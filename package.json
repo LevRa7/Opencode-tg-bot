@@ -55,7 +55,9 @@
     "@opencode-ai/sdk": "^1.1.21",
     "better-sqlite3": "^12.6.2",
     "dotenv": "^17.2.3",
-    "grammy": "^1.39.2"
+    "grammy": "^1.39.2",
+    "https-proxy-agent": "^7.0.6",
+    "socks-proxy-agent": "^8.0.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

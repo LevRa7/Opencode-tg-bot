@@ -93,6 +93,7 @@ Current command set:
 - [x] `/projects` - show and switch projects
 - [x] `/model` - select model
 - [x] `/agent` - select agent mode
+- [x] `/rename` - rename current session
 - [x] `/opencode_start` - start local OpenCode server
 - [x] `/opencode_stop` - stop local OpenCode server
 - [x] `/help` - show command help

@@ -95,6 +95,7 @@ opencode-telegram config
 | `/projects`       | Switch between OpenCode projects                        |
 | `/model`          | Choose a model from your favorites                      |
 | `/agent`          | Switch agent mode (Plan / Build)                        |
+| `/rename`         | Rename the current session                              |
 | `/opencode_start` | Start the OpenCode server remotely                      |
 | `/opencode_stop`  | Stop the OpenCode server remotely                       |
 | `/help`           | Show available commands                                 |

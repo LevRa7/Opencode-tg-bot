@@ -19,6 +19,7 @@ import { opencodeStartCommand } from "./commands/opencode-start.js";
 import { opencodeStopCommand } from "./commands/opencode-stop.js";
 import { handleAgentCommand } from "./commands/agent.js";
 import { handleModelCommand } from "./commands/model.js";
+import { renameCommand, handleRenameCancel, handleRenameTextAnswer } from "./commands/rename.js";
 import {
   handleQuestionCallback,
   showCurrentQuestion,
@@ -441,6 +442,7 @@ export function createBot(): Bot<Context> {
   bot.command("agent", handleAgentCommand);
   bot.command("model", handleModelCommand);
   bot.command("stop", stopCommand);
+  bot.command("rename", renameCommand);
 
   bot.on("callback_query:data", async (ctx) => {
     logger.debug(`[Bot] Received callback_query:data: ${ctx.callbackQuery?.data}`);
@@ -456,9 +458,10 @@ export function createBot(): Bot<Context> {
       const handledVariant = await handleVariantSelect(ctx);
       const handledCompactConfirm = await handleCompactConfirm(ctx);
       const handledCompactCancel = await handleCompactCancel(ctx);
+      const handledRenameCancel = await handleRenameCancel(ctx);
 
       logger.debug(
-        `[Bot] Callback handled: session=${handledSession}, project=${handledProject}, question=${handledQuestion}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compact=${handledCompactConfirm || handledCompactCancel}`,
+        `[Bot] Callback handled: session=${handledSession}, project=${handledProject}, question=${handledQuestion}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compact=${handledCompactConfirm || handledCompactCancel}, rename=${handledRenameCancel}`,
       );
 
       if (
@@ -470,7 +473,8 @@ export function createBot(): Bot<Context> {
         !handledModel &&
         !handledVariant &&
         !handledCompactConfirm &&
-        !handledCompactCancel
+        !handledCompactCancel &&
+        !handledRenameCancel
       ) {
         logger.debug("Unknown callback query:", ctx.callbackQuery?.data);
         await ctx.answerCallbackQuery({ text: t("callback.unknown_command") });
@@ -578,6 +582,11 @@ export function createBot(): Bot<Context> {
 
     if (questionManager.isActive()) {
       await handleQuestionTextAnswer(ctx);
+      return;
+    }
+
+    const handledRename = await handleRenameTextAnswer(ctx);
+    if (handledRename) {
       return;
     }
 

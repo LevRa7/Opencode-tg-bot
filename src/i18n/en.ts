@@ -244,6 +244,16 @@ export const en = {
   "runtime.wizard.tty_required":
     "Interactive wizard requires a TTY terminal. Run `opencode-telegram config` in an interactive shell.",
 
+  "rename.no_session": "⚠️ No active session. Create or select a session first.",
+  "rename.prompt": "📝 Enter new title for session:\n\nCurrent: {title}",
+  "rename.empty_title": "⚠️ Title cannot be empty.",
+  "rename.success": "✅ Session renamed to: {title}",
+  "rename.error": "🔴 Failed to rename session.",
+  "rename.cancelled": "❌ Rename cancelled.",
+  "rename.button.cancel": "❌ Cancel",
+
+  "cmd.description.rename": "Rename current session",
+
   "cli.usage":
     "Usage:\n  opencode-telegram [start] [--mode sources|installed]\n  opencode-telegram status\n  opencode-telegram stop\n  opencode-telegram config\n\nNotes:\n  - No command defaults to `start`\n  - `--mode` is currently supported for `start` only",
   "cli.placeholder.status":

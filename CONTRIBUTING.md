@@ -21,6 +21,25 @@ Examples:
 - `docs(readme): clarify setup steps`
 - `feat(ui)!: redesign keyboard layout`
 
+## Branch Naming Convention
+
+Use the following branch name format:
+
+`<type>/<short-description>`
+
+Examples:
+
+- `feat/model-selector`
+- `fix/session-timeout`
+- `docs/contributing-branch-rules`
+
+Rules:
+
+- Use lowercase letters and kebab-case only.
+- Use only `a-z`, `0-9`, and `-`.
+- Keep `short-description` concise (2-6 words).
+- Recommended `type` values: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`, `ci`, `build`, `perf`, `hotfix`.
+
 ## Release Notes Mapping
 
 Release notes are generated automatically from commit subjects.

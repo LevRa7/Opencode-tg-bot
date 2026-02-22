@@ -1,12 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Event } from "@opencode-ai/sdk/v2";
 import { summaryAggregator } from "../../src/summary/aggregator.js";
-import { __resetSettingsForTests, setCurrentProject } from "../../src/settings/manager.js";
+
+const mocked = vi.hoisted(() => ({
+  getCurrentProjectMock: vi.fn(),
+}));
+
+vi.mock("../../src/settings/manager.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/settings/manager.js")>(
+    "../../src/settings/manager.js",
+  );
+
+  return {
+    ...actual,
+    getCurrentProject: mocked.getCurrentProjectMock,
+  };
+});
 
 describe("summary/aggregator", () => {
   beforeEach(() => {
-    __resetSettingsForTests();
-    setCurrentProject({ id: "p1", worktree: "D:/repo", name: "repo" });
+    mocked.getCurrentProjectMock.mockReset();
+    mocked.getCurrentProjectMock.mockReturnValue({ id: "p1", worktree: "D:/repo", name: "repo" });
     summaryAggregator.clear();
     summaryAggregator.setOnCleared(() => {});
     summaryAggregator.setOnTool(() => {});

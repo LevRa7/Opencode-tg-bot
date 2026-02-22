@@ -1,11 +1,25 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { formatSummary, formatToolInfo, prepareCodeFile } from "../../src/summary/formatter.js";
-import { __resetSettingsForTests, setCurrentProject } from "../../src/settings/manager.js";
+
+const mocked = vi.hoisted(() => ({
+  getCurrentProjectMock: vi.fn(),
+}));
+
+vi.mock("../../src/settings/manager.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/settings/manager.js")>(
+    "../../src/settings/manager.js",
+  );
+
+  return {
+    ...actual,
+    getCurrentProject: mocked.getCurrentProjectMock,
+  };
+});
 
 describe("summary/formatter", () => {
   beforeEach(() => {
-    __resetSettingsForTests();
-    setCurrentProject({ id: "p1", worktree: "D:/repo", name: "repo" });
+    mocked.getCurrentProjectMock.mockReset();
+    mocked.getCurrentProjectMock.mockReturnValue({ id: "p1", worktree: "D:/repo", name: "repo" });
   });
 
   it("formats summary text and splits long output", () => {

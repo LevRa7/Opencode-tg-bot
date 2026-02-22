@@ -304,8 +304,10 @@ class SummaryAggregator {
         this.messageCount++;
         this.startTypingIndicator();
 
+        const isSummaryMessage = (info as { summary?: boolean }).summary === true;
+
         // Notify that agent started thinking
-        if (this.onThinkingCallback) {
+        if (!isSummaryMessage && this.onThinkingCallback) {
           const callback = this.onThinkingCallback;
           setImmediate(() => {
             if (typeof callback === "function") {

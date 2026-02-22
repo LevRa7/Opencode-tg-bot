@@ -159,6 +159,29 @@ describe("summary/aggregator", () => {
     expect(onThinking).toHaveBeenCalledWith("session-1");
   });
 
+  it("does not send thinking callback for summary assistant messages", async () => {
+    const onThinking = vi.fn();
+    summaryAggregator.setOnThinking(onThinking);
+    summaryAggregator.setSession("session-1");
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-summary",
+          sessionID: "session-1",
+          role: "assistant",
+          summary: true,
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onThinking).not.toHaveBeenCalled();
+  });
+
   it("sends apply_patch payload as tool file", () => {
     const onToolFile = vi.fn();
     summaryAggregator.setOnToolFile(onToolFile);

@@ -42,6 +42,11 @@ function classifyIncomingInput(ctx: Context): {
     return { inputType: "text" };
   }
 
+  // Treat photo messages as text input (they are prompts with media)
+  if (ctx.message?.photo) {
+    return { inputType: "text" };
+  }
+
   return { inputType: "other" };
 }
 

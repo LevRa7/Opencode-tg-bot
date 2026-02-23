@@ -49,11 +49,14 @@ import { getStoredAgent } from "../agent/manager.js";
 import { getStoredModel } from "../model/manager.js";
 import { formatVariantForButton } from "../variant/manager.js";
 import { createMainKeyboard } from "./utils/keyboard.js";
+import { downloadTelegramFile, toDataUri } from "./utils/file-download.js";
+import { getModelCapabilities, supportsInput } from "../model/capabilities.js";
 import { logger } from "../utils/logger.js";
 import { safeBackgroundTask } from "../utils/safe-background-task.js";
 import { formatErrorDetails } from "../utils/error-format.js";
 import { pinnedMessageManager } from "../pinned/manager.js";
 import { t } from "../i18n/index.js";
+import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2";
 
 let botInstance: Bot<Context> | null = null;
 let chatIdInstance: number | null = null;
@@ -698,25 +701,21 @@ export function createBot(): Bot<Context> {
     },
   });
 
-  bot.on("message:text", async (ctx) => {
-    const text = ctx.message?.text;
-    if (!text) {
+  /**
+   * Shared handler for sending prompts with text and/or files to OpenCode
+   */
+  async function handlePromptMessage(
+    ctx: Context,
+    bot: Bot,
+    text: string,
+    fileParts: FilePartInput[],
+  ): Promise<void> {
+    if (!ctx.chat) {
+      logger.error("[Bot] No chat context available");
       return;
     }
 
-    if (text.startsWith("/")) {
-      return;
-    }
-
-    if (questionManager.isActive()) {
-      await handleQuestionTextAnswer(ctx);
-      return;
-    }
-
-    const handledRename = await handleRenameTextAnswer(ctx);
-    if (handledRename) {
-      return;
-    }
+    const chatId = ctx.chat.id;
 
     const currentProject = getCurrentProject();
     if (!currentProject) {
@@ -725,15 +724,15 @@ export function createBot(): Bot<Context> {
     }
 
     botInstance = bot;
-    chatIdInstance = ctx.chat.id;
+    chatIdInstance = chatId;
 
     // Initialize pinned message manager if not already
     if (!pinnedMessageManager.isInitialized()) {
-      pinnedMessageManager.initialize(bot.api, ctx.chat.id);
+      pinnedMessageManager.initialize(bot.api, chatId);
     }
 
     // Initialize keyboard manager if not already
-    keyboardManager.initialize(bot.api, ctx.chat.id);
+    keyboardManager.initialize(bot.api, chatId);
 
     let currentSession = getCurrentSession();
 
@@ -823,17 +822,36 @@ export function createBot(): Bot<Context> {
       const currentAgent = getStoredAgent();
       const storedModel = getStoredModel();
 
+      // Build parts array with text and files
+      const parts: Array<TextPartInput | FilePartInput> = [];
+
+      // Add text part if present
+      if (text.trim().length > 0) {
+        parts.push({ type: "text", text });
+      }
+
+      // Add file parts
+      parts.push(...fileParts);
+
+      // If no text and files exist, use a placeholder
+      if (parts.length === 0 || (parts.length > 0 && parts.every((p) => p.type === "file"))) {
+        if (fileParts.length > 0) {
+          // Files without text - add a minimal system prompt
+          parts.unshift({ type: "text", text: "See attached file" });
+        }
+      }
+
       const promptOptions: {
         sessionID: string;
         directory: string;
-        parts: Array<{ type: "text"; text: string }>;
+        parts: Array<TextPartInput | FilePartInput>;
         model?: { providerID: string; modelID: string };
         agent?: string;
         variant?: string;
       } = {
         sessionID: currentSession.id,
         directory: currentSession.directory,
-        parts: [{ type: "text", text }],
+        parts,
         agent: currentAgent,
       };
 
@@ -858,9 +876,12 @@ export function createBot(): Bot<Context> {
         modelId: storedModel.modelID || "default",
         variant: storedModel.variant || "default",
         promptLength: text.length,
+        fileCount: fileParts.length,
       };
 
-      logger.info(`[Bot] Calling session.prompt (fire-and-forget) with agent=${currentAgent}...`);
+      logger.info(
+        `[Bot] Calling session.prompt (fire-and-forget) with agent=${currentAgent}, fileCount=${fileParts.length}...`,
+      );
 
       // CRITICAL: DO NOT wait for session.prompt to complete.
       // If we wait, the handler will not finish and grammY will not call getUpdates,
@@ -880,7 +901,7 @@ export function createBot(): Bot<Context> {
             logger.error("[Bot] session.prompt raw API error object:", error);
 
             // Send user-friendly error via API directly because ctx is no longer available
-            void bot.api.sendMessage(ctx.chat.id, t("bot.prompt_send_error")).catch(() => {});
+            void bot.api.sendMessage(chatId, t("bot.prompt_send_error")).catch(() => {});
             return;
           }
 
@@ -891,7 +912,7 @@ export function createBot(): Bot<Context> {
           logger.error("[Bot] session.prompt background task failed", promptErrorLogContext);
           logger.error("[Bot] session.prompt background failure details:", details);
           logger.error("[Bot] session.prompt raw background error object:", error);
-          void bot.api.sendMessage(ctx.chat.id, t("bot.prompt_send_error")).catch(() => {});
+          void bot.api.sendMessage(chatId, t("bot.prompt_send_error")).catch(() => {});
         },
       });
     } catch (err) {
@@ -902,7 +923,89 @@ export function createBot(): Bot<Context> {
       await ctx.reply(t("error.generic"));
     }
 
-    logger.debug("[Bot] message:text handler completed (prompt sent in background)");
+    logger.debug("[Bot] Prompt handler completed (prompt sent in background)");
+  }
+
+  // TODO explain this part to me
+  bot.on("message:text", async (ctx) => {
+    const text = ctx.message?.text;
+    if (!text) {
+      return;
+    }
+
+    if (text.startsWith("/")) {
+      return;
+    }
+
+    if (questionManager.isActive()) {
+      await handleQuestionTextAnswer(ctx);
+      return;
+    }
+
+    const handledRename = await handleRenameTextAnswer(ctx);
+    if (handledRename) {
+      return;
+    }
+
+    // Use the shared handler with no file parts
+    await handlePromptMessage(ctx, bot, text, []);
+  });
+
+  // Handle photo messages
+  bot.on("message:photo", async (ctx) => {
+    logger.debug(`[Bot] Received photo message, chatId=${ctx.chat.id}`);
+
+    const photos = ctx.message?.photo;
+    if (!photos || photos.length === 0) {
+      return;
+    }
+
+    const caption = ctx.message.caption || "";
+
+    try {
+      // Get the largest photo (last element in array)
+      const largestPhoto = photos[photos.length - 1];
+
+      // Check model capabilities
+      const storedModel = getStoredModel();
+      const capabilities = await getModelCapabilities(storedModel.providerID, storedModel.modelID);
+
+      if (!supportsInput(capabilities, "image")) {
+        logger.warn(
+          `[Bot] Model ${storedModel.providerID}/${storedModel.modelID} doesn't support image input`,
+        );
+        await ctx.reply(t("bot.photo_model_no_image"));
+
+        // Fall back to caption-only if present
+        if (caption.trim().length > 0) {
+          await handlePromptMessage(ctx, bot, caption, []);
+        }
+        return;
+      }
+
+      // Download photo
+      await ctx.reply(t("bot.photo_downloading"));
+      const downloadedFile = await downloadTelegramFile(ctx.api, largestPhoto.file_id);
+
+      // Convert to data URI (Telegram always converts photos to JPEG)
+      const dataUri = toDataUri(downloadedFile.buffer, "image/jpeg");
+
+      // Create file part
+      const filePart: FilePartInput = {
+        type: "file",
+        mime: "image/jpeg",
+        filename: "photo.jpg",
+        url: dataUri,
+      };
+
+      logger.info(`[Bot] Sending photo (${downloadedFile.buffer.length} bytes) with prompt`);
+
+      // Send via shared handler
+      await handlePromptMessage(ctx, bot, caption, [filePart]);
+    } catch (err) {
+      logger.error("[Bot] Error handling photo message:", err);
+      await ctx.reply(t("bot.photo_download_error"));
+    }
   });
 
   bot.catch((err) => {

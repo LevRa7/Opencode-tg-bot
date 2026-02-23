@@ -117,6 +117,7 @@ class SummaryAggregator {
   private onFileChangeCallback: FileChangeCallback | null = null;
   private onClearedCallback: ClearedCallback | null = null;
   private processedToolStates: Set<string> = new Set();
+  private thinkingFiredForMessages: Set<string> = new Set();
   private bot: Bot | null = null;
   private chatId: number | null = null;
   private typingTimer: ReturnType<typeof setInterval> | null = null;
@@ -271,6 +272,7 @@ class SummaryAggregator {
     this.messages.clear();
     this.partHashes.clear();
     this.processedToolStates.clear();
+    this.thinkingFiredForMessages.clear();
     this.messageCount = 0;
     this.lastUpdated = 0;
 
@@ -303,18 +305,6 @@ class SummaryAggregator {
         this.currentMessageParts.set(messageID, []);
         this.messageCount++;
         this.startTypingIndicator();
-
-        const isSummaryMessage = (info as { summary?: boolean }).summary === true;
-
-        // Notify that agent started thinking
-        if (!isSummaryMessage && this.onThinkingCallback) {
-          const callback = this.onThinkingCallback;
-          setImmediate(() => {
-            if (typeof callback === "function") {
-              callback(info.sessionID);
-            }
-          });
-        }
       }
 
       const pending = this.pendingParts.get(messageID) || [];
@@ -394,7 +384,20 @@ class SummaryAggregator {
     const messageID = part.messageID;
     const messageInfo = this.messages.get(messageID);
 
-    if (part.type === "text" && "text" in part && part.text) {
+    if (part.type === "reasoning") {
+      // Fire the thinking callback once per message on the first reasoning part.
+      // This is the signal that the model is actually doing extended thinking.
+      if (!this.thinkingFiredForMessages.has(messageID) && this.onThinkingCallback) {
+        this.thinkingFiredForMessages.add(messageID);
+        const callback = this.onThinkingCallback;
+        const sessionID = part.sessionID;
+        setImmediate(() => {
+          if (typeof callback === "function") {
+            callback(sessionID);
+          }
+        });
+      }
+    } else if (part.type === "text" && "text" in part && part.text) {
       const partHash = this.hashString(part.text);
 
       if (!this.partHashes.has(messageID)) {

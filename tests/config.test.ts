@@ -53,4 +53,28 @@ describe("config boolean env parsing", () => {
     expect(config.bot.hideThinkingMessages).toBe(false);
     expect(config.bot.hideToolCallMessages).toBe(false);
   });
+
+  it("uses markdown as default message format mode", async () => {
+    vi.stubEnv("MESSAGE_FORMAT_MODE", "");
+
+    const config = await loadConfig();
+
+    expect(config.bot.messageFormatMode).toBe("markdown");
+  });
+
+  it("parses markdown message format mode", async () => {
+    vi.stubEnv("MESSAGE_FORMAT_MODE", "MARKDOWN");
+
+    const config = await loadConfig();
+
+    expect(config.bot.messageFormatMode).toBe("markdown");
+  });
+
+  it("falls back to markdown on invalid message format mode", async () => {
+    vi.stubEnv("MESSAGE_FORMAT_MODE", "html");
+
+    const config = await loadConfig();
+
+    expect(config.bot.messageFormatMode).toBe("markdown");
+  });
 });

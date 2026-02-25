@@ -257,6 +257,7 @@ OPENCODE_MODEL_ID=big-pickle
 # SESSIONS_LIST_LIMIT=10
 # PROJECTS_LIST_LIMIT=10
 # BOT_LOCALE=en    # en or ru
+# MESSAGE_FORMAT_MODE=markdown   # markdown or raw
 
 # File output options (optional)
 # CODE_FILE_MAX_SIZE_KB=100
@@ -264,21 +265,22 @@ OPENCODE_MODEL_ID=big-pickle
 
 ### Environment variables reference
 
-| Variable                   | Description                       | Required | Default                 |
-| -------------------------- | --------------------------------- | -------- | ----------------------- |
-| `TELEGRAM_BOT_TOKEN`       | Bot token from @BotFather         | Yes      | -                       |
-| `TELEGRAM_ALLOWED_USER_ID` | Allowed Telegram user ID          | Yes      | -                       |
-| `TELEGRAM_PROXY_URL`       | Proxy URL for Telegram API        | No       | -                       |
-| `OPENCODE_MODEL_PROVIDER`  | Default model provider            | Yes      | -                       |
-| `OPENCODE_MODEL_ID`        | Default model ID                  | Yes      | -                       |
-| `OPENCODE_API_URL`         | OpenCode API URL                  | No       | `http://localhost:4096` |
-| `OPENCODE_SERVER_USERNAME` | OpenCode auth username            | No       | `opencode`              |
-| `OPENCODE_SERVER_PASSWORD` | OpenCode auth password            | No       | empty                   |
-| `LOG_LEVEL`                | Logging level                     | No       | `info`                  |
-| `SESSIONS_LIST_LIMIT`      | Max sessions shown in `/sessions` | No       | `10`                    |
-| `PROJECTS_LIST_LIMIT`      | Max projects shown in `/projects` | No       | `10`                    |
-| `BOT_LOCALE`               | Bot locale (`en` or `ru`)         | No       | `en`                    |
-| `CODE_FILE_MAX_SIZE_KB`    | Max code file size to send        | No       | `100`                   |
+| Variable                   | Description                                         | Required | Default                 |
+| -------------------------- | --------------------------------------------------- | -------- | ----------------------- |
+| `TELEGRAM_BOT_TOKEN`       | Bot token from @BotFather                           | Yes      | -                       |
+| `TELEGRAM_ALLOWED_USER_ID` | Allowed Telegram user ID                            | Yes      | -                       |
+| `TELEGRAM_PROXY_URL`       | Proxy URL for Telegram API                          | No       | -                       |
+| `OPENCODE_MODEL_PROVIDER`  | Default model provider                              | Yes      | -                       |
+| `OPENCODE_MODEL_ID`        | Default model ID                                    | Yes      | -                       |
+| `OPENCODE_API_URL`         | OpenCode API URL                                    | No       | `http://localhost:4096` |
+| `OPENCODE_SERVER_USERNAME` | OpenCode auth username                              | No       | `opencode`              |
+| `OPENCODE_SERVER_PASSWORD` | OpenCode auth password                              | No       | empty                   |
+| `LOG_LEVEL`                | Logging level                                       | No       | `info`                  |
+| `SESSIONS_LIST_LIMIT`      | Max sessions shown in `/sessions`                   | No       | `10`                    |
+| `PROJECTS_LIST_LIMIT`      | Max projects shown in `/projects`                   | No       | `10`                    |
+| `BOT_LOCALE`               | Bot locale (`en` or `ru`)                           | No       | `en`                    |
+| `MESSAGE_FORMAT_MODE`      | Assistant message format mode (`markdown` or `raw`) | No       | `markdown`              |
+| `CODE_FILE_MAX_SIZE_KB`    | Max code file size to send                          | No       | `100`                   |
 
 ## OpenCode SDK quick reference
 

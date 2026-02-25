@@ -1,0 +1,76 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  isTelegramMarkdownParseError,
+  sendMessageWithMarkdownFallback,
+} from "../../../src/bot/utils/send-with-markdown-fallback.js";
+
+describe("bot/utils/send-with-markdown-fallback", () => {
+  it("sends with MarkdownV2 when there is no parse error", async () => {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    const replyMarkup = { keyboard: [[{ text: "A" }]] };
+
+    await sendMessageWithMarkdownFallback({
+      api: { sendMessage },
+      chatId: 123,
+      text: "**hello**",
+      options: { reply_markup: replyMarkup },
+      parseMode: "MarkdownV2",
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenNthCalledWith(1, 123, "**hello**", {
+      reply_markup: replyMarkup,
+      parse_mode: "MarkdownV2",
+    });
+  });
+
+  it("retries in raw mode when Telegram rejects markdown entities", async () => {
+    const sendMessage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Bad Request: can't parse entities: Unsupported start tag"))
+      .mockResolvedValueOnce(undefined);
+
+    await sendMessageWithMarkdownFallback({
+      api: { sendMessage },
+      chatId: 123,
+      text: "<broken>",
+      options: { reply_markup: { keyboard: [] } },
+      parseMode: "MarkdownV2",
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenNthCalledWith(1, 123, "<broken>", {
+      reply_markup: { keyboard: [] },
+      parse_mode: "MarkdownV2",
+    });
+    expect(sendMessage).toHaveBeenNthCalledWith(2, 123, "<broken>", {
+      reply_markup: { keyboard: [] },
+    });
+  });
+
+  it("does not swallow non-markdown Telegram errors", async () => {
+    const sendMessage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Bad Request: message is too long"));
+
+    await expect(
+      sendMessageWithMarkdownFallback({
+        api: { sendMessage },
+        chatId: 123,
+        text: "hello",
+        parseMode: "MarkdownV2",
+      }),
+    ).rejects.toThrow("message is too long");
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("detects parse errors from api error description fields", () => {
+    const error = {
+      description: "Bad Request: can't find end of the entity starting at byte offset 42",
+    };
+
+    expect(isTelegramMarkdownParseError(error)).toBe(true);
+    expect(isTelegramMarkdownParseError(new Error("network timeout"))).toBe(false);
+  });
+});

@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { formatSummary, formatToolInfo, prepareCodeFile } from "../../src/summary/formatter.js";
+import {
+  formatSummary,
+  formatSummaryWithMode,
+  formatToolInfo,
+  prepareCodeFile,
+} from "../../src/summary/formatter.js";
 
 const mocked = vi.hoisted(() => ({
   getCurrentProjectMock: vi.fn(),
@@ -27,10 +32,61 @@ describe("summary/formatter", () => {
     expect(formatSummary("   hello world   ")).toEqual(["hello world"]);
 
     const longText = "a".repeat(4500);
-    const parts = formatSummary(longText);
+    const parts = formatSummaryWithMode(longText, "raw");
     expect(parts.length).toBeGreaterThan(1);
     expect(parts[0].startsWith("```\n")).toBe(true);
     expect(parts[0].endsWith("\n```")).toBe(true);
+  });
+
+  it("formats markdown summaries for Telegram MarkdownV2 mode", () => {
+    const text = "Check out this **amazing** library with *great* features!";
+    const parts = formatSummaryWithMode(text, "markdown");
+
+    expect(parts).toEqual(["Check out this *amazing* library with _great_ features\\!"]);
+  });
+
+  it("does not wrap long markdown summaries in code blocks", () => {
+    const parts = formatSummaryWithMode("a".repeat(4500), "markdown");
+
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts[0].startsWith("```\n")).toBe(false);
+    expect(parts[0].endsWith("\n```")).toBe(false);
+  });
+
+  it("adapts headings, quotes, tables and horizontal rules for Telegram", () => {
+    const text = [
+      "# Main heading",
+      "",
+      "> This is a quote.",
+      "Quote continues on next line.",
+      "",
+      "| Header 1 | Header 2 |",
+      "| --- | --- |",
+      "| Cell A | Cell B |",
+      "",
+      "---",
+    ].join("\n");
+
+    const parts = formatSummaryWithMode(text, "markdown");
+
+    expect(parts).toHaveLength(1);
+    expect(parts[0]).toContain("*Main heading*");
+    expect(parts[0]).toContain("> This is a quote\\.");
+    expect(parts[0]).toContain("> Quote continues on next line\\.");
+    expect(parts[0]).toContain("| Header 1 | Header 2 |");
+    expect(parts[0]).toContain("| Cell A | Cell B |");
+    expect(parts[0]).not.toContain("```\nHeader 1");
+    expect(parts[0]).toContain("──────────");
+  });
+
+  it("renders markdown checklists as visual checkboxes", () => {
+    const text = ["- [ ] Open task", "- [x] Done task", "1. [ ] Numbered task"].join("\n");
+    const parts = formatSummaryWithMode(text, "markdown");
+
+    expect(parts).toHaveLength(1);
+    expect(parts[0]).toContain("🔲 Open task");
+    expect(parts[0]).toContain("✅ Done task");
+    expect(parts[0]).toContain("🔲 Numbered task");
   });
 
   it("formats todowrite tool metadata", () => {

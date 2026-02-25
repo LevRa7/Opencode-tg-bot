@@ -39,7 +39,7 @@ import { clearAllInteractionState } from "../interaction/cleanup.js";
 import { keyboardManager } from "../keyboard/manager.js";
 import { subscribeToEvents } from "../opencode/events.js";
 import { summaryAggregator } from "../summary/aggregator.js";
-import { formatSummary, formatToolInfo } from "../summary/formatter.js";
+import { formatSummary, formatToolInfo, getAssistantParseMode } from "../summary/formatter.js";
 import { ToolMessageBatcher } from "../summary/tool-message-batcher.js";
 import { getCurrentSession } from "../session/manager.js";
 import { ingestSessionInfoForCache } from "../session/cache-manager.js";
@@ -50,6 +50,7 @@ import { t } from "../i18n/index.js";
 import { processUserPrompt } from "./handlers/prompt.js";
 import { handleVoiceMessage } from "./handlers/voice.js";
 import { downloadTelegramFile, toDataUri } from "./utils/file-download.js";
+import { sendMessageWithMarkdownFallback } from "./utils/send-with-markdown-fallback.js";
 import { getModelCapabilities, supportsInput } from "../model/capabilities.js";
 import { getStoredModel } from "../model/manager.js";
 import type { FilePartInput } from "@opencode-ai/sdk/v2";
@@ -177,25 +178,25 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     try {
       const parts = formatSummary(messageText);
+      const assistantParseMode = getAssistantParseMode();
 
       logger.debug(
         `[Bot] Sending completed message to Telegram (chatId=${chatIdInstance}, parts=${parts.length})`,
       );
+
       for (let i = 0; i < parts.length; i++) {
         const isLastPart = i === parts.length - 1;
-        if (isLastPart && keyboardManager.isInitialized()) {
-          // Attach updated keyboard to the last message part (only if initialized)
-          const keyboard = keyboardManager.getKeyboard();
-          if (keyboard) {
-            await botInstance.api.sendMessage(chatIdInstance, parts[i], {
-              reply_markup: keyboard,
-            });
-          } else {
-            await botInstance.api.sendMessage(chatIdInstance, parts[i]);
-          }
-        } else {
-          await botInstance.api.sendMessage(chatIdInstance, parts[i]);
-        }
+        const keyboard =
+          isLastPart && keyboardManager.isInitialized() ? keyboardManager.getKeyboard() : undefined;
+        const options = keyboard ? { reply_markup: keyboard } : undefined;
+
+        await sendMessageWithMarkdownFallback({
+          api: botInstance.api,
+          chatId: chatIdInstance,
+          text: parts[i],
+          options,
+          parseMode: assistantParseMode,
+        });
       }
     } catch (err) {
       logger.error("Failed to send message to Telegram:", err);

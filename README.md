@@ -28,6 +28,7 @@ Quick start: `npx @grinev/opencode-telegram-bot`
 - **Voice prompts** — send voice/audio messages, transcribe them via a Whisper-compatible API, then forward recognized text to OpenCode
 - **Context control** — compact context when it gets too large, right from the chat
 - **Input flow control** — when an interactive flow is active, the bot accepts only relevant input to keep context consistent and avoid accidental actions
+- **Configurable reply formatting** — assistant replies use Telegram MarkdownV2 by default, with optional raw mode (`MESSAGE_FORMAT_MODE=markdown|raw`)
 - **Security** — strict user ID whitelist; no one else can access your bot, even if they find it
 - **Localization** — English and Russian UI (`BOT_LOCALE=en|ru`)
 
@@ -134,6 +135,7 @@ When installed via npm, the configuration wizard handles the initial setup. The 
 | `SERVICE_MESSAGES_INTERVAL_SEC` | Service messages interval (thinking + tool calls); keep `>=2` to avoid Telegram rate limits, `0` = immediate |    No    | `5`                      |
 | `HIDE_THINKING_MESSAGES`        | Hide `💭 Thinking...` service messages                                                                       |    No    | `false`                  |
 | `HIDE_TOOL_CALL_MESSAGES`       | Hide tool-call service messages (`💻 bash ...`, `📖 read ...`, etc.)                                         |    No    | `false`                  |
+| `MESSAGE_FORMAT_MODE`           | Assistant reply formatting mode: `markdown` (Telegram MarkdownV2) or `raw`                                   |    No    | `markdown`               |
 | `CODE_FILE_MAX_SIZE_KB`         | Max file size (KB) to send as document                                                                       |    No    | `100`                    |
 | `STT_API_URL`                   | Whisper-compatible API base URL (enables voice/audio transcription)                                          |    No    | —                        |
 | `STT_API_KEY`                   | API key for your STT provider                                                                                |    No    | —                        |

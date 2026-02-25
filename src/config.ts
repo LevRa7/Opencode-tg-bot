@@ -4,6 +4,8 @@ import { getRuntimePaths } from "./runtime/paths.js";
 const runtimePaths = getRuntimePaths();
 dotenv.config({ path: runtimePaths.envFilePath });
 
+export type MessageFormatMode = "raw" | "markdown";
+
 function getEnvVar(key: string, required: boolean = true): string {
   const value = process.env[key];
   if (required && !value) {
@@ -86,6 +88,24 @@ function getOptionalBooleanEnvVar(key: string, defaultValue: boolean): boolean {
   return defaultValue;
 }
 
+function getOptionalMessageFormatModeEnvVar(
+  key: string,
+  defaultValue: MessageFormatMode,
+): MessageFormatMode {
+  const value = getEnvVar(key, false);
+
+  if (!value) {
+    return defaultValue;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "raw" || normalized === "markdown") {
+    return normalized;
+  }
+
+  return defaultValue;
+}
+
 export const config = {
   telegram: {
     token: getEnvVar("TELEGRAM_BOT_TOKEN"),
@@ -114,6 +134,7 @@ export const config = {
     ),
     hideThinkingMessages: getOptionalBooleanEnvVar("HIDE_THINKING_MESSAGES", false),
     hideToolCallMessages: getOptionalBooleanEnvVar("HIDE_TOOL_CALL_MESSAGES", false),
+    messageFormatMode: getOptionalMessageFormatModeEnvVar("MESSAGE_FORMAT_MODE", "markdown"),
   },
   files: {
     maxFileSizeKb: parseInt(getEnvVar("CODE_FILE_MAX_SIZE_KB", false) || "100", 10),

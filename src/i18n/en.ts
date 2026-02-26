@@ -170,6 +170,7 @@ export const en = {
   "model.change_error_callback": "Failed to change model",
   "model.menu.empty": "⚠️ No available models",
   "model.menu.current": "Current model: {name}\n\nSelect model:",
+  "model.menu.favorites_hint": "ℹ️ The model list is built from favorites in OpenCode CLI.",
   "model.menu.error": "🔴 Failed to get models list",
 
   "variant.model_not_selected_callback": "Error: model is not selected",

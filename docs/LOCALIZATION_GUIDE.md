@@ -61,12 +61,14 @@ Example fields:
 
 No other type updates are needed: `Locale`, `SUPPORTED_LOCALES`, and locale options are derived automatically from this registry.
 
-## 3) Update README
+## 3) Update docs
 
 Update `README.md` for every new locale:
 
 - language list
 - localization section
+
+Update `.env.example` add new language to supported languages list
 
 ## 4) Verify behavior
 

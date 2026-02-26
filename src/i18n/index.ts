@@ -1,5 +1,6 @@
 import { en, type I18nKey } from "./en.js";
 import { ru } from "./ru.js";
+import { zh } from "./zh.js";
 
 interface LocaleDefinition {
   code: string;
@@ -20,6 +21,12 @@ const LOCALE_DEFINITIONS = [
     label: "Русский",
     dateLocale: "ru-RU",
     dictionary: ru,
+  },
+  {
+    code: "zh",
+    label: "简体中文",
+    dateLocale: "zh-CN",
+    dictionary: zh,
   },
 ] as const satisfies readonly LocaleDefinition[];
 

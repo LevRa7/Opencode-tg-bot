@@ -107,9 +107,13 @@ export const en = {
     "🏗 Project is not selected.\n\nFirst select a project with /projects.",
   "sessions.empty": "📭 No sessions found.\n\nCreate a new session with /new.",
   "sessions.select": "Select a session:",
+  "sessions.select_page": "Select a session (page {page}):",
   "sessions.fetch_error":
     "🔴 OpenCode Server is unavailable or an error occurred while loading sessions.",
   "sessions.select_project_first": "🔴 Project is not selected. Use /projects.",
+  "sessions.page_empty_callback": "No sessions on this page",
+  "sessions.button.prev_page": "⬅️ Prev",
+  "sessions.button.next_page": "Next ➡️",
   "sessions.loading_context": "⏳ Loading context and latest messages...",
   "sessions.selected": "✅ Session selected: {title}",
   "sessions.select_error": "🔴 Failed to select session.",

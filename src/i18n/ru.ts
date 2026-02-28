@@ -107,9 +107,13 @@ export const ru: I18nDictionary = {
     "🏗 Проект не выбран.\n\nСначала выберите проект командой /projects.",
   "sessions.empty": "📭 Сессий нет.\n\nСоздайте новую сессию командой /new.",
   "sessions.select": "Выберите сессию:",
+  "sessions.select_page": "Выберите сессию (страница {page}):",
   "sessions.fetch_error":
     "🔴 OpenCode Server недоступен или произошла ошибка при получении списка сессий.",
   "sessions.select_project_first": "🔴 Проект не выбран. Используйте /projects.",
+  "sessions.page_empty_callback": "На этой странице нет сессий",
+  "sessions.button.prev_page": "⬅️ Назад",
+  "sessions.button.next_page": "Вперёд ➡️",
   "sessions.loading_context": "⏳ Загружаю контекст и последние сообщения...",
   "sessions.selected": "✅ Сессия выбрана: {title}",
   "sessions.select_error": "🔴 Ошибка при выборе сессии.",

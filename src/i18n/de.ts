@@ -113,9 +113,13 @@ export const de: I18nDictionary = {
     "🏗 Projekt ist nicht ausgewählt.\n\nWähle zuerst ein Projekt mit /projects.",
   "sessions.empty": "📭 Keine Sitzungen gefunden.\n\nErstelle eine neue Sitzung mit /new.",
   "sessions.select": "Sitzung auswählen:",
+  "sessions.select_page": "Sitzung auswählen (Seite {page}):",
   "sessions.fetch_error":
     "🔴 OpenCode-Server ist nicht verfügbar oder beim Laden der Sitzungen ist ein Fehler aufgetreten.",
   "sessions.select_project_first": "🔴 Projekt ist nicht ausgewählt. Nutze /projects.",
+  "sessions.page_empty_callback": "Auf dieser Seite gibt es keine Sitzungen",
+  "sessions.button.prev_page": "⬅️ Zurück",
+  "sessions.button.next_page": "Weiter ➡️",
   "sessions.loading_context": "⏳ Lade Kontext und letzte Nachrichten...",
   "sessions.selected": "✅ Sitzung ausgewählt: {title}",
   "sessions.select_error": "🔴 Sitzung konnte nicht ausgewählt werden.",

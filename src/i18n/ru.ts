@@ -112,6 +112,8 @@ export const ru: I18nDictionary = {
     "🔴 OpenCode Server недоступен или произошла ошибка при получении списка сессий.",
   "sessions.select_project_first": "🔴 Проект не выбран. Используйте /projects.",
   "sessions.page_empty_callback": "На этой странице нет сессий",
+  "sessions.page_load_error_callback":
+    "Не удалось загрузить эту страницу. Пожалуйста, попробуйте снова.",
   "sessions.button.prev_page": "⬅️ Назад",
   "sessions.button.next_page": "Вперёд ➡️",
   "sessions.loading_context": "⏳ Загружаю контекст и последние сообщения...",

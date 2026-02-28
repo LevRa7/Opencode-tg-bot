@@ -112,6 +112,7 @@ export const en = {
     "🔴 OpenCode Server is unavailable or an error occurred while loading sessions.",
   "sessions.select_project_first": "🔴 Project is not selected. Use /projects.",
   "sessions.page_empty_callback": "No sessions on this page",
+  "sessions.page_load_error_callback": "Cannot load this page. Please try again.",
   "sessions.button.prev_page": "⬅️ Prev",
   "sessions.button.next_page": "Next ➡️",
   "sessions.loading_context": "⏳ Loading context and latest messages...",

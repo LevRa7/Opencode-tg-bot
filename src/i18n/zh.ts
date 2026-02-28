@@ -99,6 +99,7 @@ export const zh: I18nDictionary = {
   "sessions.fetch_error": "🔴 OpenCode 服务器不可用，或加载会话时发生错误。",
   "sessions.select_project_first": "🔴 未选择项目。使用 /projects。",
   "sessions.page_empty_callback": "这一页没有会话",
+  "sessions.page_load_error_callback": "无法加载此页面。请重试。",
   "sessions.button.prev_page": "⬅️ 上一页",
   "sessions.button.next_page": "下一页 ➡️",
   "sessions.loading_context": "⏳ 正在加载上下文和最新消息...",

@@ -118,6 +118,8 @@ export const de: I18nDictionary = {
     "🔴 OpenCode-Server ist nicht verfügbar oder beim Laden der Sitzungen ist ein Fehler aufgetreten.",
   "sessions.select_project_first": "🔴 Projekt ist nicht ausgewählt. Nutze /projects.",
   "sessions.page_empty_callback": "Auf dieser Seite gibt es keine Sitzungen",
+  "sessions.page_load_error_callback":
+    "Diese Seite kann nicht geladen werden. Bitte versuche es erneut.",
   "sessions.button.prev_page": "⬅️ Zurück",
   "sessions.button.next_page": "Weiter ➡️",
   "sessions.loading_context": "⏳ Lade Kontext und letzte Nachrichten...",

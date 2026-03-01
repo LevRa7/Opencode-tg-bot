@@ -30,14 +30,12 @@ export interface ModelSelectionLists {
  * @returns Formatted string "providerID/modelID"
  */
 export function formatModelForButton(providerID: string, modelID: string): string {
-  const formatted = `${providerID}/${modelID}`;
+  // If model name is too long, we only truncate the model part
+  const displayModelId = modelID.length > 20 ? `${modelID.substring(0, 17)}...` : modelID;
+  const displayProviderId =
+    providerID.length > 15 ? `${providerID.substring(0, 12)}...` : providerID;
 
-  // Limit to ~30 characters for button width (excluding emoji)
-  if (formatted.length > 30) {
-    return `🤖 ${formatted.substring(0, 27)}...`;
-  }
-
-  return `🤖 ${formatted}`;
+  return `🤖 ${displayProviderId}\n${displayModelId}`;
 }
 
 /**

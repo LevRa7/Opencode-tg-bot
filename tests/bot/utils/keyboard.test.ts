@@ -18,7 +18,7 @@ describe("bot/utils/keyboard", () => {
 
     expect(getButtonText(keyboard.keyboard[0][0])).toBe("🛠️ Build Mode");
     expect(getButtonText(keyboard.keyboard[0][1])).toBe("📊 0");
-    expect(getButtonText(keyboard.keyboard[1][0])).toBe("🤖 openrouter/openai/gpt-4o");
+    expect(getButtonText(keyboard.keyboard[1][0])).toBe("🤖 openrouter\nopenai/gpt-4o");
     expect(getButtonText(keyboard.keyboard[1][1])).toBe("💡 Default");
     expect(keyboard.resize_keyboard).toBe(true);
     expect(keyboard.is_persistent).toBe(true);

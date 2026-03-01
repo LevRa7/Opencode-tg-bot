@@ -97,8 +97,12 @@ export const ru: I18nDictionary = {
     "📭 Проектов нет.\n\nОткройте директорию в OpenCode и создайте хотя бы одну сессию, после этого она появится здесь.",
   "projects.select": "Выберите проект:",
   "projects.select_with_current": "Выберите проект:\n\nТекущий: 🏗 {project}",
+  "projects.page_indicator": "Страница {current}/{total}",
+  "projects.prev_page": "⬅️ Назад",
+  "projects.next_page": "Вперёд ➡️",
   "projects.fetch_error":
     "🔴 OpenCode Server недоступен или произошла ошибка при получении списка проектов.",
+  "projects.page_load_error": "Не удалось загрузить эту страницу. Попробуйте снова.",
   "projects.selected":
     "✅ Проект выбран: {project}\n\n📋 Сессия сброшена. Используйте /sessions или /new для работы с этим проектом.",
   "projects.select_error": "🔴 Ошибка при выборе проекта.",

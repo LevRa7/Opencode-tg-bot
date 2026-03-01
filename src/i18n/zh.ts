@@ -153,6 +153,8 @@ export const zh: I18nDictionary = {
   "agent.change_error_callback": "切换模式失败",
   "agent.menu.current": "当前模式：{name}\n\n请选择模式：",
   "agent.menu.select": "请选择工作模式：",
+  "agent.menu.empty": "⚠️ 没有可用的代理",
+  "agent.menu.error": "🔴 获取代理列表失败",
 
   "model.changed_callback": "模型已更改：{name}",
   "model.changed_message": "✅ 模型已切换为：{name}",

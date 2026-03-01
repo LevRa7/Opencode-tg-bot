@@ -185,6 +185,8 @@ export const es: I18nDictionary = {
   "agent.change_error_callback": "No se pudo cambiar el modo",
   "agent.menu.current": "Modo actual: {name}\n\nSelecciona el modo:",
   "agent.menu.select": "Selecciona el modo de trabajo:",
+  "agent.menu.empty": "⚠️ No hay agentes disponibles",
+  "agent.menu.error": "🔴 No se pudo obtener la lista de agentes",
 
   "model.changed_callback": "Modelo cambiado: {name}",
   "model.changed_message": "✅ Modelo cambiado a: {name}",

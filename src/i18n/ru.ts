@@ -177,6 +177,8 @@ export const ru: I18nDictionary = {
   "agent.change_error_callback": "Ошибка при смене режима",
   "agent.menu.current": "Текущий режим: {name}\n\nВыберите режим:",
   "agent.menu.select": "Выберите режим работы:",
+  "agent.menu.empty": "⚠️ Нет доступных агентов",
+  "agent.menu.error": "🔴 Не удалось получить список агентов",
 
   "model.changed_callback": "Модель изменена: {name}",
   "model.changed_message": "✅ Модель изменена на: {name}",

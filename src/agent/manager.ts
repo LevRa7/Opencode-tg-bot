@@ -10,16 +10,11 @@ import type { AgentInfo } from "./types.js";
  * @returns Array of available agents (filtered by mode and hidden flag)
  */
 export async function getAvailableAgents(): Promise<AgentInfo[]> {
-  const project = getCurrentProject();
-  if (!project) {
-    logger.warn("[AgentManager] Cannot get agents: no project selected");
-    return [];
-  }
-
   try {
-    const { data: agents, error } = await opencodeClient.app.agents({
-      directory: project.worktree,
-    });
+    const project = getCurrentProject();
+    const { data: agents, error } = await opencodeClient.app.agents(
+      project ? { directory: project.worktree } : undefined,
+    );
 
     if (error) {
       logger.error("[AgentManager] Failed to fetch agents:", error);
@@ -43,18 +38,21 @@ export async function getAvailableAgents(): Promise<AgentInfo[]> {
   }
 }
 
+const DEFAULT_AGENT = "build";
+
 /**
- * Get current agent from last session message or settings
- * @returns Current agent name or undefined
+ * Get current agent from last session message or settings.
+ * Falls back to "build" if nothing is stored.
+ * @returns Current agent name
  */
-export async function fetchCurrentAgent(): Promise<string | undefined> {
+export async function fetchCurrentAgent(): Promise<string> {
   const storedAgent = getCurrentAgent();
   const session = getCurrentSession();
   const project = getCurrentProject();
 
   if (!session || !project) {
     // No active session, return stored agent from settings
-    return storedAgent;
+    return storedAgent ?? DEFAULT_AGENT;
   }
 
   try {
@@ -66,7 +64,7 @@ export async function fetchCurrentAgent(): Promise<string | undefined> {
 
     if (error || !messages || messages.length === 0) {
       logger.debug("[AgentManager] No messages found, using stored agent");
-      return storedAgent;
+      return storedAgent ?? DEFAULT_AGENT;
     }
 
     const lastAgent = messages[0].info.agent;
@@ -86,10 +84,10 @@ export async function fetchCurrentAgent(): Promise<string | undefined> {
       setCurrentAgent(lastAgent);
     }
 
-    return lastAgent || storedAgent;
+    return lastAgent || storedAgent || DEFAULT_AGENT;
   } catch (err) {
     logger.error("[AgentManager] Error fetching current agent:", err);
-    return storedAgent;
+    return storedAgent ?? DEFAULT_AGENT;
   }
 }
 

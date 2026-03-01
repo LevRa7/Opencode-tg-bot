@@ -175,6 +175,8 @@ export const en = {
   "agent.change_error_callback": "Failed to change mode",
   "agent.menu.current": "Current mode: {name}\n\nSelect mode:",
   "agent.menu.select": "Select work mode:",
+  "agent.menu.empty": "⚠️ No available agents",
+  "agent.menu.error": "🔴 Failed to get agents list",
 
   "model.changed_callback": "Model changed: {name}",
   "model.changed_message": "✅ Model changed to: {name}",

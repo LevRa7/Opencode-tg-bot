@@ -127,16 +127,26 @@ export async function buildAgentSelectionMenu(currentAgent?: string): Promise<In
  * @param ctx grammY context
  */
 export async function showAgentSelectionMenu(ctx: Context): Promise<void> {
-  const currentAgent = await fetchCurrentAgent();
-  const keyboard = await buildAgentSelectionMenu(currentAgent);
+  try {
+    const currentAgent = await fetchCurrentAgent();
+    const keyboard = await buildAgentSelectionMenu(currentAgent);
 
-  const text = currentAgent
-    ? t("agent.menu.current", { name: getAgentDisplayName(currentAgent) })
-    : t("agent.menu.select");
+    if (keyboard.inline_keyboard.length === 0) {
+      await ctx.reply(t("agent.menu.empty"));
+      return;
+    }
 
-  await replyWithInlineMenu(ctx, {
-    menuKind: "agent",
-    text,
-    keyboard,
-  });
+    const text = currentAgent
+      ? t("agent.menu.current", { name: getAgentDisplayName(currentAgent) })
+      : t("agent.menu.select");
+
+    await replyWithInlineMenu(ctx, {
+      menuKind: "agent",
+      text,
+      keyboard,
+    });
+  } catch (err) {
+    logger.error("[AgentHandler] Error showing agent menu:", err);
+    await ctx.reply(t("agent.menu.error"));
+  }
 }

@@ -63,6 +63,10 @@ export const zh: I18nDictionary = {
   "bot.photo_model_no_image": "⚠️ 当前模型不支持图像输入。将仅发送文本。",
   "bot.photo_download_error": "🔴 下载照片失败",
   "bot.photo_no_caption": "💡 提示：添加说明文字以描述你希望对这张照片做什么。",
+  "bot.file_downloading": "⏳ 正在下载文件...",
+  "bot.file_too_large": "⚠️ 文件过大（最大 {maxSizeMb}MB）",
+  "bot.file_download_error": "🔴 下载文件失败",
+  "bot.model_no_pdf": "⚠️ 当前模型不支持PDF输入。将仅发送文本。",
 
   "status.header_running": "🟢 **OpenCode 服务器正在运行**",
   "status.health.healthy": "健康",

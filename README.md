@@ -29,6 +29,7 @@ Languages: English (`en`), Deutsch (`de`), Español (`es`), Русский (`ru`
 - **Custom Commands** — run OpenCode custom commands (and built-ins like `init`/`review`) from an inline menu with confirmation
 - **Interactive Q&A** — answer agent questions and approve permissions via inline buttons
 - **Voice prompts** — send voice/audio messages, transcribe them via a Whisper-compatible API, then forward recognized text to OpenCode
+- **File attachments** — send images and PDF documents to OpenCode (when supported by the current model)
 - **Context control** — compact context when it gets too large, right from the chat
 - **Input flow control** — when an interactive flow is active, the bot accepts only relevant input to keep context consistent and avoid accidental actions
 - **Configurable reply formatting** — assistant replies use Telegram MarkdownV2 by default, with optional raw mode (`MESSAGE_FORMAT_MODE=markdown|raw`)

@@ -798,6 +798,73 @@ export function createBot(): Bot<Context> {
     }
   });
 
+  // Document message handler (PDF files)
+  bot.on("message:document", async (ctx) => {
+    logger.debug(`[Bot] Received document message, chatId=${ctx.chat.id}`);
+
+    const doc = ctx.message?.document;
+    if (!doc) {
+      return;
+    }
+
+    const caption = ctx.message.caption || "";
+
+    try {
+      // Check model capabilities
+      const storedModel = getStoredModel();
+      const capabilities = await getModelCapabilities(storedModel.providerID, storedModel.modelID);
+
+      if (!supportsInput(capabilities, "pdf")) {
+        logger.warn(
+          `[Bot] Model ${storedModel.providerID}/${storedModel.modelID} doesn't support PDF input`,
+        );
+        await ctx.reply(t("bot.model_no_pdf"));
+
+        // Fall back to caption-only if present
+        if (caption.trim().length > 0) {
+          botInstance = bot;
+          chatIdInstance = ctx.chat.id;
+          const promptDeps = { bot, ensureEventSubscription };
+          await processUserPrompt(ctx, caption, promptDeps);
+        }
+        return;
+      }
+
+      // Download document
+      await ctx.reply(t("bot.file_downloading"));
+      const downloadedFile = await downloadTelegramFile(ctx.api, doc.file_id);
+
+      // Determine MIME type
+      const mimeType = doc.mime_type || "application/pdf";
+      const filename = doc.file_name || "document.pdf";
+
+      // Convert to data URI
+      const dataUri = toDataUri(downloadedFile.buffer, mimeType);
+
+      // Create file part
+      const filePart: FilePartInput = {
+        type: "file",
+        mime: mimeType,
+        filename: filename,
+        url: dataUri,
+      };
+
+      logger.info(
+        `[Bot] Sending document (${downloadedFile.buffer.length} bytes, ${filename}) with prompt`,
+      );
+
+      botInstance = bot;
+      chatIdInstance = ctx.chat.id;
+
+      // Send via processUserPrompt with file part
+      const promptDeps = { bot, ensureEventSubscription };
+      await processUserPrompt(ctx, caption, promptDeps, [filePart]);
+    } catch (err) {
+      logger.error("[Bot] Error handling document message:", err);
+      await ctx.reply(t("bot.file_download_error"));
+    }
+  });
+
   bot.on("message:text", async (ctx) => {
     const text = ctx.message?.text;
     if (!text) {

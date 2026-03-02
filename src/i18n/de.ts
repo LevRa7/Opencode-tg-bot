@@ -78,6 +78,10 @@ export const de: I18nDictionary = {
   "bot.photo_download_error": "🔴 Foto konnte nicht heruntergeladen werden",
   "bot.photo_no_caption":
     "💡 Tipp: Füge eine Bildunterschrift hinzu, um zu beschreiben, was du mit diesem Foto tun möchtest.",
+  "bot.file_downloading": "⏳ Lade Datei herunter...",
+  "bot.file_too_large": "⚠️ Datei ist zu groß (max. {maxSizeMb}MB)",
+  "bot.file_download_error": "🔴 Datei konnte nicht heruntergeladen werden",
+  "bot.model_no_pdf": "⚠️ Das aktuelle Modell unterstützt keine PDF-Eingabe. Sende nur Text.",
 
   "status.header_running": "🟢 **OpenCode-Server läuft**",
   "status.health.healthy": "OK",

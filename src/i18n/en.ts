@@ -72,6 +72,10 @@ export const en = {
   "bot.photo_model_no_image": "⚠️ Current model doesn't support image input. Sending text only.",
   "bot.photo_download_error": "🔴 Failed to download photo",
   "bot.photo_no_caption": "💡 Tip: Add a caption to describe what you want to do with this photo.",
+  "bot.file_downloading": "⏳ Downloading file...",
+  "bot.file_too_large": "⚠️ File is too large (max {maxSizeMb}MB)",
+  "bot.file_download_error": "🔴 Failed to download file",
+  "bot.model_no_pdf": "⚠️ Current model doesn't support PDF input. Sending text only.",
 
   "status.header_running": "🟢 **OpenCode Server is running**",
   "status.health.healthy": "Healthy",

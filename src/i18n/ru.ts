@@ -72,6 +72,10 @@ export const ru: I18nDictionary = {
     "⚠️ Текущая модель не поддерживает изображения. Отправляю только текст.",
   "bot.photo_download_error": "🔴 Не удалось скачать фото",
   "bot.photo_no_caption": "💡 Совет: Добавьте подпись, чтобы описать, что делать с этим фото.",
+  "bot.file_downloading": "⏳ Скачиваю файл...",
+  "bot.file_too_large": "⚠️ Файл слишком большой (макс. {maxSizeMb}МБ)",
+  "bot.file_download_error": "🔴 Не удалось скачать файл",
+  "bot.model_no_pdf": "⚠️ Текущая модель не поддерживает PDF. Отправляю только текст.",
 
   "status.header_running": "🟢 **OpenCode Server запущен**",
   "status.health.healthy": "Healthy",

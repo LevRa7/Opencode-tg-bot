@@ -2,6 +2,9 @@
 
 Telegram bot client for OpenCode that lets you run and monitor coding tasks on your local machine from Telegram.
 
+> Project concept and boundaries are documented in `CONCEPT.md`.
+> Proposed changes that alter the core interaction model should be discussed before implementation.
+
 ## Concept
 
 The app works as a bridge between Telegram and a locally running OpenCode server:

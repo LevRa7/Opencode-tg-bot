@@ -4,6 +4,12 @@ Thanks for contributing to OpenCode Telegram Bot.
 
 ## Before You Start Work
 
+### Read project concept first
+
+Before proposing or implementing major behavior changes, read `CONCEPT.md`.
+
+If your idea changes the core interaction model or conflicts with `CONCEPT.md`, open an issue/discussion first and wait for maintainer confirmation.
+
 ### What can go directly to PR
 
 You can pick up and submit a PR without prior approval when the change is low-risk and aligned with the current direction, for example:

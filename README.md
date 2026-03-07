@@ -73,7 +73,7 @@ npx @grinev/opencode-telegram-bot
 
 > Quick start is for npm usage. You do not need to clone this repository. If you run this command from the source directory (repository root), it may fail with `opencode-telegram: not found`. To run from sources, use the [Development](#development) section.
 
-On first launch, an interactive wizard will guide you through the configuration — it asks for interface language first, then your bot token, user ID, and OpenCode API URL. After that, you're ready to go. Open your bot in Telegram and start sending tasks.
+On first launch, an interactive wizard will guide you through the configuration — it asks for interface language first, then your bot token, user ID, OpenCode API URL, and optional OpenCode server credentials (username/password). After that, you're ready to go. Open your bot in Telegram and start sending tasks.
 
 #### Alternative: Global Install
 

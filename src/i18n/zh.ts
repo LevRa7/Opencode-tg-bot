@@ -271,6 +271,10 @@ export const zh: I18nDictionary = {
   "runtime.wizard.user_id_invalid": "请输入一个正整数（> 0）。\n",
   "runtime.wizard.ask_api_url":
     "请输入 OpenCode API URL（可选）。\n按 Enter 使用默认值：{defaultUrl}\n> ",
+  "runtime.wizard.ask_server_username":
+    "请输入 OpenCode 服务器用户名（可选）。\n按 Enter 使用默认值：{defaultUsername}\n> ",
+  "runtime.wizard.ask_server_password":
+    "请输入 OpenCode 服务器密码（可选）。\n按 Enter 保持为空。\n> ",
   "runtime.wizard.api_url_invalid": "请输入有效 URL（http/https），或按 Enter 使用默认值。\n",
   "runtime.wizard.start": "OpenCode Telegram Bot 设置。\n",
   "runtime.wizard.saved": "配置已保存：\n- {envPath}\n- {settingsPath}\n",

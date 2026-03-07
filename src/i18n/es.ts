@@ -310,6 +310,10 @@ export const es: I18nDictionary = {
   "runtime.wizard.user_id_invalid": "Introduce un entero positivo (> 0).\n",
   "runtime.wizard.ask_api_url":
     "Introduce la URL de la API de OpenCode (opcional).\nPulsa Enter para usar el valor por defecto: {defaultUrl}\n> ",
+  "runtime.wizard.ask_server_username":
+    "Introduce el nombre de usuario del servidor OpenCode (opcional).\nPulsa Enter para usar el valor por defecto: {defaultUsername}\n> ",
+  "runtime.wizard.ask_server_password":
+    "Introduce la contrasena del servidor OpenCode (opcional).\nPulsa Enter para dejarla vacia.\n> ",
   "runtime.wizard.api_url_invalid":
     "Introduce una URL válida (http/https) o pulsa Enter para usar el valor por defecto.\n",
   "runtime.wizard.start": "Configuración de OpenCode Telegram Bot.\n",

@@ -153,7 +153,7 @@ async function ensureCommandsInitialized(ctx: Context, next: NextFunction): Prom
     });
 
     commandsInitialized = true;
-    logger.info(`[Bot] Commands initialized for authorized user (chat_id=${ctx.chat.id})`);
+    logger.debug(`[Bot] Commands initialized for authorized user (chat_id=${ctx.chat.id})`);
   } catch (err) {
     logger.error("[Bot] Failed to set commands:", err);
   }
@@ -477,7 +477,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 export function createBot(): Bot<Context> {
   clearAllInteractionState("bot_startup");
   toolMessageBatcher.setIntervalSeconds(config.bot.serviceMessagesIntervalSec);
-  logger.info(`[ToolBatcher] Service messages interval: ${config.bot.serviceMessagesIntervalSec}s`);
+  logger.debug(`[ToolBatcher] Service messages interval: ${config.bot.serviceMessagesIntervalSec}s`);
 
   const botOptions: ConstructorParameters<typeof Bot<Context>>[1] = {};
 
@@ -710,7 +710,7 @@ export function createBot(): Bot<Context> {
     },
     onSuccess: (result) => {
       if (result.success) {
-        logger.info("[Bot] Cleared global commands (default and all_private_chats scopes)");
+        logger.debug("[Bot] Cleared global commands (default and all_private_chats scopes)");
         return;
       }
 

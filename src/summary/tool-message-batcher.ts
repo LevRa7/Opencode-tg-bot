@@ -1,10 +1,15 @@
 import type { CodeFileData } from "./formatter.js";
 import { logger } from "../utils/logger.js";
+import type { TelegramTextFormat } from "../bot/utils/telegram-text.js";
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const TELEGRAM_MESSAGE_MAX_LENGTH = 4096;
 
-type SendTextCallback = (sessionId: string, text: string) => Promise<void>;
+type SendTextCallback = (
+  sessionId: string,
+  text: string,
+  format?: TelegramTextFormat,
+) => Promise<void>;
 type SendFileCallback = (sessionId: string, fileData: CodeFileData) => Promise<void>;
 
 interface ToolMessageBatcherOptions {
@@ -17,6 +22,7 @@ type QueueItem =
   | {
       kind: "text";
       text: string;
+      format?: TelegramTextFormat;
     }
   | {
       kind: "file";
@@ -27,6 +33,7 @@ type FlushItem =
   | {
       kind: "text";
       text: string;
+      format?: TelegramTextFormat;
     }
   | {
       kind: "file";
@@ -89,8 +96,17 @@ export class ToolMessageBatcher {
     this.enqueueTextInternal(sessionId, message);
   }
 
-  enqueueUniqueByPrefix(sessionId: string, message: string, prefix: string): void {
-    this.enqueueTextInternal(sessionId, message, prefix);
+  enqueueFormatted(sessionId: string, message: string, format: TelegramTextFormat): void {
+    this.enqueueTextInternal(sessionId, message, undefined, format);
+  }
+
+  enqueueUniqueByPrefix(
+    sessionId: string,
+    message: string,
+    prefix: string,
+    format?: TelegramTextFormat,
+  ): void {
+    this.enqueueTextInternal(sessionId, message, prefix, format);
   }
 
   enqueueFile(sessionId: string, fileData: CodeFileData): void {
@@ -203,7 +219,12 @@ export class ToolMessageBatcher {
     return nextTask;
   }
 
-  private enqueueTextInternal(sessionId: string, message: string, uniquePrefix?: string): void {
+  private enqueueTextInternal(
+    sessionId: string,
+    message: string,
+    uniquePrefix?: string,
+    format?: TelegramTextFormat,
+  ): void {
     const normalizedMessage = message.trim();
     if (!sessionId || normalizedMessage.length === 0) {
       return;
@@ -213,7 +234,7 @@ export class ToolMessageBatcher {
       const expectedGeneration = this.generation;
       logger.debug(`[ToolBatcher] Sending immediate text message: session=${sessionId}`);
       void this.enqueueTask(sessionId, () =>
-        this.sendTextSafe(sessionId, normalizedMessage, "immediate", expectedGeneration),
+        this.sendTextSafe(sessionId, normalizedMessage, format, "immediate", expectedGeneration),
       );
       return;
     }
@@ -224,11 +245,12 @@ export class ToolMessageBatcher {
     if (normalizedPrefix) {
       const existingUniqueMessage = queue.find(
         (item): item is Extract<QueueItem, { kind: "text" }> =>
-          item.kind === "text" && item.text.startsWith(normalizedPrefix),
+          item.kind === "text" && item.text.startsWith(normalizedPrefix) && item.format === format,
       );
 
       if (existingUniqueMessage) {
         existingUniqueMessage.text = normalizedMessage;
+        existingUniqueMessage.format = format;
         this.queues.set(sessionId, queue);
         logger.debug(
           `[ToolBatcher] Updated queued unique text message: session=${sessionId}, prefix=${normalizedPrefix}, interval=${this.intervalSeconds}s`,
@@ -238,7 +260,7 @@ export class ToolMessageBatcher {
       }
     }
 
-    queue.push({ kind: "text", text: normalizedMessage });
+    queue.push({ kind: "text", text: normalizedMessage, format });
     this.queues.set(sessionId, queue);
     logger.debug(
       `[ToolBatcher] Queued text message: session=${sessionId}, queueSize=${queue.length}, interval=${this.intervalSeconds}s`,
@@ -265,7 +287,7 @@ export class ToolMessageBatcher {
 
     for (const item of flushItems) {
       if (item.kind === "text") {
-        await this.sendTextSafe(sessionId, item.text, reason, expectedGeneration);
+        await this.sendTextSafe(sessionId, item.text, item.format, reason, expectedGeneration);
       } else {
         await this.sendFileSafe(sessionId, item.fileData, reason, expectedGeneration);
       }
@@ -275,6 +297,7 @@ export class ToolMessageBatcher {
   private async sendTextSafe(
     sessionId: string,
     text: string,
+    format: TelegramTextFormat | undefined,
     reason: string,
     expectedGeneration: number,
   ): Promise<void> {
@@ -286,7 +309,7 @@ export class ToolMessageBatcher {
     }
 
     try {
-      await this.sendText(sessionId, text);
+      await this.sendText(sessionId, text, format);
     } catch (err) {
       logger.error(
         `[ToolBatcher] Failed to send tool text message: session=${sessionId}, reason=${reason}`,
@@ -320,7 +343,7 @@ export class ToolMessageBatcher {
 
   private buildFlushItems(entries: QueueItem[]): FlushItem[] {
     const result: FlushItem[] = [];
-    const textBuffer: string[] = [];
+    let textBuffer: Array<{ text: string; format?: TelegramTextFormat }> = [];
 
     const flushTextBuffer = () => {
       if (textBuffer.length === 0) {
@@ -328,16 +351,20 @@ export class ToolMessageBatcher {
       }
 
       const packedTextMessages = this.packMessages(textBuffer);
-      for (const text of packedTextMessages) {
-        result.push({ kind: "text", text });
+      for (const item of packedTextMessages) {
+        result.push({ kind: "text", text: item.text, format: item.format });
       }
 
-      textBuffer.length = 0;
+      textBuffer = [];
     };
 
     for (const entry of entries) {
       if (entry.kind === "text") {
-        textBuffer.push(entry.text);
+        const lastBuffered = textBuffer[textBuffer.length - 1];
+        if (lastBuffered && lastBuffered.format !== entry.format) {
+          flushTextBuffer();
+        }
+        textBuffer.push({ text: entry.text, format: entry.format });
       } else {
         flushTextBuffer();
         result.push({ kind: "file", fileData: entry.fileData });
@@ -348,17 +375,24 @@ export class ToolMessageBatcher {
     return result;
   }
 
-  private packMessages(messages: string[]): string[] {
+  private packMessages(
+    messages: Array<{ text: string; format?: TelegramTextFormat }>,
+  ): Array<{ text: string; format?: TelegramTextFormat }> {
     const normalizedEntries = messages
-      .flatMap((message) => this.splitLongText(message, TELEGRAM_MESSAGE_MAX_LENGTH))
-      .filter((entry) => entry.length > 0);
+      .flatMap((message) =>
+        this.splitLongText(message.text, TELEGRAM_MESSAGE_MAX_LENGTH).map((text) => ({
+          text,
+          format: message.format,
+        })),
+      )
+      .filter((entry) => entry.text.length > 0);
 
     if (normalizedEntries.length === 0) {
       return [];
     }
 
-    const result: string[] = [];
-    let current = "";
+    const result: Array<{ text: string; format?: TelegramTextFormat }> = [];
+    let current: { text: string; format?: TelegramTextFormat } | null = null;
 
     for (const entry of normalizedEntries) {
       if (!current) {
@@ -366,9 +400,15 @@ export class ToolMessageBatcher {
         continue;
       }
 
-      const candidate = `${current}\n\n${entry}`;
+      if (current.format !== entry.format) {
+        result.push(current);
+        current = entry;
+        continue;
+      }
+
+      const candidate: string = `${current.text}\n\n${entry.text}`;
       if (candidate.length <= TELEGRAM_MESSAGE_MAX_LENGTH) {
-        current = candidate;
+        current = { text: candidate, format: current.format };
         continue;
       }
 

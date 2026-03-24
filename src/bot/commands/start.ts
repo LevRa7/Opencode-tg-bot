@@ -10,6 +10,7 @@ import { clearProject } from "../../settings/manager.js";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
 import { abortCurrentOperation } from "./abort.js";
 import { t } from "../../i18n/index.js";
+import { threadContextManager } from "../../thread/manager.js";
 
 export async function startCommand(ctx: Context): Promise<void> {
   if (ctx.chat) {
@@ -24,6 +25,7 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   clearSession();
   clearProject();
+  threadContextManager.clearAll("start_command_reset");
   keyboardManager.clearContext();
   await pinnedMessageManager.clear();
 

@@ -1,0 +1,47 @@
+import { describe, expect, it } from "vitest";
+import type { Context } from "grammy";
+import {
+  extractMessageThreadIdFromContext,
+  extractThreadTargetFromContext,
+  withMessageThreadId,
+} from "../../../src/bot/utils/message-thread.js";
+
+describe("bot/utils/message-thread", () => {
+  it("extracts message_thread_id from message updates", () => {
+    const ctx = {
+      chat: { id: -100123 },
+      message: { chat: { id: -100123 }, message_thread_id: 42 },
+    } as unknown as Context;
+
+    expect(extractMessageThreadIdFromContext(ctx)).toBe(42);
+    expect(extractThreadTargetFromContext(ctx)).toEqual({
+      chatId: -100123,
+      messageThreadId: 42,
+    });
+  });
+
+  it("extracts message_thread_id from callback message", () => {
+    const ctx = {
+      chat: { id: -100123 },
+      callbackQuery: {
+        data: "x",
+        message: { chat: { id: -100777 }, message_thread_id: 99 },
+      },
+    } as unknown as Context;
+
+    expect(extractMessageThreadIdFromContext(ctx)).toBe(99);
+    expect(extractThreadTargetFromContext(ctx)).toEqual({
+      chatId: -100777,
+      messageThreadId: 99,
+    });
+  });
+
+  it("merges message_thread_id into send options", () => {
+    expect(withMessageThreadId({ disable_notification: true }, 7)).toEqual({
+      disable_notification: true,
+      message_thread_id: 7,
+    });
+
+    expect(withMessageThreadId(undefined, undefined)).toEqual({});
+  });
+});

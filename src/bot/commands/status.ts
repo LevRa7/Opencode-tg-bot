@@ -11,6 +11,10 @@ import { pinnedMessageManager } from "../../pinned/manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { sendBotText } from "../utils/telegram-text.js";
+import {
+  extractMessageThreadIdFromContext,
+  withMessageThreadId,
+} from "../utils/message-thread.js";
 
 export async function statusCommand(ctx: CommandContext<Context>) {
   try {
@@ -84,11 +88,12 @@ export async function statusCommand(ctx: CommandContext<Context>) {
     }
     const keyboard = keyboardManager.getKeyboard();
     if (ctx.chat) {
+      const messageThreadId = extractMessageThreadIdFromContext(ctx);
       await sendBotText({
         api: ctx.api,
         chatId: ctx.chat.id,
         text: message,
-        options: { reply_markup: keyboard },
+        options: withMessageThreadId({ reply_markup: keyboard }, messageThreadId),
       });
     } else {
       await ctx.reply(message, { reply_markup: keyboard });

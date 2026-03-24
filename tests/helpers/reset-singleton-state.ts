@@ -1,20 +1,3 @@
-interface SummaryAggregatorPrivateState {
-  onCompleteCallback: null;
-  onToolCallback: null;
-  onToolFileCallback: null;
-  onQuestionCallback: null;
-  onQuestionErrorCallback: null;
-  onThinkingCallback: null;
-  onTokensCallback: null;
-  onSessionCompactedCallback: null;
-  onSessionErrorCallback: null;
-  onPermissionCallback: null;
-  onSessionDiffCallback: null;
-  onFileChangeCallback: null;
-  bot: null;
-  chatId: null;
-}
-
 interface KeyboardManagerPrivateState {
   state: null;
   api: null;
@@ -50,18 +33,24 @@ interface ProcessManagerPrivateState {
   };
 }
 
+function hasExport(module: object, exportName: string): boolean {
+  return exportName in module;
+}
+
 export async function resetSingletonState(): Promise<void> {
   const [
-    { questionManager },
-    { permissionManager },
-    { renameManager },
-    { interactionManager },
-    { summaryAggregator },
-    { keyboardManager },
-    { pinnedMessageManager },
-    { processManager },
-    { stopEventListening },
-    { __resetSessionDirectoryCacheForTests },
+    questionModule,
+    permissionModule,
+    renameModule,
+    interactionModule,
+    summaryModule,
+    keyboardModule,
+    pinnedModule,
+    processModule,
+    eventModule,
+    sessionCacheModule,
+    threadModule,
+    opencodeClientModule,
   ] = await Promise.all([
     import("../../src/question/manager.js"),
     import("../../src/permission/manager.js"),
@@ -73,30 +62,32 @@ export async function resetSingletonState(): Promise<void> {
     import("../../src/process/manager.js"),
     import("../../src/opencode/events.js"),
     import("../../src/session/cache-manager.js"),
+    import("../../src/thread/manager.js"),
+    import("../../src/opencode/client.js"),
   ]);
 
-  stopEventListening();
-  questionManager.clear();
-  permissionManager.clear();
-  renameManager.clear();
-  interactionManager.clear("test_reset");
-  summaryAggregator.clear();
+  const { questionManager } = questionModule;
+  const { permissionManager } = permissionModule;
+  const { renameManager } = renameModule;
+  const { interactionManager } = interactionModule;
+  const { keyboardManager } = keyboardModule;
+  const { pinnedMessageManager } = pinnedModule;
+  const { processManager } = processModule;
+  const { threadContextManager } = threadModule;
 
-  const aggregator = summaryAggregator as unknown as SummaryAggregatorPrivateState;
-  aggregator.onCompleteCallback = null;
-  aggregator.onToolCallback = null;
-  aggregator.onToolFileCallback = null;
-  aggregator.onQuestionCallback = null;
-  aggregator.onQuestionErrorCallback = null;
-  aggregator.onThinkingCallback = null;
-  aggregator.onTokensCallback = null;
-  aggregator.onSessionCompactedCallback = null;
-  aggregator.onSessionErrorCallback = null;
-  aggregator.onPermissionCallback = null;
-  aggregator.onSessionDiffCallback = null;
-  aggregator.onFileChangeCallback = null;
-  aggregator.bot = null;
-  aggregator.chatId = null;
+  if (hasExport(eventModule, "stopAllEventListening")) {
+    (eventModule.stopAllEventListening as () => void)();
+  }
+  questionManager.__resetForTests();
+  permissionManager.__resetForTests();
+  renameManager.clear();
+  interactionManager.__resetForTests();
+  if (hasExport(summaryModule, "__resetSummaryAggregatorsForTests")) {
+    (summaryModule.__resetSummaryAggregatorsForTests as () => void)();
+  }
+  if (hasExport(opencodeClientModule, "__resetOpencodeClientRegistryForTests")) {
+    (opencodeClientModule.__resetOpencodeClientRegistryForTests as () => void)();
+  }
 
   const keyboard = keyboardManager as unknown as KeyboardManagerPrivateState;
   keyboard.state = null;
@@ -133,5 +124,6 @@ export async function resetSingletonState(): Promise<void> {
     isRunning: false,
   };
 
-  __resetSessionDirectoryCacheForTests();
+  sessionCacheModule.__resetSessionDirectoryCacheForTests();
+  threadContextManager.__resetForTests();
 }

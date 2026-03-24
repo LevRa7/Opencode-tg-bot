@@ -1,4 +1,4 @@
-import { Bot, Context, InputFile, NextFunction } from "grammy";
+import { Bot, CommandContext, Context, InputFile, NextFunction } from "grammy";
 import { promises as fs } from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
@@ -23,6 +23,7 @@ import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand } from "./commands/abort.js";
 import { opencodeStartCommand } from "./commands/opencode-start.js";
 import { opencodeStopCommand } from "./commands/opencode-stop.js";
+import { restartCommand } from "./commands/restart.js";
 import { renameCommand, handleRenameCancel, handleRenameTextAnswer } from "./commands/rename.js";
 import { handleTaskCallback, handleTaskTextInput, taskCommand } from "./commands/task.js";
 import { handleTaskListCallback, taskListCommand } from "./commands/tasklist.js";
@@ -31,6 +32,7 @@ import {
   handleCommandsCallback,
   handleCommandTextArguments,
 } from "./commands/commands.js";
+import { streamCommand } from "./commands/stream.js";
 import {
   handleQuestionCallback,
   showCurrentQuestion,
@@ -58,24 +60,90 @@ import { pinnedMessageManager } from "../pinned/manager.js";
 import { t } from "../i18n/index.js";
 import { processUserPrompt } from "./handlers/prompt.js";
 import { handleVoiceMessage } from "./handlers/voice.js";
+import { handleVideoMessage } from "./handlers/video.js";
 import { handleDocumentMessage } from "./handlers/document.js";
 import { downloadTelegramFile, toDataUri } from "./utils/file-download.js";
+import { withMessageThreadId, type TelegramThreadTarget } from "./utils/message-thread.js";
 import { sendBotText } from "./utils/telegram-text.js";
-import { getModelCapabilities, supportsInput } from "../model/capabilities.js";
-import { getStoredModel } from "../model/manager.js";
+import { formatReasoningForTelegramHtml } from "./utils/reasoning-format.js";
+import { MessageDraftStreamManager } from "./utils/message-draft-stream.js";
+import { SequentialMessageDraftIdAllocator } from "./utils/message-draft-id.js";
+import { SendMessageDraftEffectManager } from "./utils/send-message-draft-effect.js";
+import { resetDefaultMenuButton, syncAuthorizedChatCommands } from "./utils/command-sync.js";
+import {
+  isSendMessageDraftEffectSuppressed,
+  runWithoutSendMessageDraftEffect,
+  sendMessageWithoutDraftEffect,
+} from "./utils/send-message-draft-effect-context.js";
 import type { FilePartInput } from "@opencode-ai/sdk/v2";
 import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
 import { scheduledTaskRuntime } from "../scheduled-task/runtime.js";
+import { threadContextManager } from "../thread/manager.js";
+import { isMessageStreamingEnabled } from "../settings/manager.js";
+import {
+  extractTelegramConversationScopeFromContext,
+  runWithTelegramConversationScope,
+  type TelegramConversationScope,
+} from "../telegram/scope.js";
 
 let botInstance: Bot<Context> | null = null;
 let chatIdInstance: number | null = null;
-let commandsInitialized = false;
+let messageThreadIdInstance: number | undefined;
+const commandsInitializedChatIds = new Set<number>();
 
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
 const SESSION_RETRY_PREFIX = "🔁";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const TEMP_DIR = path.join(__dirname, "..", ".tmp");
+
+function setActiveTarget(target: TelegramThreadTarget): void {
+  chatIdInstance = target.chatId;
+  messageThreadIdInstance = target.messageThreadId;
+}
+
+function setActiveTargetFromContext(ctx: Context, bot?: Bot<Context>): TelegramThreadTarget | null {
+  const target = threadContextManager.activateFromContext(ctx);
+  if (!target) {
+    return null;
+  }
+
+  if (bot) {
+    botInstance = bot;
+  }
+
+  setActiveTarget(target);
+  return target;
+}
+
+function resolveDeliveryTarget(sessionId?: string): TelegramThreadTarget | null {
+  if (sessionId) {
+    const sessionTarget = threadContextManager.getSessionTarget(sessionId);
+    if (sessionTarget) {
+      return sessionTarget;
+    }
+  }
+
+  if (chatIdInstance !== null) {
+    return {
+      chatId: chatIdInstance,
+      messageThreadId: messageThreadIdInstance,
+    };
+  }
+
+  return threadContextManager.getActiveTarget();
+}
+
+function resolveDeliveryScope(sessionId?: string): TelegramConversationScope | null {
+  if (sessionId) {
+    const sessionScope = threadContextManager.getSessionScope(sessionId);
+    if (sessionScope) {
+      return sessionScope;
+    }
+  }
+
+  return threadContextManager.getActiveScope();
+}
 
 function prepareDocumentCaption(caption: string): string {
   const normalizedCaption = caption.trim();
@@ -92,72 +160,118 @@ function prepareDocumentCaption(caption: string): string {
 
 const toolMessageBatcher = new ToolMessageBatcher({
   intervalSeconds: 5,
-  sendText: async (sessionId, text) => {
-    if (!botInstance || !chatIdInstance) {
+  sendText: async (sessionId, text, format = "raw") => {
+    if (!botInstance) {
       return;
     }
 
-    const currentSession = getCurrentSession();
-    if (!currentSession || currentSession.id !== sessionId) {
+    const botApi = botInstance.api;
+
+    const sessionScope = resolveDeliveryScope(sessionId);
+    if (!sessionScope) {
       return;
     }
 
-    await botInstance.api.sendMessage(chatIdInstance, text, {
-      disable_notification: true,
+    await runWithTelegramConversationScope(sessionScope, async () => {
+      const currentSession = getCurrentSession();
+      if (!currentSession || currentSession.id !== sessionId) {
+        return;
+      }
+
+      const target = resolveDeliveryTarget(sessionId);
+      if (!target) {
+        return;
+      }
+
+      const sendMessageTask = () =>
+        sendBotText({
+          api: botApi,
+          chatId: target.chatId,
+          text,
+          format,
+          options: withMessageThreadId(
+            {
+              disable_notification: true,
+            },
+            target.messageThreadId,
+          ),
+        });
+
+      await runWithoutSendMessageDraftEffect(sendMessageTask);
     });
   },
   sendFile: async (sessionId, fileData) => {
-    if (!botInstance || !chatIdInstance) {
+    if (!botInstance) {
       return;
     }
 
-    const currentSession = getCurrentSession();
-    if (!currentSession || currentSession.id !== sessionId) {
+    const botApi = botInstance.api;
+
+    const sessionScope = resolveDeliveryScope(sessionId);
+    if (!sessionScope) {
       return;
     }
 
-    const tempFilePath = path.join(TEMP_DIR, fileData.filename);
+    await runWithTelegramConversationScope(sessionScope, async () => {
+      const currentSession = getCurrentSession();
+      if (!currentSession || currentSession.id !== sessionId) {
+        return;
+      }
 
-    try {
-      logger.debug(
-        `[Bot] Sending code file: ${fileData.filename} (${fileData.buffer.length} bytes, session=${sessionId})`,
-      );
+      const target = resolveDeliveryTarget(sessionId);
+      if (!target) {
+        return;
+      }
 
-      await fs.mkdir(TEMP_DIR, { recursive: true });
-      await fs.writeFile(tempFilePath, fileData.buffer);
+      const tempFilePath = path.join(TEMP_DIR, fileData.filename);
 
-      await botInstance.api.sendDocument(chatIdInstance, new InputFile(tempFilePath), {
-        caption: fileData.caption,
-        disable_notification: true,
-      });
-    } finally {
-      await fs.unlink(tempFilePath).catch(() => {});
-    }
+      try {
+        logger.debug(
+          `[Bot] Sending code file: ${fileData.filename} (${fileData.buffer.length} bytes, session=${sessionId})`,
+        );
+
+        await fs.mkdir(TEMP_DIR, { recursive: true });
+        await fs.writeFile(tempFilePath, fileData.buffer);
+
+        await botApi.sendDocument(
+          target.chatId,
+          new InputFile(tempFilePath),
+          withMessageThreadId(
+            {
+              caption: fileData.caption,
+              disable_notification: true,
+            },
+            target.messageThreadId,
+          ),
+        );
+      } finally {
+        await fs.unlink(tempFilePath).catch(() => {});
+      }
+    });
   },
 });
 
-async function ensureCommandsInitialized(ctx: Context, next: NextFunction): Promise<void> {
-  if (commandsInitialized || !ctx.from || ctx.from.id !== config.telegram.allowedUserId) {
-    await next();
-    return;
-  }
+const messageDraftIdAllocator = new SequentialMessageDraftIdAllocator();
+const messageDraftStreamManager = new MessageDraftStreamManager(120, messageDraftIdAllocator);
+const reasoningDraftStreamManager = new MessageDraftStreamManager(120, messageDraftIdAllocator);
+const sendMessageDraftEffectManager = new SendMessageDraftEffectManager(messageDraftIdAllocator);
 
-  if (!ctx.chat) {
-    logger.warn("[Bot] Cannot initialize commands: chat context is missing");
+async function ensureCommandsInitialized(ctx: Context, next: NextFunction): Promise<void> {
+  if (
+    !ctx.from ||
+    !config.telegram.allowedUserIds.includes(ctx.from.id) ||
+    !ctx.chat ||
+    commandsInitializedChatIds.has(ctx.chat.id)
+  ) {
     await next();
     return;
   }
 
   try {
-    await ctx.api.setMyCommands(BOT_COMMANDS, {
-      scope: {
-        type: "chat",
-        chat_id: ctx.chat.id,
-      },
-    });
+    await syncAuthorizedChatCommands(ctx.api, ctx.chat.id, ctx.chat.type);
 
-    commandsInitialized = true;
-    logger.debug(`[Bot] Commands initialized for authorized user (chat_id=${ctx.chat.id})`);
+    commandsInitializedChatIds.add(ctx.chat.id);
+    logger.debug(`[Bot] Commands initialized for authorized chat (chat_id=${ctx.chat.id})`);
   } catch (err) {
     logger.error("[Bot] Failed to set commands:", err);
   }
@@ -172,25 +286,63 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   }
 
   toolMessageBatcher.setIntervalSeconds(config.bot.serviceMessagesIntervalSec);
-  summaryAggregator.setOnCleared(() => {
-    toolMessageBatcher.clearAll("summary_aggregator_clear");
+  summaryAggregator.setOnCleared((previousSessionId) => {
+    if (!previousSessionId) {
+      return;
+    }
+
+    toolMessageBatcher.clearSession(previousSessionId, "summary_aggregator_clear");
+    messageDraftStreamManager.clearSession(previousSessionId);
+    reasoningDraftStreamManager.clearSession(previousSessionId);
   });
 
-  summaryAggregator.setOnComplete(async (sessionId, messageText) => {
-    if (!botInstance || !chatIdInstance) {
-      logger.error("Bot or chat ID not available for sending message");
-      foregroundSessionState.markIdle(sessionId);
+  summaryAggregator.setOnStreamUpdate(async (sessionId, messageText) => {
+    if (!botInstance || !isMessageStreamingEnabled()) {
       return;
     }
 
     const currentSession = getCurrentSession();
     if (currentSession?.id !== sessionId) {
-      foregroundSessionState.markIdle(sessionId);
+      return;
+    }
+
+    const target = resolveDeliveryTarget(sessionId);
+    if (!target) {
+      return;
+    }
+
+    messageDraftStreamManager.enqueue(sessionId, botInstance.api, target, messageText);
+  });
+
+  summaryAggregator.setOnComplete(async (sessionId, messageText) => {
+    const sessionScope = resolveDeliveryScope(sessionId);
+
+    if (!botInstance) {
+      logger.error("Bot or chat ID not available for sending message");
+      reasoningDraftStreamManager.clearSession(sessionId);
+      foregroundSessionState.markIdle(sessionId, sessionScope);
+      return;
+    }
+
+    const target = resolveDeliveryTarget(sessionId);
+    if (!target) {
+      logger.error("No delivery target available for sending message");
+      reasoningDraftStreamManager.clearSession(sessionId);
+      foregroundSessionState.markIdle(sessionId, sessionScope);
+      return;
+    }
+
+    const currentSession = getCurrentSession();
+    if (currentSession?.id !== sessionId) {
+      foregroundSessionState.markIdle(sessionId, sessionScope);
+      reasoningDraftStreamManager.clearSession(sessionId);
       await scheduledTaskRuntime.flushDeferredDeliveries();
       return;
     }
 
+    reasoningDraftStreamManager.clearSession(sessionId);
     await toolMessageBatcher.flushSession(sessionId, "assistant_message_completed");
+    await messageDraftStreamManager.flushSession(sessionId);
 
     try {
       const parts = formatSummary(messageText);
@@ -198,18 +350,21 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       const assistantMessageFormat = assistantParseMode === "MarkdownV2" ? "markdown_v2" : "raw";
 
       logger.debug(
-        `[Bot] Sending completed message to Telegram (chatId=${chatIdInstance}, parts=${parts.length})`,
+        `[Bot] Sending completed message to Telegram (chatId=${target.chatId}, threadId=${target.messageThreadId ?? "none"}, parts=${parts.length})`,
       );
 
       for (let i = 0; i < parts.length; i++) {
         const isLastPart = i === parts.length - 1;
         const keyboard =
           isLastPart && keyboardManager.isInitialized() ? keyboardManager.getKeyboard() : undefined;
-        const options = keyboard ? { reply_markup: keyboard } : undefined;
+        const options = withMessageThreadId(
+          keyboard ? { reply_markup: keyboard } : undefined,
+          target.messageThreadId,
+        );
 
         await sendBotText({
           api: botInstance.api,
-          chatId: chatIdInstance,
+          chatId: target.chatId,
           text: parts[i],
           options,
           format: assistantMessageFormat,
@@ -221,13 +376,15 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       logger.error("[Bot] CRITICAL: Stopping event processing due to error");
       summaryAggregator.clear();
     } finally {
-      foregroundSessionState.markIdle(sessionId);
+      messageDraftStreamManager.clearSession(sessionId);
+      reasoningDraftStreamManager.clearSession(sessionId);
+      foregroundSessionState.markIdle(sessionId, sessionScope);
       await scheduledTaskRuntime.flushDeferredDeliveries();
     }
   });
 
   summaryAggregator.setOnTool(async (toolInfo) => {
-    if (!botInstance || !chatIdInstance) {
+    if (!botInstance) {
       logger.error("Bot or chat ID not available for sending tool notification");
       return;
     }
@@ -256,7 +413,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   });
 
   summaryAggregator.setOnToolFile(async (fileInfo) => {
-    if (!botInstance || !chatIdInstance) {
+    if (!botInstance) {
       logger.error("Bot or chat ID not available for sending file");
       return;
     }
@@ -279,52 +436,78 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
   });
 
-  summaryAggregator.setOnQuestion(async (questions, requestID) => {
-    if (!botInstance || !chatIdInstance) {
+  summaryAggregator.setOnQuestion(async (sessionId, questions, requestID) => {
+    if (!botInstance) {
       logger.error("Bot or chat ID not available for showing questions");
       return;
     }
 
-    const currentSession = getCurrentSession();
-    if (currentSession) {
-      await toolMessageBatcher.flushSession(currentSession.id, "question_asked");
+    const bot = botInstance;
+
+    const target = resolveDeliveryTarget(sessionId);
+    const scope = resolveDeliveryScope(sessionId);
+    if (!target || !scope) {
+      logger.error("No delivery target available for showing questions");
+      return;
     }
 
-    if (questionManager.isActive()) {
-      logger.warn("[Bot] Replacing active poll with a new one");
+    await toolMessageBatcher.flushSession(sessionId, "question_asked");
 
-      const previousMessageIds = questionManager.getMessageIds();
-      for (const messageId of previousMessageIds) {
-        await botInstance.api.deleteMessage(chatIdInstance, messageId).catch(() => {});
+    await runWithTelegramConversationScope(scope, async () => {
+      if (questionManager.isActive()) {
+        logger.warn("[Bot] Replacing active poll with a new one");
+
+        const previousMessageIds = questionManager.getMessageIds();
+        for (const messageId of previousMessageIds) {
+          await bot.api.deleteMessage(target.chatId, messageId).catch(() => {});
+        }
+
+        clearAllInteractionState("question_replaced_by_new_poll");
       }
 
-      clearAllInteractionState("question_replaced_by_new_poll");
-    }
-
-    logger.info(`[Bot] Received ${questions.length} questions from agent, requestID=${requestID}`);
-    questionManager.startQuestions(questions, requestID);
-    await showCurrentQuestion(botInstance.api, chatIdInstance);
+      logger.info(
+        `[Bot] Received ${questions.length} questions from agent, requestID=${requestID}`,
+      );
+      questionManager.startQuestions(questions, requestID);
+      await showCurrentQuestion(bot.api, target.chatId, target.messageThreadId);
+    });
   });
 
-  summaryAggregator.setOnQuestionError(async () => {
+  summaryAggregator.setOnQuestionError(async (sessionId) => {
     logger.info(`[Bot] Question tool failed, clearing active poll and deleting messages`);
 
     // Delete all messages from the invalid poll
-    const messageIds = questionManager.getMessageIds();
-    for (const messageId of messageIds) {
-      if (chatIdInstance) {
-        await botInstance?.api.deleteMessage(chatIdInstance, messageId).catch((err) => {
+    const target = resolveDeliveryTarget(sessionId ?? undefined);
+    const scope = resolveDeliveryScope(sessionId ?? undefined);
+
+    if (!target || !scope) {
+      clearAllInteractionState("question_error");
+      return;
+    }
+
+    await runWithTelegramConversationScope(scope, async () => {
+      const messageIds = questionManager.getMessageIds();
+
+      for (const messageId of messageIds) {
+        await botInstance?.api.deleteMessage(target.chatId, messageId).catch((err) => {
           logger.error(`[Bot] Failed to delete question message ${messageId}:`, err);
         });
       }
-    }
 
-    clearAllInteractionState("question_error");
+      clearAllInteractionState("question_error");
+    });
   });
 
   summaryAggregator.setOnPermission(async (request) => {
-    if (!botInstance || !chatIdInstance) {
+    if (!botInstance) {
       logger.error("Bot or chat ID not available for showing permission request");
+      return;
+    }
+
+    const target = resolveDeliveryTarget(request.sessionID);
+    const scope = resolveDeliveryScope(request.sessionID);
+    if (!target || !scope) {
+      logger.error("No delivery target available for showing permission request");
       return;
     }
 
@@ -333,15 +516,17 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     logger.info(
       `[Bot] Received permission request from agent: type=${request.permission}, requestID=${request.id}`,
     );
-    await showPermissionRequest(botInstance.api, chatIdInstance, request);
+    await runWithTelegramConversationScope(scope, async () => {
+      await showPermissionRequest(botInstance!.api, target.chatId, request, target.messageThreadId);
+    });
   });
 
-  summaryAggregator.setOnThinking(async (sessionId) => {
+  summaryAggregator.setOnThinking(async (sessionId, reasoningText) => {
     if (config.bot.hideThinkingMessages) {
       return;
     }
 
-    if (!botInstance || !chatIdInstance) {
+    if (!botInstance) {
       return;
     }
 
@@ -352,7 +537,28 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     logger.debug("[Bot] Agent started thinking");
 
-    toolMessageBatcher.enqueue(sessionId, t("bot.thinking"));
+    const reasoningPrefix = t("bot.thinking");
+    const reasoningParts = formatReasoningForTelegramHtml(reasoningText, reasoningPrefix);
+
+    for (const part of reasoningParts) {
+      toolMessageBatcher.enqueueFormatted(sessionId, part, "html");
+    }
+
+    if (!isMessageStreamingEnabled() || toolMessageBatcher.getIntervalSeconds() === 0) {
+      return;
+    }
+
+    const target = resolveDeliveryTarget(sessionId);
+    if (!target) {
+      return;
+    }
+
+    const previewPart = reasoningParts[reasoningParts.length - 1];
+    if (!previewPart) {
+      return;
+    }
+
+    reasoningDraftStreamManager.enqueue(sessionId, botInstance.api, target, previewPart, "html");
   });
 
   summaryAggregator.setOnTokens(async (tokens) => {
@@ -391,14 +597,23 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   });
 
   summaryAggregator.setOnSessionError(async (sessionId, message) => {
-    if (!botInstance || !chatIdInstance) {
-      foregroundSessionState.markIdle(sessionId);
+    const sessionScope = resolveDeliveryScope(sessionId);
+
+    if (!botInstance) {
+      foregroundSessionState.markIdle(sessionId, sessionScope);
+      return;
+    }
+
+    const target = resolveDeliveryTarget(sessionId);
+    if (!target) {
+      foregroundSessionState.markIdle(sessionId, sessionScope);
+      await scheduledTaskRuntime.flushDeferredDeliveries();
       return;
     }
 
     const currentSession = getCurrentSession();
     if (!currentSession || currentSession.id !== sessionId) {
-      foregroundSessionState.markIdle(sessionId);
+      foregroundSessionState.markIdle(sessionId, sessionScope);
       await scheduledTaskRuntime.flushDeferredDeliveries();
       return;
     }
@@ -411,18 +626,23 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         ? `${normalizedMessage.slice(0, 3497)}...`
         : normalizedMessage;
 
-    await botInstance.api
-      .sendMessage(chatIdInstance, t("bot.session_error", { message: truncatedMessage }))
-      .catch((err) => {
-        logger.error("[Bot] Failed to send session.error message:", err);
-      });
+    await sendMessageWithoutDraftEffect(
+      botInstance.api,
+      target.chatId,
+      t("bot.session_error", { message: truncatedMessage }),
+      withMessageThreadId(undefined, target.messageThreadId),
+    ).catch((err) => {
+      logger.error("[Bot] Failed to send session.error message:", err);
+    });
 
-    foregroundSessionState.markIdle(sessionId);
+    messageDraftStreamManager.clearSession(sessionId);
+    reasoningDraftStreamManager.clearSession(sessionId);
+    foregroundSessionState.markIdle(sessionId, sessionScope);
     await scheduledTaskRuntime.flushDeferredDeliveries();
   });
 
   summaryAggregator.setOnSessionRetry(async ({ sessionId, message }) => {
-    if (!botInstance || !chatIdInstance) {
+    if (!botInstance) {
       return;
     }
 
@@ -542,6 +762,20 @@ export function createBot(): Bot<Context> {
       lastGetUpdatesTime = now;
     } else if (method === "sendMessage") {
       logger.debug(`[Bot API] sendMessage to chat ${(payload as { chat_id?: number }).chat_id}`);
+
+      if (isMessageStreamingEnabled() && !isSendMessageDraftEffectSuppressed()) {
+        await sendMessageDraftEffectManager.play(
+          bot.api,
+          payload as {
+            chat_id?: number | string;
+            message_thread_id?: number;
+            text?: string;
+            parse_mode?: string;
+            entities?: unknown;
+          },
+          signal,
+        );
+      }
     }
     return prev(method, payload, signal);
   });
@@ -557,6 +791,13 @@ export function createBot(): Bot<Context> {
   });
 
   bot.use(authMiddleware);
+  bot.use((ctx, next) => {
+    const scope = extractTelegramConversationScopeFromContext(ctx);
+    return runWithTelegramConversationScope(scope, async () => {
+      setActiveTargetFromContext(ctx, bot);
+      return next();
+    });
+  });
   bot.use(ensureCommandsInitialized);
   bot.use(interactionGuardMiddleware);
 
@@ -573,19 +814,33 @@ export function createBot(): Bot<Context> {
     return true;
   };
 
-  bot.command("start", startCommand);
-  bot.command("help", helpCommand);
-  bot.command("status", statusCommand);
-  bot.command("opencode_start", opencodeStartCommand);
-  bot.command("opencode_stop", opencodeStopCommand);
-  bot.command("projects", projectsCommand);
-  bot.command("sessions", sessionsCommand);
-  bot.command("new", newCommand);
-  bot.command("abort", abortCommand);
-  bot.command("task", taskCommand);
-  bot.command("tasklist", taskListCommand);
-  bot.command("rename", renameCommand);
-  bot.command("commands", commandsCommand);
+  const commandHandlers: Record<string, (ctx: CommandContext<Context>) => Promise<void>> = {
+    start: startCommand,
+    help: helpCommand,
+    status: statusCommand,
+    opencode_start: opencodeStartCommand,
+    opencode_stop: opencodeStopCommand,
+    projects: projectsCommand,
+    sessions: sessionsCommand,
+    new: newCommand,
+    abort: abortCommand,
+    task: taskCommand,
+    tasklist: taskListCommand,
+    rename: renameCommand,
+    commands: commandsCommand,
+    stream: streamCommand,
+    restart: restartCommand,
+  };
+
+  for (const { command } of BOT_COMMANDS) {
+    const handler = commandHandlers[command];
+    if (!handler) {
+      logger.error(`[Bot] Missing command handler for /${command}`);
+      continue;
+    }
+
+    bot.command(command, handler);
+  }
 
   bot.on("message:text", unknownCommandMiddleware);
 
@@ -593,10 +848,7 @@ export function createBot(): Bot<Context> {
     logger.debug(`[Bot] Received callback_query:data: ${ctx.callbackQuery?.data}`);
     logger.debug(`[Bot] Callback context: from=${ctx.from?.id}, chat=${ctx.chat?.id}`);
 
-    if (ctx.chat) {
-      botInstance = bot;
-      chatIdInstance = ctx.chat.id;
-    }
+    setActiveTargetFromContext(ctx, bot);
 
     try {
       const handledInlineCancel = await handleInlineMenuCancel(ctx);
@@ -727,6 +979,7 @@ export function createBot(): Bot<Context> {
         await Promise.all([
           bot.api.setMyCommands([], { scope: { type: "default" } }),
           bot.api.setMyCommands([], { scope: { type: "all_private_chats" } }),
+          resetDefaultMenuButton(bot.api),
         ]);
         return { success: true as const };
       } catch (error) {
@@ -735,7 +988,7 @@ export function createBot(): Bot<Context> {
     },
     onSuccess: (result) => {
       if (result.success) {
-        logger.debug("[Bot] Cleared global commands (default and all_private_chats scopes)");
+        logger.debug("[Bot] Cleared global commands and reset default menu button");
         return;
       }
 
@@ -748,16 +1001,28 @@ export function createBot(): Bot<Context> {
 
   bot.on("message:voice", async (ctx) => {
     logger.debug(`[Bot] Received voice message, chatId=${ctx.chat.id}`);
-    botInstance = bot;
-    chatIdInstance = ctx.chat.id;
+    setActiveTargetFromContext(ctx, bot);
     await handleVoiceMessage(ctx, voicePromptDeps);
   });
 
   bot.on("message:audio", async (ctx) => {
     logger.debug(`[Bot] Received audio message, chatId=${ctx.chat.id}`);
-    botInstance = bot;
-    chatIdInstance = ctx.chat.id;
+    setActiveTargetFromContext(ctx, bot);
     await handleVoiceMessage(ctx, voicePromptDeps);
+  });
+
+  bot.on("message:video", async (ctx) => {
+    logger.debug(`[Bot] Received video message, chatId=${ctx.chat.id}`);
+    setActiveTargetFromContext(ctx, bot);
+    const deps = { bot, ensureEventSubscription };
+    await handleVideoMessage(ctx, deps);
+  });
+
+  bot.on("message:video_note", async (ctx) => {
+    logger.debug(`[Bot] Received video note message, chatId=${ctx.chat.id}`);
+    setActiveTargetFromContext(ctx, bot);
+    const deps = { bot, ensureEventSubscription };
+    await handleVideoMessage(ctx, deps);
   });
 
   // Photo message handler
@@ -774,26 +1039,6 @@ export function createBot(): Bot<Context> {
     try {
       // Get the largest photo (last element in array)
       const largestPhoto = photos[photos.length - 1];
-
-      // Check model capabilities
-      const storedModel = getStoredModel();
-      const capabilities = await getModelCapabilities(storedModel.providerID, storedModel.modelID);
-
-      if (!supportsInput(capabilities, "image")) {
-        logger.warn(
-          `[Bot] Model ${storedModel.providerID}/${storedModel.modelID} doesn't support image input`,
-        );
-        await ctx.reply(t("bot.photo_model_no_image"));
-
-        // Fall back to caption-only if present
-        if (caption.trim().length > 0) {
-          botInstance = bot;
-          chatIdInstance = ctx.chat.id;
-          const promptDeps = { bot, ensureEventSubscription };
-          await processUserPrompt(ctx, caption, promptDeps);
-        }
-        return;
-      }
 
       // Download photo
       await ctx.reply(t("bot.photo_downloading"));
@@ -812,8 +1057,7 @@ export function createBot(): Bot<Context> {
 
       logger.info(`[Bot] Sending photo (${downloadedFile.buffer.length} bytes) with prompt`);
 
-      botInstance = bot;
-      chatIdInstance = ctx.chat.id;
+      setActiveTargetFromContext(ctx, bot);
 
       // Send via processUserPrompt with file part
       const promptDeps = { bot, ensureEventSubscription };
@@ -827,8 +1071,7 @@ export function createBot(): Bot<Context> {
   // Document message handler (PDF and text files)
   bot.on("message:document", async (ctx) => {
     logger.debug(`[Bot] Received document message, chatId=${ctx.chat.id}`);
-    botInstance = bot;
-    chatIdInstance = ctx.chat.id;
+    setActiveTargetFromContext(ctx, bot);
     const deps = { bot, ensureEventSubscription };
     await handleDocumentMessage(ctx, deps);
   });
@@ -839,8 +1082,7 @@ export function createBot(): Bot<Context> {
       return;
     }
 
-    botInstance = bot;
-    chatIdInstance = ctx.chat.id;
+    setActiveTargetFromContext(ctx, bot);
 
     if (text.startsWith("/")) {
       return;

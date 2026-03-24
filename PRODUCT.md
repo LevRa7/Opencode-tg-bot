@@ -5,6 +5,15 @@ Telegram bot client for OpenCode that lets you run and monitor coding tasks on y
 > Project concept and boundaries are documented in [`CONCEPT.md`](./CONCEPT.md).
 > Proposed changes that alter the core interaction model should be discussed before implementation.
 
+Related docs:
+
+- Internal architecture and component interactions: [`docs/architecture.md`](./docs/architecture.md)
+- Clean architecture migration plan for the vendored `tg-cli`: [`docs/tg-cli-clean-architecture-plan.md`](./docs/tg-cli-clean-architecture-plan.md)
+- Iteration 1 execution plan for the vendored `tg-cli` refactor: [`docs/tg-cli-iteration-1-plan.md`](./docs/tg-cli-iteration-1-plan.md)
+- Embedding and Ollama API notes for the local `qwen3-embedding:8b` setup: [`docs/qwen3-emb-api.md`](./docs/qwen3-emb-api.md)
+- Planned hybrid retrieval and text analysis pipeline for Telegram exports: [`docs/Embedding-analyze-plan.md`](./docs/Embedding-analyze-plan.md)
+- Textual change log: [`CHANGELOG.md`](./CHANGELOG.md)
+
 ## Concept
 
 The app works as a bridge between Telegram and a locally running OpenCode server:
@@ -58,7 +67,7 @@ No public inbound ports are required for normal usage.
 ### Result delivery
 
 - Send each completed assistant response after completion signal from SSE
-- Do not expose raw chain-of-thought; send a lightweight thinking indicator instead
+- Forward OpenCode reasoning text to Telegram when reasoning parts are available before the final assistant answer, streaming it immediately inside expandable HTML blockquotes with a visible `💭 Думаю...` preface
 - Split long responses into multiple Telegram messages
 - Send code updates as files (size-limited)
 
@@ -71,13 +80,14 @@ No public inbound ports are required for normal usage.
 
 ### Security
 
-- Whitelist by Telegram user ID (single-user mode)
+- Admin-managed Telegram allowlist (`TELEGRAM_ADMIN_USER_ID` + optional `TELEGRAM_ALLOWED_USER_IDS`)
 - Ignore messages from non-authorized users
 
 ### Configuration
 
 - Telegram bot token
-- Allowed Telegram user ID
+- Admin Telegram user ID
+- Optional additional allowed Telegram user IDs
 - Default model provider and model ID
 - Selected project persisted in `settings.json`
 - Configurable sessions list size (default: 10)
@@ -93,6 +103,7 @@ No public inbound ports are required for normal usage.
 
 Current command set:
 
+- `/start` - reset current foreground state and show welcome message
 - `/status` - server, project, and session status
 - `/new` - create a new session
 - `/abort` - stop the current task
@@ -102,18 +113,33 @@ Current command set:
 - `/tasklist` - browse and delete scheduled tasks
 - `/rename` - rename current session
 - `/commands` - browse and run custom commands (plus built-ins like `init` and `review`)
+- `/stream` - enable, disable, or inspect draft streaming for assistant replies
 - `/opencode_start` - start local OpenCode server
 - `/opencode_stop` - stop local OpenCode server
 - `/help` - show command help
 
 Model, agent, variant, and context actions are available from the persistent bottom keyboard.
 
-Text messages (non-commands) are treated as prompts for OpenCode only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured.
+`/start` acts as a reset/welcome entrypoint: it clears the current foreground flow, resets topic bindings, rebuilds the keyboard, and sends the welcome message.
+
+Text messages (non-commands) are treated as prompts for OpenCode only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured. Photos, PDFs, Telegram videos, and video messages are sent as media attachments; if the selected model does not support the needed media input, the bot automatically switches that prompt to `google/gemini-3-flash-preview`.
+
+Supported attachments in the current flow:
+
+- photos/screenshots with automatic fallback to `google/gemini-3-flash-preview` when needed
+- videos and video messages up to 60 seconds with automatic fallback to `google/gemini-3-flash-preview` when needed
+- PDF documents with automatic fallback to `google/gemini-3-flash-preview` when needed
+- text-like documents that can be safely inlined into the prompt
 
 Interaction routing rules:
 
-- Only one interactive flow can be active at a time (inline menu, permission, question, rename, commands)
-- While an interaction is active, unrelated input is blocked with a contextual hint
+- Only one interactive flow can be active at a time within the same topic scope (inline menu, permission, question, rename, commands)
+- Different topics already keep separate interaction/question/permission state foundations, which is the first step toward parallel multi-topic execution
+- Current project and session state are now restored from durable topic bindings, while agent/model/message-streaming preferences remain per-user scoped
+- Automatic project/session initialization is allowed only for topics that do not have a saved binding yet; after that, switching remains explicit through topic actions such as `/projects`, `/sessions`, or `/new`
+- Pinned message state, pinned message persistence, and keyboard context state are now isolated per topic scope
+- Foreground OpenCode requests are now limited to 5 active topic-scoped runs per user, while different users remain isolated from each other's counters
+- While an interaction is active, unrelated input inside the same scope is blocked with a contextual hint
 - Allowed utility commands during active interactions: `/help`, `/status`, `/abort`
 - Unknown slash commands return an explicit fallback message
 - Interaction flows do not expire automatically and wait for explicit completion (`answer`, `cancel`, `/abort`, reset/cleanup)
@@ -127,7 +153,7 @@ Model picker behavior:
 
 ### Main features already implemented
 
-- [x] Single-user access control by allowed Telegram user ID
+- [x] Admin-managed Telegram access control with allowlisted users
 - [x] OpenCode server control from Telegram (`/status`, `/opencode_start`, `/opencode_stop`)
 - [x] Project and session management from Telegram (`/projects`, `/sessions`, `/new`)
 - [x] Remote task execution and interruption support (`/abort`)
@@ -136,6 +162,7 @@ Model picker behavior:
 - [x] Live pinned session status in chat (project, model, context usage, changed files)
 - [x] In-chat controls for model, agent, variant, and context
 - [x] Built-in and custom command catalog access (`/commands`)
+- [x] Assistant reply streaming toggle and status command (`/stream`)
 - [x] Scheduled task creation flow (`/task`)
 - [x] Scheduled task runtime execution with deferred Telegram delivery
 - [x] Scheduled task list and deletion flow (`/tasklist`)
@@ -152,6 +179,14 @@ Model picker behavior:
 
 Open tasks for upcoming iterations:
 
+- [ ] Complete multi-user runtime refactor (per-user state, auth, and delivery routing)
+- [ ] Complete per-topic parallel execution for up to 5 concurrent foreground requests per user
+- [ ] Move OpenCode execution to per-user Docker sandboxes with approved skills/MCP only
+- [ ] Integrate multi-account `tg-cli` daemon with bot-driven login and QR authorization
+- [ ] Refactor the vendored `tg-cli` around clean architecture boundaries before expanding export, indexing, and RAG flows
+- [ ] Extend `tg-cli` export flows with Telegram dialog classification, time-window filters, and selective media export for photos, voice messages, video notes, and allowed document types (`pdf`, `txt`, `doc`, `docx`)
+- [ ] Add `tg-cli` FTS5 indexing, text normalization, noise cleanup, and chunk storage for exported Telegram content
+- [ ] Add hybrid RAG retrieval on top of `tg-cli` local exports using Ollama `qwen3-embedding:8b`, including stable query instructions and agent-assisted semantic paragraphization for long or noisy texts
 - [ ] `/messages` command: browse session messages with fork/revert actions
 - [ ] `/skills` command: browse skills and choose one for usage
 - [ ] `/mcps` command: browse available MCP servers

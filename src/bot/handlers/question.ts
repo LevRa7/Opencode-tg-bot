@@ -8,6 +8,8 @@ import { interactionManager } from "../../interaction/manager.js";
 import { logger } from "../../utils/logger.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { t } from "../../i18n/index.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import { sendMessageWithoutDraftEffect } from "../utils/send-message-draft-effect-context.js";
 
 const MAX_BUTTON_LENGTH = 60;
 
@@ -251,11 +253,15 @@ async function updateQuestionMessage(ctx: Context): Promise<void> {
   }
 }
 
-export async function showCurrentQuestion(bot: Context["api"], chatId: number): Promise<void> {
+export async function showCurrentQuestion(
+  bot: Context["api"],
+  chatId: number,
+  messageThreadId?: number,
+): Promise<void> {
   const question = questionManager.getCurrentQuestion();
 
   if (!question) {
-    await showPollSummary(bot, chatId);
+    await showPollSummary(bot, chatId, messageThreadId);
     return;
   }
 
@@ -270,8 +276,13 @@ export async function showCurrentQuestion(bot: Context["api"], chatId: number): 
   logger.debug(`[QuestionHandler] Sending message with keyboard, chatId=${chatId}`);
 
   try {
-    const message = await bot.sendMessage(chatId, text, {
-      reply_markup: keyboard,
+    const message = await sendMessageWithoutDraftEffect(bot, chatId, text, {
+      ...withMessageThreadId(
+        {
+          reply_markup: keyboard,
+        },
+        messageThreadId,
+      ),
     });
 
     logger.debug(`[QuestionHandler] Message sent, messageId=${message.message_id}`);
@@ -333,14 +344,20 @@ async function showNextQuestion(ctx: Context): Promise<void> {
     return;
   }
 
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+
   if (questionManager.hasNextQuestion()) {
-    await showCurrentQuestion(ctx.api, ctx.chat.id);
+    await showCurrentQuestion(ctx.api, ctx.chat.id, messageThreadId);
   } else {
-    await showPollSummary(ctx.api, ctx.chat.id);
+    await showPollSummary(ctx.api, ctx.chat.id, messageThreadId);
   }
 }
 
-async function showPollSummary(bot: Context["api"], chatId: number): Promise<void> {
+async function showPollSummary(
+  bot: Context["api"],
+  chatId: number,
+  messageThreadId?: number,
+): Promise<void> {
   const answers = questionManager.getAllAnswers();
   const totalQuestions = questionManager.getTotalQuestions();
 
@@ -349,13 +366,23 @@ async function showPollSummary(bot: Context["api"], chatId: number): Promise<voi
   );
 
   // Send all answers to the OpenCode API
-  await sendAllAnswersToAgent(bot, chatId);
+  await sendAllAnswersToAgent(bot, chatId, messageThreadId);
 
   if (answers.length === 0) {
-    await bot.sendMessage(chatId, t("question.completed_no_answers"));
+    await sendMessageWithoutDraftEffect(
+      bot,
+      chatId,
+      t("question.completed_no_answers"),
+      withMessageThreadId(undefined, messageThreadId),
+    );
   } else {
     const summary = formatAnswersSummary(answers);
-    await bot.sendMessage(chatId, summary);
+    await sendMessageWithoutDraftEffect(
+      bot,
+      chatId,
+      summary,
+      withMessageThreadId(undefined, messageThreadId),
+    );
   }
 
   clearQuestionInteraction("question_completed");
@@ -363,7 +390,11 @@ async function showPollSummary(bot: Context["api"], chatId: number): Promise<voi
   logger.debug("[QuestionHandler] Poll completed and cleared");
 }
 
-async function sendAllAnswersToAgent(bot: Context["api"], chatId: number): Promise<void> {
+async function sendAllAnswersToAgent(
+  bot: Context["api"],
+  chatId: number,
+  messageThreadId?: number,
+): Promise<void> {
   const currentProject = getCurrentProject();
   const currentSession = getCurrentSession();
   const requestID = questionManager.getRequestID();
@@ -372,13 +403,23 @@ async function sendAllAnswersToAgent(bot: Context["api"], chatId: number): Promi
 
   if (!directory) {
     logger.error("[QuestionHandler] No project for sending answers");
-    await bot.sendMessage(chatId, t("question.no_active_project"));
+    await sendMessageWithoutDraftEffect(
+      bot,
+      chatId,
+      t("question.no_active_project"),
+      withMessageThreadId(undefined, messageThreadId),
+    );
     return;
   }
 
   if (!requestID) {
     logger.error("[QuestionHandler] No requestID for sending answers");
-    await bot.sendMessage(chatId, t("question.no_active_request"));
+    await sendMessageWithoutDraftEffect(
+      bot,
+      chatId,
+      t("question.no_active_request"),
+      withMessageThreadId(undefined, messageThreadId),
+    );
     return;
   }
 
@@ -422,7 +463,12 @@ async function sendAllAnswersToAgent(bot: Context["api"], chatId: number): Promi
     onSuccess: ({ error }) => {
       if (error) {
         logger.error("[QuestionHandler] Failed to send answers via question.reply:", error);
-        void bot.sendMessage(chatId, t("question.send_answers_error")).catch(() => {});
+        void sendMessageWithoutDraftEffect(
+          bot,
+          chatId,
+          t("question.send_answers_error"),
+          withMessageThreadId(undefined, messageThreadId),
+        ).catch(() => {});
         return;
       }
 

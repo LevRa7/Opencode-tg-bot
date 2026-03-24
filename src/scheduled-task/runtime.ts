@@ -14,7 +14,11 @@ import {
   replaceScheduledTasks,
   updateScheduledTask,
 } from "./store.js";
-import type { QueuedScheduledTaskDelivery, ScheduledTask } from "./types.js";
+import type {
+  QueuedScheduledTaskDelivery,
+  ScheduledTask,
+  ScheduledTaskOwnerScope,
+} from "./types.js";
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
@@ -62,6 +66,7 @@ function buildSuccessDelivery(
 ): QueuedScheduledTaskDelivery {
   return {
     taskId: task.id,
+    target: resolveTaskOwnerScope(task),
     scheduleSummary: task.scheduleSummary,
     prompt: task.prompt,
     runAt,
@@ -80,6 +85,7 @@ function buildErrorDelivery(
 ): QueuedScheduledTaskDelivery {
   return {
     taskId: task.id,
+    target: resolveTaskOwnerScope(task),
     scheduleSummary: task.scheduleSummary,
     prompt: task.prompt,
     runAt,
@@ -91,9 +97,19 @@ function buildErrorDelivery(
   };
 }
 
+function resolveTaskOwnerScope(task: ScheduledTask): ScheduledTaskOwnerScope {
+  if (task.ownerScope) {
+    return { ...task.ownerScope };
+  }
+
+  return {
+    userId: config.telegram.adminUserId,
+    chatId: config.telegram.adminUserId,
+  };
+}
+
 export class ScheduledTaskRuntime {
   private botApi: Bot<Context>["api"] | null = null;
-  private chatId: number | null = null;
   private initialized = false;
   private timersByTaskId = new Map<string, ReturnType<typeof setTimeout>>();
   private runningTaskIds = new Set<string>();
@@ -102,7 +118,6 @@ export class ScheduledTaskRuntime {
 
   async initialize(bot: Bot<Context>): Promise<void> {
     this.botApi = bot.api;
-    this.chatId = config.telegram.allowedUserId;
 
     if (this.initialized) {
       return;
@@ -136,7 +151,6 @@ export class ScheduledTaskRuntime {
     if (
       this.flushInProgress ||
       !this.botApi ||
-      this.chatId === null ||
       foregroundSessionState.isBusy() ||
       this.deliveryQueue.length === 0
     ) {
@@ -166,7 +180,6 @@ export class ScheduledTaskRuntime {
     }
 
     this.botApi = null;
-    this.chatId = null;
     this.initialized = false;
     this.timersByTaskId.clear();
     this.runningTaskIds.clear();
@@ -442,7 +455,7 @@ export class ScheduledTaskRuntime {
   }
 
   private async sendDelivery(delivery: QueuedScheduledTaskDelivery): Promise<boolean> {
-    if (!this.botApi || this.chatId === null) {
+    if (!this.botApi) {
       return false;
     }
 
@@ -451,8 +464,12 @@ export class ScheduledTaskRuntime {
       for (const part of messageParts) {
         await sendBotText({
           api: this.botApi,
-          chatId: this.chatId,
+          chatId: delivery.target.chatId,
           text: part,
+          options:
+            delivery.target.messageThreadId !== undefined
+              ? { message_thread_id: delivery.target.messageThreadId }
+              : undefined,
           format: "raw",
         });
       }

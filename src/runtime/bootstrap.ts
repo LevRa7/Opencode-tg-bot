@@ -32,7 +32,7 @@ interface EnvValidationResult {
 interface WizardCollectedValues {
   locale: Locale;
   token: string;
-  allowedUserId: string;
+  adminUserId: string;
   apiUrl?: string;
   serverUsername: string;
   serverPassword?: string;
@@ -41,7 +41,8 @@ interface WizardCollectedValues {
 export interface WizardEnvValues {
   BOT_LOCALE: Locale;
   TELEGRAM_BOT_TOKEN: string;
-  TELEGRAM_ALLOWED_USER_ID: string;
+  TELEGRAM_ADMIN_USER_ID: string;
+  TELEGRAM_ALLOWED_USER_IDS: string;
   OPENCODE_API_URL?: string;
   OPENCODE_SERVER_USERNAME: string;
   OPENCODE_SERVER_PASSWORD?: string;
@@ -67,8 +68,9 @@ export function validateRuntimeEnvValues(values: Record<string, string>): EnvVal
     return { isValid: false, reason: "Missing TELEGRAM_BOT_TOKEN" };
   }
 
-  if (!isPositiveInteger(values.TELEGRAM_ALLOWED_USER_ID || "")) {
-    return { isValid: false, reason: "Invalid TELEGRAM_ALLOWED_USER_ID" };
+  const adminUserId = values.TELEGRAM_ADMIN_USER_ID || values.TELEGRAM_ALLOWED_USER_ID || "";
+  if (!isPositiveInteger(adminUserId)) {
+    return { isValid: false, reason: "Invalid TELEGRAM_ADMIN_USER_ID" };
   }
 
   if (!values.OPENCODE_MODEL_PROVIDER || values.OPENCODE_MODEL_PROVIDER.trim().length === 0) {
@@ -116,13 +118,16 @@ export function buildEnvFileContent(existingContent: string, values: WizardEnvVa
   const orderedUpdates: Array<[keyof WizardEnvValues, string | undefined]> = [
     ["BOT_LOCALE", values.BOT_LOCALE],
     ["TELEGRAM_BOT_TOKEN", values.TELEGRAM_BOT_TOKEN],
-    ["TELEGRAM_ALLOWED_USER_ID", values.TELEGRAM_ALLOWED_USER_ID],
+    ["TELEGRAM_ADMIN_USER_ID", values.TELEGRAM_ADMIN_USER_ID],
+    ["TELEGRAM_ALLOWED_USER_IDS", values.TELEGRAM_ALLOWED_USER_IDS],
     ["OPENCODE_API_URL", values.OPENCODE_API_URL],
     ["OPENCODE_SERVER_USERNAME", values.OPENCODE_SERVER_USERNAME],
     ["OPENCODE_SERVER_PASSWORD", values.OPENCODE_SERVER_PASSWORD],
     ["OPENCODE_MODEL_PROVIDER", values.OPENCODE_MODEL_PROVIDER],
     ["OPENCODE_MODEL_ID", values.OPENCODE_MODEL_ID],
   ];
+
+  lines = removeEnvKey(lines, "TELEGRAM_ALLOWED_USER_ID");
 
   for (const [key, value] of orderedUpdates) {
     lines = removeEnvKey(lines, key);
@@ -311,16 +316,16 @@ async function askLocale(): Promise<Locale> {
   }
 }
 
-async function askAllowedUserId(): Promise<string> {
+async function askAdminUserId(): Promise<string> {
   for (;;) {
-    const allowedUserId = await askVisible(t("runtime.wizard.ask_user_id"));
+    const adminUserId = await askVisible(t("runtime.wizard.ask_user_id"));
 
-    if (!isPositiveInteger(allowedUserId)) {
+    if (!isPositiveInteger(adminUserId)) {
       process.stdout.write(t("runtime.wizard.user_id_invalid"));
       continue;
     }
 
-    return allowedUserId;
+    return adminUserId;
   }
 }
 
@@ -385,7 +390,7 @@ async function collectWizardValues(): Promise<WizardCollectedValues> {
   process.stdout.write("\n");
 
   const token = await askToken();
-  const allowedUserId = await askAllowedUserId();
+  const adminUserId = await askAdminUserId();
   const apiUrl = await askApiUrl();
   const serverUsername = await askServerUsername();
   const serverPassword = await askServerPassword();
@@ -395,7 +400,7 @@ async function collectWizardValues(): Promise<WizardCollectedValues> {
   return {
     locale,
     token,
-    allowedUserId,
+    adminUserId,
     apiUrl,
     serverUsername,
     serverPassword,
@@ -435,7 +440,8 @@ async function runWizardAndPersist(runtimePaths: RuntimePaths): Promise<void> {
   const envValues: WizardEnvValues = {
     BOT_LOCALE: wizardValues.locale,
     TELEGRAM_BOT_TOKEN: wizardValues.token,
-    TELEGRAM_ALLOWED_USER_ID: wizardValues.allowedUserId,
+    TELEGRAM_ADMIN_USER_ID: wizardValues.adminUserId,
+    TELEGRAM_ALLOWED_USER_IDS: wizardValues.adminUserId,
     OPENCODE_API_URL: wizardValues.apiUrl,
     OPENCODE_SERVER_USERNAME: wizardValues.serverUsername,
     OPENCODE_SERVER_PASSWORD: wizardValues.serverPassword,

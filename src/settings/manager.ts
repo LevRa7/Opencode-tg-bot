@@ -2,6 +2,10 @@ import type { ModelInfo } from "../model/types.js";
 import { cloneScheduledTask, type ScheduledTask } from "../scheduled-task/types.js";
 import path from "node:path";
 import { getRuntimePaths } from "../runtime/paths.js";
+import {
+  getCurrentTelegramConversationScope,
+  buildTelegramConversationScopeKey,
+} from "../telegram/scope.js";
 import { logger } from "../utils/logger.js";
 
 export interface ProjectInfo {
@@ -30,19 +34,174 @@ export interface SessionDirectoryCacheInfo {
   }>;
 }
 
+export interface ThreadContextBinding {
+  contextKey: string;
+  project?: ProjectInfo;
+  session?: SessionInfo;
+}
+
+export interface ConversationSettings {
+  currentProject?: ProjectInfo;
+  currentSession?: SessionInfo;
+  pinnedMessageId?: number;
+}
+
+export interface UserSettings {
+  currentAgent?: string;
+  currentModel?: ModelInfo;
+  messageStreamingEnabled?: boolean;
+}
+
+export interface RestartRequestInfo {
+  updateId: number;
+  requestedAt: string;
+}
+
 export interface Settings {
   currentProject?: ProjectInfo;
   currentSession?: SessionInfo;
   currentAgent?: string;
   currentModel?: ModelInfo;
-  pinnedMessageId?: number;
+  messageStreamingEnabled?: boolean;
   serverProcess?: ServerProcessInfo;
   sessionDirectoryCache?: SessionDirectoryCacheInfo;
+  lastRestartRequest?: RestartRequestInfo;
+  threadContextBindings?: ThreadContextBinding[];
   scheduledTasks?: ScheduledTask[];
+  conversations?: Record<string, ConversationSettings>;
+  users?: Record<string, UserSettings>;
 }
 
 function cloneScheduledTasks(tasks: ScheduledTask[] | undefined): ScheduledTask[] | undefined {
   return tasks?.map((task) => cloneScheduledTask(task));
+}
+
+function cloneConversationSettings(
+  conversationSettings: ConversationSettings | undefined,
+): ConversationSettings | undefined {
+  if (!conversationSettings) {
+    return undefined;
+  }
+
+  return {
+    currentProject: conversationSettings.currentProject
+      ? { ...conversationSettings.currentProject }
+      : undefined,
+    currentSession: conversationSettings.currentSession
+      ? { ...conversationSettings.currentSession }
+      : undefined,
+    pinnedMessageId: conversationSettings.pinnedMessageId,
+  };
+}
+
+function cloneConversationMap(
+  conversations: Record<string, ConversationSettings> | undefined,
+): Record<string, ConversationSettings> | undefined {
+  if (!conversations) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    Object.entries(conversations).map(([conversationKey, conversationSettings]) => [
+      conversationKey,
+      cloneConversationSettings(conversationSettings) ?? {},
+    ]),
+  );
+}
+
+function cloneUserSettings(userSettings: UserSettings | undefined): UserSettings | undefined {
+  if (!userSettings) {
+    return undefined;
+  }
+
+  return {
+    currentAgent: userSettings.currentAgent,
+    currentModel: userSettings.currentModel ? { ...userSettings.currentModel } : undefined,
+    messageStreamingEnabled: userSettings.messageStreamingEnabled,
+  };
+}
+
+function cloneUsers(
+  users: Record<string, UserSettings> | undefined,
+): Record<string, UserSettings> | undefined {
+  if (!users) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    Object.entries(users).map(([userId, userSettings]) => [
+      userId,
+      cloneUserSettings(userSettings) ?? {},
+    ]),
+  );
+}
+
+function getScopedUserId(): string | null {
+  const scope = getCurrentTelegramConversationScope();
+  return scope ? String(scope.userId) : null;
+}
+
+function getScopedConversationKey(): string | null {
+  const scope = getCurrentTelegramConversationScope();
+  return scope ? buildTelegramConversationScopeKey(scope) : null;
+}
+
+function getConversationSettings(conversationKey: string | null): ConversationSettings | undefined {
+  if (!conversationKey) {
+    return undefined;
+  }
+
+  return currentSettings.conversations?.[conversationKey];
+}
+
+function ensureConversationSettings(conversationKey: string): ConversationSettings {
+  currentSettings.conversations ??= {};
+  currentSettings.conversations[conversationKey] ??= {};
+  return currentSettings.conversations[conversationKey];
+}
+
+function cleanupConversationSettings(conversationKey: string): void {
+  if (!currentSettings.conversations?.[conversationKey]) {
+    return;
+  }
+
+  const conversationSettings = currentSettings.conversations[conversationKey];
+  if (Object.values(conversationSettings).every((value) => value === undefined)) {
+    delete currentSettings.conversations[conversationKey];
+  }
+
+  if (currentSettings.conversations && Object.keys(currentSettings.conversations).length === 0) {
+    currentSettings.conversations = undefined;
+  }
+}
+
+function getUserSettings(userId: string | null): UserSettings | undefined {
+  if (!userId) {
+    return undefined;
+  }
+
+  return currentSettings.users?.[userId];
+}
+
+function ensureUserSettings(userId: string): UserSettings {
+  currentSettings.users ??= {};
+  currentSettings.users[userId] ??= {};
+  return currentSettings.users[userId];
+}
+
+function cleanupUserSettings(userId: string): void {
+  if (!currentSettings.users?.[userId]) {
+    return;
+  }
+
+  const userSettings = currentSettings.users[userId];
+  if (Object.values(userSettings).every((value) => value === undefined)) {
+    delete currentSettings.users[userId];
+  }
+
+  if (currentSettings.users && Object.keys(currentSettings.users).length === 0) {
+    currentSettings.users = undefined;
+  }
 }
 
 function getSettingsFilePath(): string {
@@ -86,72 +245,174 @@ function writeSettingsFile(settings: Settings): Promise<void> {
 let currentSettings: Settings = {};
 
 export function getCurrentProject(): ProjectInfo | undefined {
+  const conversationKey = getScopedConversationKey();
+  if (conversationKey) {
+    return getConversationSettings(conversationKey)?.currentProject;
+  }
+
   return currentSettings.currentProject;
 }
 
 export function setCurrentProject(projectInfo: ProjectInfo): void {
-  currentSettings.currentProject = projectInfo;
+  const conversationKey = getScopedConversationKey();
+  if (conversationKey) {
+    ensureConversationSettings(conversationKey).currentProject = { ...projectInfo };
+  } else {
+    currentSettings.currentProject = { ...projectInfo };
+  }
   void writeSettingsFile(currentSettings);
 }
 
 export function clearProject(): void {
-  currentSettings.currentProject = undefined;
+  const conversationKey = getScopedConversationKey();
+  if (conversationKey) {
+    const conversationSettings = getConversationSettings(conversationKey);
+    if (conversationSettings) {
+      conversationSettings.currentProject = undefined;
+      cleanupConversationSettings(conversationKey);
+    }
+  } else {
+    currentSettings.currentProject = undefined;
+  }
   void writeSettingsFile(currentSettings);
 }
 
 export function getCurrentSession(): SessionInfo | undefined {
+  const conversationKey = getScopedConversationKey();
+  if (conversationKey) {
+    return getConversationSettings(conversationKey)?.currentSession;
+  }
+
   return currentSettings.currentSession;
 }
 
 export function setCurrentSession(sessionInfo: SessionInfo): void {
-  currentSettings.currentSession = sessionInfo;
+  const conversationKey = getScopedConversationKey();
+  if (conversationKey) {
+    ensureConversationSettings(conversationKey).currentSession = { ...sessionInfo };
+  } else {
+    currentSettings.currentSession = { ...sessionInfo };
+  }
   void writeSettingsFile(currentSettings);
 }
 
 export function clearSession(): void {
-  currentSettings.currentSession = undefined;
+  const conversationKey = getScopedConversationKey();
+  if (conversationKey) {
+    const conversationSettings = getConversationSettings(conversationKey);
+    if (conversationSettings) {
+      conversationSettings.currentSession = undefined;
+      cleanupConversationSettings(conversationKey);
+    }
+  } else {
+    currentSettings.currentSession = undefined;
+  }
   void writeSettingsFile(currentSettings);
 }
 
 export function getCurrentAgent(): string | undefined {
-  return currentSettings.currentAgent;
+  const userId = getScopedUserId();
+  return getUserSettings(userId)?.currentAgent ?? currentSettings.currentAgent;
 }
 
 export function setCurrentAgent(agentName: string): void {
-  currentSettings.currentAgent = agentName;
+  const userId = getScopedUserId();
+  if (userId) {
+    ensureUserSettings(userId).currentAgent = agentName;
+  } else {
+    currentSettings.currentAgent = agentName;
+  }
   void writeSettingsFile(currentSettings);
 }
 
 export function clearCurrentAgent(): void {
-  currentSettings.currentAgent = undefined;
+  const userId = getScopedUserId();
+  if (userId) {
+    const userSettings = getUserSettings(userId);
+    if (userSettings) {
+      userSettings.currentAgent = undefined;
+      cleanupUserSettings(userId);
+    }
+  } else {
+    currentSettings.currentAgent = undefined;
+  }
   void writeSettingsFile(currentSettings);
 }
 
 export function getCurrentModel(): ModelInfo | undefined {
-  return currentSettings.currentModel;
+  const userId = getScopedUserId();
+  return getUserSettings(userId)?.currentModel ?? currentSettings.currentModel;
+}
+
+export function isMessageStreamingEnabled(): boolean {
+  const userId = getScopedUserId();
+  return (
+    getUserSettings(userId)?.messageStreamingEnabled ??
+    currentSettings.messageStreamingEnabled ??
+    true
+  );
+}
+
+export function setMessageStreamingEnabled(enabled: boolean): Promise<void> {
+  const userId = getScopedUserId();
+  if (userId) {
+    ensureUserSettings(userId).messageStreamingEnabled = enabled;
+  } else {
+    currentSettings.messageStreamingEnabled = enabled;
+  }
+  return writeSettingsFile(currentSettings);
 }
 
 export function setCurrentModel(modelInfo: ModelInfo): void {
-  currentSettings.currentModel = modelInfo;
+  const userId = getScopedUserId();
+  if (userId) {
+    ensureUserSettings(userId).currentModel = { ...modelInfo };
+  } else {
+    currentSettings.currentModel = { ...modelInfo };
+  }
   void writeSettingsFile(currentSettings);
 }
 
 export function clearCurrentModel(): void {
-  currentSettings.currentModel = undefined;
+  const userId = getScopedUserId();
+  if (userId) {
+    const userSettings = getUserSettings(userId);
+    if (userSettings) {
+      userSettings.currentModel = undefined;
+      cleanupUserSettings(userId);
+    }
+  } else {
+    currentSettings.currentModel = undefined;
+  }
   void writeSettingsFile(currentSettings);
 }
 
 export function getPinnedMessageId(): number | undefined {
-  return currentSettings.pinnedMessageId;
+  const conversationKey = getScopedConversationKey();
+  if (!conversationKey) {
+    return undefined;
+  }
+
+  return getConversationSettings(conversationKey)?.pinnedMessageId;
 }
 
 export function setPinnedMessageId(messageId: number): void {
-  currentSettings.pinnedMessageId = messageId;
+  const conversationKey = getScopedConversationKey();
+  if (conversationKey) {
+    ensureConversationSettings(conversationKey).pinnedMessageId = messageId;
+  }
   void writeSettingsFile(currentSettings);
 }
 
 export function clearPinnedMessageId(): void {
-  currentSettings.pinnedMessageId = undefined;
+  const conversationKey = getScopedConversationKey();
+  if (conversationKey) {
+    const conversationSettings = getConversationSettings(conversationKey);
+    if (conversationSettings) {
+      conversationSettings.pinnedMessageId = undefined;
+      cleanupConversationSettings(conversationKey);
+    }
+  }
   void writeSettingsFile(currentSettings);
 }
 
@@ -167,6 +428,17 @@ export function setServerProcess(processInfo: ServerProcessInfo): void {
 export function clearServerProcess(): void {
   currentSettings.serverProcess = undefined;
   void writeSettingsFile(currentSettings);
+}
+
+export function getLastRestartRequest(): RestartRequestInfo | undefined {
+  return currentSettings.lastRestartRequest
+    ? { ...currentSettings.lastRestartRequest }
+    : undefined;
+}
+
+export function setLastRestartRequest(restartRequest: RestartRequestInfo): Promise<void> {
+  currentSettings.lastRestartRequest = { ...restartRequest };
+  return writeSettingsFile(currentSettings);
 }
 
 export function getSessionDirectoryCache(): SessionDirectoryCacheInfo | undefined {
@@ -187,6 +459,30 @@ export function getScheduledTasks(): ScheduledTask[] {
   return cloneScheduledTasks(currentSettings.scheduledTasks) ?? [];
 }
 
+export function getThreadContextBindings(): ThreadContextBinding[] {
+  return (
+    currentSettings.threadContextBindings?.map((binding) => ({
+      contextKey: binding.contextKey,
+      project: binding.project ? { ...binding.project } : undefined,
+      session: binding.session ? { ...binding.session } : undefined,
+    })) ?? []
+  );
+}
+
+export function setThreadContextBindings(bindings: ThreadContextBinding[]): Promise<void> {
+  currentSettings.threadContextBindings = bindings.map((binding) => ({
+    contextKey: binding.contextKey,
+    project: binding.project ? { ...binding.project } : undefined,
+    session: binding.session ? { ...binding.session } : undefined,
+  }));
+
+  if (currentSettings.threadContextBindings.length === 0) {
+    currentSettings.threadContextBindings = undefined;
+  }
+
+  return writeSettingsFile(currentSettings);
+}
+
 export function setScheduledTasks(tasks: ScheduledTask[]): Promise<void> {
   currentSettings.scheduledTasks = cloneScheduledTasks(tasks);
   return writeSettingsFile(currentSettings);
@@ -199,6 +495,7 @@ export function __resetSettingsForTests(): void {
 
 export async function loadSettings(): Promise<void> {
   const loadedSettings = (await readSettingsFile()) as Settings & {
+    pinnedMessageId?: unknown;
     toolMessagesIntervalSec?: unknown;
   };
 
@@ -207,6 +504,15 @@ export async function loadSettings(): Promise<void> {
     void writeSettingsFile(loadedSettings);
   }
 
-  currentSettings = loadedSettings;
+  if ("pinnedMessageId" in loadedSettings) {
+    delete loadedSettings.pinnedMessageId;
+    void writeSettingsFile(loadedSettings);
+  }
+
+  currentSettings = {
+    ...loadedSettings,
+    conversations: cloneConversationMap(loadedSettings.conversations),
+    users: cloneUsers(loadedSettings.users),
+  };
   currentSettings.scheduledTasks = cloneScheduledTasks(loadedSettings.scheduledTasks) ?? [];
 }

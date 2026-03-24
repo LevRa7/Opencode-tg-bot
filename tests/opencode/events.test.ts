@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Event } from "@opencode-ai/sdk/v2";
+import { runWithTelegramConversationScope } from "../../src/telegram/scope.js";
 
 const { subscribeMock } = vi.hoisted(() => {
   return {
@@ -8,14 +9,19 @@ const { subscribeMock } = vi.hoisted(() => {
 });
 
 vi.mock("../../src/opencode/client.js", () => ({
-  opencodeClient: {
+  getOpencodeClient: vi.fn(() => ({
     event: {
       subscribe: subscribeMock,
     },
-  },
+  })),
+  __resetOpencodeClientRegistryForTests: vi.fn(),
 }));
 
-import { stopEventListening, subscribeToEvents } from "../../src/opencode/events.js";
+import {
+  stopAllEventListening,
+  stopEventListening,
+  subscribeToEvents,
+} from "../../src/opencode/events.js";
 
 function createStream(events: Event[]): AsyncGenerator<Event, void, unknown> {
   return (async function* () {
@@ -39,7 +45,8 @@ function flushImmediate(): Promise<void> {
 
 describe("opencode/events", () => {
   afterEach(() => {
-    stopEventListening();
+    stopAllEventListening();
+    subscribeMock.mockReset();
   });
 
   it("subscribes to stream and forwards events to callback", async () => {
@@ -162,5 +169,37 @@ describe("opencode/events", () => {
 
     stopEventListening();
     await subscription;
+  });
+
+  it("keeps listeners isolated by telegram scope", async () => {
+    subscribeMock.mockImplementation(async (_params, options: { signal: AbortSignal }) => ({
+      stream: createAbortableStream(options.signal),
+    }));
+
+    const scopeA = { userId: 1, chatId: 100, messageThreadId: 10 };
+    const scopeB = { userId: 2, chatId: 100, messageThreadId: 10 };
+
+    const subscriptionA = runWithTelegramConversationScope(scopeA, () =>
+      subscribeToEvents("D:/repo", vi.fn()),
+    );
+    const subscriptionB = runWithTelegramConversationScope(scopeB, () =>
+      subscribeToEvents("D:/repo", vi.fn()),
+    );
+
+    await vi.waitFor(() => {
+      expect(subscribeMock).toHaveBeenCalledTimes(2);
+    });
+
+    runWithTelegramConversationScope(scopeA, () => {
+      stopEventListening();
+    });
+
+    await vi.waitFor(() => {
+      expect(subscribeMock.mock.calls[0]?.[1]?.signal.aborted).toBe(true);
+      expect(subscribeMock.mock.calls[1]?.[1]?.signal.aborted).toBe(false);
+    });
+
+    stopAllEventListening();
+    await Promise.all([subscriptionA, subscriptionB]);
   });
 });

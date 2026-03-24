@@ -10,6 +10,8 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { PermissionRequest, PermissionReply } from "../../permission/types.js";
 import type { I18nKey } from "../../i18n/en.js";
 import { t } from "../../i18n/index.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import { sendMessageWithoutDraftEffect } from "../utils/send-message-draft-effect-context.js";
 
 // Permission type display names
 const PERMISSION_NAME_KEYS: Record<string, I18nKey> = {
@@ -160,6 +162,7 @@ async function handlePermissionReply(
   const currentProject = getCurrentProject();
   const currentSession = getCurrentSession();
   const chatId = ctx.chat?.id;
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
   const directory = currentSession?.directory ?? currentProject?.worktree;
 
   if (!directory || !chatId) {
@@ -203,7 +206,12 @@ async function handlePermissionReply(
       if (error) {
         logger.error("[PermissionHandler] Failed to send permission reply:", error);
         if (ctx.api && chatId) {
-          void ctx.api.sendMessage(chatId, t("permission.send_reply_error")).catch(() => {});
+          void sendMessageWithoutDraftEffect(
+            ctx.api,
+            chatId,
+            t("permission.send_reply_error"),
+            withMessageThreadId(undefined, messageThreadId),
+          ).catch(() => {});
         }
         return;
       }
@@ -231,6 +239,7 @@ export async function showPermissionRequest(
   bot: Context["api"],
   chatId: number,
   request: PermissionRequest,
+  messageThreadId?: number,
 ): Promise<void> {
   logger.debug(`[PermissionHandler] Showing permission request: ${request.permission}`);
 
@@ -238,8 +247,13 @@ export async function showPermissionRequest(
   const keyboard = buildPermissionKeyboard();
 
   try {
-    const message = await bot.sendMessage(chatId, text, {
-      reply_markup: keyboard,
+    const message = await sendMessageWithoutDraftEffect(bot, chatId, text, {
+      ...withMessageThreadId(
+        {
+          reply_markup: keyboard,
+        },
+        messageThreadId,
+      ),
     });
 
     logger.debug(`[PermissionHandler] Message sent, messageId=${message.message_id}`);

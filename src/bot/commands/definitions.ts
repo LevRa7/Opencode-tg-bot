@@ -21,6 +21,7 @@ interface BotCommandI18nDefinition {
  * Update this array when adding new commands
  */
 const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
+  { command: "start", descriptionKey: "cmd.description.start" },
   { command: "status", descriptionKey: "cmd.description.status" },
   { command: "new", descriptionKey: "cmd.description.new" },
   { command: "abort", descriptionKey: "cmd.description.stop" },
@@ -30,8 +31,10 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "tasklist", descriptionKey: "cmd.description.tasklist" },
   { command: "rename", descriptionKey: "cmd.description.rename" },
   { command: "commands", descriptionKey: "cmd.description.commands" },
+  { command: "stream", descriptionKey: "cmd.description.stream" },
   { command: "opencode_start", descriptionKey: "cmd.description.opencode_start" },
   { command: "opencode_stop", descriptionKey: "cmd.description.opencode_stop" },
+  { command: "restart", descriptionKey: "cmd.description.restart" },
   { command: "help", descriptionKey: "cmd.description.help" },
 ];
 

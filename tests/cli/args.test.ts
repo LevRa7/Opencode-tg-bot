@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseCliArgs } from "../../src/cli/args.js";
+import { t } from "../../src/i18n/index.js";
 
 describe("cli/args", () => {
   it("uses start command by default", () => {
@@ -37,7 +38,7 @@ describe("cli/args", () => {
 
     expect(parsed.command).toBe("start");
     expect(parsed.showHelp).toBe(true);
-    expect(parsed.error).toContain("Invalid mode value");
+    expect(parsed.error).toBe(t("cli.args.invalid_mode", { value: "invalid" }));
   });
 
   it("shows help for unknown command", () => {
@@ -45,7 +46,7 @@ describe("cli/args", () => {
 
     expect(parsed.command).toBe("start");
     expect(parsed.showHelp).toBe(true);
-    expect(parsed.error).toContain("Unknown command");
+    expect(parsed.error).toBe(t("cli.args.unknown_command", { value: "deploy" }));
   });
 
   it("shows help for invalid mode", () => {
@@ -53,7 +54,7 @@ describe("cli/args", () => {
 
     expect(parsed.command).toBe("start");
     expect(parsed.showHelp).toBe(true);
-    expect(parsed.error).toContain("Invalid mode value");
+    expect(parsed.error).toBe(t("cli.args.invalid_mode", { value: "qa" }));
   });
 
   it("rejects --mode for non-start commands", () => {
@@ -61,7 +62,7 @@ describe("cli/args", () => {
 
     expect(parsed.command).toBe("status");
     expect(parsed.showHelp).toBe(true);
-    expect(parsed.error).toContain("supported only for the start command");
+    expect(parsed.error).toBe(t("cli.args.mode_only_start"));
   });
 
   it("shows help when requested", () => {

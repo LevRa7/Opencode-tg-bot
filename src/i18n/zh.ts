@@ -9,6 +9,7 @@ export const zh: I18nDictionary = {
   "cmd.description.task": "创建定时任务",
   "cmd.description.tasklist": "查看定时任务",
   "cmd.description.commands": "自定义命令",
+  "cmd.description.stream": "切换消息流式效果",
   "cmd.description.opencode_start": "启动 OpenCode 服务器",
   "cmd.description.opencode_stop": "停止 OpenCode 服务器",
   "cmd.description.help": "帮助",
@@ -47,6 +48,11 @@ export const zh: I18nDictionary = {
   "help.keyboard_hint": "💡 代理模式、模型、变体和上下文操作请使用底部键盘按钮。",
   "help.text":
     "📖 **帮助**\n\n/status - 查看服务器状态\n/sessions - 会话列表\n/new - 创建新会话\n/help - 帮助",
+  "stream.enabled": "✨ 已为助手回复和机器人技术消息启用流式效果。",
+  "stream.disabled": "⏹ 已禁用消息流式效果。",
+  "stream.status_enabled": "✨ 当前消息流式效果已启用。",
+  "stream.status_disabled": "⏹ 当前消息流式效果已禁用。",
+  "stream.usage": "请使用 /stream on、/stream off 或 /stream status。",
 
   "bot.thinking": "💭 思考中...",
   "bot.project_not_selected": "🏗 未选择项目。\n\n请先使用 /projects 选择一个项目。",
@@ -54,6 +60,8 @@ export const zh: I18nDictionary = {
   "bot.create_session_error": "🔴 创建会话失败。请重试 /new，或使用 /status 检查服务器状态。",
   "bot.session_created": "✅ 会话已创建：{title}",
   "bot.session_busy": "⏳ 代理正在执行任务。请等待完成，或使用 /abort 中断当前运行。",
+  "bot.parallel_limit_reached":
+    "⏳ 你在不同话题中已经有 {limit} 个活动请求。请等待其中一个完成，或使用 /abort。",
   "bot.session_reset_project_mismatch":
     "⚠️ 活动会话与所选项目不匹配，因此已重置。使用 /sessions 选择一个会话，或 /new 创建新会话。",
   "bot.prompt_send_error": "向 OpenCode 发送请求失败。",
@@ -65,10 +73,15 @@ export const zh: I18nDictionary = {
   "bot.photo_model_no_image": "⚠️ 当前模型不支持图像输入。将仅发送文本。",
   "bot.photo_download_error": "🔴 下载照片失败",
   "bot.photo_no_caption": "💡 提示：添加说明文字以描述你希望对这张照片做什么。",
+  "bot.video_downloading": "⏳ 正在下载视频...",
+  "bot.video_too_long": "⚠️ 视频过长（最长 {maxDurationSec} 秒）",
+  "bot.video_model_no_video": "⚠️ 当前模型不支持视频输入。将仅发送文本。",
+  "bot.video_download_error": "🔴 下载视频失败",
   "bot.file_downloading": "⏳ 正在下载文件...",
   "bot.file_too_large": "⚠️ 文件过大（最大 {maxSizeMb}MB）",
   "bot.file_download_error": "🔴 下载文件失败",
   "bot.model_no_pdf": "⚠️ 当前模型不支持PDF输入。将仅发送文本。",
+  "bot.media_model_no_support": "⚠️ 当前所选模型和 Gemini 备用模型都不支持此媒体输入。",
   "bot.text_file_too_large": "⚠️ 文本文件过大（最大 {maxSizeKb}KB）",
 
   "status.header_running": "🟢 OpenCode 服务器正在运行",
@@ -155,6 +168,9 @@ export const zh: I18nDictionary = {
   "opencode_stop.stop_error": "🔴 停止 OpenCode 服务器失败\n\n错误：{error}",
   "opencode_stop.success": "✅ OpenCode 服务器已成功停止",
   "opencode_stop.error": "🔴 停止服务器时发生错误。\n\n请查看应用日志了解详情。",
+  "restart.in_progress": "⚠️ 机器人重启已在进行中。",
+  "restart.restarting": "🔄 正在重启机器人...",
+  "restart.error": "🔴 重启机器人失败\n\n错误：{error}",
 
   "agent.changed_callback": "模式已更改：{name}",
   "agent.changed_message": "✅ 模式已切换为：{name}",
@@ -353,7 +369,9 @@ export const zh: I18nDictionary = {
   "commands.arguments_empty": "⚠️ 参数不能为空。请发送文本或点击执行。",
   "commands.execute_error": "🔴 执行 OpenCode 命令失败。",
 
+  "cmd.description.start": "启动或重置机器人",
   "cmd.description.rename": "重命名当前会话",
+  "cmd.description.restart": "重启机器人",
 
   "cli.usage":
     "用法：\n  opencode-telegram [start] [--mode sources|installed]\n  opencode-telegram status\n  opencode-telegram stop\n  opencode-telegram config\n\n说明：\n  - 不带命令时默认执行 `start`\n  - `--mode` 目前仅支持 `start` 命令",

@@ -8,6 +8,11 @@ yarn-error.log*
 
 # Environment
 .env
+settings.json
+bot.log
+bot-runtime.log
+*.mp4
+.~lock..env#
 
 # OS
 .DS_Store
@@ -23,12 +28,24 @@ Thumbs.db
 .claude/
 .kilocode/
 .opencode/
+.agent/
+.agents/
+skills/
+skills-lock.json
 
 # Project specific
 logs/
 run/
-settings.json
 .tmp/
+memory/
+tg-cli/
+PLAN.md
+CONCEPT.md
+specs/
+docs/Embedding-analyze-plan.md
+docs/qwen3-emb-api.md
+docs/tg-cli-clean-architecture-plan.md
+docs/tg-cli-iteration-1-plan.md
 
 # Packaging artifacts
 *.tgz

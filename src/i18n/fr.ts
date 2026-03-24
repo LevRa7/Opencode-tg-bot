@@ -9,6 +9,7 @@ export const fr: I18nDictionary = {
   "cmd.description.task": "Créer une tâche planifiée",
   "cmd.description.tasklist": "Afficher les tâches planifiées",
   "cmd.description.commands": "Commandes personnalisées",
+  "cmd.description.stream": "Basculer le streaming des messages",
   "cmd.description.opencode_start": "Démarrer le serveur OpenCode",
   "cmd.description.opencode_stop": "Arrêter le serveur OpenCode",
   "cmd.description.help": "Aide",
@@ -55,6 +56,12 @@ export const fr: I18nDictionary = {
     "💡 Utilisez les boutons du bas pour le mode d'agent, le modèle, la variante et les actions de contexte.",
   "help.text":
     "📖 **Aide**\n\n/status - Vérifier l'état du serveur\n/sessions - Liste des sessions\n/new - Créer une nouvelle session\n/help - Aide",
+  "stream.enabled":
+    "✨ Le streaming des messages est activé pour les réponses et messages techniques du bot.",
+  "stream.disabled": "⏹ Le streaming des messages est désactivé.",
+  "stream.status_enabled": "✨ Le streaming des messages est actuellement activé.",
+  "stream.status_disabled": "⏹ Le streaming des messages est actuellement désactivé.",
+  "stream.usage": "Utilisez /stream on, /stream off ou /stream status.",
 
   "bot.thinking": "💭 Réflexion en cours...",
   "bot.project_not_selected":
@@ -65,6 +72,8 @@ export const fr: I18nDictionary = {
   "bot.session_created": "✅ Session créée : {title}",
   "bot.session_busy":
     "⏳ L'agent exécute déjà une tâche. Attendez la fin ou utilisez /abort pour interrompre l'exécution en cours.",
+  "bot.parallel_limit_reached":
+    "⏳ Vous avez déjà {limit} requêtes actives dans différents sujets. Attendez qu'une se termine ou utilisez /abort.",
   "bot.session_reset_project_mismatch":
     "⚠️ La session active ne correspond pas au projet sélectionné, elle a donc été réinitialisée. Utilisez /sessions pour en choisir une ou /new pour créer une nouvelle session.",
   "bot.prompt_send_error": "Impossible d'envoyer la requête à OpenCode.",
@@ -80,11 +89,18 @@ export const fr: I18nDictionary = {
   "bot.photo_download_error": "🔴 Impossible de télécharger la photo",
   "bot.photo_no_caption":
     "💡 Conseil : ajoutez une légende pour décrire ce que vous voulez faire avec cette photo.",
+  "bot.video_downloading": "⏳ Téléchargement de la vidéo...",
+  "bot.video_too_long": "⚠️ La vidéo est trop longue (max {maxDurationSec} s)",
+  "bot.video_model_no_video":
+    "⚠️ Le modèle actuel ne prend pas en charge la vidéo. Envoi du texte uniquement.",
+  "bot.video_download_error": "🔴 Impossible de télécharger la vidéo",
   "bot.file_downloading": "⏳ Téléchargement du fichier...",
   "bot.file_too_large": "⚠️ Le fichier est trop volumineux (max {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 Impossible de télécharger le fichier",
   "bot.model_no_pdf":
     "⚠️ Le modèle actuel ne prend pas en charge les PDF. Envoi du texte uniquement.",
+  "bot.media_model_no_support":
+    "⚠️ Ni le modèle sélectionné ni le repli Gemini ne prennent en charge cette entrée média.",
   "bot.text_file_too_large": "⚠️ Le fichier texte est trop volumineux (max {maxSizeKb}KB)",
 
   "status.header_running": "🟢 Le serveur OpenCode est en cours d'exécution",
@@ -188,6 +204,9 @@ export const fr: I18nDictionary = {
   "opencode_stop.success": "✅ Serveur OpenCode arrêté avec succès",
   "opencode_stop.error":
     "🔴 Une erreur s'est produite lors de l'arrêt du serveur.\n\nConsultez les logs de l'application pour plus de détails.",
+  "restart.in_progress": "⚠️ Le redémarrage du bot est déjà en cours.",
+  "restart.restarting": "🔄 Redémarrage du bot...",
+  "restart.error": "🔴 Impossible de redémarrer le bot\n\nErreur : {error}",
 
   "agent.changed_callback": "Mode modifié : {name}",
   "agent.changed_message": "✅ Mode défini sur : {name}",
@@ -405,7 +424,9 @@ export const fr: I18nDictionary = {
     "⚠️ Les arguments ne peuvent pas être vides. Envoyez du texte ou appuyez sur Exécuter.",
   "commands.execute_error": "🔴 Impossible d'exécuter la commande OpenCode.",
 
+  "cmd.description.start": "Démarrer ou réinitialiser le bot",
   "cmd.description.rename": "Renommer la session actuelle",
+  "cmd.description.restart": "Redémarrer le bot",
 
   "cli.usage":
     "Utilisation :\n  opencode-telegram [start] [--mode sources|installed]\n  opencode-telegram status\n  opencode-telegram stop\n  opencode-telegram config\n\nNotes :\n  - Sans commande, `start` est utilisé par défaut\n  - `--mode` n'est actuellement pris en charge que pour `start`",

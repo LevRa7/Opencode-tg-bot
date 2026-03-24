@@ -28,7 +28,7 @@ describe("summary/tool-message-batcher", () => {
     await vi.waitFor(() => {
       expect(sendText).toHaveBeenCalledTimes(1);
     });
-    expect(sendText).toHaveBeenCalledWith("s1", "tool message");
+    expect(sendText).toHaveBeenCalledWith("s1", "tool message", undefined);
     expect(sendFile).not.toHaveBeenCalled();
   });
 
@@ -70,7 +70,7 @@ describe("summary/tool-message-batcher", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     expect(sendText).toHaveBeenCalledTimes(1);
-    expect(sendText).toHaveBeenCalledWith("s1", "first\n\nsecond");
+    expect(sendText).toHaveBeenCalledWith("s1", "first\n\nsecond", undefined);
     expect(sendFile).not.toHaveBeenCalled();
   });
 
@@ -91,7 +91,7 @@ describe("summary/tool-message-batcher", () => {
     await vi.advanceTimersByTimeAsync(5000);
 
     expect(sendText).toHaveBeenCalledTimes(1);
-    expect(sendText).toHaveBeenCalledWith("s1", "🔁 Retry attempt 2");
+    expect(sendText).toHaveBeenCalledWith("s1", "🔁 Retry attempt 2", undefined);
     expect(sendFile).not.toHaveBeenCalled();
   });
 
@@ -112,7 +112,7 @@ describe("summary/tool-message-batcher", () => {
     await batcher.flushSession("s1", "test_flush");
 
     expect(sendText).toHaveBeenCalledTimes(1);
-    expect(sendText).toHaveBeenCalledWith("s1", "one\n\ntwo");
+    expect(sendText).toHaveBeenCalledWith("s1", "one\n\ntwo", undefined);
 
     await vi.advanceTimersByTimeAsync(20000);
     expect(sendText).toHaveBeenCalledTimes(1);
@@ -136,6 +136,28 @@ describe("summary/tool-message-batcher", () => {
 
     await vi.advanceTimersByTimeAsync(10000);
     expect(sendText).not.toHaveBeenCalled();
+    expect(sendFile).not.toHaveBeenCalled();
+  });
+
+  it("clears only the targeted session queue", async () => {
+    vi.useFakeTimers();
+
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const sendFile = vi.fn().mockResolvedValue(undefined);
+    const batcher = new ToolMessageBatcher({
+      intervalSeconds: 5,
+      sendText,
+      sendFile,
+    });
+
+    batcher.enqueue("s1", "one");
+    batcher.enqueue("s2", "two");
+    batcher.clearSession("s1", "test_clear_session");
+
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(sendText).toHaveBeenCalledTimes(1);
+    expect(sendText).toHaveBeenCalledWith("s2", "two", undefined);
     expect(sendFile).not.toHaveBeenCalled();
   });
 
@@ -183,7 +205,7 @@ describe("summary/tool-message-batcher", () => {
     await vi.waitFor(() => {
       expect(sendText).toHaveBeenCalledTimes(1);
     });
-    expect(sendText).toHaveBeenCalledWith("s1", "first\n\nsecond");
+    expect(sendText).toHaveBeenCalledWith("s1", "first\n\nsecond", undefined);
     expect(sendFile).not.toHaveBeenCalled();
   });
 
@@ -236,9 +258,9 @@ describe("summary/tool-message-batcher", () => {
     expect(sendText.mock.invocationCallOrder[0]).toBeLessThan(sendFile.mock.invocationCallOrder[0]);
     expect(sendFile.mock.invocationCallOrder[0]).toBeLessThan(sendText.mock.invocationCallOrder[1]);
 
-    expect(sendText.mock.calls[0]).toEqual(["s1", "before"]);
+    expect(sendText.mock.calls[0]).toEqual(["s1", "before", undefined]);
     expect(sendFile.mock.calls[0]).toEqual(["s1", fileData]);
-    expect(sendText.mock.calls[1]).toEqual(["s1", "after"]);
+    expect(sendText.mock.calls[1]).toEqual(["s1", "after", undefined]);
   });
 
   it("preserves order for immediate mixed sends", async () => {
@@ -262,5 +284,31 @@ describe("summary/tool-message-batcher", () => {
     await vi.waitFor(() => {
       expect(sendOrder).toEqual(["text:first", "file:edit_d.ts.txt", "text:second"]);
     });
+  });
+
+  it("keeps html messages separate from raw messages", async () => {
+    vi.useFakeTimers();
+
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const sendFile = vi.fn().mockResolvedValue(undefined);
+    const batcher = new ToolMessageBatcher({
+      intervalSeconds: 5,
+      sendText,
+      sendFile,
+    });
+
+    batcher.enqueueFormatted("s1", "<blockquote expandable><i>one</i></blockquote>", "html");
+    batcher.enqueue("s1", "raw");
+
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(sendText).toHaveBeenCalledTimes(2);
+    expect(sendText).toHaveBeenNthCalledWith(
+      1,
+      "s1",
+      "<blockquote expandable><i>one</i></blockquote>",
+      "html",
+    );
+    expect(sendText).toHaveBeenNthCalledWith(2, "s1", "raw", undefined);
   });
 });

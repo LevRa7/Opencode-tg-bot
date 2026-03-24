@@ -3,11 +3,14 @@ import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2";
 import { opencodeClient } from "../../opencode/client.js";
 import { clearSession, getCurrentSession, setCurrentSession } from "../../session/manager.js";
 import { ingestSessionInfoForCache } from "../../session/cache-manager.js";
-import { getCurrentProject } from "../../settings/manager.js";
+import { getCurrentProject, setCurrentProject } from "../../settings/manager.js";
 import { getStoredAgent } from "../../agent/manager.js";
 import { getStoredModel } from "../../model/manager.js";
+import { resolvePromptModelForMedia } from "../../model/media-fallback.js";
 import { formatVariantForButton } from "../../variant/manager.js";
 import { createMainKeyboard } from "../utils/keyboard.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import { sendMessageWithoutDraftEffect } from "../utils/send-message-draft-effect-context.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { summaryAggregator } from "../../summary/aggregator.js";
@@ -19,6 +22,8 @@ import { formatErrorDetails } from "../../utils/error-format.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
+import { threadContextManager } from "../../thread/manager.js";
+import { ensureUserProjectForCommand } from "../../project/user-project.js";
 
 /** Module-level references for async callbacks that don't have ctx. */
 let botInstance: Bot<Context> | null = null;
@@ -30,6 +35,10 @@ export function getPromptBotInstance(): Bot<Context> | null {
 
 export function getPromptChatId(): number | null {
   return chatIdInstance;
+}
+
+function formatSessionSelectionHint(): string {
+  return `${t("status.session_not_selected")}\n${t("status.session_hint")}`;
 }
 
 async function isSessionBusy(sessionId: string, directory: string): Promise<boolean> {
@@ -95,12 +104,28 @@ export async function processUserPrompt(
   fileParts: FilePartInput[] = [],
 ): Promise<boolean> {
   const { bot, ensureEventSubscription } = deps;
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+  const activeScope = threadContextManager.getActiveScope();
 
-  const currentProject = getCurrentProject();
+  let currentProject = getCurrentProject();
   if (!currentProject) {
-    await ctx.reply(t("bot.project_not_selected"));
-    return false;
+    if (!threadContextManager.canAutoAssignProjectForActiveContext()) {
+      await ctx.reply(t("bot.project_not_selected"));
+      return false;
+    }
+
+    const tgId = ctx.from?.id;
+    if (!tgId) {
+      await ctx.reply(t("bot.project_not_selected"));
+      return false;
+    }
+
+    logger.info(`[Bot] No project selected, auto-creating project for tgId=${tgId}`);
+    currentProject = await ensureUserProjectForCommand(tgId);
+    setCurrentProject(currentProject);
   }
+
+  threadContextManager.bindProjectToActiveContext(currentProject);
 
   botInstance = bot;
   chatIdInstance = ctx.chat!.id;
@@ -120,11 +145,17 @@ export async function processUserPrompt(
       `[Bot] Session/project mismatch detected. sessionDirectory=${currentSession.directory}, projectDirectory=${currentProject.worktree}. Resetting session context.`,
     );
     await resetMismatchedSessionContext();
+    threadContextManager.clearSessionForActiveContext();
     await ctx.reply(t("bot.session_reset_project_mismatch"));
     return false;
   }
 
   if (!currentSession) {
+    if (!threadContextManager.canAutoAssignSessionForActiveContext()) {
+      await ctx.reply(formatSessionSelectionHint());
+      return false;
+    }
+
     await ctx.reply(t("bot.creating_session"));
 
     const { data: session, error } = await opencodeClient.session.create({
@@ -147,6 +178,7 @@ export async function processUserPrompt(
     };
 
     setCurrentSession(currentSession);
+    threadContextManager.bindSessionToActiveContext(currentSession);
     await ingestSessionInfoForCache(session);
 
     // Create pinned message for new session
@@ -183,12 +215,14 @@ export async function processUserPrompt(
         logger.error("[Bot] Error creating pinned message for existing session:", err);
       }
     }
+
+    threadContextManager.bindSessionToActiveContext(currentSession);
   }
 
   await ensureEventSubscription(currentSession.directory);
 
   summaryAggregator.setSession(currentSession.id);
-  summaryAggregator.setBotAndChatId(bot, ctx.chat!.id);
+  summaryAggregator.setBotAndChatId(bot, ctx.chat!.id, messageThreadId);
 
   const sessionIsBusy = await isSessionBusy(currentSession.id, currentSession.directory);
   if (sessionIsBusy) {
@@ -200,6 +234,12 @@ export async function processUserPrompt(
   try {
     const currentAgent = getStoredAgent();
     const storedModel = getStoredModel();
+    const resolvedModel = await resolvePromptModelForMedia({ storedModel, fileParts });
+
+    if (resolvedModel.missingMediaSupport) {
+      await ctx.reply(t("bot.media_model_no_support"));
+      return false;
+    }
 
     // Build parts array with text and files
     const parts: Array<TextPartInput | FilePartInput> = [];
@@ -234,26 +274,31 @@ export async function processUserPrompt(
       agent: currentAgent,
     };
 
-    // Use stored model (from settings or config)
-    if (storedModel.providerID && storedModel.modelID) {
+    // Use stored model or media fallback model when needed.
+    if (resolvedModel.model) {
       promptOptions.model = {
-        providerID: storedModel.providerID,
-        modelID: storedModel.modelID,
+        providerID: resolvedModel.model.providerID,
+        modelID: resolvedModel.model.modelID,
       };
 
-      // Add variant if specified
-      if (storedModel.variant) {
-        promptOptions.variant = storedModel.variant;
+      if (resolvedModel.variant) {
+        promptOptions.variant = resolvedModel.variant;
       }
+    }
+
+    if (resolvedModel.fallbackUsed) {
+      logger.info(
+        `[Bot] Using media fallback model ${resolvedModel.model?.providerID}/${resolvedModel.model?.modelID}`,
+      );
     }
 
     const promptErrorLogContext = {
       sessionId: currentSession.id,
       directory: currentSession.directory,
       agent: currentAgent || "default",
-      modelProvider: storedModel.providerID || "default",
-      modelId: storedModel.modelID || "default",
-      variant: storedModel.variant || "default",
+      modelProvider: resolvedModel.model?.providerID || storedModel.providerID || "default",
+      modelId: resolvedModel.model?.modelID || storedModel.modelID || "default",
+      variant: resolvedModel.variant || "default",
       promptLength: text.length,
       fileCount: fileParts.length,
     };
@@ -262,7 +307,18 @@ export async function processUserPrompt(
       `[Bot] Calling session.prompt (fire-and-forget) with agent=${currentAgent}, fileCount=${fileParts.length}...`,
     );
 
-    foregroundSessionState.markBusy(currentSession.id);
+    const reservedForegroundSlot = foregroundSessionState.tryMarkBusy(
+      currentSession.id,
+      activeScope,
+    );
+    if (!reservedForegroundSlot) {
+      await ctx.reply(
+        t("bot.parallel_limit_reached", {
+          limit: "5",
+        }),
+      );
+      return false;
+    }
 
     // CRITICAL: DO NOT wait for session.prompt to complete.
     // If we wait, the handler will not finish and grammY will not call getUpdates,
@@ -273,7 +329,7 @@ export async function processUserPrompt(
       task: () => opencodeClient.session.prompt(promptOptions),
       onSuccess: ({ error }) => {
         if (error) {
-          foregroundSessionState.markIdle(currentSession.id);
+          foregroundSessionState.markIdle(currentSession.id, activeScope);
           const details = formatErrorDetails(error, 6000);
           logger.error(
             "[Bot] OpenCode API returned an error for session.prompt",
@@ -283,26 +339,36 @@ export async function processUserPrompt(
           logger.error("[Bot] session.prompt raw API error object:", error);
 
           // Send user-friendly error via API directly because ctx is no longer available
-          void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {});
+          void sendMessageWithoutDraftEffect(
+            bot.api,
+            ctx.chat!.id,
+            t("bot.prompt_send_error"),
+            withMessageThreadId(undefined, messageThreadId),
+          ).catch(() => {});
           return;
         }
 
         logger.info("[Bot] session.prompt completed");
       },
       onError: (error) => {
-        foregroundSessionState.markIdle(currentSession.id);
+        foregroundSessionState.markIdle(currentSession.id, activeScope);
         const details = formatErrorDetails(error, 6000);
         logger.error("[Bot] session.prompt background task failed", promptErrorLogContext);
         logger.error("[Bot] session.prompt background failure details:", details);
         logger.error("[Bot] session.prompt raw background error object:", error);
-        void bot.api.sendMessage(ctx.chat!.id, t("bot.prompt_send_error")).catch(() => {});
+        void sendMessageWithoutDraftEffect(
+          bot.api,
+          ctx.chat!.id,
+          t("bot.prompt_send_error"),
+          withMessageThreadId(undefined, messageThreadId),
+        ).catch(() => {});
       },
     });
 
     return true;
   } catch (err) {
     if (currentSession) {
-      foregroundSessionState.markIdle(currentSession.id);
+      foregroundSessionState.markIdle(currentSession.id, activeScope);
     }
     logger.error("Error in prompt handler:", err);
     if (interactionManager.getSnapshot()) {

@@ -2,7 +2,7 @@ import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { setCurrentSession, SessionInfo } from "../../session/manager.js";
 import { ingestSessionInfoForCache } from "../../session/cache-manager.js";
-import { getCurrentProject } from "../../settings/manager.js";
+import { getCurrentProject, setCurrentProject } from "../../settings/manager.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
 import { summaryAggregator } from "../../summary/aggregator.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
@@ -13,14 +13,29 @@ import { formatVariantForButton } from "../../variant/manager.js";
 import { createMainKeyboard } from "../utils/keyboard.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { threadContextManager } from "../../thread/manager.js";
+import { ensureUserProjectForCommand } from "../../project/user-project.js";
 
 export async function newCommand(ctx: CommandContext<Context>) {
   try {
-    const currentProject = getCurrentProject();
+    let currentProject = getCurrentProject();
 
     if (!currentProject) {
-      await ctx.reply(t("new.project_not_selected"));
-      return;
+      if (!threadContextManager.canAutoAssignProjectForActiveContext()) {
+        await ctx.reply(t("new.project_not_selected"));
+        return;
+      }
+
+      const tgId = ctx.from?.id;
+      if (!tgId) {
+        await ctx.reply(t("new.project_not_selected"));
+        return;
+      }
+
+      logger.info(`[Bot] No project selected, auto-creating project for tgId=${tgId}`);
+      currentProject = await ensureUserProjectForCommand(tgId);
+      setCurrentProject(currentProject);
+      threadContextManager.bindProjectToActiveContext(currentProject);
     }
 
     logger.debug("[Bot] Creating new session for directory:", currentProject.worktree);
@@ -43,6 +58,8 @@ export async function newCommand(ctx: CommandContext<Context>) {
       directory: currentProject.worktree,
     };
     setCurrentSession(sessionInfo);
+    threadContextManager.bindProjectToActiveContext(currentProject);
+    threadContextManager.bindSessionToActiveContext(sessionInfo);
     summaryAggregator.clear();
     clearAllInteractionState("session_created");
     await ingestSessionInfoForCache(session);

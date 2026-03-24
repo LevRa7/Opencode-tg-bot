@@ -5,12 +5,14 @@ import {
 } from "./send-with-markdown-fallback.js";
 
 type SendMessageApi = Pick<Api<RawApi>, "sendMessage">;
+type SendMessageDraftApi = Pick<Api<RawApi>, "sendMessageDraft">;
 type EditMessageApi = Pick<Api<RawApi>, "editMessageText">;
 
 type TelegramSendMessageOptions = Parameters<SendMessageApi["sendMessage"]>[2];
+type TelegramSendMessageDraftOptions = Parameters<SendMessageDraftApi["sendMessageDraft"]>[3];
 type TelegramEditMessageOptions = Parameters<EditMessageApi["editMessageText"]>[3];
 
-export type TelegramTextFormat = "raw" | "markdown_v2";
+export type TelegramTextFormat = "raw" | "markdown_v2" | "html";
 
 interface SendBotTextParams {
   api: SendMessageApi;
@@ -29,7 +31,18 @@ interface EditBotTextParams {
   format?: TelegramTextFormat;
 }
 
-function resolveParseMode(format: TelegramTextFormat | undefined): "MarkdownV2" | undefined {
+interface SendBotTextDraftParams {
+  api: SendMessageDraftApi;
+  chatId: Parameters<SendMessageDraftApi["sendMessageDraft"]>[0];
+  draftId: Parameters<SendMessageDraftApi["sendMessageDraft"]>[1];
+  text: string;
+  options?: TelegramSendMessageDraftOptions;
+  format?: TelegramTextFormat;
+}
+
+function resolveMarkdownParseMode(
+  format: TelegramTextFormat | undefined,
+): "MarkdownV2" | undefined {
   if (format === "markdown_v2") {
     return "MarkdownV2";
   }
@@ -44,12 +57,20 @@ export async function sendBotText({
   options,
   format = "raw",
 }: SendBotTextParams): Promise<void> {
+  if (format === "html") {
+    await api.sendMessage(chatId, text, {
+      ...(options || {}),
+      parse_mode: "HTML",
+    });
+    return;
+  }
+
   await sendMessageWithMarkdownFallback({
     api,
     chatId,
     text,
     options,
-    parseMode: resolveParseMode(format),
+    parseMode: resolveMarkdownParseMode(format),
   });
 }
 
@@ -61,12 +82,36 @@ export async function editBotText({
   options,
   format = "raw",
 }: EditBotTextParams): Promise<void> {
+  if (format === "html") {
+    await api.editMessageText(chatId, messageId, text, {
+      ...(options || {}),
+      parse_mode: "HTML",
+    });
+    return;
+  }
+
   await editMessageWithMarkdownFallback({
     api,
     chatId,
     messageId,
     text,
     options,
-    parseMode: resolveParseMode(format),
+    parseMode: resolveMarkdownParseMode(format),
+  });
+}
+
+export async function sendBotTextDraft({
+  api,
+  chatId,
+  draftId,
+  text,
+  options,
+  format = "raw",
+}: SendBotTextDraftParams): Promise<void> {
+  const parseMode = format === "html" ? "HTML" : resolveMarkdownParseMode(format);
+
+  await api.sendMessageDraft(chatId, draftId, text, {
+    ...(options || {}),
+    ...(parseMode ? { parse_mode: parseMode } : {}),
   });
 }

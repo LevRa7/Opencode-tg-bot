@@ -38,6 +38,8 @@ vi.mock("../../../src/session/manager.js", () => ({
 
 vi.mock("../../../src/settings/manager.js", () => ({
   clearProject: mocked.clearProjectMock,
+  getThreadContextBindings: vi.fn(() => []),
+  setThreadContextBindings: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("../../../src/bot/utils/keyboard.js", () => ({

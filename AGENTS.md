@@ -67,7 +67,7 @@ OpenCode Server
 - Persistent state is stored in `settings.json`.
 - Active runtime state is kept in dedicated in-memory managers.
 - Session/project/model/agent context is synchronized through OpenCode API calls.
-- The app is currently single-user by design.
+- Telegram access control now supports one admin user plus an explicit allowlist, while deeper per-user runtime isolation is still in progress.
 
 ## AI agent behavior rules
 
@@ -92,6 +92,7 @@ OpenCode Server
 
 - Code, identifiers, comments, and in-code documentation must be in English.
 - User-facing Telegram messages should be localized through i18n.
+- Do not hardcode user-facing interface text in bot code. Every new visible bot label, hint, status text, or service message must be added to i18n and translated in all available locales (`en`, `ru`, `de`, `es`, `fr`, `zh`).
 
 ### Code style
 
@@ -109,18 +110,29 @@ OpenCode Server
 - Send understandable error messages to users.
 - Never expose stack traces to users.
 
+### Documentation
+
+- Always maintain a complete textual description of the full bot functionality.
+- Always document how key functions, modules, managers, and API integrations interact with each other.
+- Every functional or architectural change must include documentation updates describing what changed, how it affects the flow, and which components or APIs are involved.
+
 ### Bot commands
 
 The command list is centralized in `src/bot/commands/definitions.ts`.
 
 ```typescript
 const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
+  { command: "start", descriptionKey: "cmd.description.start" },
   { command: "status", descriptionKey: "cmd.description.status" },
   { command: "new", descriptionKey: "cmd.description.new" },
   { command: "abort", descriptionKey: "cmd.description.stop" },
   { command: "sessions", descriptionKey: "cmd.description.sessions" },
   { command: "projects", descriptionKey: "cmd.description.projects" },
+  { command: "task", descriptionKey: "cmd.description.task" },
+  { command: "tasklist", descriptionKey: "cmd.description.tasklist" },
   { command: "rename", descriptionKey: "cmd.description.rename" },
+  { command: "commands", descriptionKey: "cmd.description.commands" },
+  { command: "stream", descriptionKey: "cmd.description.stream" },
   { command: "opencode_start", descriptionKey: "cmd.description.opencode_start" },
   { command: "opencode_stop", descriptionKey: "cmd.description.opencode_stop" },
   { command: "help", descriptionKey: "cmd.description.help" },
@@ -213,4 +225,5 @@ Full docs: https://opencode.ai/docs/sdk
 4. Add or update tests for new functionality.
 5. After code changes, run quality checks: `npm run build`, `npm run lint`, and `npm test`.
 6. Update checkboxes in `PRODUCT.md` when relevant tasks are completed.
-7. Keep code clean, consistent, and maintainable.
+7. Update the textual documentation for bot functionality, component interactions, and change descriptions for every relevant code change.
+8. Keep code clean, consistent, and maintainable.

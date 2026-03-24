@@ -1,3 +1,5 @@
+import { config } from "../config.js";
+import { getCurrentTelegramConversationScope } from "../telegram/scope.js";
 import { getScheduledTasks, setScheduledTasks } from "../settings/manager.js";
 import { logger } from "../utils/logger.js";
 import type { ScheduledTask } from "./types.js";
@@ -14,7 +16,7 @@ async function mutateScheduledTasks<T>(
       },
 ): Promise<T> {
   const runMutation = async (): Promise<T> => {
-    const currentTasks = listScheduledTasks();
+    const currentTasks = listAllScheduledTasks();
     const { tasks, result } = await mutator(currentTasks);
     await setScheduledTasks(tasks.map((task) => cloneScheduledTask(task)));
     return result;
@@ -25,12 +27,29 @@ async function mutateScheduledTasks<T>(
   return mutationPromise;
 }
 
-export function listScheduledTasks(): ScheduledTask[] {
+function listAllScheduledTasks(): ScheduledTask[] {
   return getScheduledTasks().map((task) => cloneScheduledTask(task));
 }
 
+function canAccessTask(task: ScheduledTask): boolean {
+  const scope = getCurrentTelegramConversationScope();
+  if (!scope) {
+    return true;
+  }
+
+  if (task.ownerScope) {
+    return task.ownerScope.userId === scope.userId;
+  }
+
+  return scope.userId === config.telegram.adminUserId;
+}
+
+export function listScheduledTasks(): ScheduledTask[] {
+  return listAllScheduledTasks().filter((task) => canAccessTask(task));
+}
+
 export function getScheduledTask(taskId: string): ScheduledTask | null {
-  const task = listScheduledTasks().find((item) => item.id === taskId);
+  const task = listAllScheduledTasks().find((item) => item.id === taskId && canAccessTask(item));
   return task ? cloneScheduledTask(task) : null;
 }
 
@@ -52,7 +71,7 @@ export async function replaceScheduledTasks(tasks: ScheduledTask[]): Promise<voi
 
 export async function removeScheduledTask(taskId: string): Promise<boolean> {
   const removed = await mutateScheduledTasks((tasks) => {
-    const nextTasks = tasks.filter((task) => task.id !== taskId);
+    const nextTasks = tasks.filter((task) => task.id !== taskId || !canAccessTask(task));
     return {
       tasks: nextTasks,
       result: nextTasks.length !== tasks.length,
@@ -72,7 +91,7 @@ export async function updateScheduledTask(
   updater: (task: ScheduledTask) => ScheduledTask,
 ): Promise<ScheduledTask | null> {
   return mutateScheduledTasks((tasks) => {
-    const index = tasks.findIndex((task) => task.id === taskId);
+    const index = tasks.findIndex((task) => task.id === taskId && canAccessTask(task));
     if (index < 0) {
       return { tasks, result: null };
     }

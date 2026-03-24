@@ -1,74 +1,111 @@
 import { PermissionRequest, PermissionState } from "./types.js";
+import type { TelegramConversationScope } from "../telegram/scope.js";
+import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
 import { logger } from "../utils/logger.js";
 
-class PermissionManager {
-  private state: PermissionState = {
+function createInitialState(): PermissionState {
+  return {
     requestsByMessageId: new Map(),
   };
+}
+
+class PermissionManager {
+  private states = new Map<string, PermissionState>();
+
+  private getScopeKey(scope?: TelegramConversationScope | null): string {
+    return resolveTelegramConversationScopeKey(scope);
+  }
+
+  private getOrCreateState(scope?: TelegramConversationScope | null): PermissionState {
+    const scopeKey = this.getScopeKey(scope);
+    let state = this.states.get(scopeKey);
+    if (!state) {
+      state = createInitialState();
+      this.states.set(scopeKey, state);
+    }
+
+    return state;
+  }
+
+  private getState(scope?: TelegramConversationScope | null): PermissionState {
+    return this.states.get(this.getScopeKey(scope)) ?? createInitialState();
+  }
 
   /**
    * Register a new permission request message
    */
-  startPermission(request: PermissionRequest, messageId: number): void {
+  startPermission(
+    request: PermissionRequest,
+    messageId: number,
+    scope?: TelegramConversationScope | null,
+  ): void {
+    const state = this.getOrCreateState(scope);
+    const scopeKey = this.getScopeKey(scope);
     logger.debug(
-      `[PermissionManager] startPermission: id=${request.id}, permission=${request.permission}, messageId=${messageId}`,
+      `[PermissionManager] startPermission: scope=${scopeKey}, id=${request.id}, permission=${request.permission}, messageId=${messageId}`,
     );
 
-    if (this.state.requestsByMessageId.has(messageId)) {
+    if (state.requestsByMessageId.has(messageId)) {
       logger.warn(`[PermissionManager] Message ID already tracked, replacing: ${messageId}`);
     }
 
-    this.state.requestsByMessageId.set(messageId, request);
+    state.requestsByMessageId.set(messageId, request);
 
     logger.info(
-      `[PermissionManager] New permission request: type=${request.permission}, patterns=${request.patterns.join(", ")}, pending=${this.state.requestsByMessageId.size}`,
+      `[PermissionManager] New permission request: scope=${scopeKey}, type=${request.permission}, patterns=${request.patterns.join(", ")}, pending=${state.requestsByMessageId.size}`,
     );
   }
 
   /**
    * Get permission request by Telegram message ID
    */
-  getRequest(messageId: number | null): PermissionRequest | null {
+  getRequest(
+    messageId: number | null,
+    scope?: TelegramConversationScope | null,
+  ): PermissionRequest | null {
     if (messageId === null) {
       return null;
     }
 
-    return this.state.requestsByMessageId.get(messageId) ?? null;
+    return this.getState(scope).requestsByMessageId.get(messageId) ?? null;
   }
 
   /**
    * Get request ID for API reply by Telegram message ID
    */
-  getRequestID(messageId: number | null): string | null {
-    return this.getRequest(messageId)?.id ?? null;
+  getRequestID(messageId: number | null, scope?: TelegramConversationScope | null): string | null {
+    return this.getRequest(messageId, scope)?.id ?? null;
   }
 
   /**
    * Get permission type (bash, edit, etc.) by message ID
    */
-  getPermissionType(messageId: number | null): string | null {
-    return this.getRequest(messageId)?.permission ?? null;
+  getPermissionType(
+    messageId: number | null,
+    scope?: TelegramConversationScope | null,
+  ): string | null {
+    return this.getRequest(messageId, scope)?.permission ?? null;
   }
 
   /**
    * Get patterns (commands/files) by message ID
    */
-  getPatterns(messageId: number | null): string[] {
-    return this.getRequest(messageId)?.patterns ?? [];
+  getPatterns(messageId: number | null, scope?: TelegramConversationScope | null): string[] {
+    return this.getRequest(messageId, scope)?.patterns ?? [];
   }
 
   /**
    * Check if callback message ID belongs to active permission request
    */
-  isActiveMessage(messageId: number | null): boolean {
-    return messageId !== null && this.state.requestsByMessageId.has(messageId);
+  isActiveMessage(messageId: number | null, scope?: TelegramConversationScope | null): boolean {
+    return messageId !== null && this.getState(scope).requestsByMessageId.has(messageId);
   }
 
   /**
    * Get latest Telegram message ID
    */
-  getMessageId(): number | null {
-    const messageIds = this.getMessageIds();
+  getMessageId(scope?: TelegramConversationScope | null): number | null {
+    const messageIds = this.getMessageIds(scope);
     if (messageIds.length === 0) {
       return null;
     }
@@ -79,23 +116,27 @@ class PermissionManager {
   /**
    * Get Telegram message IDs for all active requests
    */
-  getMessageIds(): number[] {
-    return Array.from(this.state.requestsByMessageId.keys());
+  getMessageIds(scope?: TelegramConversationScope | null): number[] {
+    return Array.from(this.getState(scope).requestsByMessageId.keys());
   }
 
   /**
    * Remove permission request by Telegram message ID
    */
-  removeByMessageId(messageId: number | null): PermissionRequest | null {
-    const request = this.getRequest(messageId);
+  removeByMessageId(
+    messageId: number | null,
+    scope?: TelegramConversationScope | null,
+  ): PermissionRequest | null {
+    const state = this.getOrCreateState(scope);
+    const request = this.getRequest(messageId, scope);
     if (!request || messageId === null) {
       return null;
     }
 
-    this.state.requestsByMessageId.delete(messageId);
+    state.requestsByMessageId.delete(messageId);
 
     logger.debug(
-      `[PermissionManager] Removed permission request: id=${request.id}, messageId=${messageId}, pending=${this.state.requestsByMessageId.size}`,
+      `[PermissionManager] Removed permission request: scope=${this.getScopeKey(scope)}, id=${request.id}, messageId=${messageId}, pending=${state.requestsByMessageId.size}`,
     );
 
     return request;
@@ -104,28 +145,31 @@ class PermissionManager {
   /**
    * Get number of active permission requests
    */
-  getPendingCount(): number {
-    return this.state.requestsByMessageId.size;
+  getPendingCount(scope?: TelegramConversationScope | null): number {
+    return this.getState(scope).requestsByMessageId.size;
   }
 
   /**
    * Check if there are active permission requests
    */
-  isActive(): boolean {
-    return this.state.requestsByMessageId.size > 0;
+  isActive(scope?: TelegramConversationScope | null): boolean {
+    return this.getState(scope).requestsByMessageId.size > 0;
   }
 
   /**
    * Clear state after reply
    */
-  clear(): void {
+  clear(scope?: TelegramConversationScope | null): void {
+    const state = this.getOrCreateState(scope);
     logger.debug(
-      `[PermissionManager] Clearing permission state: pending=${this.state.requestsByMessageId.size}`,
+      `[PermissionManager] Clearing permission state: scope=${this.getScopeKey(scope)}, pending=${state.requestsByMessageId.size}`,
     );
 
-    this.state = {
-      requestsByMessageId: new Map(),
-    };
+    this.states.set(this.getScopeKey(scope), createInitialState());
+  }
+
+  __resetForTests(): void {
+    this.states.clear();
   }
 }
 

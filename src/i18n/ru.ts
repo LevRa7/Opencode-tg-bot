@@ -9,6 +9,7 @@ export const ru: I18nDictionary = {
   "cmd.description.task": "Создать задачу по расписанию",
   "cmd.description.tasklist": "Список задач по расписанию",
   "cmd.description.commands": "Пользовательские команды",
+  "cmd.description.stream": "Переключить стриминг сообщений",
   "cmd.description.opencode_start": "Запустить OpenCode сервер",
   "cmd.description.opencode_stop": "Остановить OpenCode сервер",
   "cmd.description.help": "Справка",
@@ -52,6 +53,11 @@ export const ru: I18nDictionary = {
     "💡 Режим, модель, вариант и действия с контекстом доступны через нижние кнопки клавиатуры.",
   "help.text":
     "📖 **Справка**\n\n/status - Проверить статус сервера\n/sessions - Список сессий\n/new - Создать новую сессию\n/help - Справка",
+  "stream.enabled": "✨ Стриминг сообщений включен для ответов и технических сообщений бота.",
+  "stream.disabled": "⏹ Стриминг сообщений отключен.",
+  "stream.status_enabled": "✨ Стриминг сообщений сейчас включен.",
+  "stream.status_disabled": "⏹ Стриминг сообщений сейчас отключен.",
+  "stream.usage": "Используйте /stream on, /stream off или /stream status.",
 
   "bot.thinking": "💭 Думаю...",
   "bot.project_not_selected": "🏗 Проект не выбран.\n\nСначала выберите проект командой /projects.",
@@ -61,6 +67,8 @@ export const ru: I18nDictionary = {
   "bot.session_created": "✅ Сессия создана: {title}",
   "bot.session_busy":
     "⏳ Агент уже выполняет задачу. Дождитесь завершения или используйте /abort, чтобы прервать текущий запуск.",
+  "bot.parallel_limit_reached":
+    "⏳ У вас уже есть {limit} активных запросов в разных топиках. Дождитесь завершения одного из них или используйте /abort.",
   "bot.session_reset_project_mismatch":
     "⚠️ Активная сессия не соответствует выбранному проекту, поэтому была сброшена. Используйте /sessions для выбора или /new для создания новой сессии.",
   "bot.prompt_send_error": "Не удалось отправить запрос в OpenCode.",
@@ -74,10 +82,16 @@ export const ru: I18nDictionary = {
     "⚠️ Текущая модель не поддерживает изображения. Отправляю только текст.",
   "bot.photo_download_error": "🔴 Не удалось скачать фото",
   "bot.photo_no_caption": "💡 Совет: Добавьте подпись, чтобы описать, что делать с этим фото.",
+  "bot.video_downloading": "⏳ Скачиваю видео...",
+  "bot.video_too_long": "⚠️ Видео слишком длинное (макс. {maxDurationSec} сек)",
+  "bot.video_model_no_video": "⚠️ Текущая модель не поддерживает видео. Отправляю только текст.",
+  "bot.video_download_error": "🔴 Не удалось скачать видео",
   "bot.file_downloading": "⏳ Скачиваю файл...",
   "bot.file_too_large": "⚠️ Файл слишком большой (макс. {maxSizeMb}МБ)",
   "bot.file_download_error": "🔴 Не удалось скачать файл",
   "bot.model_no_pdf": "⚠️ Текущая модель не поддерживает PDF. Отправляю только текст.",
+  "bot.media_model_no_support":
+    "⚠️ Ни выбранная модель, ни резервная Gemini не поддерживают этот тип медиа.",
   "bot.text_file_too_large": "⚠️ Текстовый файл слишком большой (макс. {maxSizeKb}КБ)",
 
   "status.header_running": "🟢 OpenCode Server запущен",
@@ -179,6 +193,9 @@ export const ru: I18nDictionary = {
   "opencode_stop.success": "✅ OpenCode Server успешно остановлен",
   "opencode_stop.error":
     "🔴 Произошла ошибка при остановке сервера.\n\nПроверьте логи приложения для подробностей.",
+  "restart.in_progress": "⚠️ Перезапуск бота уже выполняется.",
+  "restart.restarting": "🔄 Перезапускаю бота...",
+  "restart.error": "🔴 Не удалось перезапустить бота\n\nОшибка: {error}",
 
   "agent.changed_callback": "Режим изменен: {name}",
   "agent.changed_message": "✅ Режим изменен на: {name}",
@@ -392,7 +409,9 @@ export const ru: I18nDictionary = {
     "⚠️ Аргументы не могут быть пустыми. Отправьте текст или нажмите Выполнить.",
   "commands.execute_error": "🔴 Не удалось выполнить команду OpenCode.",
 
+  "cmd.description.start": "Запустить или сбросить бота",
   "cmd.description.rename": "Переименовать текущую сессию",
+  "cmd.description.restart": "Перезапустить бота",
 
   "cli.usage":
     "Использование:\n  opencode-telegram [start] [--mode sources|installed]\n  opencode-telegram status\n  opencode-telegram stop\n  opencode-telegram config\n\nЗаметки:\n  - Без команды по умолчанию используется `start`\n  - `--mode` сейчас поддерживается только для `start`",

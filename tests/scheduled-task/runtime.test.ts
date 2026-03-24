@@ -20,7 +20,8 @@ function cloneTask(task: ScheduledTask): ScheduledTask {
 vi.mock("../../src/config.js", () => ({
   config: {
     telegram: {
-      allowedUserId: 777,
+      adminUserId: 777,
+      allowedUserIds: [777],
     },
     opencode: {
       apiUrl: "http://localhost:4096",
@@ -107,12 +108,16 @@ function createTask(partial: Partial<ScheduledTask> = {}): ScheduledTask {
       lastStatus: "idle",
       lastError: null,
       ...partial,
-    };
+    } as ScheduledTask;
   }
 
   return {
     id: "task-1",
     kind: "once",
+    ownerScope: {
+      userId: 777,
+      chatId: 777,
+    },
     projectId: "project-1",
     projectWorktree: "D:\\Projects\\Repo",
     model: {
@@ -132,7 +137,7 @@ function createTask(partial: Partial<ScheduledTask> = {}): ScheduledTask {
     lastStatus: "idle",
     lastError: null,
     ...partial,
-  };
+  } as ScheduledTask;
 }
 
 describe("scheduled-task/runtime", () => {
@@ -219,6 +224,50 @@ describe("scheduled-task/runtime", () => {
       expect.objectContaining({
         chatId: 777,
         text: expect.stringContaining("Task failed"),
+      }),
+    );
+
+    runtime.__resetForTests();
+    vi.useRealTimers();
+  });
+
+  it("delivers scheduled task result back to the owner topic", async () => {
+    ({ ScheduledTaskRuntime: ScheduledTaskRuntimeClass } =
+      await import("../../src/scheduled-task/runtime.js"));
+    ({ foregroundSessionState } = await import("../../src/scheduled-task/foreground-state.js"));
+    foregroundSessionState.__resetForTests();
+
+    const runtime = new ScheduledTaskRuntimeClass();
+    mocked.tasks = [
+      createTask({
+        nextRunAt: "2026-03-16T09:59:00.000Z",
+        ownerScope: {
+          userId: 555,
+          chatId: -100123,
+          messageThreadId: 42,
+        },
+      }),
+    ];
+    mocked.executeScheduledTaskMock.mockResolvedValue({
+      taskId: "task-1",
+      status: "success",
+      startedAt: "2026-03-16T10:00:00.000Z",
+      finishedAt: "2026-03-16T10:01:00.000Z",
+      resultText: "Topic result",
+      errorMessage: null,
+    });
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-16T10:00:00.000Z"));
+
+    await runtime.initialize({ api: {} } as Bot<Context>);
+    await vi.runAllTimersAsync();
+
+    expect(mocked.sendBotTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: -100123,
+        options: { message_thread_id: 42 },
+        text: expect.stringContaining("Topic result"),
       }),
     );
 

@@ -36,6 +36,8 @@ const mocked = vi.hoisted(() => ({
 
 vi.mock("../../../src/settings/manager.js", () => ({
   getCurrentProject: vi.fn(() => mocked.currentProject),
+  getThreadContextBindings: vi.fn(() => []),
+  setThreadContextBindings: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("../../../src/session/manager.js", () => ({

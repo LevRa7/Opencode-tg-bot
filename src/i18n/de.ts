@@ -9,6 +9,7 @@ export const de: I18nDictionary = {
   "cmd.description.task": "Geplante Aufgabe erstellen",
   "cmd.description.tasklist": "Geplante Aufgaben anzeigen",
   "cmd.description.commands": "Benutzerdefinierte Befehle",
+  "cmd.description.stream": "Nachrichten-Streaming umschalten",
   "cmd.description.opencode_start": "OpenCode-Server starten",
   "cmd.description.opencode_stop": "OpenCode-Server stoppen",
   "cmd.description.help": "Hilfe",
@@ -55,6 +56,11 @@ export const de: I18nDictionary = {
     "💡 Nutze die unteren Buttons für Modus, Modell, Variante und Kontextaktionen.",
   "help.text":
     "📖 **Hilfe**\n\n/status - Serverstatus prüfen\n/sessions - Sitzungsliste\n/new - Neue Sitzung erstellen\n/help - Hilfe",
+  "stream.enabled": "✨ Nachrichten-Streaming ist für Assistenten- und Bot-Nachrichten aktiviert.",
+  "stream.disabled": "⏹ Nachrichten-Streaming ist deaktiviert.",
+  "stream.status_enabled": "✨ Nachrichten-Streaming ist derzeit aktiviert.",
+  "stream.status_disabled": "⏹ Nachrichten-Streaming ist derzeit deaktiviert.",
+  "stream.usage": "Verwende /stream on, /stream off oder /stream status.",
 
   "bot.thinking": "💭 Denke...",
   "bot.project_not_selected":
@@ -65,6 +71,8 @@ export const de: I18nDictionary = {
   "bot.session_created": "✅ Sitzung erstellt: {title}",
   "bot.session_busy":
     "⏳ Agent führt bereits eine Aufgabe aus. Warte auf Abschluss oder nutze /abort, um den aktuellen Lauf zu unterbrechen.",
+  "bot.parallel_limit_reached":
+    "⏳ Du hast bereits {limit} aktive Anfragen in verschiedenen Themen. Warte, bis eine abgeschlossen ist, oder nutze /abort.",
   "bot.session_reset_project_mismatch":
     "⚠️ Die aktive Sitzung passt nicht zum ausgewählten Projekt und wurde daher zurückgesetzt. Nutze /sessions zur Auswahl oder /new, um eine neue Sitzung zu erstellen.",
   "bot.prompt_send_error": "Anfrage konnte nicht an OpenCode gesendet werden.",
@@ -80,10 +88,17 @@ export const de: I18nDictionary = {
   "bot.photo_download_error": "🔴 Foto konnte nicht heruntergeladen werden",
   "bot.photo_no_caption":
     "💡 Tipp: Füge eine Bildunterschrift hinzu, um zu beschreiben, was du mit diesem Foto tun möchtest.",
+  "bot.video_downloading": "⏳ Lade Video herunter...",
+  "bot.video_too_long": "⚠️ Video ist zu lang (max. {maxDurationSec} Sek.)",
+  "bot.video_model_no_video":
+    "⚠️ Das aktuelle Modell unterstützt keine Videoeingabe. Sende nur Text.",
+  "bot.video_download_error": "🔴 Video konnte nicht heruntergeladen werden",
   "bot.file_downloading": "⏳ Lade Datei herunter...",
   "bot.file_too_large": "⚠️ Datei ist zu groß (max. {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 Datei konnte nicht heruntergeladen werden",
   "bot.model_no_pdf": "⚠️ Das aktuelle Modell unterstützt keine PDF-Eingabe. Sende nur Text.",
+  "bot.media_model_no_support":
+    "⚠️ Weder das ausgewählte Modell noch das Gemini-Fallback unterstützen diese Medieneingabe.",
   "bot.text_file_too_large": "⚠️ Textdatei ist zu groß (max. {maxSizeKb}KB)",
 
   "status.header_running": "🟢 OpenCode-Server läuft",
@@ -188,6 +203,9 @@ export const de: I18nDictionary = {
   "opencode_stop.success": "✅ OpenCode-Server erfolgreich gestoppt",
   "opencode_stop.error":
     "🔴 Beim Stoppen des Servers ist ein Fehler aufgetreten.\n\nSiehe Anwendungslogs für Details.",
+  "restart.in_progress": "⚠️ Der Bot-Neustart läuft bereits.",
+  "restart.restarting": "🔄 Starte Bot neu...",
+  "restart.error": "🔴 Bot konnte nicht neu gestartet werden\n\nFehler: {error}",
 
   "agent.changed_callback": "Modus geändert: {name}",
   "agent.changed_message": "✅ Modus geändert zu: {name}",
@@ -404,7 +422,9 @@ export const de: I18nDictionary = {
     "⚠️ Argumente dürfen nicht leer sein. Sende Text oder tippe auf Ausführen.",
   "commands.execute_error": "🔴 OpenCode-Befehl konnte nicht ausgeführt werden.",
 
+  "cmd.description.start": "Bot starten oder zurücksetzen",
   "cmd.description.rename": "Aktuelle Sitzung umbenennen",
+  "cmd.description.restart": "Bot neu starten",
 
   "cli.usage":
     "Verwendung:\n  opencode-telegram [start] [--mode sources|installed]\n  opencode-telegram status\n  opencode-telegram stop\n  opencode-telegram config\n\nHinweise:\n  - Ohne Befehl wird standardmäßig `start` verwendet\n  - `--mode` wird derzeit nur für `start` unterstützt",

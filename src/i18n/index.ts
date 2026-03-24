@@ -60,7 +60,7 @@ export interface LocaleOption {
 
 type TranslationParams = Record<string, string | number | boolean | null | undefined>;
 
-const DEFAULT_LOCALE: Locale = "en";
+const DEFAULT_LOCALE: Locale = "ru";
 
 export const SUPPORTED_LOCALES: readonly Locale[] = LOCALE_DEFINITIONS.map(
   (definition) => definition.code,

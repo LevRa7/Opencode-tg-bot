@@ -5,6 +5,7 @@ import { normalizePathForDisplay, prepareCodeFile } from "./formatter.js";
 import type { Question } from "../question/types.js";
 import type { PermissionRequest } from "../permission/types.js";
 import type { FileChange } from "../pinned/types.js";
+import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
 import { logger } from "../utils/logger.js";
 import { getCurrentProject } from "../settings/manager.js";
 
@@ -16,6 +17,8 @@ export interface SummaryInfo {
 }
 
 type MessageCompleteCallback = (sessionId: string, messageText: string) => void;
+
+type StreamUpdateCallback = (sessionId: string, messageText: string) => void | Promise<void>;
 
 export interface ToolInfo {
   sessionId: string;
@@ -38,11 +41,11 @@ type ToolCallback = (toolInfo: ToolInfo) => void;
 
 type ToolFileCallback = (fileInfo: ToolFileInfo) => void;
 
-type QuestionCallback = (questions: Question[], requestID: string) => void;
+type QuestionCallback = (sessionId: string, questions: Question[], requestID: string) => void;
 
-type QuestionErrorCallback = () => void;
+type QuestionErrorCallback = (sessionId: string | null) => void;
 
-type ThinkingCallback = (sessionId: string) => void;
+type ThinkingCallback = (sessionId: string, reasoningText: string) => void | Promise<void>;
 
 export interface TokensInfo {
   input: number;
@@ -73,7 +76,7 @@ type SessionDiffCallback = (sessionId: string, diffs: FileChange[]) => void;
 
 type FileChangeCallback = (change: FileChange) => void;
 
-type ClearedCallback = () => void;
+type ClearedCallback = (previousSessionId: string | null) => void;
 
 interface PreparedToolFileContext {
   fileData: CodeFileData | null;
@@ -116,6 +119,7 @@ class SummaryAggregator {
   private messageCount = 0;
   private lastUpdated = 0;
   private onCompleteCallback: MessageCompleteCallback | null = null;
+  private onStreamUpdateCallback: StreamUpdateCallback | null = null;
   private onToolCallback: ToolCallback | null = null;
   private onToolFileCallback: ToolFileCallback | null = null;
   private onQuestionCallback: QuestionCallback | null = null;
@@ -130,19 +134,24 @@ class SummaryAggregator {
   private onFileChangeCallback: FileChangeCallback | null = null;
   private onClearedCallback: ClearedCallback | null = null;
   private processedToolStates: Set<string> = new Set();
-  private thinkingFiredForMessages: Set<string> = new Set();
   private bot: Bot | null = null;
   private chatId: number | null = null;
+  private messageThreadId: number | undefined;
   private typingTimer: ReturnType<typeof setInterval> | null = null;
   private partHashes: Map<string, Set<string>> = new Map();
 
-  setBotAndChatId(bot: Bot, chatId: number): void {
+  setBotAndChatId(bot: Bot, chatId: number, messageThreadId?: number): void {
     this.bot = bot;
     this.chatId = chatId;
+    this.messageThreadId = messageThreadId;
   }
 
   setOnComplete(callback: MessageCompleteCallback): void {
     this.onCompleteCallback = callback;
+  }
+
+  setOnStreamUpdate(callback: StreamUpdateCallback): void {
+    this.onStreamUpdateCallback = callback;
   }
 
   setOnTool(callback: ToolCallback): void {
@@ -204,9 +213,15 @@ class SummaryAggregator {
 
     const sendTyping = () => {
       if (this.bot && this.chatId) {
-        this.bot.api.sendChatAction(this.chatId, "typing").catch((err) => {
-          logger.error("Failed to send typing action:", err);
-        });
+        this.bot.api
+          .sendChatAction(this.chatId, "typing", {
+            ...(typeof this.messageThreadId === "number"
+              ? { message_thread_id: this.messageThreadId }
+              : {}),
+          })
+          .catch((err) => {
+            logger.error("Failed to send typing action:", err);
+          });
       }
     };
 
@@ -289,20 +304,21 @@ class SummaryAggregator {
   }
 
   clear(): void {
+    const previousSessionId = this.currentSessionId;
     this.stopTypingIndicator();
     this.currentSessionId = null;
+    this.messageThreadId = undefined;
     this.currentMessageParts.clear();
     this.pendingParts.clear();
     this.messages.clear();
     this.partHashes.clear();
     this.processedToolStates.clear();
-    this.thinkingFiredForMessages.clear();
     this.messageCount = 0;
     this.lastUpdated = 0;
 
     if (this.onClearedCallback) {
       try {
-        this.onClearedCallback();
+        this.onClearedCallback(previousSessionId);
       } catch (err) {
         logger.error("[Aggregator] Error in clear callback:", err);
       }
@@ -335,6 +351,13 @@ class SummaryAggregator {
       const current = this.currentMessageParts.get(messageID) || [];
       this.currentMessageParts.set(messageID, [...current, ...pending]);
       this.pendingParts.delete(messageID);
+
+      if (this.onStreamUpdateCallback && pending.length > 0) {
+        const latestPendingText = pending[pending.length - 1];
+        setImmediate(() => {
+          void this.onStreamUpdateCallback?.(info.sessionID, latestPendingText);
+        });
+      }
 
       const assistantMessage = info as { time?: { created: number; completed?: number } };
       const time = assistantMessage.time;
@@ -407,35 +430,34 @@ class SummaryAggregator {
 
     const messageID = part.messageID;
     const messageInfo = this.messages.get(messageID);
+    const partText = "text" in part && typeof part.text === "string" ? part.text : "";
+    const partHash = partText ? this.hashString(partText) : null;
 
-    if (part.type === "reasoning") {
-      // Fire the thinking callback once per message on the first reasoning part.
-      // This is the signal that the model is actually doing extended thinking.
-      if (!this.thinkingFiredForMessages.has(messageID) && this.onThinkingCallback) {
-        this.thinkingFiredForMessages.add(messageID);
-        const callback = this.onThinkingCallback;
-        const sessionID = part.sessionID;
-        setImmediate(() => {
-          if (typeof callback === "function") {
-            callback(sessionID);
-          }
-        });
-      }
-    } else if (part.type === "text" && "text" in part && part.text) {
-      const partHash = this.hashString(part.text);
-
+    if (partHash) {
       if (!this.partHashes.has(messageID)) {
         this.partHashes.set(messageID, new Set());
       }
 
       const hashes = this.partHashes.get(messageID)!;
-
       if (hashes.has(partHash)) {
         return;
       }
 
       hashes.add(partHash);
+    }
 
+    if (part.type === "reasoning") {
+      const reasoningText = partText.trim();
+      if (reasoningText && this.onThinkingCallback) {
+        const callback = this.onThinkingCallback;
+        const sessionID = part.sessionID;
+        setImmediate(() => {
+          if (typeof callback === "function") {
+            void callback(sessionID, reasoningText);
+          }
+        });
+      }
+    } else if (part.type === "text" && "text" in part && part.text) {
       if (messageInfo && messageInfo.role === "assistant") {
         if (!this.currentMessageParts.has(messageID)) {
           this.currentMessageParts.set(messageID, []);
@@ -444,6 +466,13 @@ class SummaryAggregator {
 
         const parts = this.currentMessageParts.get(messageID)!;
         parts.push(part.text);
+
+        if (this.onStreamUpdateCallback) {
+          const latestText = part.text;
+          setImmediate(() => {
+            void this.onStreamUpdateCallback?.(part.sessionID, latestText);
+          });
+        }
       } else {
         if (!this.pendingParts.has(messageID)) {
           this.pendingParts.set(messageID, []);
@@ -472,7 +501,7 @@ class SummaryAggregator {
           );
           if (this.onQuestionErrorCallback) {
             setImmediate(() => {
-              this.onQuestionErrorCallback!();
+              this.onQuestionErrorCallback!(this.currentSessionId);
             });
           }
           return;
@@ -792,7 +821,7 @@ class SummaryAggregator {
       const callback = this.onQuestionCallback;
       setImmediate(async () => {
         try {
-          await callback(questions as Question[], id);
+          await callback(sessionID, questions as Question[], id);
         } catch (err) {
           logger.error("[Aggregator] Error in question callback:", err);
         }
@@ -857,4 +886,27 @@ class SummaryAggregator {
   }
 }
 
-export const summaryAggregator = new SummaryAggregator();
+const summaryAggregatorRegistry = new Map<string, SummaryAggregator>();
+
+function getSummaryAggregatorInstance(): SummaryAggregator {
+  const scopeKey = resolveTelegramConversationScopeKey();
+  const existing = summaryAggregatorRegistry.get(scopeKey);
+  if (existing) {
+    return existing;
+  }
+
+  const aggregator = new SummaryAggregator();
+  summaryAggregatorRegistry.set(scopeKey, aggregator);
+  return aggregator;
+}
+
+export function __resetSummaryAggregatorsForTests(): void {
+  summaryAggregatorRegistry.clear();
+}
+
+export const summaryAggregator = new Proxy({} as SummaryAggregator, {
+  get(_target, property, receiver) {
+    const value = Reflect.get(getSummaryAggregatorInstance(), property, receiver);
+    return typeof value === "function" ? value.bind(getSummaryAggregatorInstance()) : value;
+  },
+});

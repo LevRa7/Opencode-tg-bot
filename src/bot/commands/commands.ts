@@ -1,6 +1,6 @@
 import { Bot, CommandContext, Context, InlineKeyboard } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
-import { getCurrentProject } from "../../settings/manager.js";
+import { getCurrentProject, setCurrentProject } from "../../settings/manager.js";
 import {
   clearSession,
   getCurrentSession,
@@ -17,6 +17,10 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import { sendMessageWithoutDraftEffect } from "../utils/send-message-draft-effect-context.js";
+import { threadContextManager } from "../../thread/manager.js";
+import { ensureUserProjectForCommand } from "../../project/user-project.js";
 
 const COMMANDS_CALLBACK_PREFIX = "commands:";
 const COMMANDS_CALLBACK_SELECT_PREFIX = `${COMMANDS_CALLBACK_PREFIX}select:`;
@@ -250,12 +254,17 @@ async function ensureSessionForProject(
   projectDirectory: string,
 ): Promise<SessionInfo | null> {
   let currentSession = getCurrentSession();
+  const currentProject = getCurrentProject();
+  if (currentProject && currentProject.worktree === projectDirectory) {
+    threadContextManager.bindProjectToActiveContext(currentProject);
+  }
 
   if (currentSession && currentSession.directory !== projectDirectory) {
     logger.warn(
       `[Commands] Session/project mismatch detected. sessionDirectory=${currentSession.directory}, projectDirectory=${projectDirectory}. Resetting session context.`,
     );
     clearSession();
+    threadContextManager.clearSessionForActiveContext();
     summaryAggregator.clear();
     foregroundSessionState.clearAll("session_mismatch_reset");
     await ctx.reply(t("bot.session_reset_project_mismatch"));
@@ -263,7 +272,13 @@ async function ensureSessionForProject(
   }
 
   if (currentSession) {
+    threadContextManager.bindSessionToActiveContext(currentSession);
     return currentSession;
+  }
+
+  if (!threadContextManager.canAutoAssignSessionForActiveContext()) {
+    await ctx.reply(`${t("status.session_not_selected")}\n${t("status.session_hint")}`);
+    return null;
   }
 
   await ctx.reply(t("bot.creating_session"));
@@ -284,6 +299,7 @@ async function ensureSessionForProject(
   };
 
   setCurrentSession(sessionInfo);
+  threadContextManager.bindSessionToActiveContext(sessionInfo);
   await ingestSessionInfoForCache(session);
   await ctx.reply(t("bot.session_created", { title: session.title }));
 
@@ -309,11 +325,19 @@ async function executeCommand(
 
   await deps.ensureEventSubscription(session.directory);
   summaryAggregator.setSession(session.id);
-  summaryAggregator.setBotAndChatId(deps.bot, ctx.chat.id);
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+  summaryAggregator.setBotAndChatId(deps.bot, ctx.chat.id, messageThreadId);
 
   const sessionIsBusy = await isSessionBusy(session.id, session.directory);
   if (sessionIsBusy) {
     await ctx.reply(t("bot.session_busy"));
+    return;
+  }
+
+  const activeScope = threadContextManager.getActiveScope();
+  const reservedForegroundSlot = foregroundSessionState.tryMarkBusy(session.id, activeScope);
+  if (!reservedForegroundSlot) {
+    await ctx.reply(t("bot.parallel_limit_reached", { limit: "5" }));
     return;
   }
 
@@ -323,8 +347,6 @@ async function executeCommand(
     storedModel.providerID && storedModel.modelID
       ? `${storedModel.providerID}/${storedModel.modelID}`
       : undefined;
-
-  foregroundSessionState.markBusy(session.id);
 
   safeBackgroundTask({
     taskName: "session.command",
@@ -340,14 +362,19 @@ async function executeCommand(
       }),
     onSuccess: ({ error }) => {
       if (error) {
-        foregroundSessionState.markIdle(session.id);
+        foregroundSessionState.markIdle(session.id, activeScope);
         logger.error("[Commands] OpenCode API returned an error for session.command", {
           sessionId: session.id,
           command: params.commandName,
           args,
         });
         logger.error("[Commands] session.command error details:", error);
-        void ctx.api.sendMessage(ctx.chat!.id, t("commands.execute_error")).catch(() => {});
+        void sendMessageWithoutDraftEffect(
+          ctx.api,
+          ctx.chat!.id,
+          t("commands.execute_error"),
+          withMessageThreadId(undefined, messageThreadId),
+        ).catch(() => {});
         return;
       }
 
@@ -356,24 +383,42 @@ async function executeCommand(
       );
     },
     onError: (error) => {
-      foregroundSessionState.markIdle(session.id);
+      foregroundSessionState.markIdle(session.id, activeScope);
       logger.error("[Commands] session.command background task failed", {
         sessionId: session.id,
         command: params.commandName,
         args,
       });
       logger.error("[Commands] session.command background failure details:", error);
-      void ctx.api.sendMessage(ctx.chat!.id, t("commands.execute_error")).catch(() => {});
+      void sendMessageWithoutDraftEffect(
+        ctx.api,
+        ctx.chat!.id,
+        t("commands.execute_error"),
+        withMessageThreadId(undefined, messageThreadId),
+      ).catch(() => {});
     },
   });
 }
 
 export async function commandsCommand(ctx: CommandContext<Context>): Promise<void> {
   try {
-    const currentProject = getCurrentProject();
+    let currentProject = getCurrentProject();
     if (!currentProject) {
-      await ctx.reply(t("bot.project_not_selected"));
-      return;
+      if (!threadContextManager.canAutoAssignProjectForActiveContext()) {
+        await ctx.reply(t("bot.project_not_selected"));
+        return;
+      }
+
+      const tgId = ctx.from?.id;
+      if (!tgId) {
+        await ctx.reply(t("bot.project_not_selected"));
+        return;
+      }
+
+      logger.info(`[Bot] No project selected, auto-creating project for tgId=${tgId}`);
+      currentProject = await ensureUserProjectForCommand(tgId);
+      setCurrentProject(currentProject);
+      threadContextManager.bindProjectToActiveContext(currentProject);
     }
 
     const commands = await getCommandList(currentProject.worktree);

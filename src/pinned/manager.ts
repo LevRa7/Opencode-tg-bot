@@ -9,8 +9,10 @@ import {
   clearPinnedMessageId,
 } from "../settings/manager.js";
 import { getStoredModel } from "../model/manager.js";
+import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
 import type { FileChange, PinnedMessageState, TokensInfo } from "./types.js";
 import { t } from "../i18n/index.js";
+import { sendMessageWithoutDraftEffect } from "../bot/utils/send-message-draft-effect-context.js";
 
 class PinnedMessageManager {
   private api: Api | null = null;
@@ -615,7 +617,7 @@ class PinnedMessageManager {
       const text = this.formatMessage();
 
       // Send new message
-      const sentMessage = await this.api.sendMessage(this.chatId, text);
+      const sentMessage = await sendMessageWithoutDraftEffect(this.api, this.chatId, text);
 
       this.state.messageId = sentMessage.message_id;
       this.state.chatId = this.chatId;
@@ -747,4 +749,27 @@ class PinnedMessageManager {
   }
 }
 
-export const pinnedMessageManager = new PinnedMessageManager();
+const pinnedMessageManagerRegistry = new Map<string, PinnedMessageManager>();
+
+function getPinnedMessageManagerInstance(): PinnedMessageManager {
+  const scopeKey = resolveTelegramConversationScopeKey();
+  const existing = pinnedMessageManagerRegistry.get(scopeKey);
+  if (existing) {
+    return existing;
+  }
+
+  const manager = new PinnedMessageManager();
+  pinnedMessageManagerRegistry.set(scopeKey, manager);
+  return manager;
+}
+
+export function __resetPinnedMessageManagersForTests(): void {
+  pinnedMessageManagerRegistry.clear();
+}
+
+export const pinnedMessageManager = new Proxy({} as PinnedMessageManager, {
+  get(_target, property, receiver) {
+    const value = Reflect.get(getPinnedMessageManagerInstance(), property, receiver);
+    return typeof value === "function" ? value.bind(getPinnedMessageManagerInstance()) : value;
+  },
+});

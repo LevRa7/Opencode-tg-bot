@@ -9,9 +9,39 @@ async function loadConfig() {
 describe("config boolean env parsing", () => {
   beforeEach(() => {
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "test-telegram-token");
-    vi.stubEnv("TELEGRAM_ALLOWED_USER_ID", "123456789");
+    vi.stubEnv("TELEGRAM_ADMIN_USER_ID", "123456789");
+    vi.stubEnv("TELEGRAM_ALLOWED_USER_IDS", "123456789");
+    vi.stubEnv("TELEGRAM_ALLOWED_USER_ID", "");
     vi.stubEnv("OPENCODE_MODEL_PROVIDER", "test-provider");
     vi.stubEnv("OPENCODE_MODEL_ID", "test-model");
+  });
+
+  it("uses admin user as default allowed user list", async () => {
+    vi.stubEnv("TELEGRAM_ALLOWED_USER_IDS", "");
+
+    const config = await loadConfig();
+
+    expect(config.telegram.adminUserId).toBe(123456789);
+    expect(config.telegram.allowedUserIds).toEqual([123456789]);
+  });
+
+  it("parses additional allowed Telegram user ids", async () => {
+    vi.stubEnv("TELEGRAM_ALLOWED_USER_IDS", "123456789, 987654321 555");
+
+    const config = await loadConfig();
+
+    expect(config.telegram.allowedUserIds).toEqual([123456789, 987654321, 555]);
+  });
+
+  it("supports legacy TELEGRAM_ALLOWED_USER_ID fallback", async () => {
+    vi.stubEnv("TELEGRAM_ADMIN_USER_ID", "");
+    vi.stubEnv("TELEGRAM_ALLOWED_USER_IDS", "");
+    vi.stubEnv("TELEGRAM_ALLOWED_USER_ID", "777");
+
+    const config = await loadConfig();
+
+    expect(config.telegram.adminUserId).toBe(777);
+    expect(config.telegram.allowedUserIds).toEqual([777]);
   });
 
   it("uses false defaults for hide service message flags", async () => {
@@ -99,7 +129,7 @@ describe("config boolean env parsing", () => {
 
     const config = await loadConfig();
 
-    expect(config.bot.locale).toBe("en");
+    expect(config.bot.locale).toBe("ru");
   });
 
   it("uses default task limit when TASK_LIMIT is missing", async () => {

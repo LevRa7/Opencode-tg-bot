@@ -3,15 +3,13 @@ import { createMainKeyboard } from "../bot/utils/keyboard.js";
 import type { ModelInfo } from "../model/types.js";
 import { getStoredAgent } from "../agent/manager.js";
 import { getStoredModel } from "../model/manager.js";
+import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
 import { formatVariantForButton } from "../variant/manager.js";
 import { logger } from "../utils/logger.js";
 import type { ContextInfo, KeyboardState } from "./types.js";
 import { t } from "../i18n/index.js";
+import { sendMessageWithoutDraftEffect } from "../bot/utils/send-message-draft-effect-context.js";
 
-/**
- * Keyboard Manager - manages Reply Keyboard state and updates
- * Singleton pattern
- */
 class KeyboardManager {
   private state: KeyboardState | null = null;
 
@@ -162,7 +160,7 @@ class KeyboardManager {
 
       // Send a dummy message with updated keyboard
       // This is needed because Reply Keyboard updates require a message
-      await this.api.sendMessage(targetChatId, t("keyboard.updated"), {
+      await sendMessageWithoutDraftEffect(this.api, targetChatId, t("keyboard.updated"), {
         reply_markup: keyboard,
       });
 
@@ -200,5 +198,27 @@ class KeyboardManager {
   }
 }
 
-// Export singleton instance
-export const keyboardManager = new KeyboardManager();
+const keyboardManagerRegistry = new Map<string, KeyboardManager>();
+
+function getKeyboardManagerInstance(): KeyboardManager {
+  const scopeKey = resolveTelegramConversationScopeKey();
+  const existing = keyboardManagerRegistry.get(scopeKey);
+  if (existing) {
+    return existing;
+  }
+
+  const manager = new KeyboardManager();
+  keyboardManagerRegistry.set(scopeKey, manager);
+  return manager;
+}
+
+export function __resetKeyboardManagersForTests(): void {
+  keyboardManagerRegistry.clear();
+}
+
+export const keyboardManager = new Proxy({} as KeyboardManager, {
+  get(_target, property, receiver) {
+    const value = Reflect.get(getKeyboardManagerInstance(), property, receiver);
+    return typeof value === "function" ? value.bind(getKeyboardManagerInstance()) : value;
+  },
+});

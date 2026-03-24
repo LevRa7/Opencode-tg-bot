@@ -5,7 +5,7 @@ import { getDateLocale, t } from "../../i18n/index.js";
 import { interactionManager } from "../../interaction/manager.js";
 import type { InteractionState } from "../../interaction/types.js";
 import { getStoredModel } from "../../model/manager.js";
-import { getCurrentProject } from "../../settings/manager.js";
+import { getCurrentProject, setCurrentProject } from "../../settings/manager.js";
 import { taskCreationManager } from "../../scheduled-task/creation-manager.js";
 import { parseTaskSchedule } from "../../scheduled-task/schedule-parser.js";
 import { addScheduledTask, listScheduledTasks } from "../../scheduled-task/store.js";
@@ -17,6 +17,9 @@ import {
   type TaskCreationState,
 } from "../../scheduled-task/types.js";
 import { logger } from "../../utils/logger.js";
+import { ensureUserProjectForCommand } from "../../project/user-project.js";
+import { threadContextManager } from "../../thread/manager.js";
+import { getCurrentTelegramConversationScope } from "../../telegram/scope.js";
 
 const TASK_RETRY_SCHEDULE_CALLBACK = "task:retry-schedule";
 const TASK_CANCEL_CALLBACK = "task:cancel";
@@ -265,10 +268,19 @@ function buildScheduledTask(
   parsedSchedule: ParsedTaskSchedule,
   prompt: string,
 ): ScheduledTask {
+  const ownerScope = getCurrentTelegramConversationScope();
   const baseTask = {
     id: randomUUID(),
     projectId,
     projectWorktree,
+    ownerScope:
+      ownerScope !== null
+        ? {
+            userId: ownerScope.userId,
+            chatId: ownerScope.chatId,
+            messageThreadId: ownerScope.messageThreadId,
+          }
+        : undefined,
     model,
     scheduleText,
     scheduleSummary: parsedSchedule.summary,
@@ -298,10 +310,23 @@ function buildScheduledTask(
 }
 
 export async function taskCommand(ctx: CommandContext<Context>): Promise<void> {
-  const currentProject = getCurrentProject();
+  let currentProject = getCurrentProject();
   if (!currentProject) {
-    await ctx.reply(t("bot.project_not_selected"));
-    return;
+    if (!threadContextManager.canAutoAssignProjectForActiveContext()) {
+      await ctx.reply(t("bot.project_not_selected"));
+      return;
+    }
+
+    const tgId = ctx.from?.id;
+    if (!tgId) {
+      await ctx.reply(t("bot.project_not_selected"));
+      return;
+    }
+
+    logger.info(`[Bot] No project selected, auto-creating project for tgId=${tgId}`);
+    currentProject = await ensureUserProjectForCommand(tgId);
+    setCurrentProject(currentProject);
+    threadContextManager.bindProjectToActiveContext(currentProject);
   }
 
   if (isTaskLimitReached()) {

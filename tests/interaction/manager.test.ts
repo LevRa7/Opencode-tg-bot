@@ -3,10 +3,11 @@ import {
   DEFAULT_ALLOWED_INTERACTION_COMMANDS,
   interactionManager,
 } from "../../src/interaction/manager.js";
+import type { TelegramConversationScope } from "../../src/telegram/scope.js";
 
 describe("interactionManager", () => {
   beforeEach(() => {
-    interactionManager.clear("test_setup");
+    interactionManager.__resetForTests();
   });
 
   it("starts interaction with defaults", () => {
@@ -84,5 +85,29 @@ describe("interactionManager", () => {
 
     expect(interactionManager.isActive()).toBe(false);
     expect(interactionManager.get()).toBeNull();
+  });
+
+  it("keeps interactions isolated by scope", () => {
+    const scopeA: TelegramConversationScope = { userId: 1, chatId: 100, messageThreadId: 10 };
+    const scopeB: TelegramConversationScope = { userId: 1, chatId: 100, messageThreadId: 11 };
+
+    interactionManager.start(
+      {
+        kind: "question",
+        expectedInput: "callback",
+      },
+      scopeA,
+    );
+    interactionManager.start(
+      {
+        kind: "rename",
+        expectedInput: "text",
+      },
+      scopeB,
+    );
+
+    expect(interactionManager.getSnapshot(scopeA)?.kind).toBe("question");
+    expect(interactionManager.getSnapshot(scopeB)?.kind).toBe("rename");
+    expect(interactionManager.getSnapshot()).toBeNull();
   });
 });

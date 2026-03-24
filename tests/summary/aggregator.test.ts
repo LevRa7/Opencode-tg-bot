@@ -28,15 +28,31 @@ describe("summary/aggregator", () => {
     summaryAggregator.setOnThinking(() => {});
     summaryAggregator.setOnSessionError(() => {});
     summaryAggregator.setOnSessionRetry(() => {});
+    summaryAggregator.setOnStreamUpdate(() => {});
   });
 
   it("invokes onCleared callback when aggregator is cleared", () => {
     const onCleared = vi.fn();
     summaryAggregator.setOnCleared(onCleared);
+    summaryAggregator.setSession("session-1");
+    onCleared.mockClear();
 
     summaryAggregator.clear();
 
     expect(onCleared).toHaveBeenCalledTimes(1);
+    expect(onCleared).toHaveBeenCalledWith("session-1");
+  });
+
+  it("passes previous session id to onCleared when switching sessions", () => {
+    const onCleared = vi.fn();
+    summaryAggregator.setOnCleared(onCleared);
+
+    summaryAggregator.setSession("session-1");
+    onCleared.mockClear();
+    summaryAggregator.setSession("session-2");
+
+    expect(onCleared).toHaveBeenCalledTimes(1);
+    expect(onCleared).toHaveBeenCalledWith("session-1");
   });
 
   it("includes sessionId in tool callback payload", () => {
@@ -139,7 +155,7 @@ describe("summary/aggregator", () => {
     expect(onToolFile).not.toHaveBeenCalled();
   });
 
-  it("passes sessionId to thinking callback when reasoning part arrives", async () => {
+  it("passes sessionId and reasoning text to thinking callback when reasoning part arrives", async () => {
     const onThinking = vi.fn();
     summaryAggregator.setOnThinking(onThinking);
     summaryAggregator.setSession("session-1");
@@ -172,7 +188,7 @@ describe("summary/aggregator", () => {
 
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(onThinking).toHaveBeenCalledWith("session-1");
+    expect(onThinking).toHaveBeenCalledWith("session-1", "Let me think about this...");
   });
 
   it("does not send thinking callback when no reasoning part arrives", async () => {
@@ -212,7 +228,7 @@ describe("summary/aggregator", () => {
     expect(onThinking).not.toHaveBeenCalled();
   });
 
-  it("fires thinking callback only once per message even with multiple reasoning parts", async () => {
+  it("forwards every unique reasoning part for the same message", async () => {
     const onThinking = vi.fn();
     summaryAggregator.setOnThinking(onThinking);
     summaryAggregator.setSession("session-1");
@@ -247,8 +263,85 @@ describe("summary/aggregator", () => {
 
     await new Promise<void>((resolve) => setImmediate(resolve));
 
+    expect(onThinking).toHaveBeenCalledTimes(3);
+    expect(onThinking).toHaveBeenNthCalledWith(1, "session-1", "Thinking step 0");
+    expect(onThinking).toHaveBeenNthCalledWith(2, "session-1", "Thinking step 1");
+    expect(onThinking).toHaveBeenNthCalledWith(3, "session-1", "Thinking step 2");
+  });
+
+  it("deduplicates identical reasoning parts", async () => {
+    const onThinking = vi.fn();
+    summaryAggregator.setOnThinking(onThinking);
+    summaryAggregator.setSession("session-1");
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-duplicate-reasoning",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    for (let i = 0; i < 2; i++) {
+      summaryAggregator.processEvent({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: `part-duplicate-reasoning-${i}`,
+            sessionID: "session-1",
+            messageID: "message-duplicate-reasoning",
+            type: "reasoning",
+            text: "Repeated reasoning",
+            time: { start: Date.now() },
+          },
+        },
+      } as unknown as Event);
+    }
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
     expect(onThinking).toHaveBeenCalledTimes(1);
-    expect(onThinking).toHaveBeenCalledWith("session-1");
+    expect(onThinking).toHaveBeenCalledWith("session-1", "Repeated reasoning");
+  });
+
+  it("streams assistant text updates as they arrive", async () => {
+    const onStreamUpdate = vi.fn();
+    summaryAggregator.setOnStreamUpdate(onStreamUpdate);
+    summaryAggregator.setSession("session-1");
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-stream-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-stream-1",
+          sessionID: "session-1",
+          messageID: "message-stream-1",
+          type: "text",
+          text: "partial answer",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onStreamUpdate).toHaveBeenCalledWith("session-1", "partial answer");
   });
 
   it("reports session.error message through callback", async () => {

@@ -7,6 +7,7 @@ export const en = {
   "cmd.description.task": "Create a scheduled task",
   "cmd.description.tasklist": "List scheduled tasks",
   "cmd.description.commands": "Custom commands",
+  "cmd.description.stream": "Toggle message streaming",
   "cmd.description.opencode_start": "Start OpenCode server",
   "cmd.description.opencode_stop": "Stop OpenCode server",
   "cmd.description.help": "Help",
@@ -52,6 +53,11 @@ export const en = {
     "💡 Use the bottom keyboard buttons for agent mode, model, variant, and context actions.",
   "help.text":
     "📖 **Help**\n\n/status - Check server status\n/sessions - Session list\n/new - Create new session\n/help - Help",
+  "stream.enabled": "✨ Message streaming is enabled for assistant and bot messages.",
+  "stream.disabled": "⏹ Message streaming is disabled.",
+  "stream.status_enabled": "✨ Message streaming is currently enabled.",
+  "stream.status_disabled": "⏹ Message streaming is currently disabled.",
+  "stream.usage": "Use /stream on, /stream off, or /stream status.",
 
   "bot.thinking": "💭 Thinking...",
   "bot.project_not_selected":
@@ -62,6 +68,8 @@ export const en = {
   "bot.session_created": "✅ Session created: {title}",
   "bot.session_busy":
     "⏳ Agent is already running a task. Wait for completion or use /abort to interrupt current run.",
+  "bot.parallel_limit_reached":
+    "⏳ You already have {limit} active requests in different topics. Wait for one to finish or use /abort.",
   "bot.session_reset_project_mismatch":
     "⚠️ Active session does not match the selected project, so it was reset. Use /sessions to pick one or /new to create a new session.",
   "bot.prompt_send_error": "Failed to send request to OpenCode.",
@@ -74,10 +82,16 @@ export const en = {
   "bot.photo_model_no_image": "⚠️ Current model doesn't support image input. Sending text only.",
   "bot.photo_download_error": "🔴 Failed to download photo",
   "bot.photo_no_caption": "💡 Tip: Add a caption to describe what you want to do with this photo.",
+  "bot.video_downloading": "⏳ Downloading video...",
+  "bot.video_too_long": "⚠️ Video is too long (max {maxDurationSec} sec)",
+  "bot.video_model_no_video": "⚠️ Current model doesn't support video input. Sending text only.",
+  "bot.video_download_error": "🔴 Failed to download video",
   "bot.file_downloading": "⏳ Downloading file...",
   "bot.file_too_large": "⚠️ File is too large (max {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 Failed to download file",
   "bot.model_no_pdf": "⚠️ Current model doesn't support PDF input. Sending text only.",
+  "bot.media_model_no_support":
+    "⚠️ Neither the selected model nor fallback Gemini supports this media input.",
   "bot.text_file_too_large": "⚠️ Text file is too large (max {maxSizeKb}KB)",
 
   "status.header_running": "🟢 OpenCode Server is running",
@@ -177,6 +191,9 @@ export const en = {
   "opencode_stop.success": "✅ OpenCode Server stopped successfully",
   "opencode_stop.error":
     "🔴 An error occurred while stopping server.\n\nCheck application logs for details.",
+  "restart.in_progress": "⚠️ Bot restart is already in progress.",
+  "restart.restarting": "🔄 Restarting bot...",
+  "restart.error": "🔴 Failed to restart bot\n\nError: {error}",
 
   "agent.changed_callback": "Mode changed: {name}",
   "agent.changed_message": "✅ Mode changed to: {name}",
@@ -389,7 +406,9 @@ export const en = {
   "commands.arguments_empty": "⚠️ Arguments cannot be empty. Send text or tap Execute.",
   "commands.execute_error": "🔴 Failed to execute OpenCode command.",
 
+  "cmd.description.start": "Start or reset bot",
   "cmd.description.rename": "Rename current session",
+  "cmd.description.restart": "Restart bot",
 
   "cli.usage":
     "Usage:\n  opencode-telegram [start] [--mode sources|installed]\n  opencode-telegram status\n  opencode-telegram stop\n  opencode-telegram config\n\nNotes:\n  - No command defaults to `start`\n  - `--mode` is currently supported for `start` only",

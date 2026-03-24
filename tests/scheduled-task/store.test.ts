@@ -6,10 +6,12 @@ import { setRuntimeMode } from "../../src/runtime/mode.js";
 import { __resetSettingsForTests, loadSettings } from "../../src/settings/manager.js";
 import {
   addScheduledTask,
+  getScheduledTask,
   listScheduledTasks,
   removeScheduledTask,
 } from "../../src/scheduled-task/store.js";
 import type { ScheduledTask } from "../../src/scheduled-task/types.js";
+import { runWithTelegramConversationScope } from "../../src/telegram/scope.js";
 
 function createScheduledTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
   return {
@@ -87,5 +89,49 @@ describe("scheduled-task/store", () => {
     await removeScheduledTask("task-1");
 
     expect(listScheduledTasks()).toEqual([secondTask]);
+  });
+
+  it("filters scheduled tasks by owner scope", async () => {
+    const adminTask = createScheduledTask({
+      id: "admin-task",
+      ownerScope: { userId: 123456789, chatId: 123456789 },
+    });
+    const userTask = createScheduledTask({
+      id: "user-task",
+      ownerScope: { userId: 555, chatId: 555 },
+    });
+
+    await addScheduledTask(adminTask);
+    await addScheduledTask(userTask);
+
+    expect(
+      runWithTelegramConversationScope({ userId: 123456789, chatId: 123456789 }, () =>
+        listScheduledTasks(),
+      ),
+    ).toEqual([adminTask]);
+    expect(
+      runWithTelegramConversationScope({ userId: 555, chatId: 555 }, () => listScheduledTasks()),
+    ).toEqual([userTask]);
+  });
+
+  it("does not remove another user's scheduled task from scoped access", async () => {
+    const adminTask = createScheduledTask({
+      id: "admin-task",
+      ownerScope: { userId: 123456789, chatId: 123456789 },
+    });
+    const userTask = createScheduledTask({
+      id: "user-task",
+      ownerScope: { userId: 555, chatId: 555 },
+    });
+
+    await addScheduledTask(adminTask);
+    await addScheduledTask(userTask);
+
+    await runWithTelegramConversationScope({ userId: 555, chatId: 555 }, () =>
+      removeScheduledTask("admin-task"),
+    );
+
+    expect(getScheduledTask("admin-task")).toEqual(adminTask);
+    expect(listScheduledTasks()).toEqual([adminTask, userTask]);
   });
 });

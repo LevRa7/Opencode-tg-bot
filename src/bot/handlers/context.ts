@@ -7,6 +7,7 @@ import {
   ensureActiveInlineMenu,
   replyWithInlineMenu,
 } from "./inline-menu.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 
@@ -85,7 +86,11 @@ export async function handleCompactConfirm(ctx: Context): Promise<boolean> {
     const progressMessage = await ctx.reply(t("context.progress"));
 
     // Show typing indicator
-    await ctx.api.sendChatAction(ctx.chat!.id, "typing");
+    await ctx.api.sendChatAction(
+      ctx.chat!.id,
+      "typing",
+      withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
+    );
 
     const storedModel = getStoredModel();
 

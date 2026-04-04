@@ -38,6 +38,12 @@ const MULTIPLE_QUESTION: Question = {
   ],
 };
 
+const SINGLE_OPTION_QUESTION: Question = {
+  header: "Код",
+  question: "Введите код из Telegram",
+  options: [{ label: "Отправить", description: "Введите 5-значный код из Telegram" }],
+};
+
 function createApi(sendMessageIds: number[]): Context["api"] {
   let index = 0;
 
@@ -172,5 +178,21 @@ describe("bot/handlers/question", () => {
       show_alert: true,
     });
     expect(questionManager.isActive()).toBe(true);
+  });
+
+  it("uses direct text input for single-option questions without inline keyboard", async () => {
+    const api = createApi([500]);
+
+    questionManager.startQuestions([SINGLE_OPTION_QUESTION], "req-6");
+    await showCurrentQuestion(api, 123);
+
+    expect(api.sendMessage).toHaveBeenCalledWith(123, "1/1 Код\n\nВведите код из Telegram", {});
+    expect(interactionManager.getSnapshot()?.expectedInput).toBe("mixed");
+
+    const textCtx = createTextContext("95001", api);
+    await handleQuestionTextAnswer(textCtx);
+
+    expect(questionManager.isActive()).toBe(false);
+    expect(api.deleteMessage).toHaveBeenCalledWith(123, 500);
   });
 });

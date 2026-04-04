@@ -7,25 +7,30 @@ describe("scheduled-task/foreground-state", () => {
     foregroundSessionState.__resetForTests();
   });
 
-  it("allows up to five active topic-scoped requests per user", () => {
+  it("keeps topic-scoped busy state independent for the same user", () => {
     const results = Array.from({ length: 5 }, (_, index) =>
       runWithTelegramConversationScope({ userId: 1, chatId: 100, messageThreadId: index + 1 }, () =>
         foregroundSessionState.tryMarkBusy(`session-${index + 1}`),
       ),
     );
 
-    const overflow = runWithTelegramConversationScope(
+    const additionalTopic = runWithTelegramConversationScope(
       { userId: 1, chatId: 100, messageThreadId: 99 },
       () => foregroundSessionState.tryMarkBusy("session-6"),
     );
 
     expect(results).toEqual([true, true, true, true, true]);
-    expect(overflow).toBe(false);
+    expect(additionalTopic).toBe(true);
     expect(
       runWithTelegramConversationScope({ userId: 1, chatId: 100, messageThreadId: 1 }, () =>
         foregroundSessionState.getActiveCount(),
       ),
-    ).toBe(5);
+    ).toBe(1);
+    expect(
+      runWithTelegramConversationScope({ userId: 1, chatId: 100, messageThreadId: 99 }, () =>
+        foregroundSessionState.getActiveCount(),
+      ),
+    ).toBe(1);
   });
 
   it("keeps different users independent", () => {

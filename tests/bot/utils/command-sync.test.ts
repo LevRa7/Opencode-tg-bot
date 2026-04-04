@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BOT_COMMANDS } from "../../../src/bot/commands/definitions.js";
+import { getLocalizedBotCommands } from "../../../src/bot/commands/definitions.js";
 import {
   resetDefaultMenuButton,
   syncAuthorizedChatCommands,
@@ -19,7 +19,7 @@ describe("command sync helpers", () => {
 
     await syncAuthorizedChatCommands(api, 123, "private");
 
-    expect(api.setMyCommands).toHaveBeenCalledWith(BOT_COMMANDS, {
+    expect(api.setMyCommands).toHaveBeenCalledWith(getLocalizedBotCommands({ isAdmin: false }), {
       scope: { type: "chat", chat_id: 123 },
     });
     expect(api.setChatMenuButton).toHaveBeenCalledWith({
@@ -28,12 +28,20 @@ describe("command sync helpers", () => {
     });
   });
 
+  it("exposes export_data with dedicated description", async () => {
+    const commands = getLocalizedBotCommands({ isAdmin: false });
+    const exportData = commands.find((item) => item.command === "export_data");
+
+    expect(exportData).toBeDefined();
+    expect(exportData?.description).not.toBe(getLocalizedBotCommands({ isAdmin: false }).find((item) => item.command === "help")?.description);
+  });
+
   it("syncs only commands for non-private chats", async () => {
     const api = createApi();
 
     await syncAuthorizedChatCommands(api, -100123, "supergroup");
 
-    expect(api.setMyCommands).toHaveBeenCalledWith(BOT_COMMANDS, {
+    expect(api.setMyCommands).toHaveBeenCalledWith(getLocalizedBotCommands({ isAdmin: false }), {
       scope: { type: "chat", chat_id: -100123 },
     });
     expect(api.setChatMenuButton).not.toHaveBeenCalled();
@@ -44,12 +52,12 @@ describe("command sync helpers", () => {
 
     await syncUnauthorizedPrivateChatCommands(api, 456);
 
-    expect(api.setMyCommands).toHaveBeenCalledWith([], {
+    expect(api.setMyCommands).toHaveBeenCalledWith(getLocalizedBotCommands({ isAdmin: false }), {
       scope: { type: "chat", chat_id: 456 },
     });
     expect(api.setChatMenuButton).toHaveBeenCalledWith({
       chat_id: 456,
-      menu_button: { type: "default" },
+      menu_button: { type: "commands" },
     });
   });
 

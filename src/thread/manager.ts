@@ -1,8 +1,11 @@
 import type { Context } from "grammy";
-import type { ProjectInfo, SessionInfo } from "../settings/manager.js";
 import {
+  getCurrentAgent,
+  getCurrentModel,
   getCurrentProject,
   getThreadContextBindings,
+  setCurrentAgent,
+  setCurrentModel,
   setCurrentProject,
   setThreadContextBindings,
   type ProjectInfo as SettingsProjectInfo,
@@ -19,10 +22,13 @@ import {
   type TelegramThreadTarget,
 } from "../bot/utils/message-thread.js";
 import {
+  buildTelegramConversationScopeKey,
   extractTelegramConversationScopeFromContext,
   type TelegramConversationScope,
 } from "../telegram/scope.js";
 import { logger } from "../utils/logger.js";
+import type { ModelInfo } from "../model/types.js";
+import type { ProjectInfo, SessionInfo } from "../settings/manager.js";
 
 function cloneProject(project: ProjectInfo): SettingsProjectInfo {
   return { ...project };
@@ -32,6 +38,10 @@ function cloneSession(session: SessionInfo): SettingsSessionInfo {
   return { ...session };
 }
 
+function cloneModel(model: ModelInfo): ModelInfo {
+  return { ...model };
+}
+
 interface ParsedContextKey {
   userId: number | null;
   chatId: number;
@@ -39,7 +49,7 @@ interface ParsedContextKey {
 }
 
 function buildContextKey(scope: TelegramConversationScope): string {
-  return `${scope.chatId}:${scope.messageThreadId ?? 0}`;
+  return buildTelegramConversationScopeKey(scope);
 }
 
 class ThreadContextManager {
@@ -47,6 +57,8 @@ class ThreadContextManager {
   private activeContextKey: string | null = null;
   private projectByContext = new Map<string, SettingsProjectInfo>();
   private sessionByContext = new Map<string, SettingsSessionInfo>();
+  private agentByContext = new Map<string, string>();
+  private modelByContext = new Map<string, ModelInfo>();
   private scopeBySessionId = new Map<string, TelegramConversationScope>();
   private hydratedFromSettings = false;
 
@@ -71,6 +83,14 @@ class ThreadContextManager {
             messageThreadId: target.messageThreadId,
           });
         }
+      }
+
+      if (binding.agent) {
+        this.agentByContext.set(binding.contextKey, binding.agent);
+      }
+
+      if (binding.model) {
+        this.modelByContext.set(binding.contextKey, cloneModel(binding.model));
       }
     }
 
@@ -123,14 +143,18 @@ class ThreadContextManager {
     const contextKeys = new Set<string>([
       ...this.projectByContext.keys(),
       ...this.sessionByContext.keys(),
+      ...this.agentByContext.keys(),
+      ...this.modelByContext.keys(),
     ]);
 
     const bindings: ThreadContextBinding[] = [];
     for (const contextKey of contextKeys) {
       const project = this.projectByContext.get(contextKey);
       const session = this.sessionByContext.get(contextKey);
+      const agent = this.agentByContext.get(contextKey);
+      const model = this.modelByContext.get(contextKey);
 
-      if (!project && !session) {
+      if (!project && !session && !agent && !model) {
         continue;
       }
 
@@ -138,6 +162,8 @@ class ThreadContextManager {
         contextKey,
         project: project ? { ...project } : undefined,
         session: session ? { ...session } : undefined,
+        agent,
+        model: model ? cloneModel(model) : undefined,
       });
     }
 
@@ -146,7 +172,6 @@ class ThreadContextManager {
 
   private findRecoverableContextKey(scope: TelegramConversationScope): string | null {
     const exactCandidates = new Set<string>();
-    const threadCandidates = new Set<string>();
 
     const registerCandidate = (contextKey: string): void => {
       const target = this.parseContextKey(contextKey);
@@ -155,17 +180,11 @@ class ThreadContextManager {
       }
 
       if (
+        target.userId === scope.userId &&
         target.chatId === scope.chatId &&
         target.messageThreadId === scope.messageThreadId
       ) {
         exactCandidates.add(contextKey);
-      }
-
-      if (
-        scope.messageThreadId !== undefined &&
-        target.messageThreadId === scope.messageThreadId
-      ) {
-        threadCandidates.add(contextKey);
       }
     };
 
@@ -177,11 +196,19 @@ class ThreadContextManager {
       registerCandidate(contextKey);
     }
 
+    for (const contextKey of this.agentByContext.keys()) {
+      registerCandidate(contextKey);
+    }
+
+    for (const contextKey of this.modelByContext.keys()) {
+      registerCandidate(contextKey);
+    }
+
     if (exactCandidates.size === 1) {
       return [...exactCandidates][0];
     }
 
-    return threadCandidates.size === 1 ? [...threadCandidates][0] : null;
+    return null;
   }
 
   private findSessionContextKey(sessionId: string): string | null {
@@ -211,6 +238,18 @@ class ThreadContextManager {
       this.sessionByContext.delete(fromContextKey);
     }
 
+    const agent = this.agentByContext.get(fromContextKey);
+    if (agent) {
+      this.agentByContext.set(toContextKey, agent);
+      this.agentByContext.delete(fromContextKey);
+    }
+
+    const model = this.modelByContext.get(fromContextKey);
+    if (model) {
+      this.modelByContext.set(toContextKey, model);
+      this.modelByContext.delete(fromContextKey);
+    }
+
     this.persistBindings();
   }
 
@@ -229,12 +268,14 @@ class ThreadContextManager {
     if (
       target.messageThreadId !== undefined &&
       !this.projectByContext.has(this.activeContextKey) &&
-      !this.sessionByContext.has(this.activeContextKey)
+      !this.sessionByContext.has(this.activeContextKey) &&
+      !this.agentByContext.has(this.activeContextKey) &&
+      !this.modelByContext.has(this.activeContextKey)
     ) {
       const recoverableContextKey = this.findRecoverableContextKey(scope);
       if (recoverableContextKey) {
         logger.info(
-          `[ThreadContext] Recovering topic binding by thread id: ${recoverableContextKey} -> ${this.activeContextKey}`,
+          `[ThreadContext] Recovering topic binding by scope: ${recoverableContextKey} -> ${this.activeContextKey}`,
         );
         this.migrateContextBinding(recoverableContextKey, this.activeContextKey);
       }
@@ -260,6 +301,34 @@ class ThreadContextManager {
     const boundSession = this.sessionByContext.get(this.activeContextKey);
     const currentSession = getCurrentSession();
     const effectiveProject = boundProject ?? currentProject;
+    const boundAgent = this.agentByContext.get(this.activeContextKey);
+    const currentAgent = getCurrentAgent();
+    const boundModel = this.modelByContext.get(this.activeContextKey);
+    const currentModel = getCurrentModel();
+
+    if (boundAgent && currentAgent !== boundAgent) {
+      setCurrentAgent(boundAgent);
+    }
+
+    if (!boundAgent && currentAgent && target.messageThreadId !== undefined) {
+      this.agentByContext.set(this.activeContextKey, currentAgent);
+      this.persistBindings();
+    }
+
+    if (
+      boundModel &&
+      (!currentModel ||
+        currentModel.providerID !== boundModel.providerID ||
+        currentModel.modelID !== boundModel.modelID ||
+        currentModel.variant !== boundModel.variant)
+    ) {
+      setCurrentModel(cloneModel(boundModel));
+    }
+
+    if (!boundModel && currentModel && target.messageThreadId !== undefined) {
+      this.modelByContext.set(this.activeContextKey, cloneModel(currentModel));
+      this.persistBindings();
+    }
 
     if (boundSession) {
       if (
@@ -327,6 +396,28 @@ class ThreadContextManager {
     this.persistBindings();
   }
 
+  bindAgentToActiveContext(agent: string): void {
+    this.ensureHydrated();
+
+    if (!this.activeContextKey) {
+      return;
+    }
+
+    this.agentByContext.set(this.activeContextKey, agent);
+    this.persistBindings();
+  }
+
+  bindModelToActiveContext(model: ModelInfo): void {
+    this.ensureHydrated();
+
+    if (!this.activeContextKey) {
+      return;
+    }
+
+    this.modelByContext.set(this.activeContextKey, cloneModel(model));
+    this.persistBindings();
+  }
+
   canAutoAssignSessionForActiveContext(): boolean {
     this.ensureHydrated();
 
@@ -350,6 +441,28 @@ class ThreadContextManager {
     }
 
     this.sessionByContext.delete(this.activeContextKey);
+    this.persistBindings();
+  }
+
+  clearModelForActiveContext(): void {
+    this.ensureHydrated();
+
+    if (!this.activeContextKey) {
+      return;
+    }
+
+    this.modelByContext.delete(this.activeContextKey);
+    this.persistBindings();
+  }
+
+  clearAgentForActiveContext(): void {
+    this.ensureHydrated();
+
+    if (!this.activeContextKey) {
+      return;
+    }
+
+    this.agentByContext.delete(this.activeContextKey);
     this.persistBindings();
   }
 
@@ -390,6 +503,17 @@ class ThreadContextManager {
     return contextKey === this.activeContextKey ? { ...this.activeScope } : null;
   }
 
+  getSessionDirectory(sessionId: string): string | null {
+    this.ensureHydrated();
+
+    const contextKey = this.findSessionContextKey(sessionId);
+    if (!contextKey) {
+      return null;
+    }
+
+    return this.sessionByContext.get(contextKey)?.directory ?? null;
+  }
+
   getActiveTarget(): TelegramThreadTarget | null {
     return this.activeScope
       ? { chatId: this.activeScope.chatId, messageThreadId: this.activeScope.messageThreadId }
@@ -417,6 +541,8 @@ class ThreadContextManager {
 
     this.projectByContext.clear();
     this.sessionByContext.clear();
+    this.agentByContext.clear();
+    this.modelByContext.clear();
     this.scopeBySessionId.clear();
     this.activeScope = null;
     this.activeContextKey = null;
@@ -427,6 +553,8 @@ class ThreadContextManager {
   __resetForTests(): void {
     this.projectByContext.clear();
     this.sessionByContext.clear();
+    this.agentByContext.clear();
+    this.modelByContext.clear();
     this.scopeBySessionId.clear();
     this.activeScope = null;
     this.activeContextKey = null;

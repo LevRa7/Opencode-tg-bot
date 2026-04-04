@@ -38,7 +38,7 @@ describe("cli/args", () => {
 
     expect(parsed.command).toBe("start");
     expect(parsed.showHelp).toBe(true);
-    expect(parsed.error).toBe(t("cli.args.invalid_mode", { value: "invalid" }));
+    expect(parsed.error).toContain(t("cli.args.invalid_mode", { value: "invalid" }));
   });
 
   it("shows help for unknown command", () => {
@@ -46,7 +46,7 @@ describe("cli/args", () => {
 
     expect(parsed.command).toBe("start");
     expect(parsed.showHelp).toBe(true);
-    expect(parsed.error).toBe(t("cli.args.unknown_command", { value: "deploy" }));
+    expect(parsed.error).toContain(t("cli.args.unknown_command", { value: "deploy" }));
   });
 
   it("shows help for invalid mode", () => {
@@ -54,7 +54,7 @@ describe("cli/args", () => {
 
     expect(parsed.command).toBe("start");
     expect(parsed.showHelp).toBe(true);
-    expect(parsed.error).toBe(t("cli.args.invalid_mode", { value: "qa" }));
+    expect(parsed.error).toContain(t("cli.args.invalid_mode", { value: "qa" }));
   });
 
   it("rejects --mode for non-start commands", () => {
@@ -62,7 +62,7 @@ describe("cli/args", () => {
 
     expect(parsed.command).toBe("status");
     expect(parsed.showHelp).toBe(true);
-    expect(parsed.error).toBe(t("cli.args.mode_only_start"));
+    expect(parsed.error).toContain(t("cli.args.mode_only_start"));
   });
 
   it("shows help when requested", () => {

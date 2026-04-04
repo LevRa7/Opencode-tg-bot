@@ -2,15 +2,25 @@ import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const fetchMock = vi.fn();
+
 const { spawnMock, execMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
   execMock: vi.fn(),
 }));
 
-const { getServerProcessMock, setServerProcessMock, clearServerProcessMock } = vi.hoisted(() => ({
+const {
+  getServerProcessMock,
+  setServerProcessMock,
+  clearServerProcessMock,
+  getTenantRuntimesMock,
+  clearTenantRuntimeInfoMock,
+} = vi.hoisted(() => ({
   getServerProcessMock: vi.fn(),
   setServerProcessMock: vi.fn(),
   clearServerProcessMock: vi.fn(),
+  getTenantRuntimesMock: vi.fn(() => ({})),
+  clearTenantRuntimeInfoMock: vi.fn(),
 }));
 
 vi.mock("child_process", () => ({
@@ -22,6 +32,8 @@ vi.mock("../../src/settings/manager.js", () => ({
   getServerProcess: getServerProcessMock,
   setServerProcess: setServerProcessMock,
   clearServerProcess: clearServerProcessMock,
+  getTenantRuntimes: getTenantRuntimesMock,
+  clearTenantRuntimeInfo: clearTenantRuntimeInfoMock,
 }));
 
 import { processManager } from "../../src/process/manager.js";
@@ -50,11 +62,17 @@ function setPlatform(platform: NodeJS.Platform): () => void {
 
 describe("process/manager", () => {
   beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
     spawnMock.mockReset();
     execMock.mockReset();
+    fetchMock.mockReset();
     getServerProcessMock.mockReset();
     setServerProcessMock.mockReset();
     clearServerProcessMock.mockReset();
+    getTenantRuntimesMock.mockReset();
+    clearTenantRuntimeInfoMock.mockReset();
+    getTenantRuntimesMock.mockReturnValue({});
+    fetchMock.mockResolvedValue({ ok: true });
 
     execMock.mockImplementation((_command: string, callback?: (...args: unknown[]) => void) => {
       if (callback) {
@@ -96,10 +114,13 @@ describe("process/manager", () => {
     expect(processManager.getPID()).toBeNull();
   });
 
-  it("starts process and persists PID", async () => {
+  it("starts process, waits for health, and persists PID", async () => {
     const restorePlatform = setPlatform("win32");
     vi.spyOn(process, "kill").mockImplementation(() => true);
     spawnMock.mockReturnValue(createMockChildProcess(456));
+    fetchMock
+      .mockRejectedValueOnce(new Error("not ready"))
+      .mockResolvedValueOnce({ ok: true });
 
     try {
       const result = await processManager.start();
@@ -114,6 +135,7 @@ describe("process/manager", () => {
           stdio: ["ignore", "pipe", "pipe"],
         }),
       );
+      expect(fetchMock).toHaveBeenCalled();
       expect(setServerProcessMock).toHaveBeenCalledWith(
         expect.objectContaining({
           pid: 456,
@@ -139,6 +161,25 @@ describe("process/manager", () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain("Failed to start OpenCode server process");
       expect(processManager.getPID()).toBeNull();
+      expect(clearServerProcessMock).toHaveBeenCalled();
+    } finally {
+      restorePlatform();
+    }
+  });
+
+  it("returns error when host process never becomes healthy", async () => {
+    const restorePlatform = setPlatform("win32");
+    vi.useFakeTimers();
+    vi.spyOn(process, "kill").mockImplementation(() => true);
+    spawnMock.mockReturnValue(createMockChildProcess(654));
+    fetchMock.mockRejectedValue(new Error("still booting"));
+
+    try {
+      const resultPromise = processManager.start();
+      await vi.advanceTimersByTimeAsync(10_000);
+      const result = await resultPromise;
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("did not become ready");
       expect(clearServerProcessMock).toHaveBeenCalled();
     } finally {
       restorePlatform();

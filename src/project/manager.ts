@@ -5,6 +5,12 @@ import { ProjectInfo } from "../settings/manager.js";
 import { getCachedSessionProjects } from "../session/cache-manager.js";
 import { logger } from "../utils/logger.js";
 
+const ROOT_PROJECT: ProjectInfo = {
+  id: "global",
+  worktree: "/",
+  name: "/",
+};
+
 interface InternalProject extends ProjectInfo {
   lastUpdated: number;
 }
@@ -112,10 +118,22 @@ export async function getProjectById(id: string): Promise<ProjectInfo> {
 }
 
 export async function getProjectByWorktree(worktree: string): Promise<ProjectInfo> {
+  if (worktree === ROOT_PROJECT.worktree) {
+    return { ...ROOT_PROJECT };
+  }
+
   const projects = await getProjects();
   const project = projects.find((p) => p.worktree === worktree);
   if (!project) {
     throw new Error(`Project with worktree ${worktree} not found`);
   }
   return project;
+}
+
+export async function getDefaultProject(): Promise<ProjectInfo | null> {
+  try {
+    return await getProjectByWorktree(ROOT_PROJECT.worktree);
+  } catch {
+    return null;
+  }
 }

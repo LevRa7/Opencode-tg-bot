@@ -3,6 +3,7 @@ import { t } from "../../i18n/index.js";
 import { restartCurrentProcess } from "../../runtime/restart.js";
 import { getLastRestartRequest, setLastRestartRequest } from "../../settings/manager.js";
 import { logger } from "../../utils/logger.js";
+import { config } from "../../config.js";
 
 let restartInProgress = false;
 const RESTART_TRIGGER_DELAY_MS = 1500;
@@ -12,6 +13,11 @@ export function __resetRestartStateForTests(): void {
 }
 
 export async function restartCommand(ctx: CommandContext<Context>): Promise<void> {
+  if (ctx.from?.id !== config.telegram.adminUserId) {
+    await ctx.reply(t("restart.admin_only"));
+    return;
+  }
+
   const updateId = ctx.update.update_id;
   const lastRestartRequest = getLastRestartRequest();
 

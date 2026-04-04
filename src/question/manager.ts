@@ -1,9 +1,8 @@
-import { Question, QuestionState, QuestionAnswer } from "./types.js";
-import type { TelegramConversationScope } from "../telegram/scope.js";
-import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
 import { logger } from "../utils/logger.js";
+import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
+import { Question, QuestionAnswer, QuestionState } from "./types.js";
 
-function createInitialState(): QuestionState {
+function createQuestionState(): QuestionState {
   return {
     questions: [],
     currentIndex: 0,
@@ -20,48 +19,38 @@ function createInitialState(): QuestionState {
 class QuestionManager {
   private states = new Map<string, QuestionState>();
 
-  private getScopeKey(scope?: TelegramConversationScope | null): string {
-    return resolveTelegramConversationScopeKey(scope);
-  }
-
-  private getOrCreateState(scope?: TelegramConversationScope | null): QuestionState {
-    const scopeKey = this.getScopeKey(scope);
-    let state = this.states.get(scopeKey);
-    if (!state) {
-      state = createInitialState();
-      this.states.set(scopeKey, state);
+  private getScopeState(scopeKey?: string): QuestionState {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    const existingState = this.states.get(resolvedScopeKey);
+    if (existingState) {
+      return existingState;
     }
 
-    return state;
+    const nextState = createQuestionState();
+    this.states.set(resolvedScopeKey, nextState);
+    return nextState;
   }
 
-  private getState(scope?: TelegramConversationScope | null): QuestionState {
-    return this.states.get(this.getScopeKey(scope)) ?? createInitialState();
-  }
+  startQuestions(questions: Question[], requestID: string, scopeKey?: string): void {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    const state = this.getScopeState(resolvedScopeKey);
 
-  startQuestions(
-    questions: Question[],
-    requestID: string,
-    scope?: TelegramConversationScope | null,
-  ): void {
-    const state = this.getOrCreateState(scope);
-    const scopeKey = this.getScopeKey(scope);
     logger.debug(
-      `[QuestionManager] startQuestions called: scope=${scopeKey}, isActive=${state.isActive}, currentQuestions=${state.questions.length}, newQuestions=${questions.length}, requestID=${requestID}`,
+      `[QuestionManager] startQuestions called: scope=${resolvedScopeKey}, isActive=${state.isActive}, currentQuestions=${state.questions.length}, newQuestions=${questions.length}, requestID=${requestID}`,
     );
 
     if (state.isActive) {
       logger.info(
-        `[QuestionManager] Poll already active in scope ${scopeKey}! Forcing reset before starting new poll.`,
+        `[QuestionManager] Poll already active for scope=${resolvedScopeKey}. Forcing reset before starting new poll.`,
       );
-      // Force-reset the previous poll before starting a new one
-      this.clear(scope);
+      this.clear(resolvedScopeKey);
     }
 
     logger.info(
-      `[QuestionManager] Starting new poll: scope=${scopeKey}, questions=${questions.length}, requestID=${requestID}`,
+      `[QuestionManager] Starting new poll for scope=${resolvedScopeKey} with ${questions.length} questions, requestID=${requestID}`,
     );
-    this.states.set(scopeKey, {
+
+    this.states.set(resolvedScopeKey, {
       questions,
       currentIndex: 0,
       selectedOptions: new Map(),
@@ -74,24 +63,20 @@ class QuestionManager {
     });
   }
 
-  getRequestID(scope?: TelegramConversationScope | null): string | null {
-    return this.getState(scope).requestID;
+  getRequestID(scopeKey?: string): string | null {
+    return this.getScopeState(scopeKey).requestID;
   }
 
-  getCurrentQuestion(scope?: TelegramConversationScope | null): Question | null {
-    const state = this.getState(scope);
+  getCurrentQuestion(scopeKey?: string): Question | null {
+    const state = this.getScopeState(scopeKey);
     if (state.currentIndex >= state.questions.length) {
       return null;
     }
     return state.questions[state.currentIndex];
   }
 
-  selectOption(
-    questionIndex: number,
-    optionIndex: number,
-    scope?: TelegramConversationScope | null,
-  ): void {
-    const state = this.getOrCreateState(scope);
+  selectOption(questionIndex: number, optionIndex: number, scopeKey?: string): void {
+    const state = this.getScopeState(scopeKey);
     if (!state.isActive) {
       return;
     }
@@ -117,16 +102,16 @@ class QuestionManager {
     state.selectedOptions.set(questionIndex, selected);
 
     logger.debug(
-      `[QuestionManager] Selected options for question ${questionIndex}: ${Array.from(selected).join(", ")}`,
+      `[QuestionManager] Selected options for scope=${resolveTelegramConversationScopeKey(scopeKey)} question ${questionIndex}: ${Array.from(selected).join(", ")}`,
     );
   }
 
-  getSelectedOptions(questionIndex: number, scope?: TelegramConversationScope | null): Set<number> {
-    return this.getState(scope).selectedOptions.get(questionIndex) || new Set();
+  getSelectedOptions(questionIndex: number, scopeKey?: string): Set<number> {
+    return this.getScopeState(scopeKey).selectedOptions.get(questionIndex) || new Set();
   }
 
-  getSelectedAnswer(questionIndex: number, scope?: TelegramConversationScope | null): string {
-    const state = this.getState(scope);
+  getSelectedAnswer(questionIndex: number, scopeKey?: string): string {
+    const state = this.getScopeState(scopeKey);
     const question = state.questions[questionIndex];
     if (!question) {
       return "";
@@ -141,71 +126,64 @@ class QuestionManager {
     return options.join("\n");
   }
 
-  setCustomAnswer(
-    questionIndex: number,
-    answer: string,
-    scope?: TelegramConversationScope | null,
-  ): void {
+  setCustomAnswer(questionIndex: number, answer: string, scopeKey?: string): void {
     logger.debug(
-      `[QuestionManager] Custom answer received for question ${questionIndex}: ${answer}`,
+      `[QuestionManager] Custom answer received for scope=${resolveTelegramConversationScopeKey(scopeKey)} question ${questionIndex}: ${answer}`,
     );
-    this.getOrCreateState(scope).customAnswers.set(questionIndex, answer);
+    this.getScopeState(scopeKey).customAnswers.set(questionIndex, answer);
   }
 
-  getCustomAnswer(
-    questionIndex: number,
-    scope?: TelegramConversationScope | null,
-  ): string | undefined {
-    return this.getState(scope).customAnswers.get(questionIndex);
+  getCustomAnswer(questionIndex: number, scopeKey?: string): string | undefined {
+    return this.getScopeState(scopeKey).customAnswers.get(questionIndex);
   }
 
-  hasCustomAnswer(questionIndex: number, scope?: TelegramConversationScope | null): boolean {
-    return this.getState(scope).customAnswers.has(questionIndex);
+  hasCustomAnswer(questionIndex: number, scopeKey?: string): boolean {
+    return this.getScopeState(scopeKey).customAnswers.has(questionIndex);
   }
 
-  nextQuestion(scope?: TelegramConversationScope | null): void {
-    const state = this.getOrCreateState(scope);
+  nextQuestion(scopeKey?: string): void {
+    const state = this.getScopeState(scopeKey);
     state.currentIndex++;
     state.customInputQuestionIndex = null;
     state.activeMessageId = null;
 
     logger.debug(
-      `[QuestionManager] Moving to next question: ${state.currentIndex}/${state.questions.length}`,
+      `[QuestionManager] Moving to next question for scope=${resolveTelegramConversationScopeKey(scopeKey)}: ${state.currentIndex}/${state.questions.length}`,
     );
   }
 
-  hasNextQuestion(scope?: TelegramConversationScope | null): boolean {
-    const state = this.getState(scope);
+  hasNextQuestion(scopeKey?: string): boolean {
+    const state = this.getScopeState(scopeKey);
     return state.currentIndex < state.questions.length;
   }
 
-  getCurrentIndex(scope?: TelegramConversationScope | null): number {
-    return this.getState(scope).currentIndex;
+  getCurrentIndex(scopeKey?: string): number {
+    return this.getScopeState(scopeKey).currentIndex;
   }
 
-  getTotalQuestions(scope?: TelegramConversationScope | null): number {
-    return this.getState(scope).questions.length;
+  getTotalQuestions(scopeKey?: string): number {
+    return this.getScopeState(scopeKey).questions.length;
   }
 
-  addMessageId(messageId: number, scope?: TelegramConversationScope | null): void {
-    this.getOrCreateState(scope).messageIds.push(messageId);
+  addMessageId(messageId: number, scopeKey?: string): void {
+    this.getScopeState(scopeKey).messageIds.push(messageId);
   }
 
-  setActiveMessageId(messageId: number, scope?: TelegramConversationScope | null): void {
-    this.getOrCreateState(scope).activeMessageId = messageId;
+  setActiveMessageId(messageId: number, scopeKey?: string): void {
+    this.getScopeState(scopeKey).activeMessageId = messageId;
   }
 
-  getActiveMessageId(scope?: TelegramConversationScope | null): number | null {
-    return this.getState(scope).activeMessageId;
+  getActiveMessageId(scopeKey?: string): number | null {
+    return this.getScopeState(scopeKey).activeMessageId;
   }
 
-  isActiveMessage(messageId: number | null, scope?: TelegramConversationScope | null): boolean {
-    const state = this.getState(scope);
+  isActiveMessage(messageId: number | null, scopeKey?: string): boolean {
+    const state = this.getScopeState(scopeKey);
     return state.isActive && state.activeMessageId !== null && messageId === state.activeMessageId;
   }
 
-  startCustomInput(questionIndex: number, scope?: TelegramConversationScope | null): void {
-    const state = this.getOrCreateState(scope);
+  startCustomInput(questionIndex: number, scopeKey?: string): void {
+    const state = this.getScopeState(scopeKey);
     if (!state.isActive || !state.questions[questionIndex]) {
       return;
     }
@@ -213,50 +191,52 @@ class QuestionManager {
     state.customInputQuestionIndex = questionIndex;
   }
 
-  clearCustomInput(scope?: TelegramConversationScope | null): void {
-    this.getOrCreateState(scope).customInputQuestionIndex = null;
+  clearCustomInput(scopeKey?: string): void {
+    this.getScopeState(scopeKey).customInputQuestionIndex = null;
   }
 
-  isWaitingForCustomInput(
-    questionIndex: number,
-    scope?: TelegramConversationScope | null,
-  ): boolean {
-    return this.getState(scope).customInputQuestionIndex === questionIndex;
+  isWaitingForCustomInput(questionIndex: number, scopeKey?: string): boolean {
+    return this.getScopeState(scopeKey).customInputQuestionIndex === questionIndex;
   }
 
-  getMessageIds(scope?: TelegramConversationScope | null): number[] {
-    return [...this.getState(scope).messageIds];
+  getMessageIds(scopeKey?: string): number[] {
+    return [...this.getScopeState(scopeKey).messageIds];
   }
 
-  isActive(scope?: TelegramConversationScope | null): boolean {
-    const state = this.getState(scope);
+  isActive(scopeKey?: string): boolean {
+    const state = this.getScopeState(scopeKey);
     logger.debug(
-      `[QuestionManager] isActive check: isActive=${state.isActive}, questions=${state.questions.length}, currentIndex=${state.currentIndex}`,
+      `[QuestionManager] isActive check: scope=${resolveTelegramConversationScopeKey(scopeKey)}, isActive=${state.isActive}, questions=${state.questions.length}, currentIndex=${state.currentIndex}`,
     );
     return state.isActive;
   }
 
-  cancel(scope?: TelegramConversationScope | null): void {
-    const state = this.getOrCreateState(scope);
-    logger.info("[QuestionManager] Poll cancelled");
+  cancel(scopeKey?: string): void {
+    const state = this.getScopeState(scopeKey);
+    logger.info(
+      `[QuestionManager] Poll cancelled for scope=${resolveTelegramConversationScopeKey(scopeKey)}`,
+    );
     state.isActive = false;
     state.customInputQuestionIndex = null;
     state.activeMessageId = null;
   }
 
-  clear(scope?: TelegramConversationScope | null): void {
-    this.states.set(this.getScopeKey(scope), createInitialState());
+  clear(scopeKey?: string): void {
+    this.states.set(resolveTelegramConversationScopeKey(scopeKey), createQuestionState());
   }
 
-  getAllAnswers(scope?: TelegramConversationScope | null): QuestionAnswer[] {
-    const state = this.getState(scope);
+  clearAll(): void {
+    this.states.clear();
+  }
+
+  getAllAnswers(scopeKey?: string): QuestionAnswer[] {
+    const state = this.getScopeState(scopeKey);
     const answers: QuestionAnswer[] = [];
 
     for (let i = 0; i < state.questions.length; i++) {
       const question = state.questions[i];
-      const selectedAnswer = this.getSelectedAnswer(i, scope);
-      const customAnswer = this.getCustomAnswer(i, scope);
-
+      const selectedAnswer = this.getSelectedAnswer(i, scopeKey);
+      const customAnswer = this.getCustomAnswer(i, scopeKey);
       const finalAnswer = customAnswer || selectedAnswer;
 
       if (finalAnswer) {
@@ -268,10 +248,6 @@ class QuestionManager {
     }
 
     return answers;
-  }
-
-  __resetForTests(): void {
-    this.states.clear();
   }
 }
 

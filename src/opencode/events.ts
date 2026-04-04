@@ -1,29 +1,45 @@
 import { Event } from "@opencode-ai/sdk/v2";
 import {
-  getCurrentTelegramConversationScope,
-  resolveTelegramConversationScopeKey,
-  runWithTelegramConversationScope,
-  type TelegramConversationScope,
-} from "../telegram/scope.js";
+  ensureCurrentOpencodeRouteReady,
+  getCurrentOpencodeRuntimeKey,
+  getOpencodeClientForCurrentScope,
+} from "./client.js";
 import { logger } from "../utils/logger.js";
-import { getOpencodeClient } from "./client.js";
 
 type EventCallback = (event: Event) => void;
-
-interface EventListenerState {
-  scope: TelegramConversationScope | null;
-  directory: string;
-  callback: EventCallback;
-  stream: AsyncGenerator<Event, unknown, unknown> | null;
-  isListening: boolean;
-  controller: AbortController;
-}
 
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
 const FATAL_NO_STREAM_ERROR = "No stream returned from event subscription";
 
-const listenerRegistry = new Map<string, EventListenerState>();
+interface EventListenerState {
+  eventStream: AsyncGenerator<Event, unknown, unknown> | null;
+  eventCallback: EventCallback | null;
+  isListening: boolean;
+  streamAbortController: AbortController | null;
+}
+
+const listenersByRuntimeAndDirectory = new Map<string, EventListenerState>();
+
+function buildListenerKey(directory: string): string {
+  return `${getCurrentOpencodeRuntimeKey()}::${directory}`;
+}
+
+function getListenerState(listenerKey: string): EventListenerState {
+  const existingState = listenersByRuntimeAndDirectory.get(listenerKey);
+  if (existingState) {
+    return existingState;
+  }
+
+  const nextState: EventListenerState = {
+    eventStream: null,
+    eventCallback: null,
+    isListening: false,
+    streamAbortController: null,
+  };
+  listenersByRuntimeAndDirectory.set(listenerKey, nextState);
+  return nextState;
+}
 
 function getReconnectDelayMs(attempt: number): number {
   const exponentialDelay = RECONNECT_BASE_DELAY_MS * Math.pow(2, Math.max(0, attempt - 1));
@@ -52,70 +68,33 @@ function waitWithAbort(ms: number, signal: AbortSignal): Promise<boolean> {
   });
 }
 
-function buildScopePrefix(scope: TelegramConversationScope | null | undefined): string {
-  return `${resolveTelegramConversationScopeKey(scope)}:`;
-}
-
-function buildListenerKey(
-  directory: string,
-  scope: TelegramConversationScope | null | undefined,
-): string {
-  return `${resolveTelegramConversationScopeKey(scope)}:${directory}`;
-}
-
-function removeListenerState(listenerKey: string, state: EventListenerState): void {
-  const currentState = listenerRegistry.get(listenerKey);
-  if (currentState === state) {
-    listenerRegistry.delete(listenerKey);
-  }
-}
-
-function stopListenersByPrefix(prefix: string): void {
-  for (const [listenerKey, state] of listenerRegistry.entries()) {
-    if (!listenerKey.startsWith(prefix)) {
-      continue;
-    }
-
-    state.controller.abort();
-    state.isListening = false;
-    state.stream = null;
-    listenerRegistry.delete(listenerKey);
-  }
-}
-
 export async function subscribeToEvents(directory: string, callback: EventCallback): Promise<void> {
-  const scope = getCurrentTelegramConversationScope();
-  const scopeKey = resolveTelegramConversationScopeKey(scope);
-  const listenerKey = buildListenerKey(directory, scope);
-  const existingState = listenerRegistry.get(listenerKey);
+  await ensureCurrentOpencodeRouteReady();
 
-  if (existingState?.isListening) {
-    existingState.callback = callback;
-    logger.debug(`Event listener already running for ${directory} in scope ${scopeKey}`);
+  const listenerKey = buildListenerKey(directory);
+  const state = getListenerState(listenerKey);
+
+  if (state.isListening) {
+    state.eventCallback = callback;
+    logger.debug(`Event listener already running for ${listenerKey}`);
     return;
   }
 
-  stopListenersByPrefix(buildScopePrefix(scope));
-
   const controller = new AbortController();
-  const listenerState: EventListenerState = {
-    scope,
-    directory,
-    callback,
-    stream: null,
-    isListening: true,
-    controller,
-  };
 
-  listenerRegistry.set(listenerKey, listenerState);
+  state.eventCallback = callback;
+  state.isListening = true;
+  state.streamAbortController = controller;
 
   try {
     let reconnectAttempt = 0;
 
-    while (listenerState.isListening && !controller.signal.aborted) {
+    while (state.isListening && !controller.signal.aborted) {
       try {
-        const result = await runWithTelegramConversationScope(scope, () =>
-          getOpencodeClient().event.subscribe({ directory }, { signal: controller.signal }),
+        await ensureCurrentOpencodeRouteReady();
+        const result = await getOpencodeClientForCurrentScope().event.subscribe(
+          { directory },
+          { signal: controller.signal },
         );
 
         if (!result.stream) {
@@ -123,32 +102,32 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
         }
 
         reconnectAttempt = 0;
-        listenerState.stream = result.stream;
+        state.eventStream = result.stream;
 
-        for await (const event of result.stream) {
-          if (!listenerState.isListening || controller.signal.aborted) {
-            logger.debug(`Event listener stopped for ${directory} in scope ${scopeKey}`);
+        for await (const event of state.eventStream) {
+          if (!state.isListening || controller.signal.aborted) {
+            logger.debug(`Event listener stopped for ${listenerKey}, breaking loop`);
             break;
           }
 
           await new Promise<void>((resolve) => setImmediate(resolve));
 
-          const callbackSnapshot = listenerState.callback;
-          setImmediate(() => {
-            void runWithTelegramConversationScope(scope, () => callbackSnapshot(event));
-          });
+          if (state.eventCallback) {
+            const callbackSnapshot = state.eventCallback;
+            setImmediate(() => callbackSnapshot(event));
+          }
         }
 
-        listenerState.stream = null;
+        state.eventStream = null;
 
-        if (!listenerState.isListening || controller.signal.aborted) {
+        if (!state.isListening || controller.signal.aborted) {
           break;
         }
 
         reconnectAttempt++;
         const reconnectDelay = getReconnectDelayMs(reconnectAttempt);
         logger.warn(
-          `Event stream ended for ${directory} in scope ${scopeKey}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})`,
+          `Event stream ended for ${listenerKey}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})`,
         );
 
         const shouldContinue = await waitWithAbort(reconnectDelay, controller.signal);
@@ -156,22 +135,22 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
           break;
         }
       } catch (error) {
-        listenerState.stream = null;
+        state.eventStream = null;
 
-        if (controller.signal.aborted || !listenerState.isListening) {
-          logger.info(`Event listener aborted for scope ${scopeKey}`);
+        if (controller.signal.aborted || !state.isListening) {
+          logger.info(`Event listener aborted for ${listenerKey}`);
           return;
         }
 
         if (error instanceof Error && error.message === FATAL_NO_STREAM_ERROR) {
-          logger.error(`Event stream fatal error for scope ${scopeKey}:`, error);
+          logger.error("Event stream fatal error:", error);
           throw error;
         }
 
         reconnectAttempt++;
         const reconnectDelay = getReconnectDelayMs(reconnectAttempt);
         logger.error(
-          `Event stream error for ${directory} in scope ${scopeKey}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})`,
+          `Event stream error for ${listenerKey}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})`,
           error,
         );
 
@@ -183,44 +162,55 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
     }
   } catch (error) {
     if (controller.signal.aborted) {
-      logger.info(`Event listener aborted for scope ${scopeKey}`);
+      logger.info(`Event listener aborted for ${listenerKey}`);
       return;
     }
 
-    logger.error(`Event stream error for scope ${scopeKey}:`, error);
-    listenerState.isListening = false;
-    listenerState.stream = null;
-    removeListenerState(listenerKey, listenerState);
+    logger.error("Event stream error:", error);
+    state.isListening = false;
+    state.streamAbortController = null;
     throw error;
   } finally {
-    listenerState.isListening = false;
-    listenerState.stream = null;
-    removeListenerState(listenerKey, listenerState);
+    if (state.streamAbortController === controller) {
+      if (state.isListening && !controller.signal.aborted) {
+        logger.warn(`Event stream ended for ${listenerKey}, listener marked as disconnected`);
+      }
+
+      state.streamAbortController = null;
+      state.eventStream = null;
+      state.eventCallback = null;
+      state.isListening = false;
+      listenersByRuntimeAndDirectory.delete(listenerKey);
+    }
   }
 }
 
-export function stopEventListening(): void {
-  const scope = getCurrentTelegramConversationScope();
-  if (scope) {
-    stopListenersByPrefix(buildScopePrefix(scope));
-    logger.info(`Event listener stopped for scope ${resolveTelegramConversationScopeKey(scope)}`);
+export function stopEventListening(directory?: string): void {
+  if (directory) {
+    const listenerKey = buildListenerKey(directory);
+    const state = listenersByRuntimeAndDirectory.get(listenerKey);
+    if (!state) {
+      return;
+    }
+
+    state.streamAbortController?.abort();
+    state.streamAbortController = null;
+    state.isListening = false;
+    state.eventCallback = null;
+    state.eventStream = null;
+    listenersByRuntimeAndDirectory.delete(listenerKey);
+    logger.info(`Event listener stopped for ${listenerKey}`);
     return;
   }
 
-  stopAllEventListening();
-}
-
-export function stopAllEventListening(): void {
-  for (const state of listenerRegistry.values()) {
-    state.controller.abort();
+  for (const [activeKey, state] of listenersByRuntimeAndDirectory.entries()) {
+    state.streamAbortController?.abort();
+    state.streamAbortController = null;
     state.isListening = false;
-    state.stream = null;
+    state.eventCallback = null;
+    state.eventStream = null;
+    logger.info(`Event listener stopped for ${activeKey}`);
   }
 
-  listenerRegistry.clear();
-  logger.info("All event listeners stopped");
-}
-
-export function __resetEventListenersForTests(): void {
-  stopAllEventListening();
+  listenersByRuntimeAndDirectory.clear();
 }

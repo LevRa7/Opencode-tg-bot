@@ -2,6 +2,8 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    include: ["tests/**/*.test.ts"],
+    exclude: [".worktrees/**"],
     environment: "node",
     setupFiles: ["./tests/setup.ts"],
     passWithNoTests: true,

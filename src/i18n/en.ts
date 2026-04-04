@@ -3,13 +3,16 @@ export const en = {
   "cmd.description.new": "Create a new session",
   "cmd.description.stop": "Stop current action",
   "cmd.description.sessions": "List sessions",
+  "cmd.description.tts": "Toggle audio replies",
   "cmd.description.projects": "List projects",
   "cmd.description.task": "Create a scheduled task",
   "cmd.description.tasklist": "List scheduled tasks",
   "cmd.description.commands": "Custom commands",
   "cmd.description.stream": "Toggle message streaming",
+  "cmd.description.restart": "Restart bot process",
   "cmd.description.opencode_start": "Start OpenCode server",
   "cmd.description.opencode_stop": "Stop OpenCode server",
+  "cmd.description.reasoning": "Configure reasoning level (0-3)",
   "cmd.description.help": "Help",
 
   "callback.unknown_command": "Unknown command",
@@ -53,7 +56,7 @@ export const en = {
     "💡 Use the bottom keyboard buttons for agent mode, model, variant, and context actions.",
   "help.text":
     "📖 **Help**\n\n/status - Check server status\n/sessions - Session list\n/new - Create new session\n/help - Help",
-  "stream.enabled": "✨ Message streaming is enabled for assistant and bot messages.",
+  "stream.enabled": "✨ Message streaming is enabled.",
   "stream.disabled": "⏹ Message streaming is disabled.",
   "stream.status_enabled": "✨ Message streaming is currently enabled.",
   "stream.status_disabled": "⏹ Message streaming is currently disabled.",
@@ -68,8 +71,6 @@ export const en = {
   "bot.session_created": "✅ Session created: {title}",
   "bot.session_busy":
     "⏳ Agent is already running a task. Wait for completion or use /abort to interrupt current run.",
-  "bot.parallel_limit_reached":
-    "⏳ You already have {limit} active requests in different topics. Wait for one to finish or use /abort.",
   "bot.session_reset_project_mismatch":
     "⚠️ Active session does not match the selected project, so it was reset. Use /sessions to pick one or /new to create a new session.",
   "bot.prompt_send_error": "Failed to send request to OpenCode.",
@@ -82,16 +83,13 @@ export const en = {
   "bot.photo_model_no_image": "⚠️ Current model doesn't support image input. Sending text only.",
   "bot.photo_download_error": "🔴 Failed to download photo",
   "bot.photo_no_caption": "💡 Tip: Add a caption to describe what you want to do with this photo.",
-  "bot.video_downloading": "⏳ Downloading video...",
-  "bot.video_too_long": "⚠️ Video is too long (max {maxDurationSec} sec)",
-  "bot.video_model_no_video": "⚠️ Current model doesn't support video input. Sending text only.",
-  "bot.video_download_error": "🔴 Failed to download video",
   "bot.file_downloading": "⏳ Downloading file...",
   "bot.file_too_large": "⚠️ File is too large (max {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 Failed to download file",
+  "bot.video_too_long": "⚠️ Video is too long (max {maxDurationSec} sec)",
+  "bot.video_downloading": "⏳ Downloading video...",
+  "bot.video_download_error": "🔴 Failed to download video",
   "bot.model_no_pdf": "⚠️ Current model doesn't support PDF input. Sending text only.",
-  "bot.media_model_no_support":
-    "⚠️ Neither the selected model nor fallback Gemini supports this media input.",
   "bot.text_file_too_large": "⚠️ Text file is too large (max {maxSizeKb}KB)",
 
   "status.header_running": "🟢 OpenCode Server is running",
@@ -105,6 +103,9 @@ export const en = {
   "status.line.uptime_sec": "Uptime: {seconds} sec",
   "status.line.mode": "Mode: {mode}",
   "status.line.model": "Model: {model}",
+  "status.line.tts": "TTS replies: {tts}",
+  "status.tts.on": "On",
+  "status.tts.off": "Off",
   "status.agent_not_set": "not set",
   "status.project_selected": "Project: {project}",
   "status.project_not_selected": "Project: not selected",
@@ -114,6 +115,12 @@ export const en = {
   "status.session_hint": "Use /sessions to select one or /new to create one",
   "status.server_unavailable":
     "🔴 OpenCode Server is unavailable\n\nUse /opencode_start to start the server.",
+
+  "tts.enabled": "🔊 Audio replies enabled globally.",
+  "tts.not_configured":
+    "⚠️ Audio replies are unavailable. Set `TTS_API_URL` and `TTS_API_KEY` first.",
+  "tts.disabled": "🔇 Audio replies disabled globally.",
+  "tts.failed": "⚠️ Failed to generate audio reply.",
 
   "projects.empty":
     "📭 No projects found.\n\nOpen a directory in OpenCode and create at least one session, then it will appear here.",
@@ -149,11 +156,23 @@ export const en = {
   "sessions.preview.you": "You:",
   "sessions.preview.agent": "Agent:",
 
+  "ontology.button.view_graph": "View graph",
+  "ontology.button.refresh": "Refresh",
+  "ontology.button.prev_page": "⬅️ Prev",
+  "ontology.button.next_page": "Next ➡️",
+  "ontology.button.back": "Back",
+  "ontology.button.summary": "Summary",
+  "ontology.load_error": "🔴 Failed to load ontology view.",
+
   "new.project_not_selected":
     "🏗 Project is not selected.\n\nFirst select a project with /projects.",
   "new.created": "✅ New session created: {title}",
   "new.create_error":
     "🔴 OpenCode Server is unavailable or an error occurred while creating session.",
+
+  "restart.in_progress": "⏳ Restart is already in progress.",
+  "restart.restarting": "🔄 Restarting bot...",
+  "restart.error": "🔴 Failed to restart bot: {error}",
 
   "stop.no_active_session":
     "🛑 Agent was not started\n\nCreate a session with /new or select one via /sessions.",
@@ -191,9 +210,6 @@ export const en = {
   "opencode_stop.success": "✅ OpenCode Server stopped successfully",
   "opencode_stop.error":
     "🔴 An error occurred while stopping server.\n\nCheck application logs for details.",
-  "restart.in_progress": "⚠️ Bot restart is already in progress.",
-  "restart.restarting": "🔄 Restarting bot...",
-  "restart.error": "🔴 Failed to restart bot\n\nError: {error}",
 
   "agent.changed_callback": "Mode changed: {name}",
   "agent.changed_message": "✅ Mode changed to: {name}",
@@ -296,6 +312,19 @@ export const en = {
   "pinned.line.project": "Project: {project}",
   "pinned.line.model": "Model: {model}",
   "pinned.line.context": "Context: {used} / {limit} ({percent}%)",
+  "pinned.line.cost": "Cost: {cost} spent",
+  "subagent.header": "Subagent {agent}: {description}",
+  "subagent.line.status": "Status: {status}",
+  "subagent.line.task": "Task: {task}",
+  "subagent.line.agent": "Agent: {agent}",
+  "subagent.working": "Working...",
+  "subagent.working_with_details": "Working: {details}",
+  "subagent.completed": "Completed",
+  "subagent.failed": "Task failed",
+  "subagent.status.pending": "pending",
+  "subagent.status.running": "running",
+  "subagent.status.completed": "completed",
+  "subagent.status.error": "error",
   "pinned.files.title": "Files ({count}):",
   "pinned.files.item": "  {path}{diff}",
   "pinned.files.more": "  ... and {count} more",
@@ -376,7 +405,7 @@ export const en = {
     "Recurring schedule is too frequent. The minimum allowed interval is once every 5 minutes.",
   "task.kind.cron": "recurring",
   "task.kind.once": "one-time",
-  "task.run.success": "⏰ Scheduled task completed: {description}\n\n{result}",
+  "task.run.success": "⏰ Scheduled task completed: {description}",
   "task.run.error": "🔴 Scheduled task failed: {description}\n\nError: {error}",
 
   "tasklist.empty": "📭 No scheduled tasks yet.",
@@ -405,10 +434,13 @@ export const en = {
   "commands.executing_prefix": "⚡ Executing command:",
   "commands.arguments_empty": "⚠️ Arguments cannot be empty. Send text or tap Execute.",
   "commands.execute_error": "🔴 Failed to execute OpenCode command.",
+  "commands.select_page": "Choose an OpenCode command (page {page}):",
+  "commands.button.prev_page": "⬅️ Prev",
+  "commands.button.next_page": "Next ➡️",
+  "commands.page_empty_callback": "No commands on this page",
+  "commands.page_load_error_callback": "Cannot load this page. Please try again.",
 
-  "cmd.description.start": "Start or reset bot",
   "cmd.description.rename": "Rename current session",
-  "cmd.description.restart": "Restart bot",
 
   "cli.usage":
     "Usage:\n  opencode-telegram [start] [--mode sources|installed]\n  opencode-telegram status\n  opencode-telegram stop\n  opencode-telegram config\n\nNotes:\n  - No command defaults to `start`\n  - `--mode` is currently supported for `start` only",
@@ -437,6 +469,88 @@ export const en = {
     "🎤 Voice recognition is not configured.\n\nSet STT_API_URL and STT_API_KEY in .env to enable it.",
   "stt.error": "🔴 Failed to recognize audio: {error}",
   "stt.empty_result": "🎤 No speech detected in the audio message.",
+
+  "cmd.description.export_data": "Export data",
+
+  "export_data.title": "Data export settings",
+  "export_data.group.personal": "Personal",
+  "export_data.group.bots": "Bots",
+  "export_data.group.group_chats": "Group chats",
+  "export_data.group.public_channels": "Public channels",
+  "export_data.group.interlocutor_channels": "Interlocutor channels",
+
+  "restart.admin_only": "This command is available only to the admin.",
+
+  "status.runtime.tenant": "Runtime: tenant",
+  "status.runtime.host": "Runtime: host",
+  "status.line.port": "Port: {port}",
+  "status.line.tenant": "Tenant: {tenantId}",
+
+  "auth.button.approve": "✅ Approve",
+  "auth.button.deny": "❌ Deny",
+  "auth.request.title": "🔐 Access request",
+  "auth.request.user": "User: {user}",
+  "auth.request.user_id": "User ID: {userId}",
+  "auth.request.chat_id": "Chat ID: {chatId}",
+  "auth.request.chat_type": "Chat type: {chatType}",
+  "auth.request.language": "Language: {language}",
+  "auth.requester.sent": "Access request has been sent to the admin. After approval you can use the bot.",
+  "auth.error.admin_only": "Only the admin can manage access",
+  "auth.error.request_not_pending": "Access request is no longer pending",
+  "auth.callback.pending_approval": "Access pending admin approval",
+  "auth.decision.approved": "✅ Access approved",
+  "auth.decision.denied": "❌ Access denied",
+  "auth.decision.user": "User: {user}",
+  "auth.decision.user_id": "User ID: {userId}",
+  "auth.decision.chat_id": "Chat ID: {chatId}",
+  "auth.decision.chat_type": "Chat type: {chatType}",
+  "auth.decision.language": "Language: {language}",
+  "auth.decision.requested_at": "Requested at: {requestedAt}",
+  "auth.decision.decided_by": "Decided by admin: {adminUserId}",
+  "auth.requester.approved": "Access approved by the admin. You can now use the bot.",
+  "auth.requester.denied": "The admin denied the access request.",
+
+  "ontology.summary.title": "🧭 Ontology snapshot",
+  "ontology.summary.chat": "Chat: {chat}",
+  "ontology.summary.session": "Session: {sessionId}",
+  "ontology.summary.query": "Query: {query}",
+  "ontology.summary.messages": "Messages: {messageCount}",
+  "ontology.summary.segments": "Segments: {segmentCount}",
+  "ontology.summary.facts": "Facts: {factCount}",
+  "ontology.summary.updated": "Updated: {generatedAt}",
+  "ontology.summary.counts": "Counts:",
+  "ontology.summary.goals": "Goals: {count}",
+  "ontology.summary.constraints": "Constraints: {count}",
+  "ontology.summary.locations": "Locations: {count}",
+  "ontology.summary.projects": "Projects: {count}",
+  "ontology.summary.bonds": "Bond components: {count}",
+
+  "ontology.graph.title": "🧬 Ontology graph",
+  "ontology.graph.page": "Page {current}/{total}",
+  "ontology.graph.empty": "No ontology nodes found.",
+
+  "ontology.node.title": "🪪 Ontology node",
+  "ontology.node.empty": "No ontology node found.",
+  "ontology.node.index": "Index: {index}",
+  "ontology.node.kind": "Kind: {kind}",
+  "ontology.node.label": "Label: {label}",
+  "ontology.node.summary": "Summary: {summary}",
+  "ontology.node.source_message": "Source message: {msgId}",
+  "ontology.node.raw": "Raw:",
+
+  "ontology.kind.goal": "Goal",
+  "ontology.kind.constraint": "Constraint",
+  "ontology.kind.location": "Location",
+  "ontology.kind.project": "Project",
+  "ontology.kind.bond": "Bond",
+
+  "reasoning.title": "🧠 Reasoning settings",
+  "reasoning.mode_0": "0 - Final answer only",
+  "reasoning.mode_1": "1 - Thoughts and files",
+  "reasoning.mode_2": "2 - Level 1 + commands",
+  "reasoning.mode_3": "3 - Combined view (default)",
+  "reasoning.current": "Current mode: {mode}",
+  "reasoning.updated": "✅ Reasoning mode changed to: {mode}",
 } as const;
 
 export type I18nKey = keyof typeof en;

@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
-import { BOT_COMMANDS } from "../commands/definitions.js";
+import { config } from "../../config.js";
+import { getLocalizedBotCommands } from "../commands/definitions.js";
 
 type CommandSyncApi = Pick<Context["api"], "setMyCommands" | "setChatMenuButton">;
 type TelegramChatType = NonNullable<Context["chat"]>["type"];
@@ -9,8 +10,11 @@ export async function syncAuthorizedChatCommands(
   chatId: number,
   chatType: TelegramChatType,
 ): Promise<void> {
+  const isAdmin = chatId === config.telegram.adminUserId;
+  const commands = getLocalizedBotCommands({ isAdmin });
+
   const tasks: Promise<unknown>[] = [
-    api.setMyCommands(BOT_COMMANDS, {
+    api.setMyCommands(commands, {
       scope: {
         type: "chat",
         chat_id: chatId,
@@ -34,8 +38,10 @@ export async function syncUnauthorizedPrivateChatCommands(
   api: CommandSyncApi,
   chatId: number,
 ): Promise<void> {
+  const commands = getLocalizedBotCommands({ isAdmin: false });
+
   await Promise.all([
-    api.setMyCommands([], {
+    api.setMyCommands(commands, {
       scope: {
         type: "chat",
         chat_id: chatId,
@@ -43,7 +49,7 @@ export async function syncUnauthorizedPrivateChatCommands(
     }),
     api.setChatMenuButton({
       chat_id: chatId,
-      menu_button: { type: "default" },
+      menu_button: { type: "commands" },
     }),
   ]);
 }

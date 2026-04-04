@@ -11,32 +11,33 @@ import { getStoredAgent } from "../../agent/manager.js";
 import { getStoredModel } from "../../model/manager.js";
 import { formatVariantForButton } from "../../variant/manager.js";
 import { createMainKeyboard } from "../utils/keyboard.js";
+import { isForegroundBusy, replyBusyBlocked } from "../utils/busy-guard.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
-import { ensureUserProjectForCommand } from "../../project/user-project.js";
+import { getDefaultProject } from "../../project/manager.js";
 
 export async function newCommand(ctx: CommandContext<Context>) {
   try {
+    if (isForegroundBusy()) {
+      await replyBusyBlocked(ctx);
+      return;
+    }
+
     let currentProject = getCurrentProject();
 
     if (!currentProject) {
-      if (!threadContextManager.canAutoAssignProjectForActiveContext()) {
+      const defaultProject = await getDefaultProject();
+      if (!defaultProject) {
         await ctx.reply(t("new.project_not_selected"));
         return;
       }
 
-      const tgId = ctx.from?.id;
-      if (!tgId) {
-        await ctx.reply(t("new.project_not_selected"));
-        return;
-      }
-
-      logger.info(`[Bot] No project selected, auto-creating project for tgId=${tgId}`);
-      currentProject = await ensureUserProjectForCommand(tgId);
-      setCurrentProject(currentProject);
-      threadContextManager.bindProjectToActiveContext(currentProject);
+      currentProject = defaultProject;
     }
+
+    setCurrentProject(currentProject);
+    threadContextManager.bindProjectToActiveContext(currentProject);
 
     logger.debug("[Bot] Creating new session for directory:", currentProject.worktree);
 
@@ -58,7 +59,6 @@ export async function newCommand(ctx: CommandContext<Context>) {
       directory: currentProject.worktree,
     };
     setCurrentSession(sessionInfo);
-    threadContextManager.bindProjectToActiveContext(currentProject);
     threadContextManager.bindSessionToActiveContext(sessionInfo);
     summaryAggregator.clear();
     clearAllInteractionState("session_created");

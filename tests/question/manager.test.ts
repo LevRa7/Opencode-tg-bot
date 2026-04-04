@@ -1,7 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { questionManager } from "../../src/question/manager.js";
 import type { Question } from "../../src/question/types.js";
-import type { TelegramConversationScope } from "../../src/telegram/scope.js";
 
 const SINGLE_QUESTION: Question = {
   question: "Pick one option",
@@ -24,10 +23,6 @@ const MULTIPLE_QUESTION: Question = {
 };
 
 describe("questionManager", () => {
-  beforeEach(() => {
-    questionManager.__resetForTests();
-  });
-
   it("starts poll and moves through questions", () => {
     questionManager.startQuestions([SINGLE_QUESTION, MULTIPLE_QUESTION], "req-1");
 
@@ -124,22 +119,5 @@ describe("questionManager", () => {
     expect(questionManager.getTotalQuestions()).toBe(0);
     expect(questionManager.getRequestID()).toBeNull();
     expect(questionManager.getCurrentQuestion()).toBeNull();
-  });
-
-  it("isolates question state by telegram scope", () => {
-    const scopeA: TelegramConversationScope = { userId: 1, chatId: 100, messageThreadId: 10 };
-    const scopeB: TelegramConversationScope = { userId: 1, chatId: 100, messageThreadId: 11 };
-
-    questionManager.startQuestions([SINGLE_QUESTION], "req-a", scopeA);
-    questionManager.startQuestions([MULTIPLE_QUESTION], "req-b", scopeB);
-
-    questionManager.selectOption(0, 0, scopeA);
-    questionManager.selectOption(0, 1, scopeB);
-
-    expect(questionManager.getRequestID(scopeA)).toBe("req-a");
-    expect(questionManager.getRequestID(scopeB)).toBe("req-b");
-    expect(questionManager.getSelectedAnswer(0, scopeA)).toBe("* Yes: accept");
-    expect(questionManager.getSelectedAnswer(0, scopeB)).toBe("* Beta: second");
-    expect(questionManager.getSelectedAnswer(0)).toBe("");
   });
 });

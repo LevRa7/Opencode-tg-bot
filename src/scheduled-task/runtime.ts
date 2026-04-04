@@ -1,5 +1,9 @@
 import type { Bot, Context } from "grammy";
 import { config } from "../config.js";
+import {
+  escapePlainTextForTelegramMarkdownV2,
+  formatSummaryWithMode,
+} from "../summary/formatter.js";
 import { t } from "../i18n/index.js";
 import { logger } from "../utils/logger.js";
 import { safeBackgroundTask } from "../utils/safe-background-task.js";
@@ -14,40 +18,41 @@ import {
   replaceScheduledTasks,
   updateScheduledTask,
 } from "./store.js";
-import type {
-  QueuedScheduledTaskDelivery,
-  ScheduledTask,
-  ScheduledTaskOwnerScope,
-} from "./types.js";
+import type { QueuedScheduledTaskDelivery, ScheduledTask } from "./types.js";
 
-const TELEGRAM_MESSAGE_LIMIT = 4096;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const TELEGRAM_MESSAGE_LIMIT = 4096;
 const TASK_DESCRIPTION_PREVIEW_LENGTH = 64;
 const RESTART_INTERRUPTED_ERROR = "Interrupted by bot restart during scheduled task execution.";
 
-function splitTelegramText(text: string): string[] {
-  if (text.length <= TELEGRAM_MESSAGE_LIMIT) {
-    return [text];
+function getScheduledTaskDeliveryFormat(): "raw" | "markdown_v2" {
+  return config.bot.messageFormatMode === "markdown" ? "markdown_v2" : "raw";
+}
+
+function buildScheduledTaskSuccessMessageParts(delivery: QueuedScheduledTaskDelivery): string[] {
+  if (!delivery.resultText) {
+    return [delivery.notificationText];
   }
 
-  const parts: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > TELEGRAM_MESSAGE_LIMIT) {
-    let splitIndex = remaining.lastIndexOf("\n", TELEGRAM_MESSAGE_LIMIT);
-    if (splitIndex <= 0 || splitIndex < Math.floor(TELEGRAM_MESSAGE_LIMIT * 0.5)) {
-      splitIndex = TELEGRAM_MESSAGE_LIMIT;
-    }
-
-    parts.push(remaining.slice(0, splitIndex).trim());
-    remaining = remaining.slice(splitIndex).trimStart();
+  if (config.bot.messageFormatMode !== "markdown") {
+    return formatSummaryWithMode(
+      `${delivery.notificationText}\n\n${delivery.resultText}`,
+      config.bot.messageFormatMode,
+    );
   }
 
-  if (remaining.trim()) {
-    parts.push(remaining.trim());
+  const header = escapePlainTextForTelegramMarkdownV2(delivery.notificationText);
+  const resultParts = formatSummaryWithMode(delivery.resultText, config.bot.messageFormatMode);
+  if (resultParts.length === 0) {
+    return [header];
   }
 
-  return parts;
+  const firstPart = `${header}\n\n${resultParts[0]}`;
+  if (firstPart.length <= TELEGRAM_MESSAGE_LIMIT) {
+    return [firstPart, ...resultParts.slice(1)];
+  }
+
+  return [header, ...resultParts];
 }
 
 function normalizeTaskPrompt(prompt: string): string {
@@ -66,15 +71,14 @@ function buildSuccessDelivery(
 ): QueuedScheduledTaskDelivery {
   return {
     taskId: task.id,
-    target: resolveTaskOwnerScope(task),
     scheduleSummary: task.scheduleSummary,
     prompt: task.prompt,
     runAt,
     status: "success",
-    messageText: t("task.run.success", {
+    notificationText: t("task.run.success", {
       description: normalizeTaskPrompt(task.prompt),
-      result: resultText,
     }),
+    resultText,
   };
 }
 
@@ -85,31 +89,20 @@ function buildErrorDelivery(
 ): QueuedScheduledTaskDelivery {
   return {
     taskId: task.id,
-    target: resolveTaskOwnerScope(task),
     scheduleSummary: task.scheduleSummary,
     prompt: task.prompt,
     runAt,
     status: "error",
-    messageText: t("task.run.error", {
+    notificationText: t("task.run.error", {
       description: normalizeTaskPrompt(task.prompt),
       error: errorMessage,
     }),
   };
 }
 
-function resolveTaskOwnerScope(task: ScheduledTask): ScheduledTaskOwnerScope {
-  if (task.ownerScope) {
-    return { ...task.ownerScope };
-  }
-
-  return {
-    userId: config.telegram.adminUserId,
-    chatId: config.telegram.adminUserId,
-  };
-}
-
 export class ScheduledTaskRuntime {
   private botApi: Bot<Context>["api"] | null = null;
+  private chatId: number | null = null;
   private initialized = false;
   private timersByTaskId = new Map<string, ReturnType<typeof setTimeout>>();
   private runningTaskIds = new Set<string>();
@@ -118,6 +111,7 @@ export class ScheduledTaskRuntime {
 
   async initialize(bot: Bot<Context>): Promise<void> {
     this.botApi = bot.api;
+    this.chatId = config.telegram.adminUserId;
 
     if (this.initialized) {
       return;
@@ -151,6 +145,7 @@ export class ScheduledTaskRuntime {
     if (
       this.flushInProgress ||
       !this.botApi ||
+      this.chatId === null ||
       foregroundSessionState.isBusy() ||
       this.deliveryQueue.length === 0
     ) {
@@ -180,6 +175,7 @@ export class ScheduledTaskRuntime {
     }
 
     this.botApi = null;
+    this.chatId = null;
     this.initialized = false;
     this.timersByTaskId.clear();
     this.runningTaskIds.clear();
@@ -455,22 +451,23 @@ export class ScheduledTaskRuntime {
   }
 
   private async sendDelivery(delivery: QueuedScheduledTaskDelivery): Promise<boolean> {
-    if (!this.botApi) {
+    if (!this.botApi || this.chatId === null) {
       return false;
     }
 
     try {
-      const messageParts = splitTelegramText(delivery.messageText);
+      const messageParts =
+        delivery.status === "success"
+          ? buildScheduledTaskSuccessMessageParts(delivery)
+          : [delivery.notificationText];
+      const format = delivery.status === "success" ? getScheduledTaskDeliveryFormat() : "raw";
+
       for (const part of messageParts) {
         await sendBotText({
           api: this.botApi,
-          chatId: delivery.target.chatId,
+          chatId: this.chatId,
           text: part,
-          options:
-            delivery.target.messageThreadId !== undefined
-              ? { message_thread_id: delivery.target.messageThreadId }
-              : undefined,
-          format: "raw",
+          format,
         });
       }
 

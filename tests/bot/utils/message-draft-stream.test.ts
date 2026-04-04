@@ -86,8 +86,30 @@ describe("bot/utils/message-draft-stream", () => {
     await manager.flushSession("session-1");
 
     expect(sendMessageDraft).toHaveBeenCalledTimes(1);
-    expect(sendMessageDraft).toHaveBeenCalledWith(123, 1, htmlText, {
-      parse_mode: "HTML",
-    });
+    expect(sendMessageDraft).toHaveBeenCalledWith(123, 1, htmlText, {});
+  });
+
+  it("does not send parallel duplicate drafts while a send is in flight", async () => {
+    let resolveSend: ((value: boolean) => void) | null = null;
+    const sendMessageDraft = vi.fn().mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveSend = resolve;
+        }),
+    );
+    const manager = new MessageDraftStreamManager(0);
+
+    manager.enqueue("session-1", { sendMessageDraft }, { chatId: 123 }, "hello world");
+
+    const firstFlush = manager.flushSession("session-1");
+    const secondFlush = manager.flushSession("session-1");
+
+    expect(sendMessageDraft).toHaveBeenCalledTimes(1);
+
+    resolveSend?.(true);
+    await firstFlush;
+    await secondFlush;
+
+    expect(sendMessageDraft).toHaveBeenCalledTimes(1);
   });
 });

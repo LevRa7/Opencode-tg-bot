@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Event } from "@opencode-ai/sdk/v2";
-import { runWithTelegramConversationScope } from "../../src/telegram/scope.js";
 
 const { subscribeMock } = vi.hoisted(() => {
   return {
@@ -9,19 +8,16 @@ const { subscribeMock } = vi.hoisted(() => {
 });
 
 vi.mock("../../src/opencode/client.js", () => ({
-  getOpencodeClient: vi.fn(() => ({
+  ensureCurrentOpencodeRouteReady: vi.fn().mockResolvedValue(undefined),
+  getCurrentOpencodeRuntimeKey: vi.fn(() => "host"),
+  getOpencodeClientForCurrentScope: vi.fn(() => ({
     event: {
       subscribe: subscribeMock,
     },
   })),
-  __resetOpencodeClientRegistryForTests: vi.fn(),
 }));
 
-import {
-  stopAllEventListening,
-  stopEventListening,
-  subscribeToEvents,
-} from "../../src/opencode/events.js";
+import { stopEventListening, subscribeToEvents } from "../../src/opencode/events.js";
 
 function createStream(events: Event[]): AsyncGenerator<Event, void, unknown> {
   return (async function* () {
@@ -45,8 +41,7 @@ function flushImmediate(): Promise<void> {
 
 describe("opencode/events", () => {
   afterEach(() => {
-    stopAllEventListening();
-    subscribeMock.mockReset();
+    stopEventListening();
   });
 
   it("subscribes to stream and forwards events to callback", async () => {
@@ -92,8 +87,9 @@ describe("opencode/events", () => {
     await firstSubscription;
   });
 
-  it("aborts previous stream when directory changes", async () => {
+  it("allows subscriptions for different directories independently", async () => {
     let firstSignal: { aborted: boolean } | null = null;
+    let secondSignal: { aborted: boolean } | null = null;
 
     subscribeMock
       .mockImplementationOnce(async (_params, options: { signal: AbortSignal }) => {
@@ -101,6 +97,7 @@ describe("opencode/events", () => {
         return { stream: createAbortableStream(options.signal) };
       })
       .mockImplementationOnce(async (_params, options: { signal: AbortSignal }) => {
+        secondSignal = options.signal;
         return { stream: createAbortableStream(options.signal) };
       });
 
@@ -116,8 +113,8 @@ describe("opencode/events", () => {
       expect(subscribeMock).toHaveBeenCalledTimes(2);
     });
 
-    expect(subscribeMock).toHaveBeenCalledTimes(2);
-    expect(firstSignal).toEqual(expect.objectContaining({ aborted: true }));
+    expect(firstSignal).toEqual(expect.objectContaining({ aborted: false }));
+    expect(secondSignal).toEqual(expect.objectContaining({ aborted: false }));
 
     stopEventListening();
     await Promise.all([firstSubscription, secondSubscription]);
@@ -169,37 +166,5 @@ describe("opencode/events", () => {
 
     stopEventListening();
     await subscription;
-  });
-
-  it("keeps listeners isolated by telegram scope", async () => {
-    subscribeMock.mockImplementation(async (_params, options: { signal: AbortSignal }) => ({
-      stream: createAbortableStream(options.signal),
-    }));
-
-    const scopeA = { userId: 1, chatId: 100, messageThreadId: 10 };
-    const scopeB = { userId: 2, chatId: 100, messageThreadId: 10 };
-
-    const subscriptionA = runWithTelegramConversationScope(scopeA, () =>
-      subscribeToEvents("D:/repo", vi.fn()),
-    );
-    const subscriptionB = runWithTelegramConversationScope(scopeB, () =>
-      subscribeToEvents("D:/repo", vi.fn()),
-    );
-
-    await vi.waitFor(() => {
-      expect(subscribeMock).toHaveBeenCalledTimes(2);
-    });
-
-    runWithTelegramConversationScope(scopeA, () => {
-      stopEventListening();
-    });
-
-    await vi.waitFor(() => {
-      expect(subscribeMock.mock.calls[0]?.[1]?.signal.aborted).toBe(true);
-      expect(subscribeMock.mock.calls[1]?.[1]?.signal.aborted).toBe(false);
-    });
-
-    stopAllEventListening();
-    await Promise.all([subscriptionA, subscriptionB]);
   });
 });

@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { setRuntimeMode } from "../../src/runtime/mode.js";
 import { loadSettings } from "../../src/settings/manager.js";
+import { runWithTelegramConversationScope } from "../../src/telegram/scope.js";
 import {
   __resetSessionDirectoryCacheForTests,
   getCachedSessionDirectories,
@@ -153,5 +154,33 @@ describe("session/cache-manager", () => {
 
     const directories = await getCachedSessionDirectories();
     expect(directories).toEqual([{ worktree: "D:/repo-a", lastUpdated: 1_700_000_000_900 }]);
+  });
+
+  it("does not expose global host cache inside user scope", async () => {
+    await upsertSessionDirectory("/host-repo", 1_700_000_000_100);
+
+    const scopedDirectories = await runWithTelegramConversationScope(
+      { userId: 7408085157, chatId: 7408085157 },
+      () => getCachedSessionDirectories(),
+    );
+
+    expect(scopedDirectories).toEqual([]);
+
+    await runWithTelegramConversationScope(
+      { userId: 7408085157, chatId: 7408085157 },
+      () => upsertSessionDirectory("/tenant-repo", 1_700_000_000_200),
+    );
+
+    const globalDirectories = await getCachedSessionDirectories();
+    expect(globalDirectories).toEqual([{ worktree: "/host-repo", lastUpdated: 1_700_000_000_100 }]);
+
+    const scopedDirectoriesAfterWrite = await runWithTelegramConversationScope(
+      { userId: 7408085157, chatId: 7408085157 },
+      () => getCachedSessionDirectories(),
+    );
+
+    expect(scopedDirectoriesAfterWrite).toEqual([
+      { worktree: "/tenant-repo", lastUpdated: 1_700_000_000_200 },
+    ]);
   });
 });

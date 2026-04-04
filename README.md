@@ -28,24 +28,18 @@ Languages: English (`en`), Deutsch (`de`), Español (`es`), Français (`fr`), Р
 - **Live status** — pinned message with current project, model, context usage, and changed files list, updated in real time
 - **Model switching** — pick models from OpenCode favorites and recent history directly in the chat (favorites are shown first)
 - **Agent modes** — switch between Plan and Build modes on the fly
+- **Subagent activity** — watch live subagent progress in chat, including the current task, agent, model, and active tool step
 - **Custom Commands** — run OpenCode custom commands (and built-ins like `init`/`review`) from an inline menu with confirmation
 - **Interactive Q&A** — answer agent questions and approve permissions via inline buttons
-- **Voice prompts** — send voice/audio messages, transcribe them via a Whisper-compatible API, then forward recognized text to OpenCode
+- **Voice prompts** — send voice/audio messages, transcribe them via a Whisper-compatible API, and optionally enable spoken replies with `/tts`
 - **File attachments** — send images, PDF documents, and any text-based files to OpenCode (code, logs, configs etc.)
-- **Forum topic threading** — in Telegram forum chats, each topic gets its own session context and bot replies stay in the same topic
 - **Scheduled tasks** — schedule prompts to run later or on a recurring interval; see [Scheduled Tasks](#scheduled-tasks)
 - **Context control** — compact context when it gets too large, right from the chat
 - **Input flow control** — when an interactive flow is active, the bot accepts only relevant input to keep context consistent and avoid accidental actions
-- **Security** — admin-managed Telegram allowlist; unauthorized users are ignored even if they find the bot
+- **Security** — strict user ID whitelist; no one else can access your bot, even if they find it
 - **Localization** — UI localization is supported for multiple languages (`BOT_LOCALE`)
 
 Planned features currently in development are listed in [Current Task List](PRODUCT.md#current-task-list).
-
-Additional project docs:
-
-- Product scope and full bot functionality: [`PRODUCT.md`](PRODUCT.md)
-- Internal architecture and component interactions: [`docs/architecture.md`](docs/architecture.md)
-- Change history and documentation log: [`CHANGELOG.md`](CHANGELOG.md)
 
 ## Prerequisites
 
@@ -61,7 +55,7 @@ Additional project docs:
 2. Follow the prompts to choose a name and username
 3. Copy the **bot token** you receive (e.g. `123456:ABC-DEF1234...`)
 
-You'll also need your **Telegram User ID** — send any message to [@userinfobot](https://t.me/userinfobot) and it will reply with your numeric ID. The setup wizard uses it as the initial admin user and seeds the allowlist with that same ID.
+You'll also need your **Telegram User ID** — send any message to [@userinfobot](https://t.me/userinfobot) and it will reply with your numeric ID.
 
 ### 2. Start OpenCode Server
 
@@ -83,7 +77,7 @@ npx @grinev/opencode-telegram-bot
 
 > Quick start is for npm usage. You do not need to clone this repository. If you run this command from the source directory (repository root), it may fail with `opencode-telegram: not found`. To run from sources, use the [Development](#development) section.
 
-On first launch, an interactive wizard will guide you through the configuration — it asks for interface language first, then your bot token, admin user ID, OpenCode API URL, and optional OpenCode server credentials (username/password). After that, you're ready to go. Open your bot in Telegram and start sending tasks.
+On first launch, an interactive wizard will guide you through the configuration — it asks for interface language first, then your bot token, user ID, OpenCode API URL, and optional OpenCode server credentials (username/password). After that, you're ready to go. Open your bot in Telegram and start sending tasks.
 
 #### Alternative: Global Install
 
@@ -110,46 +104,23 @@ opencode-telegram config
 
 | Command           | Description                                             |
 | ----------------- | ------------------------------------------------------- |
-| `/start`          | Reset current state and show welcome message            |
 | `/status`         | Server health, current project, session, and model info |
 | `/new`            | Create a new session                                    |
 | `/abort`          | Abort the current task                                  |
 | `/sessions`       | Browse and switch between recent sessions               |
 | `/projects`       | Switch between OpenCode projects                        |
+| `/tts`            | Toggle audio replies                                    |
 | `/rename`         | Rename the current session                              |
 | `/commands`       | Browse and run custom commands                          |
-| `/stream`         | Toggle or inspect assistant draft streaming             |
 | `/task`           | Create a scheduled task                                 |
 | `/tasklist`       | Browse and delete scheduled tasks                       |
 | `/opencode_start` | Start the OpenCode server remotely                      |
 | `/opencode_stop`  | Stop the OpenCode server remotely                       |
-| `/restart`        | Restart the bot process                                 |
 | `/help`           | Show available commands                                 |
 
-Any regular text message is sent as a prompt to the coding agent only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured. Photos, PDFs, Telegram videos, and video notes are forwarded as media attachments; when the selected model does not support the required media input, the bot automatically uses `google/gemini-3-flash-preview` for that prompt.
-
-The bot also re-syncs the per-chat Telegram command list for allowed users, restores the private-chat menu button to the command picker when Telegram keeps older menu-button state, and keeps the bottom reply keyboard non-persistent so the command menu stays accessible.
-
-`/start` is the welcome/reset entrypoint: it clears the active foreground state, resets topic bindings, rebuilds the bottom keyboard, and sends the welcome message.
-
-Supported attachment flow currently covers:
-
-- photos/screenshots with automatic fallback to `google/gemini-3-flash-preview` when needed
-- videos and video notes up to 60 seconds, with automatic fallback to `google/gemini-3-flash-preview` when needed
-- PDF documents with automatic fallback to `google/gemini-3-flash-preview` when needed
-- text-like files that can be inlined into the prompt
-
-### Telegram Forum Topics (Threaded Mode)
-
-When the bot is used in a Telegram forum supergroup, it follows Telegram Bot API topic routing using `message_thread_id`:
-
-- prompts in a new topic automatically create a new OpenCode session for that topic
-- prompts in an existing topic continue that topic's session
-- async bot replies (assistant output, question/permission prompts, errors) are sent back to the same topic
+Any regular text message is sent as a prompt to the coding agent only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured.
 
 > `/opencode_start` and `/opencode_stop` are intended as emergency commands — for example, if you need to restart a stuck server while away from your computer. Under normal usage, start `opencode serve` yourself before launching the bot.
-
-`/restart` relaunches the current bot process with the same Node.js arguments after a short delay, then exits the old instance so Telegram polling can reconnect cleanly.
 
 ## Scheduled Tasks
 
@@ -180,27 +151,32 @@ When installed via npm, the configuration wizard handles the initial setup. The 
 | Variable                        | Description                                                                                                  | Required | Default                  |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------ | :------: | ------------------------ |
 | `TELEGRAM_BOT_TOKEN`            | Bot token from @BotFather                                                                                    |   Yes    | —                        |
-| `TELEGRAM_ADMIN_USER_ID`        | Numeric Telegram user ID for the bot admin                                                                   |   Yes    | —                        |
-| `TELEGRAM_ALLOWED_USER_IDS`     | Additional allowed Telegram user IDs (comma- or space-separated); admin is always allowed                    |    No    | admin only               |
+| `TELEGRAM_ALLOWED_USER_ID`      | Your numeric Telegram user ID                                                                                |   Yes    | —                        |
 | `TELEGRAM_PROXY_URL`            | Proxy URL for Telegram API (SOCKS5/HTTP)                                                                     |    No    | —                        |
 | `OPENCODE_API_URL`              | OpenCode server URL                                                                                          |    No    | `http://localhost:4096`  |
 | `OPENCODE_SERVER_USERNAME`      | Server auth username                                                                                         |    No    | `opencode`               |
 | `OPENCODE_SERVER_PASSWORD`      | Server auth password                                                                                         |    No    | —                        |
 | `OPENCODE_MODEL_PROVIDER`       | Default model provider                                                                                       |   Yes    | `opencode`               |
 | `OPENCODE_MODEL_ID`             | Default model ID                                                                                             |   Yes    | `big-pickle`             |
-| `BOT_LOCALE`                    | Bot UI language (supported locale code, e.g. `en`, `de`, `es`, `fr`, `ru`, `zh`)                             |    No    | `ru`                     |
+| `BOT_LOCALE`                    | Bot UI language (supported locale code, e.g. `en`, `de`, `es`, `fr`, `ru`, `zh`)                             |    No    | `en`                     |
 | `SESSIONS_LIST_LIMIT`           | Sessions per page in `/sessions`                                                                             |    No    | `10`                     |
 | `PROJECTS_LIST_LIMIT`           | Projects per page in `/projects`                                                                             |    No    | `10`                     |
+| `COMMANDS_LIST_LIMIT`           | Commands per page in `/commands`                                                                             |    No    | `10`                     |
 | `TASK_LIMIT`                    | Maximum number of scheduled tasks that can exist at once                                                     |    No    | `10`                     |
 | `SERVICE_MESSAGES_INTERVAL_SEC` | Service messages interval (thinking + tool calls); keep `>=2` to avoid Telegram rate limits, `0` = immediate |    No    | `5`                      |
-| `HIDE_THINKING_MESSAGES`        | Hide reasoning service messages produced from OpenCode reasoning parts and rendered as expandable quotes     |    No    | `false`                  |
+| `HIDE_THINKING_MESSAGES`        | Hide `💭 Thinking...` service messages                                                                       |    No    | `false`                  |
 | `HIDE_TOOL_CALL_MESSAGES`       | Hide tool-call service messages (`💻 bash ...`, `📖 read ...`, etc.)                                         |    No    | `false`                  |
+| `RESPONSE_STREAMING`            | Stream assistant replies while they are generated across one or more Telegram messages                       |    No    | `true`                   |
 | `MESSAGE_FORMAT_MODE`           | Assistant reply formatting mode: `markdown` (Telegram MarkdownV2) or `raw`                                   |    No    | `markdown`               |
 | `CODE_FILE_MAX_SIZE_KB`         | Max file size (KB) to send as document                                                                       |    No    | `100`                    |
 | `STT_API_URL`                   | Whisper-compatible API base URL (enables voice/audio transcription)                                          |    No    | —                        |
 | `STT_API_KEY`                   | API key for your STT provider                                                                                |    No    | —                        |
 | `STT_MODEL`                     | STT model name passed to `/audio/transcriptions`                                                             |    No    | `whisper-large-v3-turbo` |
 | `STT_LANGUAGE`                  | Optional language hint (empty = provider auto-detect)                                                        |    No    | —                        |
+| `TTS_API_URL`                   | TTS API base URL                                                                                             |    No    | —                        |
+| `TTS_API_KEY`                   | TTS API key                                                                                                  |    No    | —                        |
+| `TTS_MODEL`                     | TTS model name passed to `/audio/speech`                                                                     |    No    | `gpt-4o-mini-tts`        |
+| `TTS_VOICE`                     | OpenAI-compatible TTS voice name                                                                             |    No    | `alloy`                  |
 | `LOG_LEVEL`                     | Log level (`debug`, `info`, `warn`, `error`)                                                                 |    No    | `info`                   |
 
 > **Keep your `.env` file private.** It contains your bot token. Never commit it to version control.
@@ -213,6 +189,17 @@ If `STT_API_URL` and `STT_API_KEY` are set, the bot will:
 2. Transcribe them via `POST {STT_API_URL}/audio/transcriptions`
 3. Show recognized text in chat
 4. Send the recognized text to OpenCode as a normal prompt
+
+If TTS credentials are configured, you can toggle spoken replies globally with `/tts`. The preference is stored in `settings.json` and persists across restarts.
+
+TTS configuration example:
+
+```env
+TTS_API_URL=https://api.openai.com/v1
+TTS_API_KEY=your-tts-api-key
+TTS_MODEL=gpt-4o-mini-tts
+TTS_VOICE=alloy
+```
 
 Supported provider examples (Whisper-compatible):
 
@@ -241,9 +228,7 @@ To add a model to favorites, open OpenCode TUI (`opencode`), go to model selecti
 
 ## Security
 
-The bot enforces an admin-managed **Telegram allowlist**. The admin user from `TELEGRAM_ADMIN_USER_ID` is always authorized, and you can optionally add more users via `TELEGRAM_ALLOWED_USER_IDS`. Messages from everyone else are silently ignored and logged as unauthorized access attempts.
-
-The setup wizard initializes a safe single-user default by writing the same ID to the admin slot and the initial allowlist. To onboard more people later, edit `.env` and add their Telegram numeric IDs to `TELEGRAM_ALLOWED_USER_IDS`.
+The bot enforces a strict **user ID whitelist**. Only the Telegram user whose numeric ID matches `TELEGRAM_ALLOWED_USER_ID` can interact with the bot. Messages from any other user are silently ignored and logged as unauthorized access attempts.
 
 Since the bot runs locally on your machine and connects to your local OpenCode server, there is no external attack surface beyond the Telegram Bot API itself.
 
@@ -256,7 +241,7 @@ git clone https://github.com/grinev/opencode-telegram-bot.git
 cd opencode-telegram-bot
 npm install
 cp .env.example .env
-# Edit .env with your bot token, admin/allowed user IDs, and model settings
+# Edit .env with your bot token, user ID, and model settings
 ```
 
 Build and run:
@@ -284,7 +269,7 @@ npm run dev
 
 **Bot doesn't respond to messages**
 
-- Make sure your Telegram numeric ID is configured in `TELEGRAM_ADMIN_USER_ID` or included in `TELEGRAM_ALLOWED_USER_IDS` (check with [@userinfobot](https://t.me/userinfobot))
+- Make sure `TELEGRAM_ALLOWED_USER_ID` matches your actual Telegram user ID (check with [@userinfobot](https://t.me/userinfobot))
 - Verify the bot token is correct
 
 **"OpenCode server is not available"**

@@ -1,27 +1,30 @@
-interface KeyboardManagerPrivateState {
-  state: null;
-  api: null;
+interface SummaryAggregatorPrivateState {
+  onCompleteCallback: null;
+  onPartialCallback: null;
+  onToolCallback: null;
+  onToolFileCallback: null;
+  onQuestionCallback: null;
+  onQuestionErrorCallback: null;
+  onThinkingCallback: null;
+  onTokensCallback: null;
+  onSessionCompactedCallback: null;
+  onSessionErrorCallback: null;
+  onPermissionCallback: null;
+  onSessionDiffCallback: null;
+  onFileChangeCallback: null;
+  bot: null;
   chatId: null;
-  lastUpdateTime: number;
+  typingIndicatorEnabled: boolean;
+  resolveSessionDirectory: (sessionId: string) => string | null;
+}
+
+interface KeyboardManagerPrivateState {
+  scopedStates: Map<string, unknown>;
 }
 
 interface PinnedMessageManagerPrivateState {
-  api: null;
-  chatId: null;
-  contextLimit: null;
-  updateDebounceTimer: ReturnType<typeof setTimeout> | null;
+  scopedRuntimes: Map<string, { updateDebounceTimer: ReturnType<typeof setTimeout> | null }>;
   onKeyboardUpdateCallback: undefined;
-  state: {
-    messageId: null;
-    chatId: null;
-    sessionId: null;
-    sessionTitle: string;
-    projectName: string;
-    tokensUsed: number;
-    tokensLimit: number;
-    lastUpdated: number;
-    changedFiles: Array<{ file: string; additions: number; deletions: number }>;
-  };
 }
 
 interface ProcessManagerPrivateState {
@@ -33,24 +36,18 @@ interface ProcessManagerPrivateState {
   };
 }
 
-function hasExport(module: object, exportName: string): boolean {
-  return exportName in module;
-}
-
 export async function resetSingletonState(): Promise<void> {
   const [
-    questionModule,
-    permissionModule,
-    renameModule,
-    interactionModule,
-    summaryModule,
+    { questionManager },
+    { permissionManager },
+    { renameManager },
+    { interactionManager },
+    { summaryAggregator },
     keyboardModule,
     pinnedModule,
-    processModule,
-    eventModule,
-    sessionCacheModule,
-    threadModule,
-    opencodeClientModule,
+    { processManager },
+    { stopEventListening },
+    { __resetSessionDirectoryCacheForTests },
   ] = await Promise.all([
     import("../../src/question/manager.js"),
     import("../../src/permission/manager.js"),
@@ -62,59 +59,49 @@ export async function resetSingletonState(): Promise<void> {
     import("../../src/process/manager.js"),
     import("../../src/opencode/events.js"),
     import("../../src/session/cache-manager.js"),
-    import("../../src/thread/manager.js"),
-    import("../../src/opencode/client.js"),
   ]);
 
-  const { questionManager } = questionModule;
-  const { permissionManager } = permissionModule;
-  const { renameManager } = renameModule;
-  const { interactionManager } = interactionModule;
-  const { keyboardManager } = keyboardModule;
-  const { pinnedMessageManager } = pinnedModule;
-  const { processManager } = processModule;
-  const { threadContextManager } = threadModule;
-
-  if (hasExport(eventModule, "stopAllEventListening")) {
-    (eventModule.stopAllEventListening as () => void)();
-  }
-  questionManager.__resetForTests();
-  permissionManager.__resetForTests();
+  stopEventListening();
+  questionManager.clear();
+  permissionManager.clear();
   renameManager.clear();
-  interactionManager.__resetForTests();
-  if (hasExport(summaryModule, "__resetSummaryAggregatorsForTests")) {
-    (summaryModule.__resetSummaryAggregatorsForTests as () => void)();
-  }
-  if (hasExport(opencodeClientModule, "__resetOpencodeClientRegistryForTests")) {
-    (opencodeClientModule.__resetOpencodeClientRegistryForTests as () => void)();
+  interactionManager.clear("test_reset");
+  summaryAggregator.clear();
+
+  const aggregator = summaryAggregator as unknown as SummaryAggregatorPrivateState;
+  aggregator.onCompleteCallback = null;
+  aggregator.onPartialCallback = null;
+  aggregator.onToolCallback = null;
+  aggregator.onToolFileCallback = null;
+  aggregator.onQuestionCallback = null;
+  aggregator.onQuestionErrorCallback = null;
+  aggregator.onThinkingCallback = null;
+  aggregator.onTokensCallback = null;
+  aggregator.onSessionCompactedCallback = null;
+  aggregator.onSessionErrorCallback = null;
+  aggregator.onPermissionCallback = null;
+  aggregator.onSessionDiffCallback = null;
+  aggregator.onFileChangeCallback = null;
+  aggregator.bot = null;
+  aggregator.chatId = null;
+  aggregator.typingIndicatorEnabled = true;
+  aggregator.resolveSessionDirectory = () => null;
+
+  const keyboard = keyboardModule.keyboardManager as unknown as KeyboardManagerPrivateState;
+  if (keyboard && keyboard.scopedStates instanceof Map) {
+    keyboard.scopedStates = new Map<string, unknown>();
   }
 
-  const keyboard = keyboardManager as unknown as KeyboardManagerPrivateState;
-  keyboard.state = null;
-  keyboard.api = null;
-  keyboard.chatId = null;
-  keyboard.lastUpdateTime = 0;
-
-  const pinned = pinnedMessageManager as unknown as PinnedMessageManagerPrivateState;
-  if (pinned.updateDebounceTimer) {
-    clearTimeout(pinned.updateDebounceTimer);
+  const pinned = pinnedModule.pinnedMessageManager as unknown as PinnedMessageManagerPrivateState;
+  if (pinned && pinned.scopedRuntimes instanceof Map) {
+    for (const runtime of pinned.scopedRuntimes.values()) {
+      if (runtime.updateDebounceTimer) {
+        clearTimeout(runtime.updateDebounceTimer);
+      }
+    }
+    pinned.scopedRuntimes = new Map<string, { updateDebounceTimer: ReturnType<typeof setTimeout> | null }>();
+    pinned.onKeyboardUpdateCallback = undefined;
   }
-  pinned.updateDebounceTimer = null;
-  pinned.api = null;
-  pinned.chatId = null;
-  pinned.contextLimit = null;
-  pinned.onKeyboardUpdateCallback = undefined;
-  pinned.state = {
-    messageId: null,
-    chatId: null,
-    sessionId: null,
-    sessionTitle: "new session",
-    projectName: "",
-    tokensUsed: 0,
-    tokensLimit: 0,
-    lastUpdated: 0,
-    changedFiles: [],
-  };
 
   const process = processManager as unknown as ProcessManagerPrivateState;
   process.state = {
@@ -124,6 +111,5 @@ export async function resetSingletonState(): Promise<void> {
     isRunning: false,
   };
 
-  sessionCacheModule.__resetSessionDirectoryCacheForTests();
-  threadContextManager.__resetForTests();
+  __resetSessionDirectoryCacheForTests();
 }

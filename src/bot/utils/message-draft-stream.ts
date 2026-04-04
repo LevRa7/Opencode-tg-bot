@@ -20,6 +20,7 @@ interface DraftStreamState {
   target: TelegramThreadTarget | null;
   api: DraftApi | null;
   disabled: boolean;
+  inFlight: boolean;
 }
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
@@ -142,10 +143,21 @@ export class MessageDraftStreamManager {
       state.timer = null;
     }
 
+    if (state.inFlight) {
+      return;
+    }
+
     const text = state.pendingText;
     const format = state.pendingFormat;
-    await this.sendDraftText(sessionId, state, text, format);
-    if (!state.disabled) {
+
+    state.inFlight = true;
+    try {
+      await this.sendDraftText(sessionId, state, text, format);
+    } finally {
+      state.inFlight = false;
+    }
+
+    if (!state.disabled && state.pendingText === text && state.pendingFormat === format) {
       state.pendingText = null;
       state.pendingFormat = state.lastSentFormat;
     }
@@ -182,6 +194,7 @@ export class MessageDraftStreamManager {
       target: null,
       api: null,
       disabled: false,
+      inFlight: false,
     };
     this.states.set(sessionId, created);
     return created;
@@ -204,19 +217,29 @@ export class MessageDraftStreamManager {
 
   private async processSession(sessionId: string): Promise<void> {
     const state = this.states.get(sessionId);
-    if (!state || state.disabled || !state.pendingText || !state.api || !state.target) {
+    if (!state || state.disabled || !state.pendingText || !state.api || !state.target || state.inFlight) {
       return;
     }
 
-    const nextText = resolveNextProgressiveText(
-      state.lastSentText,
-      state.pendingText,
-      state.pendingFormat,
-    );
-    await this.sendDraftText(sessionId, state, nextText, state.pendingFormat);
+    const pendingText = state.pendingText;
+    const pendingFormat = state.pendingFormat;
+    const nextText = resolveNextProgressiveText(state.lastSentText, pendingText, pendingFormat);
+
+    state.inFlight = true;
+    try {
+      await this.sendDraftText(sessionId, state, nextText, pendingFormat);
+    } finally {
+      state.inFlight = false;
+    }
 
     if (state.disabled) {
       return;
+    }
+
+    if (state.pendingText === nextText && state.pendingFormat === pendingFormat) {
+      if (nextText === pendingText) {
+        state.pendingText = null;
+      }
     }
 
     if (state.pendingText && state.pendingText !== state.lastSentText) {

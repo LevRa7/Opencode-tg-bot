@@ -1,34 +1,334 @@
-import { Context, NextFunction } from "grammy";
+import { Context, InlineKeyboard, NextFunction } from "grammy";
 import { config } from "../../config.js";
+import {
+  getApprovedTelegramUserIds,
+  getPendingAccessRequests,
+  setApprovedTelegramUserIds,
+  setPendingAccessRequests,
+  type AccessApprovalRequest,
+} from "../../settings/manager.js";
 import { logger } from "../../utils/logger.js";
-import { syncUnauthorizedPrivateChatCommands } from "../utils/command-sync.js";
+import { t } from "../../i18n/index.js";
+
+const ACCESS_REQUEST_COOLDOWN_MS = 60 * 60 * 1000;
+
+function isPrivateChat(ctx: Context): boolean {
+  return ctx.chat?.type === "private";
+}
+
+function isAdmin(userId: number | undefined): boolean {
+  return typeof userId === "number" && userId === config.telegram.adminUserId;
+}
+
+function isApprovedUser(userId: number | undefined): boolean {
+  if (typeof userId !== "number") {
+    return false;
+  }
+
+  if (isAdmin(userId)) {
+    return true;
+  }
+
+  const approvedUserIds = new Set<number>([
+    ...config.telegram.allowedUserIds,
+    ...getApprovedTelegramUserIds(),
+  ]);
+
+  if (!approvedUserIds.has(config.telegram.adminUserId)) {
+    approvedUserIds.add(config.telegram.adminUserId);
+    void setApprovedTelegramUserIds(Array.from(approvedUserIds));
+  }
+
+  return approvedUserIds.has(userId);
+}
+
+function buildAccessRequestKeyboard(userId: number): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(t("auth.button.approve"), `access:approve:${userId}`)
+    .text(t("auth.button.deny"), `access:deny:${userId}`);
+}
+
+function formatUserLabel(ctx: Context): string {
+  const firstName = ctx.from?.first_name?.trim();
+  const lastName = ctx.from?.last_name?.trim();
+  const username = ctx.from?.username?.trim();
+  const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
+
+  if (fullName && username) {
+    return `${fullName} (@${username})`;
+  }
+
+  if (fullName) {
+    return fullName;
+  }
+
+  if (username) {
+    return `@${username}`;
+  }
+
+  return t("common.unknown");
+}
+
+function buildAccessRequestText(ctx: Context): string {
+  return [
+    t("auth.request.title"),
+    t("auth.request.user", { user: formatUserLabel(ctx) }),
+    t("auth.request.user_id", { userId: ctx.from?.id ?? "-" }),
+    t("auth.request.chat_id", { chatId: ctx.chat?.id ?? "-" }),
+    t("auth.request.chat_type", { chatType: ctx.chat?.type ?? "-" }),
+    ctx.from?.language_code ? t("auth.request.language", { language: ctx.from.language_code }) : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function hideCommandsForUnauthorizedPrivateChat(ctx: Context): Promise<void> {
+  if (!ctx.chat?.id || !isPrivateChat(ctx)) {
+    return;
+  }
+
+  try {
+    await Promise.all([
+      ctx.api.setMyCommands([], {
+        scope: { type: "chat", chat_id: ctx.chat.id },
+      }),
+      ctx.api.setChatMenuButton({
+        chat_id: ctx.chat.id,
+        menu_button: { type: "default" },
+      }),
+    ]);
+    logger.debug(`[Auth] Hid commands for unauthorized chat_id=${ctx.chat.id}`);
+  } catch (err) {
+    logger.debug(`[Auth] Could not hide commands for chat_id=${ctx.chat.id}: ${err}`);
+  }
+}
+
+function isApprovalRequestCooldownActive(request: AccessApprovalRequest): boolean {
+  const lastNotifiedAt = Date.parse(request.lastNotifiedAt ?? request.requestedAt);
+  if (!Number.isFinite(lastNotifiedAt)) {
+    return false;
+  }
+
+  return Date.now() - lastNotifiedAt < ACCESS_REQUEST_COOLDOWN_MS;
+}
+
+async function upsertPendingApprovalRequest(ctx: Context): Promise<boolean> {
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  if (!userId || !chatId) {
+    return false;
+  }
+
+  const pendingRequests = getPendingAccessRequests();
+  const existingRequestIndex = pendingRequests.findIndex((request) => request.userId === userId);
+  const existingRequest = existingRequestIndex >= 0 ? pendingRequests[existingRequestIndex] : undefined;
+
+  if (existingRequest && isApprovalRequestCooldownActive(existingRequest)) {
+    logger.debug(`[Auth] Approval request cooldown active for userId=${userId}`);
+    return false;
+  }
+
+  const nowIso = new Date().toISOString();
+  const nextRequest: AccessApprovalRequest = {
+    userId,
+    chatId,
+    chatType: ctx.chat?.type,
+    username: ctx.from?.username,
+    firstName: ctx.from?.first_name,
+    lastName: ctx.from?.last_name,
+    languageCode: ctx.from?.language_code,
+    requestedAt: existingRequest?.requestedAt ?? nowIso,
+    lastNotifiedAt: nowIso,
+    adminChatId: config.telegram.adminUserId,
+    adminMessageId: existingRequest?.adminMessageId,
+  };
+
+  const text = buildAccessRequestText(ctx);
+  const keyboard = buildAccessRequestKeyboard(userId);
+
+  if (typeof existingRequest?.adminMessageId === "number") {
+    try {
+      await ctx.api.editMessageText(config.telegram.adminUserId, existingRequest.adminMessageId, text, {
+        reply_markup: keyboard,
+      });
+      pendingRequests[existingRequestIndex] = nextRequest;
+      await setPendingAccessRequests(pendingRequests);
+      return true;
+    } catch (error) {
+      logger.debug(`[Auth] Failed to update existing access request message: ${error}`);
+    }
+  }
+
+  try {
+    const message = await ctx.api.sendMessage(config.telegram.adminUserId, text, {
+      reply_markup: keyboard,
+    });
+    nextRequest.adminMessageId = message.message_id;
+
+    if (existingRequestIndex >= 0) {
+      pendingRequests[existingRequestIndex] = nextRequest;
+    } else {
+      pendingRequests.push(nextRequest);
+    }
+
+    await setPendingAccessRequests(pendingRequests);
+    return true;
+  } catch (error) {
+    logger.error("[Auth] Failed to send admin approval request", error);
+    return false;
+  }
+}
+
+function getPendingApprovalRequest(userId: number): AccessApprovalRequest | undefined {
+  return getPendingAccessRequests().find((request) => request.userId === userId);
+}
+
+async function removePendingApprovalRequest(userId: number): Promise<AccessApprovalRequest | null> {
+  const pendingRequests = getPendingAccessRequests();
+  const nextPendingRequests = pendingRequests.filter((request) => request.userId !== userId);
+
+  if (nextPendingRequests.length === pendingRequests.length) {
+    return null;
+  }
+
+  const removedRequest = pendingRequests.find((request) => request.userId === userId) ?? null;
+  await setPendingAccessRequests(nextPendingRequests);
+  return removedRequest;
+}
+
+async function approveTelegramUser(userId: number): Promise<void> {
+  const approvedUserIds = new Set<number>([
+    ...config.telegram.allowedUserIds,
+    ...getApprovedTelegramUserIds(),
+    config.telegram.adminUserId,
+    userId,
+  ]);
+
+  await setApprovedTelegramUserIds(Array.from(approvedUserIds));
+}
+
+function formatApprovedUserLabel(request: AccessApprovalRequest): string {
+  const fullName = [request.firstName?.trim(), request.lastName?.trim()].filter(Boolean).join(" ").trim();
+  const username = request.username?.trim();
+
+  if (fullName && username) {
+    return `${fullName} (@${username})`;
+  }
+
+  if (fullName) {
+    return fullName;
+  }
+
+  if (username) {
+    return `@${username}`;
+  }
+
+  return `${request.userId}`;
+}
+
+function buildAccessDecisionText(
+  action: "approve" | "deny",
+  request: AccessApprovalRequest,
+  adminUserId: number | undefined,
+): string {
+  const actionLabel = action === "approve" ? t("auth.decision.approved") : t("auth.decision.denied");
+  const decidedByLabel =
+    typeof adminUserId === "number"
+      ? t("auth.decision.decided_by", { adminUserId })
+      : t("auth.decision.decided_by", { adminUserId: t("common.unknown") });
+
+  return [
+    actionLabel,
+    t("auth.decision.user", { user: formatApprovedUserLabel(request) }),
+    t("auth.decision.user_id", { userId: request.userId }),
+    t("auth.decision.chat_id", { chatId: request.chatId }),
+    request.chatType ? t("auth.decision.chat_type", { chatType: request.chatType }) : null,
+    request.languageCode ? t("auth.decision.language", { language: request.languageCode }) : null,
+    t("auth.decision.requested_at", { requestedAt: request.requestedAt }),
+    decidedByLabel,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export async function handleAccessApprovalCallback(ctx: Context): Promise<boolean> {
+  const data = ctx.callbackQuery?.data;
+  if (!data?.startsWith("access:")) {
+    return false;
+  }
+
+  if (!isAdmin(ctx.from?.id)) {
+    await ctx.answerCallbackQuery({ text: t("auth.error.admin_only"), show_alert: true });
+    return true;
+  }
+
+  const [, action, userIdRaw] = data.split(":");
+  const userId = Number(userIdRaw);
+  if ((action !== "approve" && action !== "deny") || !Number.isInteger(userId) || userId <= 0) {
+    await ctx.answerCallbackQuery({ text: t("callback.processing_error"), show_alert: true });
+    return true;
+  }
+
+  const request = getPendingApprovalRequest(userId);
+  if (!request) {
+    await ctx.answerCallbackQuery({ text: t("auth.error.request_not_pending"), show_alert: true });
+    await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {});
+    return true;
+  }
+
+  if (action === "approve") {
+    await approveTelegramUser(userId);
+  }
+
+  await removePendingApprovalRequest(userId);
+
+  await ctx.answerCallbackQuery({
+    text: action === "approve" ? t("auth.decision.approved") : t("auth.decision.denied"),
+  });
+
+  const decisionText = buildAccessDecisionText(action, request, ctx.from?.id);
+  await ctx.editMessageText(decisionText, { reply_markup: undefined }).catch(async () => {
+    await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {});
+  });
+
+  if (request.chatId) {
+    const requesterMessage =
+      action === "approve"
+        ? t("auth.requester.approved")
+        : t("auth.requester.denied");
+
+    await ctx.api.sendMessage(request.chatId, requesterMessage).catch((error) => {
+      logger.warn(`[Auth] Failed to notify requester about access ${action}: ${error}`);
+    });
+  }
+
+  return true;
+}
 
 export async function authMiddleware(ctx: Context, next: NextFunction): Promise<void> {
   const userId = ctx.from?.id;
-  const isAuthorizedUser =
-    typeof userId === "number" && config.telegram.allowedUserIds.includes(userId);
 
   logger.debug(
-    `[Auth] Checking access: userId=${userId}, adminUserId=${config.telegram.adminUserId}, allowedUsers=${config.telegram.allowedUserIds.join(",")}, hasCallbackQuery=${!!ctx.callbackQuery}, hasMessage=${!!ctx.message}`,
+    `[Auth] Checking access: userId=${userId}, adminUserId=${config.telegram.adminUserId}, hasCallbackQuery=${!!ctx.callbackQuery}, hasMessage=${!!ctx.message}`,
   );
 
-  if (isAuthorizedUser) {
+  if (isApprovedUser(userId)) {
     logger.debug(`[Auth] Access granted for userId=${userId}`);
     await next();
-  } else {
-    // Silently ignore unauthorized users
-    logger.warn(`Unauthorized access attempt from user ID: ${userId}`);
+    return;
+  }
 
-    // Actively hide commands for unauthorized users in their private chats.
-    // Avoid changing command visibility in shared group chats.
-    if (ctx.chat?.id && ctx.chat.type === "private") {
-      try {
-        await syncUnauthorizedPrivateChatCommands(ctx.api, ctx.chat.id);
-        logger.debug(`[Auth] Cleared commands for unauthorized chat_id=${ctx.chat.id}`);
-      } catch (err) {
-        // Ignore errors
-        logger.debug(`[Auth] Could not clear unauthorized chat commands: ${err}`);
-      }
-    }
+  logger.warn(`Unauthorized access attempt from user ID: ${userId}`);
+
+  await hideCommandsForUnauthorizedPrivateChat(ctx);
+  const approvalRequestSent = await upsertPendingApprovalRequest(ctx);
+
+  if (ctx.callbackQuery) {
+    await ctx.answerCallbackQuery({ text: t("auth.callback.pending_approval") }).catch(() => {});
+    return;
+  }
+
+  if (isPrivateChat(ctx) && approvalRequestSent) {
+    await ctx.reply(t("auth.requester.sent")).catch(() => {});
   }
 }

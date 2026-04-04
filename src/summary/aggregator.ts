@@ -5,9 +5,9 @@ import { normalizePathForDisplay, prepareCodeFile } from "./formatter.js";
 import type { Question } from "../question/types.js";
 import type { PermissionRequest } from "../permission/types.js";
 import type { FileChange } from "../pinned/types.js";
-import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
 import { logger } from "../utils/logger.js";
 import { getCurrentProject } from "../settings/manager.js";
+import { getCurrentSession } from "../session/manager.js";
 
 export interface SummaryInfo {
   sessionId: string;
@@ -16,9 +16,39 @@ export interface SummaryInfo {
   lastUpdated: number;
 }
 
-type MessageCompleteCallback = (sessionId: string, messageText: string) => void;
+type MessageCompleteCallback = (
+  sessionId: string,
+  messageId: string,
+  messageText: string,
+  reasoningText?: string,
+  toolCalls?: Array<{ tool: string; title?: string; input?: any }>,
+) => void;
 
-type StreamUpdateCallback = (sessionId: string, messageText: string) => void | Promise<void>;
+type MessagePartialCallback = (
+  sessionId: string,
+  messageId: string,
+  messageText: string,
+  reasoningText?: string,
+  toolCalls?: Array<{ tool: string; title?: string; input?: any }>,
+) => void;
+
+interface MessagePartDeltaEventRaw {
+  type: "message.part.delta";
+  properties: {
+    part?: {
+      id?: string;
+      sessionID?: string;
+      messageID?: string;
+      type?: string;
+      text?: string;
+    };
+    sessionID?: string;
+    messageID?: string;
+    partID?: string;
+    type?: string;
+    delta?: string;
+  };
+}
 
 export interface ToolInfo {
   sessionId: string;
@@ -43,9 +73,9 @@ type ToolFileCallback = (fileInfo: ToolFileInfo) => void;
 
 type QuestionCallback = (sessionId: string, questions: Question[], requestID: string) => void;
 
-type QuestionErrorCallback = (sessionId: string | null) => void;
+type QuestionErrorCallback = (sessionId: string) => void;
 
-type ThinkingCallback = (sessionId: string, reasoningText: string) => void | Promise<void>;
+type ThinkingCallback = (sessionId: string) => void;
 
 export interface TokensInfo {
   input: number;
@@ -55,7 +85,33 @@ export interface TokensInfo {
   cacheWrite: number;
 }
 
-type TokensCallback = (tokens: TokensInfo) => void;
+type TokensCallback = (tokens: TokensInfo, isCompleted: boolean) => void;
+
+type CostCallback = (cost: number) => void;
+
+export type SubagentStatus = "pending" | "running" | "completed" | "error";
+
+export interface SubagentInfo {
+  cardId: string;
+  sessionId: string | null;
+  parentSessionId: string;
+  agent: string;
+  description: string;
+  prompt: string;
+  command?: string;
+  status: SubagentStatus;
+  providerID?: string;
+  modelID?: string;
+  tokens: TokensInfo;
+  cost: number;
+  currentTool?: string;
+  currentToolInput?: { [key: string]: unknown };
+  currentToolTitle?: string;
+  terminalMessage?: string;
+  updatedAt: number;
+}
+
+type SubagentCallback = (sessionId: string, subagents: SubagentInfo[]) => void;
 
 type SessionCompactedCallback = (sessionId: string, directory: string) => void;
 
@@ -76,11 +132,29 @@ type SessionDiffCallback = (sessionId: string, diffs: FileChange[]) => void;
 
 type FileChangeCallback = (change: FileChange) => void;
 
-type ClearedCallback = (previousSessionId: string | null) => void;
+type ClearedCallback = () => void;
+
+type SessionDirectoryResolver = (sessionId: string) => string | null;
 
 interface PreparedToolFileContext {
   fileData: CodeFileData | null;
   fileChange: FileChange | null;
+}
+
+interface TextMessageState {
+  orderedPartIds: string[];
+  partTexts: Map<string, string>;
+  orderedThoughtPartIds: string[];
+  thoughtTexts: Map<string, string>;
+  toolCalls: Array<{ tool: string; title?: string; input?: any }>;
+  optimisticUpdateCount: number;
+}
+
+interface SubagentState extends SubagentInfo {
+  hasSubtaskMetadata: boolean;
+  hasTaskToolMetadata: boolean;
+  hasSessionTitleMetadata: boolean;
+  createdAt: number;
 }
 
 function extractFirstUpdatedFileFromTitle(title: string): string {
@@ -113,19 +187,20 @@ function countDiffChangesFromText(text: string): { additions: number; deletions:
 
 class SummaryAggregator {
   private currentSessionId: string | null = null;
-  private currentMessageParts: Map<string, string[]> = new Map();
-  private pendingParts: Map<string, string[]> = new Map();
+  private textMessageStates: Map<string, TextMessageState> = new Map();
   private messages: Map<string, { role: string }> = new Map();
   private messageCount = 0;
   private lastUpdated = 0;
   private onCompleteCallback: MessageCompleteCallback | null = null;
-  private onStreamUpdateCallback: StreamUpdateCallback | null = null;
+  private onPartialCallback: MessagePartialCallback | null = null;
   private onToolCallback: ToolCallback | null = null;
   private onToolFileCallback: ToolFileCallback | null = null;
   private onQuestionCallback: QuestionCallback | null = null;
   private onQuestionErrorCallback: QuestionErrorCallback | null = null;
   private onThinkingCallback: ThinkingCallback | null = null;
   private onTokensCallback: TokensCallback | null = null;
+  private onCostCallback: CostCallback | null = null;
+  private onSubagentCallback: SubagentCallback | null = null;
   private onSessionCompactedCallback: SessionCompactedCallback | null = null;
   private onSessionErrorCallback: SessionErrorCallback | null = null;
   private onSessionRetryCallback: SessionRetryCallback | null = null;
@@ -133,25 +208,38 @@ class SummaryAggregator {
   private onSessionDiffCallback: SessionDiffCallback | null = null;
   private onFileChangeCallback: FileChangeCallback | null = null;
   private onClearedCallback: ClearedCallback | null = null;
+  private resolveSessionDirectory: SessionDirectoryResolver = () => null;
   private processedToolStates: Set<string> = new Set();
+  private thinkingFiredForMessages: Set<string> = new Set();
+  private knownTextPartIds: Map<string, Set<string>> = new Map();
   private bot: Bot | null = null;
   private chatId: number | null = null;
-  private messageThreadId: number | undefined;
   private typingTimer: ReturnType<typeof setInterval> | null = null;
+  private typingIndicatorEnabled = true;
   private partHashes: Map<string, Set<string>> = new Map();
+  private trackedSessionParents: Map<string, string | null> = new Map();
+  private subagentStates: Map<string, SubagentState> = new Map();
+  private subagentOrder: string[] = [];
+  private subagentCardIdBySessionId: Map<string, string> = new Map();
+  private pendingSubagentCardIdsByParent: Map<string, string[]> = new Map();
+  private pendingChildSessionIdsByParent: Map<string, string[]> = new Map();
+  private fallbackSubagentCardIdsByParent: Map<string, string[]> = new Map();
 
-  setBotAndChatId(bot: Bot, chatId: number, messageThreadId?: number): void {
+  setBotAndChatId(bot: Bot, chatId: number): void {
     this.bot = bot;
     this.chatId = chatId;
-    this.messageThreadId = messageThreadId;
+  }
+
+  setSessionDirectoryResolver(resolver: SessionDirectoryResolver): void {
+    this.resolveSessionDirectory = resolver;
   }
 
   setOnComplete(callback: MessageCompleteCallback): void {
     this.onCompleteCallback = callback;
   }
 
-  setOnStreamUpdate(callback: StreamUpdateCallback): void {
-    this.onStreamUpdateCallback = callback;
+  setOnPartial(callback: MessagePartialCallback): void {
+    this.onPartialCallback = callback;
   }
 
   setOnTool(callback: ToolCallback): void {
@@ -176,6 +264,14 @@ class SummaryAggregator {
 
   setOnTokens(callback: TokensCallback): void {
     this.onTokensCallback = callback;
+  }
+
+  setOnCost(callback: CostCallback): void {
+    this.onCostCallback = callback;
+  }
+
+  setOnSubagent(callback: SubagentCallback): void {
+    this.onSubagentCallback = callback;
   }
 
   setOnSessionCompacted(callback: SessionCompactedCallback): void {
@@ -206,22 +302,28 @@ class SummaryAggregator {
     this.onClearedCallback = callback;
   }
 
+  setTypingIndicatorEnabled(enabled: boolean): void {
+    this.typingIndicatorEnabled = enabled;
+
+    if (!enabled) {
+      this.stopTypingIndicator();
+    }
+  }
+
   private startTypingIndicator(): void {
+    if (!this.typingIndicatorEnabled) {
+      return;
+    }
+
     if (this.typingTimer) {
       return;
     }
 
     const sendTyping = () => {
       if (this.bot && this.chatId) {
-        this.bot.api
-          .sendChatAction(this.chatId, "typing", {
-            ...(typeof this.messageThreadId === "number"
-              ? { message_thread_id: this.messageThreadId }
-              : {}),
-          })
-          .catch((err) => {
-            logger.error("Failed to send typing action:", err);
-          });
+        this.bot.api.sendChatAction(this.chatId, "typing").catch((err) => {
+          logger.error("Failed to send typing action:", err);
+        });
       }
     };
 
@@ -237,6 +339,13 @@ class SummaryAggregator {
   }
 
   processEvent(event: Event): void {
+    const eventType = (event as unknown as { type: string }).type;
+
+    if (eventType === "message.part.delta") {
+      this.handleMessagePartDelta(event as unknown as MessagePartDeltaEventRaw);
+      return;
+    }
+
     // Log all question-related events for debugging
     if (event.type.startsWith("question.")) {
       logger.info(
@@ -254,6 +363,10 @@ class SummaryAggregator {
     }
 
     switch (event.type) {
+      case "session.created":
+      case "session.updated":
+        this.handleSessionCreatedOrUpdated(event);
+        break;
       case "message.updated":
         this.handleMessageUpdated(event);
         break;
@@ -300,29 +413,512 @@ class SummaryAggregator {
     if (this.currentSessionId !== sessionId) {
       this.clear();
       this.currentSessionId = sessionId;
+      this.trackedSessionParents.set(sessionId, null);
     }
   }
 
   clear(): void {
-    const previousSessionId = this.currentSessionId;
     this.stopTypingIndicator();
     this.currentSessionId = null;
-    this.messageThreadId = undefined;
-    this.currentMessageParts.clear();
-    this.pendingParts.clear();
+    this.textMessageStates.clear();
     this.messages.clear();
     this.partHashes.clear();
+    this.knownTextPartIds.clear();
     this.processedToolStates.clear();
+    this.thinkingFiredForMessages.clear();
+    this.trackedSessionParents.clear();
+    this.subagentStates.clear();
+    this.subagentOrder = [];
+    this.subagentCardIdBySessionId.clear();
+    this.pendingSubagentCardIdsByParent.clear();
+    this.pendingChildSessionIdsByParent.clear();
+    this.fallbackSubagentCardIdsByParent.clear();
     this.messageCount = 0;
     this.lastUpdated = 0;
 
     if (this.onClearedCallback) {
       try {
-        this.onClearedCallback(previousSessionId);
+        this.onClearedCallback();
       } catch (err) {
         logger.error("[Aggregator] Error in clear callback:", err);
       }
     }
+  }
+
+  private isTrackedChildSession(sessionId: string): boolean {
+    return this.trackedSessionParents.has(sessionId) && sessionId !== this.currentSessionId;
+  }
+
+  private getQueue(map: Map<string, string[]>, parentSessionId: string): string[] {
+    const existing = map.get(parentSessionId);
+    if (existing) {
+      return existing;
+    }
+
+    const queue: string[] = [];
+    map.set(parentSessionId, queue);
+    return queue;
+  }
+
+  private dequeue(map: Map<string, string[]>, parentSessionId: string): string | undefined {
+    const queue = map.get(parentSessionId);
+    if (!queue || queue.length === 0) {
+      return undefined;
+    }
+
+    const value = queue.shift();
+    if (queue.length === 0) {
+      map.delete(parentSessionId);
+    }
+
+    return value;
+  }
+
+  private removeFromQueue(
+    map: Map<string, string[]>,
+    parentSessionId: string,
+    value: string,
+  ): void {
+    const queue = map.get(parentSessionId);
+    if (!queue) {
+      return;
+    }
+
+    const index = queue.indexOf(value);
+    if (index >= 0) {
+      queue.splice(index, 1);
+    }
+
+    if (queue.length === 0) {
+      map.delete(parentSessionId);
+    }
+  }
+
+  private emitSubagentState(): void {
+    if (!this.currentSessionId || !this.onSubagentCallback || this.subagentOrder.length === 0) {
+      return;
+    }
+
+    const subagents = this.subagentOrder
+      .map((cardId) => this.subagentStates.get(cardId))
+      .filter((state): state is SubagentState => Boolean(state))
+      .map((state) => ({
+        cardId: state.cardId,
+        sessionId: state.sessionId,
+        parentSessionId: state.parentSessionId,
+        agent: state.agent,
+        description: state.description,
+        prompt: state.prompt,
+        command: state.command,
+        status: state.status,
+        providerID: state.providerID,
+        modelID: state.modelID,
+        tokens: { ...state.tokens },
+        cost: state.cost,
+        currentTool: state.currentTool,
+        currentToolInput: state.currentToolInput ? { ...state.currentToolInput } : undefined,
+        currentToolTitle: state.currentToolTitle,
+        terminalMessage: state.terminalMessage,
+        updatedAt: state.updatedAt,
+      }));
+
+    this.onSubagentCallback(this.currentSessionId, subagents);
+  }
+
+  private createSubagentState(
+    parentSessionId: string,
+    sessionId: string | null,
+    cardId: string = `subagent-${parentSessionId}-${Date.now()}-${this.subagentOrder.length}`,
+  ): SubagentState {
+    const state: SubagentState = {
+      cardId,
+      sessionId,
+      parentSessionId,
+      agent: "",
+      description: "",
+      prompt: "",
+      status: "pending",
+      tokens: {
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      cost: 0,
+      terminalMessage: undefined,
+      updatedAt: Date.now(),
+      hasSubtaskMetadata: false,
+      hasTaskToolMetadata: false,
+      hasSessionTitleMetadata: false,
+      createdAt: Date.now(),
+    };
+
+    this.subagentStates.set(cardId, state);
+    this.subagentOrder.push(cardId);
+    if (sessionId) {
+      this.subagentCardIdBySessionId.set(sessionId, cardId);
+    }
+    return state;
+  }
+
+  private enrichSubagentFromSubtask(
+    state: SubagentState,
+    details: { agent: string; description: string; prompt: string; command?: string },
+  ): void {
+    state.agent = details.agent || state.agent;
+    state.description = details.description || details.prompt || state.description;
+    state.prompt = details.prompt;
+    state.command = details.command;
+    state.hasSubtaskMetadata = true;
+    state.updatedAt = Date.now();
+  }
+
+  private enrichSubagentFromTaskTool(
+    state: SubagentState,
+    details: {
+      agent?: string;
+      description?: string;
+      prompt?: string;
+      command?: string;
+    },
+  ): void {
+    const nextDescription = details.description?.trim() || details.prompt?.trim();
+    if (details.agent?.trim()) {
+      state.agent = details.agent.trim();
+    }
+    if (nextDescription) {
+      state.description = nextDescription;
+    }
+    if (details.prompt?.trim()) {
+      state.prompt = details.prompt.trim();
+    }
+    if (details.command?.trim()) {
+      state.command = details.command.trim();
+    }
+    state.hasTaskToolMetadata = true;
+    state.updatedAt = Date.now();
+  }
+
+  private enrichSubagentFromSessionTitle(state: SubagentState, title?: string): void {
+    const trimmedTitle = title?.trim();
+    if (!trimmedTitle) {
+      return;
+    }
+
+    const match = trimmedTitle.match(/^(.*?)(?:\s+\(@([^\s)]+)\s+subagent\))?$/i);
+    const rawDescription = match?.[1]?.trim() || trimmedTitle;
+    const rawAgent = match?.[2]?.trim();
+
+    if (rawDescription) {
+      state.description = rawDescription;
+    }
+
+    if (rawAgent) {
+      state.agent = rawAgent.replace(/^@/, "");
+    }
+
+    state.hasSessionTitleMetadata = true;
+    state.updatedAt = Date.now();
+  }
+
+  private attachSessionToSubagent(cardId: string, sessionId: string): void {
+    const state = this.subagentStates.get(cardId);
+    if (!state) {
+      return;
+    }
+
+    state.sessionId = sessionId;
+    state.updatedAt = Date.now();
+    this.subagentCardIdBySessionId.set(sessionId, cardId);
+    this.removeFromQueue(this.pendingSubagentCardIdsByParent, state.parentSessionId, cardId);
+  }
+
+  private findPendingSubagentWithoutSession(): SubagentState | null {
+    for (const cardId of this.subagentOrder) {
+      const state = this.subagentStates.get(cardId);
+      if (state && !state.sessionId) {
+        return state;
+      }
+    }
+
+    return null;
+  }
+
+  private attachUnknownSessionToPendingSubagent(sessionId: string): boolean {
+    const pendingState = this.findPendingSubagentWithoutSession();
+    if (!pendingState) {
+      return false;
+    }
+
+    this.trackedSessionParents.set(sessionId, pendingState.parentSessionId);
+    this.attachSessionToSubagent(pendingState.cardId, sessionId);
+    this.removeFromQueue(
+      this.pendingChildSessionIdsByParent,
+      pendingState.parentSessionId,
+      sessionId,
+    );
+    this.emitSubagentState();
+    return true;
+  }
+
+  private findNextSubagentForTaskTool(parentSessionId: string): SubagentState | null {
+    for (const cardId of this.subagentOrder) {
+      const state = this.subagentStates.get(cardId);
+      if (state && state.parentSessionId === parentSessionId && !state.hasTaskToolMetadata) {
+        return state;
+      }
+    }
+
+    return null;
+  }
+
+  private updateSubagentFromTaskTool(
+    parentSessionId: string,
+    input?: { [key: string]: unknown },
+  ): void {
+    const subagent = this.findNextSubagentForTaskTool(parentSessionId);
+    if (!subagent || !input) {
+      return;
+    }
+
+    const description = typeof input.description === "string" ? input.description : undefined;
+    const prompt = typeof input.prompt === "string" ? input.prompt : undefined;
+    const agent = typeof input.subagent_type === "string" ? input.subagent_type : undefined;
+    const command = typeof input.command === "string" ? input.command : undefined;
+
+    if (!description && !prompt && !agent && !command) {
+      return;
+    }
+
+    this.enrichSubagentFromTaskTool(subagent, { agent, description, prompt, command });
+    this.emitSubagentState();
+  }
+
+  private getOrCreateSubagentForSession(sessionId: string): SubagentState {
+    const existingCardId = this.subagentCardIdBySessionId.get(sessionId);
+    if (existingCardId) {
+      return this.subagentStates.get(existingCardId)!;
+    }
+
+    const parentSessionId =
+      this.trackedSessionParents.get(sessionId) ?? this.currentSessionId ?? sessionId;
+    this.removeFromQueue(this.pendingChildSessionIdsByParent, parentSessionId, sessionId);
+    const state = this.createSubagentState(parentSessionId, sessionId);
+    this.getQueue(this.fallbackSubagentCardIdsByParent, parentSessionId).push(state.cardId);
+    return state;
+  }
+
+  private registerSubtaskPart(
+    parentSessionId: string,
+    partId: string,
+    agent: string,
+    description: string,
+    prompt: string,
+    command?: string,
+  ): void {
+    const fallbackCardId = this.dequeue(this.fallbackSubagentCardIdsByParent, parentSessionId);
+    if (fallbackCardId) {
+      const fallbackState = this.subagentStates.get(fallbackCardId);
+      if (fallbackState) {
+        this.enrichSubagentFromSubtask(fallbackState, { agent, description, prompt, command });
+        this.emitSubagentState();
+        return;
+      }
+    }
+
+    const state = this.createSubagentState(
+      parentSessionId,
+      null,
+      `subtask-${parentSessionId}-${partId}`,
+    );
+    this.enrichSubagentFromSubtask(state, { agent, description, prompt, command });
+
+    const pendingChildSessionId = this.dequeue(
+      this.pendingChildSessionIdsByParent,
+      parentSessionId,
+    );
+    if (pendingChildSessionId) {
+      this.attachSessionToSubagent(state.cardId, pendingChildSessionId);
+    } else {
+      this.getQueue(this.pendingSubagentCardIdsByParent, parentSessionId).push(state.cardId);
+    }
+
+    this.emitSubagentState();
+  }
+
+  private trackChildSession(sessionId: string, parentSessionId: string): void {
+    this.trackedSessionParents.set(sessionId, parentSessionId);
+
+    const pendingCardId = this.dequeue(this.pendingSubagentCardIdsByParent, parentSessionId);
+    if (pendingCardId) {
+      this.attachSessionToSubagent(pendingCardId, sessionId);
+      this.emitSubagentState();
+      return;
+    }
+
+    this.getQueue(this.pendingChildSessionIdsByParent, parentSessionId).push(sessionId);
+  }
+
+  private handleSessionCreatedOrUpdated(
+    event: Event & {
+      type: "session.created" | "session.updated";
+    },
+  ): void {
+    if (!this.currentSessionId) {
+      return;
+    }
+
+    const { info } = event.properties;
+    if (!info.parentID) {
+      return;
+    }
+
+    if (!this.trackedSessionParents.has(info.parentID)) {
+      return;
+    }
+
+    if (info.id === this.currentSessionId) {
+      return;
+    }
+
+    if (!this.trackedSessionParents.has(info.id)) {
+      this.trackChildSession(info.id, info.parentID);
+    }
+
+    const subagent = this.getOrCreateSubagentForSession(info.id);
+    this.enrichSubagentFromSessionTitle(subagent, info.title);
+    this.emitSubagentState();
+  }
+
+  private updateSubagentFromAssistantMessage(info: {
+    sessionID: string;
+    providerID?: string;
+    modelID?: string;
+    agent?: string;
+    tokens?: {
+      input: number;
+      output: number;
+      reasoning: number;
+      cache?: { read: number; write: number };
+    };
+    cost?: number;
+  }): void {
+    const subagent = this.getOrCreateSubagentForSession(info.sessionID);
+    if (info.agent) {
+      subagent.agent = info.agent;
+    }
+    if (info.providerID) {
+      subagent.providerID = info.providerID;
+    }
+    if (info.modelID) {
+      subagent.modelID = info.modelID;
+    }
+    if (info.tokens) {
+      subagent.tokens = {
+        input: info.tokens.input,
+        output: info.tokens.output,
+        reasoning: info.tokens.reasoning,
+        cacheRead: info.tokens.cache?.read || 0,
+        cacheWrite: info.tokens.cache?.write || 0,
+      };
+    }
+    if (typeof info.cost === "number") {
+      subagent.cost = info.cost;
+    }
+    subagent.updatedAt = Date.now();
+    this.emitSubagentState();
+  }
+
+  private updateSubagentToolState(
+    sessionId: string,
+    state: ToolState,
+    tool: string,
+    input?: { [key: string]: unknown },
+    title?: string,
+  ): void {
+    const subagent = this.getOrCreateSubagentForSession(sessionId);
+    const status = "status" in state ? state.status : undefined;
+
+    if (status === "running") {
+      subagent.status = "running";
+      subagent.terminalMessage = undefined;
+    }
+
+    if (status === "pending" && subagent.status === "pending") {
+      subagent.status = "pending";
+      subagent.terminalMessage = undefined;
+    }
+
+    subagent.currentTool = tool;
+    subagent.currentToolInput = input ? { ...input } : undefined;
+    subagent.currentToolTitle = title;
+    subagent.updatedAt = Date.now();
+    this.emitSubagentState();
+  }
+
+  private updateSubagentStepStart(sessionId: string, snapshot?: string): void {
+    const subagent = this.getOrCreateSubagentForSession(sessionId);
+    subagent.status = "running";
+    subagent.terminalMessage = undefined;
+    subagent.currentTool = undefined;
+    subagent.currentToolInput = undefined;
+    subagent.currentToolTitle = snapshot?.trim() || subagent.currentToolTitle;
+    subagent.updatedAt = Date.now();
+    this.emitSubagentState();
+  }
+
+  private updateSubagentStepFinish(
+    sessionId: string,
+    tokens: {
+      input: number;
+      output: number;
+      reasoning: number;
+      cache: { read: number; write: number };
+    },
+    cost: number,
+    snapshot?: string,
+  ): void {
+    const subagent = this.getOrCreateSubagentForSession(sessionId);
+    subagent.status = "running";
+    subagent.terminalMessage = undefined;
+    subagent.tokens = {
+      input: tokens.input,
+      output: tokens.output,
+      reasoning: tokens.reasoning,
+      cacheRead: tokens.cache.read,
+      cacheWrite: tokens.cache.write,
+    };
+    subagent.cost += cost;
+    if (snapshot?.trim()) {
+      subagent.currentToolTitle = snapshot.trim();
+    }
+    subagent.updatedAt = Date.now();
+    this.emitSubagentState();
+  }
+
+  private setSubagentTerminalStatus(
+    sessionId: string,
+    status: Extract<SubagentStatus, "completed" | "error">,
+    terminalMessage?: string,
+  ): void {
+    const cardId = this.subagentCardIdBySessionId.get(sessionId);
+    if (!cardId) {
+      return;
+    }
+
+    const subagent = this.subagentStates.get(cardId);
+    if (!subagent) {
+      return;
+    }
+
+    subagent.status = status;
+    subagent.currentTool = undefined;
+    subagent.currentToolInput = undefined;
+    subagent.currentToolTitle = undefined;
+    subagent.terminalMessage = terminalMessage?.trim() || undefined;
+    subagent.updatedAt = Date.now();
+    this.emitSubagentState();
   }
 
   private handleMessageUpdated(
@@ -331,6 +927,34 @@ class SummaryAggregator {
     },
   ): void {
     const { info } = event.properties;
+
+    if (
+      info.sessionID !== this.currentSessionId &&
+      !this.trackedSessionParents.has(info.sessionID) &&
+      info.role === "assistant"
+    ) {
+      this.attachUnknownSessionToPendingSubagent(info.sessionID);
+    }
+
+    if (this.isTrackedChildSession(info.sessionID)) {
+      if (info.role === "assistant") {
+        const assistantInfo = info as {
+          sessionID: string;
+          providerID?: string;
+          modelID?: string;
+          agent?: string;
+          tokens?: {
+            input: number;
+            output: number;
+            reasoning: number;
+            cache: { read: number; write: number };
+          };
+          cost?: number;
+        };
+        this.updateSubagentFromAssistantMessage(assistantInfo);
+      }
+      return;
+    }
 
     if (info.sessionID !== this.currentSessionId) {
       return;
@@ -341,73 +965,83 @@ class SummaryAggregator {
     this.messages.set(messageID, { role: info.role });
 
     if (info.role === "assistant") {
-      if (!this.currentMessageParts.has(messageID)) {
-        this.currentMessageParts.set(messageID, []);
+      if (!this.textMessageStates.has(messageID)) {
+        this.getOrCreateTextMessageState(messageID);
         this.messageCount++;
         this.startTypingIndicator();
       }
 
-      const pending = this.pendingParts.get(messageID) || [];
-      const current = this.currentMessageParts.get(messageID) || [];
-      this.currentMessageParts.set(messageID, [...current, ...pending]);
-      this.pendingParts.delete(messageID);
-
-      if (this.onStreamUpdateCallback && pending.length > 0) {
-        const latestPendingText = pending[pending.length - 1];
-        setImmediate(() => {
-          void this.onStreamUpdateCallback?.(info.sessionID, latestPendingText);
-        });
-      }
+      const textState = this.getOrCreateTextMessageState(messageID);
 
       const assistantMessage = info as { time?: { created: number; completed?: number } };
       const time = assistantMessage.time;
+      const isCompleted = Boolean(time?.completed);
+      const messageText = this.getCombinedMessageText(messageID);
 
-      if (time?.completed) {
-        const parts = this.currentMessageParts.get(messageID) || [];
-        const lastPart = parts[parts.length - 1] || "";
+      if (isCompleted && this.onCompleteCallback) {
+        this.onCompleteCallback(
+          info.sessionID,
+          messageID,
+          messageText,
+          this.getCombinedReasoningText(messageID),
+          textState.toolCalls,
+        );
+      }
+
+      // Extract and report tokens for EVERY message.updated with token data
+      // (both intermediate and completed). This keeps keyboard context in sync.
+      const assistantInfo = info as {
+        tokens?: {
+          input: number;
+          output: number;
+          reasoning: number;
+          cache: { read: number; write: number };
+        };
+        cost?: number;
+      };
+
+      if (this.onTokensCallback && assistantInfo.tokens) {
+        const tokens: TokensInfo = {
+          input: assistantInfo.tokens.input,
+          output: assistantInfo.tokens.output,
+          reasoning: assistantInfo.tokens.reasoning,
+          cacheRead: assistantInfo.tokens.cache?.read || 0,
+          cacheWrite: assistantInfo.tokens.cache?.write || 0,
+        };
+        logger.debug(
+          `[Aggregator] Tokens: input=${tokens.input}, output=${tokens.output}, reasoning=${tokens.reasoning}, cacheRead=${tokens.cacheRead}, cacheWrite=${tokens.cacheWrite}, completed=${isCompleted}`,
+        );
+        // Call synchronously so keyboardManager is updated before onComplete sends the reply
+        this.onTokensCallback(tokens, isCompleted);
+      }
+
+      if (isCompleted) {
+        const finalText = messageText;
 
         logger.debug(
-          `[Aggregator] Message part completed: messageId=${messageID}, textLength=${lastPart.length}, totalParts=${parts.length}, session=${this.currentSessionId}`,
+          `[Aggregator] Message part completed: messageId=${messageID}, textLength=${finalText.length}, totalParts=${textState.orderedPartIds.length}, session=${this.currentSessionId}`,
         );
 
-        // Extract and report tokens BEFORE onComplete so keyboard context is updated
-        const assistantInfo = info as {
-          tokens?: {
-            input: number;
-            output: number;
-            reasoning: number;
-            cache: { read: number; write: number };
-          };
-        };
-
-        if (this.onTokensCallback && assistantInfo.tokens) {
-          const tokens: TokensInfo = {
-            input: assistantInfo.tokens.input,
-            output: assistantInfo.tokens.output,
-            reasoning: assistantInfo.tokens.reasoning,
-            cacheRead: assistantInfo.tokens.cache?.read || 0,
-            cacheWrite: assistantInfo.tokens.cache?.write || 0,
-          };
-          logger.debug(
-            `[Aggregator] Tokens: input=${tokens.input}, output=${tokens.output}, reasoning=${tokens.reasoning}`,
-          );
-          // Call synchronously so keyboardManager is updated before onComplete sends the reply
-          this.onTokensCallback(tokens);
+        // Extract and report cost
+        if (this.onCostCallback && assistantInfo.cost !== undefined) {
+          logger.debug(`[Aggregator] Cost: $${assistantInfo.cost.toFixed(2)}`);
+          this.onCostCallback(assistantInfo.cost);
         }
 
-        if (this.onCompleteCallback && lastPart.length > 0) {
-          this.onCompleteCallback(this.currentSessionId!, lastPart);
+        if (this.onCompleteCallback && finalText.length > 0) {
+          this.onCompleteCallback(this.currentSessionId!, messageID, finalText);
         }
 
-        this.currentMessageParts.delete(messageID);
+        this.textMessageStates.delete(messageID);
         this.messages.delete(messageID);
         this.partHashes.delete(messageID);
+        this.knownTextPartIds.delete(messageID);
 
         logger.debug(
-          `[Aggregator] Message completed cleanup: remaining messages=${this.currentMessageParts.size}`,
+          `[Aggregator] Message completed cleanup: remaining messages=${this.textMessageStates.size}`,
         );
 
-        if (this.currentMessageParts.size === 0) {
+        if (this.textMessageStates.size === 0) {
           logger.debug("[Aggregator] No more active messages, stopping typing indicator");
           this.stopTypingIndicator();
         }
@@ -424,67 +1058,132 @@ class SummaryAggregator {
   ): void {
     const { part } = event.properties;
 
-    if (part.sessionID !== this.currentSessionId) {
+    if (
+      part.sessionID !== this.currentSessionId &&
+      !this.trackedSessionParents.has(part.sessionID) &&
+      part.type !== "subtask"
+    ) {
+      this.attachUnknownSessionToPendingSubagent(part.sessionID);
+    }
+
+    const isCurrentRootSession = part.sessionID === this.currentSessionId;
+    const isTrackedChildSession = this.isTrackedChildSession(part.sessionID);
+
+    if (!isCurrentRootSession && !isTrackedChildSession) {
+      return;
+    }
+
+    if (part.type === "subtask") {
+      this.registerSubtaskPart(
+        part.sessionID,
+        part.id,
+        part.agent,
+        part.description,
+        part.prompt,
+        part.command,
+      );
+      this.lastUpdated = Date.now();
+      return;
+    }
+
+    if (isTrackedChildSession) {
+      if (part.type === "tool") {
+        const state = part.state;
+        const input = "input" in state ? (state.input as { [key: string]: unknown }) : undefined;
+        const title = "title" in state ? state.title : undefined;
+        this.updateSubagentToolState(part.sessionID, state, part.tool, input, title);
+      }
+
+      if (part.type === "step-start") {
+        this.updateSubagentStepStart(part.sessionID, part.snapshot);
+      }
+
+      if (part.type === "step-finish") {
+        this.updateSubagentStepFinish(part.sessionID, part.tokens, part.cost, part.snapshot);
+      }
+
+      this.lastUpdated = Date.now();
       return;
     }
 
     const messageID = part.messageID;
     const messageInfo = this.messages.get(messageID);
-    const partText = "text" in part && typeof part.text === "string" ? part.text : "";
-    const partHash = partText ? this.hashString(partText) : null;
 
-    if (partHash) {
-      if (!this.partHashes.has(messageID)) {
-        this.partHashes.set(messageID, new Set());
-      }
+    if (part.type === "text") {
+      this.registerKnownTextPart(messageID, part.id);
+      this.registerTextPart(messageID, part.id);
+    }
 
-      const hashes = this.partHashes.get(messageID)!;
-      if (hashes.has(partHash)) {
-        return;
-      }
-
-      hashes.add(partHash);
+    const deltaFromUpdated = (event.properties as { delta?: unknown }).delta;
+    if (
+      part.type === "text" &&
+      typeof deltaFromUpdated === "string" &&
+      deltaFromUpdated.length > 0
+    ) {
+      this.applyTextDelta(part.sessionID, messageID, part.id, deltaFromUpdated, part.text);
+      this.lastUpdated = Date.now();
+      return;
     }
 
     if (part.type === "reasoning") {
-      const reasoningText = partText.trim();
-      if (reasoningText && this.onThinkingCallback) {
-        const callback = this.onThinkingCallback;
-        const sessionID = part.sessionID;
-        setImmediate(() => {
-          if (typeof callback === "function") {
-            void callback(sessionID, reasoningText);
+      // Fire the thinking callback once per message on the first reasoning part.
+      this.fireThinkingCallbackOnce(messageID, part.sessionID);
+
+      if ("text" in part && part.text) {
+        this.setReasoningPartSnapshot(messageID, part.id, part.text);
+        const fullText = this.getCombinedMessageText(messageID);
+        const reasoning = this.getCombinedReasoningText(messageID);
+        const state = this.getOrCreateTextMessageState(messageID);
+
+        if (messageInfo && messageInfo.role === "assistant") {
+          this.startTypingIndicator();
+          this.emitPartialText(part.sessionID, messageID, fullText, reasoning, state.toolCalls);
+        } else {
+          state.optimisticUpdateCount++;
+
+          if (state.optimisticUpdateCount >= 2) {
+            this.emitPartialText(part.sessionID, messageID, fullText, reasoning, state.toolCalls);
           }
-        });
+        }
       }
     } else if (part.type === "text" && "text" in part && part.text) {
+      const wasUpdated =
+        messageInfo && messageInfo.role === "assistant"
+          ? this.setTextPartSnapshot(messageID, part.id, part.text)
+          : this.setOptimisticTextSnapshot(messageID, part.id, part.text);
+      if (!wasUpdated) {
+        return;
+      }
+
+      const fullText = this.getCombinedMessageText(messageID);
+      const reasoning = this.getCombinedReasoningText(messageID);
+      const state = this.getOrCreateTextMessageState(messageID);
+
       if (messageInfo && messageInfo.role === "assistant") {
-        if (!this.currentMessageParts.has(messageID)) {
-          this.currentMessageParts.set(messageID, []);
-          this.startTypingIndicator();
-        }
-
-        const parts = this.currentMessageParts.get(messageID)!;
-        parts.push(part.text);
-
-        if (this.onStreamUpdateCallback) {
-          const latestText = part.text;
-          setImmediate(() => {
-            void this.onStreamUpdateCallback?.(part.sessionID, latestText);
-          });
-        }
+        this.startTypingIndicator();
+        this.emitPartialText(part.sessionID, messageID, fullText, reasoning, state.toolCalls);
       } else {
-        if (!this.pendingParts.has(messageID)) {
-          this.pendingParts.set(messageID, []);
-        }
+        state.optimisticUpdateCount++;
 
-        const pending = this.pendingParts.get(messageID)!;
-        pending.push(part.text);
+        if (state.optimisticUpdateCount >= 2) {
+          this.emitPartialText(part.sessionID, messageID, fullText, reasoning, state.toolCalls);
+        }
       }
     } else if (part.type === "tool") {
       const state = part.state;
       const input = "input" in state ? (state.input as { [key: string]: unknown }) : undefined;
       const title = "title" in state ? state.title : undefined;
+
+      if (part.tool === "task") {
+        this.updateSubagentFromTaskTool(part.sessionID, input);
+      }
+
+      if ("status" in state && state.status === "completed") {
+        const msgState = this.getOrCreateTextMessageState(messageID);
+        if (!msgState.toolCalls.some((t) => t.tool === part.tool && t.title === title)) {
+          msgState.toolCalls.push({ tool: part.tool, title, input });
+        }
+      }
 
       logger.debug(
         `[Aggregator] Tool event: callID=${part.callID}, tool=${part.tool}, status=${"status" in state ? state.status : "unknown"}`,
@@ -500,8 +1199,9 @@ class SummaryAggregator {
             `[Aggregator] Question tool failed with error, clearing active poll. callID=${part.callID}`,
           );
           if (this.onQuestionErrorCallback) {
+            const callback = this.onQuestionErrorCallback;
             setImmediate(() => {
-              this.onQuestionErrorCallback!(this.currentSessionId);
+              callback(part.sessionID);
             });
           }
           return;
@@ -568,6 +1268,231 @@ class SummaryAggregator {
     }
 
     this.lastUpdated = Date.now();
+  }
+
+  private handleMessagePartDelta(event: MessagePartDeltaEventRaw): void {
+    const part = event.properties.part;
+    const sessionID = part?.sessionID || event.properties.sessionID;
+    const messageID = part?.messageID || event.properties.messageID;
+    const partID = part?.id || event.properties.partID || "text";
+    const partType = part?.type || event.properties.type;
+    const delta = event.properties.delta;
+
+    if (!sessionID || !messageID || typeof delta !== "string" || delta.length === 0) {
+      return;
+    }
+
+    if (partType === "reasoning" || partType === "thought") {
+      this.applyReasoningDelta(sessionID, messageID, partID, delta);
+      return;
+    }
+
+    if (partType && partType !== "text") {
+      return;
+    }
+
+    if (partType === "text") {
+      this.registerKnownTextPart(messageID, partID);
+      this.registerTextPart(messageID, partID);
+    } else {
+      const knownTextIds = this.knownTextPartIds.get(messageID);
+      const isKnownTextPart = knownTextIds?.has(partID) ?? false;
+      const thinkingFired = this.thinkingFiredForMessages.has(messageID);
+
+      if (thinkingFired && !isKnownTextPart) {
+        return;
+      }
+
+      if (!thinkingFired && !isKnownTextPart) {
+        this.registerKnownTextPart(messageID, partID);
+        this.registerTextPart(messageID, partID);
+      }
+    }
+
+    this.applyTextDelta(sessionID, messageID, partID, delta, part?.text);
+  }
+
+  private applyReasoningDelta(
+    sessionID: string,
+    messageID: string,
+    partID: string,
+    delta: string,
+  ): void {
+    if (sessionID !== this.currentSessionId) {
+      return;
+    }
+
+    const state = this.getOrCreateTextMessageState(messageID);
+    if (!state.orderedThoughtPartIds.includes(partID)) {
+      state.orderedThoughtPartIds.push(partID);
+    }
+    const previous = state.thoughtTexts.get(partID) || "";
+    state.thoughtTexts.set(partID, `${previous}${delta}`);
+
+    const combinedText = this.getCombinedMessageText(messageID);
+    const combinedReasoning = this.getCombinedReasoningText(messageID);
+
+    this.startTypingIndicator();
+    this.emitPartialText(sessionID, messageID, combinedText, combinedReasoning, state.toolCalls);
+  }
+
+  private applyTextDelta(
+    sessionID: string,
+    messageID: string,
+    partID: string,
+    delta: string,
+    fullTextHint?: string,
+  ): void {
+    if (sessionID !== this.currentSessionId) {
+      return;
+    }
+
+    this.registerTextPart(messageID, partID);
+
+    const state = this.getOrCreateTextMessageState(messageID);
+    const previous = state.partTexts.get(partID) || "";
+    let accumulated = `${previous}${delta}`;
+
+    if (typeof fullTextHint === "string" && fullTextHint.length > accumulated.length) {
+      accumulated = fullTextHint;
+    }
+
+    state.partTexts.set(partID, accumulated);
+
+    const combinedText = this.getCombinedMessageText(messageID);
+    const combinedReasoning = this.getCombinedReasoningText(messageID);
+
+    this.startTypingIndicator();
+    this.emitPartialText(sessionID, messageID, combinedText, combinedReasoning, state.toolCalls);
+  }
+
+  private emitPartialText(
+    sessionId: string,
+    messageId: string,
+    messageText: string,
+    reasoningText?: string,
+    toolCalls?: Array<{ tool: string; title?: string; input?: any }>,
+  ): void {
+    if (!this.onPartialCallback) {
+      return;
+    }
+
+    try {
+      this.onPartialCallback(sessionId, messageId, messageText, reasoningText, toolCalls);
+    } catch (err) {
+      logger.error("[Aggregator] Error in partial callback:", err);
+    }
+  }
+
+  private getOrCreateTextMessageState(messageID: string): TextMessageState {
+    const existing = this.textMessageStates.get(messageID);
+    if (existing) {
+      return existing;
+    }
+
+    const state: TextMessageState = {
+      orderedPartIds: [],
+      partTexts: new Map(),
+      orderedThoughtPartIds: [],
+      thoughtTexts: new Map(),
+      toolCalls: [],
+      optimisticUpdateCount: 0,
+    };
+    this.textMessageStates.set(messageID, state);
+    return state;
+  }
+
+  private registerKnownTextPart(messageID: string, partID: string): void {
+    if (!this.knownTextPartIds.has(messageID)) {
+      this.knownTextPartIds.set(messageID, new Set());
+    }
+
+    this.knownTextPartIds.get(messageID)!.add(partID);
+  }
+
+  private registerTextPart(messageID: string, partID: string): void {
+    const state = this.getOrCreateTextMessageState(messageID);
+    if (!state.orderedPartIds.includes(partID)) {
+      state.orderedPartIds.push(partID);
+    }
+  }
+
+  private fireThinkingCallbackOnce(messageID: string, sessionID: string): void {
+    if (!this.thinkingFiredForMessages.has(messageID) && this.onThinkingCallback) {
+      this.thinkingFiredForMessages.add(messageID);
+      const callback = this.onThinkingCallback;
+      setImmediate(() => {
+        if (typeof callback === "function") {
+          callback(sessionID);
+        }
+      });
+    }
+  }
+
+  private setReasoningPartSnapshot(messageID: string, partID: string, text: string): boolean {
+    const state = this.getOrCreateTextMessageState(messageID);
+    if (!state.orderedThoughtPartIds.includes(partID)) {
+      state.orderedThoughtPartIds.push(partID);
+    }
+    const previous = state.thoughtTexts.get(partID);
+    if (previous === text) {
+      return false;
+    }
+    state.thoughtTexts.set(partID, text);
+    return true;
+  }
+
+  private setTextPartSnapshot(messageID: string, partID: string, text: string): boolean {
+    const normalized = text;
+    const partHash = this.hashString(`${partID}\n${normalized}`);
+
+    if (!this.partHashes.has(messageID)) {
+      this.partHashes.set(messageID, new Set());
+    }
+
+    const hashes = this.partHashes.get(messageID)!;
+    if (hashes.has(partHash)) {
+      return false;
+    }
+
+    hashes.add(partHash);
+
+    this.registerTextPart(messageID, partID);
+    const state = this.getOrCreateTextMessageState(messageID);
+    state.partTexts.set(partID, normalized);
+    return true;
+  }
+
+  private setOptimisticTextSnapshot(messageID: string, partID: string, text: string): boolean {
+    const wasUpdated = this.setTextPartSnapshot(messageID, partID, text);
+    if (!wasUpdated) {
+      return false;
+    }
+
+    const state = this.getOrCreateTextMessageState(messageID);
+    state.orderedPartIds = [partID];
+    state.partTexts = new Map([[partID, text]]);
+    return true;
+  }
+
+  private getCombinedMessageText(messageID: string): string {
+    const state = this.textMessageStates.get(messageID);
+    if (!state) {
+      return "";
+    }
+
+    return state.orderedPartIds.map((partID) => state.partTexts.get(partID) || "").join("");
+  }
+
+  private getCombinedReasoningText(messageID: string): string {
+    const state = this.textMessageStates.get(messageID);
+    if (!state) {
+      return "";
+    }
+
+    return state.orderedThoughtPartIds
+      .map((partID) => state.thoughtTexts.get(partID) || "")
+      .join("");
   }
 
   private prepareToolFileContext(
@@ -734,6 +1659,12 @@ class SummaryAggregator {
   ): void {
     const { sessionID } = event.properties;
 
+    if (this.isTrackedChildSession(sessionID)) {
+      logger.info(`[Aggregator] Subagent session became idle: ${sessionID}`);
+      this.setSubagentTerminalStatus(sessionID, "completed");
+      return;
+    }
+
     if (sessionID !== this.currentSessionId) {
       return;
     }
@@ -761,9 +1692,13 @@ class SummaryAggregator {
     // Reload context from history after compaction
     if (this.onSessionCompactedCallback) {
       setImmediate(() => {
-        const project = getCurrentProject();
-        if (project) {
-          this.onSessionCompactedCallback!(sessionID, project.worktree);
+        const directory =
+          this.resolveSessionDirectory(sessionID) ||
+          getCurrentSession()?.directory ||
+          getCurrentProject()?.worktree ||
+          null;
+        if (directory) {
+          this.onSessionCompactedCallback!(sessionID, directory);
         }
       });
     }
@@ -783,12 +1718,18 @@ class SummaryAggregator {
       };
     };
 
-    if (sessionID !== this.currentSessionId) {
+    const message =
+      error?.data?.message || error?.message || error?.name || "Unknown session error";
+
+    if (sessionID && this.isTrackedChildSession(sessionID)) {
+      logger.warn(`[Aggregator] Subagent session error: ${sessionID}: ${message}`);
+      this.setSubagentTerminalStatus(sessionID, "error", message);
       return;
     }
 
-    const message =
-      error?.data?.message || error?.message || error?.name || "Unknown session error";
+    if (sessionID !== this.currentSessionId) {
+      return;
+    }
 
     logger.warn(`[Aggregator] Session error: ${sessionID}: ${message}`);
     this.stopTypingIndicator();
@@ -886,27 +1827,4 @@ class SummaryAggregator {
   }
 }
 
-const summaryAggregatorRegistry = new Map<string, SummaryAggregator>();
-
-function getSummaryAggregatorInstance(): SummaryAggregator {
-  const scopeKey = resolveTelegramConversationScopeKey();
-  const existing = summaryAggregatorRegistry.get(scopeKey);
-  if (existing) {
-    return existing;
-  }
-
-  const aggregator = new SummaryAggregator();
-  summaryAggregatorRegistry.set(scopeKey, aggregator);
-  return aggregator;
-}
-
-export function __resetSummaryAggregatorsForTests(): void {
-  summaryAggregatorRegistry.clear();
-}
-
-export const summaryAggregator = new Proxy({} as SummaryAggregator, {
-  get(_target, property, receiver) {
-    const value = Reflect.get(getSummaryAggregatorInstance(), property, receiver);
-    return typeof value === "function" ? value.bind(getSummaryAggregatorInstance()) : value;
-  },
-});
+export const summaryAggregator = new SummaryAggregator();

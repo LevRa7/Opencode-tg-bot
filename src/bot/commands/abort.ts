@@ -16,8 +16,8 @@ interface AbortCurrentOperationOptions {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-function abortLocalStreaming(): void {
-  stopEventListening();
+function abortLocalStreaming(sessionDirectory?: string): void {
+  stopEventListening(sessionDirectory);
   summaryAggregator.clear();
   clearAllInteractionState("abort_command");
 }
@@ -68,9 +68,8 @@ export async function abortCurrentOperation(
   const notifyUser = options.notifyUser ?? true;
 
   try {
-    abortLocalStreaming();
-
     const currentSession = getCurrentSession();
+    abortLocalStreaming(currentSession?.directory);
 
     if (!currentSession) {
       if (notifyUser) {

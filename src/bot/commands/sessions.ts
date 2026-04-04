@@ -2,7 +2,7 @@ import { CommandContext, Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { setCurrentSession, SessionInfo } from "../../session/manager.js";
-import { getCurrentProject, setCurrentProject } from "../../settings/manager.js";
+import { getCurrentProject } from "../../settings/manager.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
 import { summaryAggregator } from "../../summary/aggregator.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
@@ -12,13 +12,12 @@ import {
   ensureActiveInlineMenu,
   replyWithInlineMenu,
 } from "../handlers/inline-menu.js";
+import { isForegroundBusy, replyBusyBlocked } from "../utils/busy-guard.js";
 import { logger } from "../../utils/logger.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { config } from "../../config.js";
 import { getDateLocale, t } from "../../i18n/index.js";
-import { ensureUserProjectForCommand } from "../../project/user-project.js";
 import { threadContextManager } from "../../thread/manager.js";
-import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 
 const SESSION_CALLBACK_PREFIX = "session:";
 const SESSION_PAGE_CALLBACK_PREFIX = "session:page:";
@@ -89,6 +88,7 @@ async function loadSessionPage(
   const { data: sessions, error } = await opencodeClient.session.list({
     directory,
     limit: endExclusive + SESSION_FETCH_EXTRA_COUNT,
+    roots: true,
   });
 
   if (error || !sessions) {
@@ -137,25 +137,17 @@ function buildSessionsKeyboard(pageData: SessionPage, pageSize: number): InlineK
 
 export async function sessionsCommand(ctx: CommandContext<Context>) {
   try {
+    if (isForegroundBusy()) {
+      await replyBusyBlocked(ctx);
+      return;
+    }
+
     const pageSize = config.bot.sessionsListLimit;
-    let currentProject = getCurrentProject();
+    const currentProject = getCurrentProject();
 
     if (!currentProject) {
-      if (!threadContextManager.canAutoAssignProjectForActiveContext()) {
-        await ctx.reply(t("sessions.project_not_selected"));
-        return;
-      }
-
-      const tgId = ctx.from?.id;
-      if (!tgId) {
-        await ctx.reply(t("sessions.project_not_selected"));
-        return;
-      }
-
-      logger.info(`[Bot] No project selected, auto-creating project for tgId=${tgId}`);
-      currentProject = await ensureUserProjectForCommand(tgId);
-      setCurrentProject(currentProject);
-      threadContextManager.bindProjectToActiveContext(currentProject);
+      await ctx.reply(t("sessions.project_not_selected"));
+      return;
     }
 
     logger.debug(`[Sessions] Fetching sessions for directory: ${currentProject.worktree}`);
@@ -191,7 +183,10 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
     return false;
   }
 
-  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+  if (isForegroundBusy()) {
+    await replyBusyBlocked(ctx);
+    return true;
+  }
 
   const page = parseSessionPageCallback(callbackQuery.data);
   const sessionId = parseSessionIdCallback(callbackQuery.data);
@@ -202,28 +197,13 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
   }
 
   try {
-    let currentProject = getCurrentProject();
+    const currentProject = getCurrentProject();
 
     if (!currentProject) {
-      if (!threadContextManager.canAutoAssignProjectForActiveContext()) {
-        clearAllInteractionState("session_select_project_missing");
-        await ctx.answerCallbackQuery();
-        await ctx.reply(t("sessions.select_project_first"));
-        return true;
-      }
-
-      const tgId = ctx.from?.id;
-      if (!tgId) {
-        clearAllInteractionState("session_select_project_missing");
-        await ctx.answerCallbackQuery();
-        await ctx.reply(t("sessions.select_project_first"));
-        return true;
-      }
-
-      logger.info(`[Bot] No project selected, auto-creating project for tgId=${tgId}`);
-      currentProject = await ensureUserProjectForCommand(tgId);
-      setCurrentProject(currentProject);
-      threadContextManager.bindProjectToActiveContext(currentProject);
+      clearAllInteractionState("session_select_project_missing");
+      await ctx.answerCallbackQuery();
+      await ctx.reply(t("sessions.select_project_first"));
+      return true;
     }
 
     if (page !== null) {
@@ -273,7 +253,6 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
       directory: currentProject.worktree,
     };
     setCurrentSession(sessionInfo);
-    threadContextManager.bindProjectToActiveContext(currentProject);
     threadContextManager.bindSessionToActiveContext(sessionInfo);
     summaryAggregator.clear();
     clearAllInteractionState("session_switched");
@@ -286,7 +265,6 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
         const loadingMessage = await ctx.api.sendMessage(
           ctx.chat.id,
           t("sessions.loading_context"),
-          withMessageThreadId(undefined, messageThreadId),
         );
         loadingMessageId = loadingMessage.message_id;
       } catch (err) {
@@ -336,12 +314,7 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
       const keyboard = keyboardManager.getKeyboard();
       try {
         await ctx.api.sendMessage(chatId, t("sessions.selected", { title: session.title }), {
-          ...withMessageThreadId(
-            {
-              reply_markup: keyboard,
-            },
-            messageThreadId,
-          ),
+          reply_markup: keyboard,
         });
       } catch (err) {
         logger.error("[Sessions] Failed to send selection message:", err);
@@ -354,7 +327,6 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
           sendSessionPreview(
             ctx.api,
             chatId,
-            messageThreadId,
             null,
             session.title,
             session.id,
@@ -479,7 +451,6 @@ function formatSessionPreview(_sessionTitle: string, items: SessionPreviewItem[]
 async function sendSessionPreview(
   api: Context["api"],
   chatId: number,
-  messageThreadId: number | undefined,
   messageId: number | null,
   sessionTitle: string,
   sessionId: string,
@@ -498,7 +469,7 @@ async function sendSessionPreview(
   }
 
   try {
-    await api.sendMessage(chatId, finalText, withMessageThreadId(undefined, messageThreadId));
+    await api.sendMessage(chatId, finalText);
   } catch (err) {
     logger.error("[Sessions] Failed to send session preview message:", err);
   }

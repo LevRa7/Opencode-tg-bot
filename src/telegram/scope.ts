@@ -60,8 +60,12 @@ export function getCurrentTelegramConversationScopeKey(): string {
 }
 
 export function resolveTelegramConversationScopeKey(
-  scope?: TelegramConversationScope | null,
+  scope?: TelegramConversationScope | string | null,
 ): string {
+  if (typeof scope === "string") {
+    return scope;
+  }
+
   return buildTelegramConversationScopeKey(scope ?? getCurrentTelegramConversationScope());
 }
 

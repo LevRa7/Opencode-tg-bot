@@ -6,11 +6,9 @@ import { ingestSessionInfoForCache } from "../../session/cache-manager.js";
 import { getCurrentProject, setCurrentProject } from "../../settings/manager.js";
 import { getStoredAgent } from "../../agent/manager.js";
 import { getStoredModel } from "../../model/manager.js";
-import { resolvePromptModelForMedia } from "../../model/media-fallback.js";
 import { formatVariantForButton } from "../../variant/manager.js";
 import { createMainKeyboard } from "../utils/keyboard.js";
-import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
-import { sendMessageWithoutDraftEffect } from "../utils/send-message-draft-effect-context.js";
+import { extractThreadTargetFromContext, type TelegramThreadTarget } from "../utils/message-thread.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { summaryAggregator } from "../../summary/aggregator.js";
@@ -23,22 +21,58 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
 import { threadContextManager } from "../../thread/manager.js";
-import { ensureUserProjectForCommand } from "../../project/user-project.js";
+import { getDefaultProject } from "../../project/manager.js";
+import {
+  extractTelegramConversationScopeFromContext,
+  runWithTelegramConversationScope,
+  type TelegramConversationScope,
+} from "../../telegram/scope.js";
 
-/** Module-level references for async callbacks that don't have ctx. */
-let botInstance: Bot<Context> | null = null;
-let chatIdInstance: number | null = null;
+const promptResponseModes = new Map<string, PromptResponseMode>();
 
-export function getPromptBotInstance(): Bot<Context> | null {
-  return botInstance;
+interface PromptRoutingContext {
+  bot: Bot<Context>;
+  target: TelegramThreadTarget;
+  scope: TelegramConversationScope | null;
+  quiet: boolean;
 }
 
-export function getPromptChatId(): number | null {
-  return chatIdInstance;
+const promptRoutingBySessionId = new Map<string, PromptRoutingContext>();
+
+export type PromptResponseMode = "text_only" | "text_and_tts";
+
+type ProcessPromptOptions = {
+  responseMode?: PromptResponseMode;
+};
+
+function setPromptRoutingContext(sessionId: string, routing: PromptRoutingContext): void {
+  promptRoutingBySessionId.set(sessionId, routing);
 }
 
-function formatSessionSelectionHint(): string {
-  return `${t("status.session_not_selected")}\n${t("status.session_hint")}`;
+export function getPromptRoutingContext(sessionId: string): PromptRoutingContext | null {
+  return promptRoutingBySessionId.get(sessionId) ?? null;
+}
+
+function clearPromptRoutingContext(sessionId: string): void {
+  promptRoutingBySessionId.delete(sessionId);
+}
+
+export function clearPromptRouting(sessionId: string): void {
+  clearPromptRoutingContext(sessionId);
+}
+
+export function setPromptResponseMode(sessionId: string, responseMode: PromptResponseMode): void {
+  promptResponseModes.set(sessionId, responseMode);
+}
+
+export function clearPromptResponseMode(sessionId: string): void {
+  promptResponseModes.delete(sessionId);
+}
+
+export function consumePromptResponseMode(sessionId: string): PromptResponseMode | null {
+  const responseMode = promptResponseModes.get(sessionId) ?? null;
+  promptResponseModes.delete(sessionId);
+  return responseMode;
 }
 
 async function isSessionBusy(sessionId: string, directory: string): Promise<boolean> {
@@ -69,6 +103,7 @@ async function resetMismatchedSessionContext(): Promise<void> {
   foregroundSessionState.clearAll("session_mismatch_reset");
   clearAllInteractionState("session_mismatch_reset");
   clearSession();
+  threadContextManager.clearSessionForActiveContext();
   keyboardManager.clearContext();
 
   if (!pinnedMessageManager.isInitialized()) {
@@ -102,33 +137,33 @@ export async function processUserPrompt(
   text: string,
   deps: ProcessPromptDeps,
   fileParts: FilePartInput[] = [],
+  options: ProcessPromptOptions = {},
 ): Promise<boolean> {
   const { bot, ensureEventSubscription } = deps;
-  const messageThreadId = extractMessageThreadIdFromContext(ctx);
-  const activeScope = threadContextManager.getActiveScope();
+  const responseMode = options.responseMode ?? "text_only";
+  const quietPrompt = responseMode === "text_only";
 
   let currentProject = getCurrentProject();
   if (!currentProject) {
-    if (!threadContextManager.canAutoAssignProjectForActiveContext()) {
+    const defaultProject = await getDefaultProject();
+    if (!defaultProject) {
       await ctx.reply(t("bot.project_not_selected"));
       return false;
     }
 
-    const tgId = ctx.from?.id;
-    if (!tgId) {
-      await ctx.reply(t("bot.project_not_selected"));
-      return false;
-    }
-
-    logger.info(`[Bot] No project selected, auto-creating project for tgId=${tgId}`);
-    currentProject = await ensureUserProjectForCommand(tgId);
-    setCurrentProject(currentProject);
+    currentProject = defaultProject;
+    setCurrentProject(defaultProject);
+    threadContextManager.bindProjectToActiveContext(defaultProject);
   }
 
-  threadContextManager.bindProjectToActiveContext(currentProject);
+  const scope = extractTelegramConversationScopeFromContext(ctx);
+  const target = extractThreadTargetFromContext(ctx);
 
-  botInstance = bot;
-  chatIdInstance = ctx.chat!.id;
+  if (!target) {
+    logger.error("[Bot] Cannot process prompt: Telegram target is missing");
+    await ctx.reply(t("error.generic"));
+    return false;
+  }
 
   // Initialize pinned message manager if not already
   if (!pinnedMessageManager.isInitialized()) {
@@ -145,17 +180,11 @@ export async function processUserPrompt(
       `[Bot] Session/project mismatch detected. sessionDirectory=${currentSession.directory}, projectDirectory=${currentProject.worktree}. Resetting session context.`,
     );
     await resetMismatchedSessionContext();
-    threadContextManager.clearSessionForActiveContext();
     await ctx.reply(t("bot.session_reset_project_mismatch"));
     return false;
   }
 
   if (!currentSession) {
-    if (!threadContextManager.canAutoAssignSessionForActiveContext()) {
-      await ctx.reply(formatSessionSelectionHint());
-      return false;
-    }
-
     await ctx.reply(t("bot.creating_session"));
 
     const { data: session, error } = await opencodeClient.session.create({
@@ -215,14 +244,11 @@ export async function processUserPrompt(
         logger.error("[Bot] Error creating pinned message for existing session:", err);
       }
     }
-
-    threadContextManager.bindSessionToActiveContext(currentSession);
   }
 
   await ensureEventSubscription(currentSession.directory);
 
   summaryAggregator.setSession(currentSession.id);
-  summaryAggregator.setBotAndChatId(bot, ctx.chat!.id, messageThreadId);
 
   const sessionIsBusy = await isSessionBusy(currentSession.id, currentSession.directory);
   if (sessionIsBusy) {
@@ -234,12 +260,6 @@ export async function processUserPrompt(
   try {
     const currentAgent = getStoredAgent();
     const storedModel = getStoredModel();
-    const resolvedModel = await resolvePromptModelForMedia({ storedModel, fileParts });
-
-    if (resolvedModel.missingMediaSupport) {
-      await ctx.reply(t("bot.media_model_no_support"));
-      return false;
-    }
 
     // Build parts array with text and files
     const parts: Array<TextPartInput | FilePartInput> = [];
@@ -274,51 +294,45 @@ export async function processUserPrompt(
       agent: currentAgent,
     };
 
-    // Use stored model or media fallback model when needed.
-    if (resolvedModel.model) {
+    // Use stored model (from settings or config)
+    if (storedModel.providerID && storedModel.modelID) {
       promptOptions.model = {
-        providerID: resolvedModel.model.providerID,
-        modelID: resolvedModel.model.modelID,
+        providerID: storedModel.providerID,
+        modelID: storedModel.modelID,
       };
 
-      if (resolvedModel.variant) {
-        promptOptions.variant = resolvedModel.variant;
+      // Add variant if specified
+      if (storedModel.variant) {
+        promptOptions.variant = storedModel.variant;
       }
-    }
-
-    if (resolvedModel.fallbackUsed) {
-      logger.info(
-        `[Bot] Using media fallback model ${resolvedModel.model?.providerID}/${resolvedModel.model?.modelID}`,
-      );
     }
 
     const promptErrorLogContext = {
       sessionId: currentSession.id,
       directory: currentSession.directory,
       agent: currentAgent || "default",
-      modelProvider: resolvedModel.model?.providerID || storedModel.providerID || "default",
-      modelId: resolvedModel.model?.modelID || storedModel.modelID || "default",
-      variant: resolvedModel.variant || "default",
+      modelProvider: storedModel.providerID || "default",
+      modelId: storedModel.modelID || "default",
+      variant: storedModel.variant || "default",
       promptLength: text.length,
       fileCount: fileParts.length,
     };
 
-    logger.info(
-      `[Bot] Calling session.prompt (fire-and-forget) with agent=${currentAgent}, fileCount=${fileParts.length}...`,
-    );
-
-    const reservedForegroundSlot = foregroundSessionState.tryMarkBusy(
-      currentSession.id,
-      activeScope,
-    );
-    if (!reservedForegroundSlot) {
-      await ctx.reply(
-        t("bot.parallel_limit_reached", {
-          limit: "5",
-        }),
+    if (!quietPrompt) {
+      logger.info(
+        `[Bot] Calling session.prompt (fire-and-forget) with agent=${currentAgent}, fileCount=${fileParts.length}...`,
       );
-      return false;
     }
+
+    foregroundSessionState.markBusy(currentSession.id);
+    setPromptResponseMode(currentSession.id, responseMode);
+    const routingContext = {
+      bot,
+      target,
+      scope,
+      quiet: quietPrompt,
+    };
+    setPromptRoutingContext(currentSession.id, routingContext);
 
     // CRITICAL: DO NOT wait for session.prompt to complete.
     // If we wait, the handler will not finish and grammY will not call getUpdates,
@@ -329,7 +343,8 @@ export async function processUserPrompt(
       task: () => opencodeClient.session.prompt(promptOptions),
       onSuccess: ({ error }) => {
         if (error) {
-          foregroundSessionState.markIdle(currentSession.id, activeScope);
+          foregroundSessionState.markIdle(currentSession.id);
+          clearPromptResponseMode(currentSession.id);
           const details = formatErrorDetails(error, 6000);
           logger.error(
             "[Bot] OpenCode API returned an error for session.prompt",
@@ -338,37 +353,45 @@ export async function processUserPrompt(
           logger.error("[Bot] session.prompt error details:", details);
           logger.error("[Bot] session.prompt raw API error object:", error);
 
-          // Send user-friendly error via API directly because ctx is no longer available
-          void sendMessageWithoutDraftEffect(
-            bot.api,
-            ctx.chat!.id,
-            t("bot.prompt_send_error"),
-            withMessageThreadId(undefined, messageThreadId),
-          ).catch(() => {});
+          const routing = getPromptRoutingContext(currentSession.id) ?? routingContext;
+          if (routing) {
+            void runWithTelegramConversationScope(routing.scope, () => {
+              if (routing.quiet) {
+                return Promise.resolve();
+              }
+              return routing.bot.api.sendMessage(routing.target.chatId, t("bot.prompt_send_error"));
+            }).catch(() => {});
+          }
           return;
         }
 
-        logger.info("[Bot] session.prompt completed");
+        if (!quietPrompt) {
+          logger.info("[Bot] session.prompt completed");
+        }
       },
       onError: (error) => {
-        foregroundSessionState.markIdle(currentSession.id, activeScope);
+        foregroundSessionState.markIdle(currentSession.id);
+        clearPromptResponseMode(currentSession.id);
         const details = formatErrorDetails(error, 6000);
         logger.error("[Bot] session.prompt background task failed", promptErrorLogContext);
         logger.error("[Bot] session.prompt background failure details:", details);
         logger.error("[Bot] session.prompt raw background error object:", error);
-        void sendMessageWithoutDraftEffect(
-          bot.api,
-          ctx.chat!.id,
-          t("bot.prompt_send_error"),
-          withMessageThreadId(undefined, messageThreadId),
-        ).catch(() => {});
+        const routing = getPromptRoutingContext(currentSession.id) ?? routingContext;
+        if (routing) {
+          void runWithTelegramConversationScope(routing.scope, () => {
+            if (routing.quiet) {
+              return Promise.resolve();
+            }
+            return routing.bot.api.sendMessage(routing.target.chatId, t("bot.prompt_send_error"));
+          }).catch(() => {});
+        }
       },
     });
 
     return true;
   } catch (err) {
     if (currentSession) {
-      foregroundSessionState.markIdle(currentSession.id, activeScope);
+      foregroundSessionState.markIdle(currentSession.id);
     }
     logger.error("Error in prompt handler:", err);
     if (interactionManager.getSnapshot()) {

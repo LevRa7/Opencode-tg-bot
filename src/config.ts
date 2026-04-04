@@ -7,15 +7,6 @@ dotenv.config({ path: runtimePaths.envFilePath, quiet: true });
 
 export type MessageFormatMode = "raw" | "markdown";
 
-function parsePositiveInteger(value: string): number | null {
-  const parsedValue = Number.parseInt(value, 10);
-  if (Number.isNaN(parsedValue) || parsedValue <= 0) {
-    return null;
-  }
-
-  return parsedValue;
-}
-
 function getEnvVar(key: string, required: boolean = true): string {
   const value = process.env[key];
   if (required && !value) {
@@ -33,93 +24,12 @@ function getOptionalPositiveIntEnvVar(key: string, defaultValue: number): number
     return defaultValue;
   }
 
-  const parsedValue = parsePositiveInteger(value);
-  if (parsedValue === null) {
+  const parsedValue = Number.parseInt(value, 10);
+  if (Number.isNaN(parsedValue) || parsedValue <= 0) {
     return defaultValue;
   }
 
   return parsedValue;
-}
-
-function getOptionalPositiveIntegerEnvVarFromKeys(keys: string[]): number | null {
-  for (const key of keys) {
-    const value = getEnvVar(key, false).trim();
-    if (!value) {
-      continue;
-    }
-
-    return parsePositiveInteger(value);
-  }
-
-  return null;
-}
-
-function parseUserIdList(value: string): number[] {
-  const uniqueUserIds = new Set<number>();
-
-  for (const item of value.split(/[\s,]+/)) {
-    const normalizedItem = item.trim();
-    if (!normalizedItem) {
-      continue;
-    }
-
-    const parsedUserId = parsePositiveInteger(normalizedItem);
-    if (parsedUserId !== null) {
-      uniqueUserIds.add(parsedUserId);
-    }
-  }
-
-  return [...uniqueUserIds];
-}
-
-function resolveTelegramAccessConfig(): { adminUserId: number; allowedUserIds: number[] } {
-  const adminUserId = getOptionalPositiveIntegerEnvVarFromKeys([
-    "TELEGRAM_ADMIN_USER_ID",
-    "TELEGRAM_ALLOWED_USER_ID",
-  ]);
-
-  if (adminUserId === null) {
-    throw new Error(
-      `Missing required environment variable: TELEGRAM_ADMIN_USER_ID (or legacy TELEGRAM_ALLOWED_USER_ID) (expected in ${runtimePaths.envFilePath})`,
-    );
-  }
-
-  const allowedUserIds = new Set<number>([adminUserId]);
-  const explicitAllowedUserIds = parseUserIdList(getEnvVar("TELEGRAM_ALLOWED_USER_IDS", false));
-  for (const userId of explicitAllowedUserIds) {
-    allowedUserIds.add(userId);
-  }
-
-  const legacyAllowedUserId = getOptionalPositiveIntegerEnvVarFromKeys([
-    "TELEGRAM_ALLOWED_USER_ID",
-  ]);
-  if (legacyAllowedUserId !== null) {
-    allowedUserIds.add(legacyAllowedUserId);
-  }
-
-  return {
-    adminUserId,
-    allowedUserIds: [...allowedUserIds],
-  };
-}
-
-const telegramAccess = resolveTelegramAccessConfig();
-function getOptionalNonNegativeIntEnvVarFromKeys(keys: string[], defaultValue: number): number {
-  for (const key of keys) {
-    const value = getEnvVar(key, false);
-    if (!value) {
-      continue;
-    }
-
-    const parsedValue = Number.parseInt(value, 10);
-    if (Number.isNaN(parsedValue) || parsedValue < 0) {
-      return defaultValue;
-    }
-
-    return parsedValue;
-  }
-
-  return defaultValue;
 }
 
 function getOptionalLocaleEnvVar(key: string, defaultValue: Locale): Locale {
@@ -165,11 +75,65 @@ function getOptionalMessageFormatModeEnvVar(
   return defaultValue;
 }
 
+function parsePositiveInteger(value: string): number | null {
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) {
+    return null;
+  }
+
+  const parsedValue = Number.parseInt(normalized, 10);
+  if (Number.isNaN(parsedValue) || parsedValue <= 0) {
+    return null;
+  }
+
+  return parsedValue;
+}
+
+function getTelegramAdminUserId(): number {
+  const adminUserId = parsePositiveInteger(getEnvVar("TELEGRAM_ADMIN_USER_ID", false));
+  if (adminUserId !== null) {
+    return adminUserId;
+  }
+
+  const legacyAllowedUserId = parsePositiveInteger(getEnvVar("TELEGRAM_ALLOWED_USER_ID", false));
+  if (legacyAllowedUserId !== null) {
+    return legacyAllowedUserId;
+  }
+
+  throw new Error(
+    `Missing required environment variable: TELEGRAM_ADMIN_USER_ID (or legacy TELEGRAM_ALLOWED_USER_ID) (expected in ${runtimePaths.envFilePath})`,
+  );
+}
+
+function getOptionalTelegramUserIdListEnvVar(key: string): number[] {
+  const value = getEnvVar(key, false);
+  if (!value) {
+    return [];
+  }
+
+  const ids = new Set<number>();
+
+  for (const rawPart of value.split(/[\s,]+/)) {
+    const parsedValue = parsePositiveInteger(rawPart);
+    if (parsedValue !== null) {
+      ids.add(parsedValue);
+    }
+  }
+
+  return Array.from(ids);
+}
+
+const adminUserId = getTelegramAdminUserId();
+const configuredAllowedUserIds = new Set<number>([
+  adminUserId,
+  ...getOptionalTelegramUserIdListEnvVar("TELEGRAM_ALLOWED_USER_IDS"),
+]);
+
 export const config = {
   telegram: {
     token: getEnvVar("TELEGRAM_BOT_TOKEN"),
-    adminUserId: telegramAccess.adminUserId,
-    allowedUserIds: telegramAccess.allowedUserIds,
+    adminUserId,
+    allowedUserIds: Array.from(configuredAllowedUserIds),
     proxyUrl: getEnvVar("TELEGRAM_PROXY_URL", false),
   },
   opencode: {
@@ -177,8 +141,8 @@ export const config = {
     username: getEnvVar("OPENCODE_SERVER_USERNAME", false) || "opencode",
     password: getEnvVar("OPENCODE_SERVER_PASSWORD", false),
     model: {
-      provider: getEnvVar("OPENCODE_MODEL_PROVIDER", true), // Required
-      modelId: getEnvVar("OPENCODE_MODEL_ID", true), // Required
+      provider: getEnvVar("OPENCODE_MODEL_PROVIDER", true),
+      modelId: getEnvVar("OPENCODE_MODEL_ID", true),
     },
   },
   server: {
@@ -187,12 +151,10 @@ export const config = {
   bot: {
     sessionsListLimit: getOptionalPositiveIntEnvVar("SESSIONS_LIST_LIMIT", 10),
     projectsListLimit: getOptionalPositiveIntEnvVar("PROJECTS_LIST_LIMIT", 10),
+    commandsListLimit: getOptionalPositiveIntEnvVar("COMMANDS_LIST_LIMIT", 10),
     taskLimit: getOptionalPositiveIntEnvVar("TASK_LIMIT", 10),
-    locale: getOptionalLocaleEnvVar("BOT_LOCALE", "ru"),
-    serviceMessagesIntervalSec: getOptionalNonNegativeIntEnvVarFromKeys(
-      ["SERVICE_MESSAGES_INTERVAL_SEC", "TOOL_MESSAGES_INTERVAL_SEC"],
-      5,
-    ),
+    responseStreamThrottleMs: getOptionalPositiveIntEnvVar("RESPONSE_STREAM_THROTTLE_MS", 500),
+    locale: getOptionalLocaleEnvVar("BOT_LOCALE", "en"),
     hideThinkingMessages: getOptionalBooleanEnvVar("HIDE_THINKING_MESSAGES", false),
     hideToolCallMessages: getOptionalBooleanEnvVar("HIDE_TOOL_CALL_MESSAGES", false),
     messageFormatMode: getOptionalMessageFormatModeEnvVar("MESSAGE_FORMAT_MODE", "markdown"),
@@ -205,5 +167,11 @@ export const config = {
     apiKey: getEnvVar("STT_API_KEY", false),
     model: getEnvVar("STT_MODEL", false) || "whisper-large-v3-turbo",
     language: getEnvVar("STT_LANGUAGE", false),
+  },
+  tts: {
+    apiUrl: getEnvVar("TTS_API_URL", false),
+    apiKey: getEnvVar("TTS_API_KEY", false),
+    model: getEnvVar("TTS_MODEL", false) || "gpt-4o-mini-tts",
+    voice: getEnvVar("TTS_VOICE", false) || "alloy",
   },
 };

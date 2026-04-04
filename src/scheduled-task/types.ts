@@ -10,17 +10,10 @@ export interface ScheduledTaskModel {
   variant: string | null;
 }
 
-export interface ScheduledTaskOwnerScope {
-  userId: number;
-  chatId: number;
-  messageThreadId?: number;
-}
-
 export interface ScheduledTaskBase {
   id: string;
   projectId: string;
   projectWorktree: string;
-  ownerScope?: ScheduledTaskOwnerScope;
   model: ScheduledTaskModel;
   scheduleText: string;
   scheduleSummary: string;
@@ -97,7 +90,6 @@ export function cloneScheduledTaskModel(model: ScheduledTaskModel): ScheduledTas
 export function cloneScheduledTask(task: ScheduledTask): ScheduledTask {
   return {
     ...task,
-    ownerScope: task.ownerScope ? { ...task.ownerScope } : undefined,
     model: cloneScheduledTaskModel(task.model),
   };
 }
@@ -113,10 +105,10 @@ export interface ScheduledTaskExecutionResult {
 
 export interface QueuedScheduledTaskDelivery {
   taskId: string;
-  target: ScheduledTaskOwnerScope;
   scheduleSummary: string;
   prompt: string;
   runAt: string;
   status: "success" | "error";
-  messageText: string;
+  notificationText: string;
+  resultText?: string;
 }

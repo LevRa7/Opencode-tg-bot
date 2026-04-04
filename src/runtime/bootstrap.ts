@@ -42,7 +42,7 @@ export interface WizardEnvValues {
   BOT_LOCALE: Locale;
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_ADMIN_USER_ID: string;
-  TELEGRAM_ALLOWED_USER_IDS: string;
+  TELEGRAM_ALLOWED_USER_IDS?: string;
   OPENCODE_API_URL?: string;
   OPENCODE_SERVER_USERNAME: string;
   OPENCODE_SERVER_PASSWORD?: string;
@@ -63,14 +63,30 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
+function resolveConfiguredAdminUserId(values: Record<string, string>): string {
+  const adminUserId = values.TELEGRAM_ADMIN_USER_ID?.trim();
+  if (isPositiveInteger(adminUserId || "")) {
+    return adminUserId!;
+  }
+
+  const legacyAllowedUserId = values.TELEGRAM_ALLOWED_USER_ID?.trim();
+  if (isPositiveInteger(legacyAllowedUserId || "")) {
+    return legacyAllowedUserId!;
+  }
+
+  return "";
+}
+
 export function validateRuntimeEnvValues(values: Record<string, string>): EnvValidationResult {
   if (!values.TELEGRAM_BOT_TOKEN || values.TELEGRAM_BOT_TOKEN.trim().length === 0) {
     return { isValid: false, reason: "Missing TELEGRAM_BOT_TOKEN" };
   }
 
-  const adminUserId = values.TELEGRAM_ADMIN_USER_ID || values.TELEGRAM_ALLOWED_USER_ID || "";
-  if (!isPositiveInteger(adminUserId)) {
-    return { isValid: false, reason: "Invalid TELEGRAM_ADMIN_USER_ID" };
+  if (!isPositiveInteger(resolveConfiguredAdminUserId(values))) {
+    return {
+      isValid: false,
+      reason: "Invalid TELEGRAM_ADMIN_USER_ID (or legacy TELEGRAM_ALLOWED_USER_ID)",
+    };
   }
 
   if (!values.OPENCODE_MODEL_PROVIDER || values.OPENCODE_MODEL_PROVIDER.trim().length === 0) {
@@ -115,19 +131,18 @@ function finalizeEnvContent(lines: string[]): string {
 export function buildEnvFileContent(existingContent: string, values: WizardEnvValues): string {
   let lines = normalizeEnvLineEndings(existingContent);
 
-  const orderedUpdates: Array<[keyof WizardEnvValues, string | undefined]> = [
+  const orderedUpdates: Array<[keyof WizardEnvValues | "TELEGRAM_ALLOWED_USER_ID", string | undefined]> = [
     ["BOT_LOCALE", values.BOT_LOCALE],
     ["TELEGRAM_BOT_TOKEN", values.TELEGRAM_BOT_TOKEN],
     ["TELEGRAM_ADMIN_USER_ID", values.TELEGRAM_ADMIN_USER_ID],
     ["TELEGRAM_ALLOWED_USER_IDS", values.TELEGRAM_ALLOWED_USER_IDS],
+    ["TELEGRAM_ALLOWED_USER_ID", undefined],
     ["OPENCODE_API_URL", values.OPENCODE_API_URL],
     ["OPENCODE_SERVER_USERNAME", values.OPENCODE_SERVER_USERNAME],
     ["OPENCODE_SERVER_PASSWORD", values.OPENCODE_SERVER_PASSWORD],
     ["OPENCODE_MODEL_PROVIDER", values.OPENCODE_MODEL_PROVIDER],
     ["OPENCODE_MODEL_ID", values.OPENCODE_MODEL_ID],
   ];
-
-  lines = removeEnvKey(lines, "TELEGRAM_ALLOWED_USER_ID");
 
   for (const [key, value] of orderedUpdates) {
     lines = removeEnvKey(lines, key);
@@ -441,7 +456,6 @@ async function runWizardAndPersist(runtimePaths: RuntimePaths): Promise<void> {
     BOT_LOCALE: wizardValues.locale,
     TELEGRAM_BOT_TOKEN: wizardValues.token,
     TELEGRAM_ADMIN_USER_ID: wizardValues.adminUserId,
-    TELEGRAM_ALLOWED_USER_IDS: wizardValues.adminUserId,
     OPENCODE_API_URL: wizardValues.apiUrl,
     OPENCODE_SERVER_USERNAME: wizardValues.serverUsername,
     OPENCODE_SERVER_PASSWORD: wizardValues.serverPassword,

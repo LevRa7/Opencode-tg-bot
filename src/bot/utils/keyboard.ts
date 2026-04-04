@@ -61,7 +61,7 @@ export function createMainKeyboard(
   // Row 2: model and variant buttons
   keyboard.text(modelText).text(variantText).row();
 
-  return keyboard.resized();
+  return keyboard.resized().persistent();
 }
 
 /**
@@ -77,7 +77,7 @@ export function createAgentKeyboard(currentAgent: string): Keyboard {
   // Single button with current agent mode
   keyboard.text(displayName).row();
 
-  return keyboard.resized();
+  return keyboard.resized().persistent();
 }
 
 /**

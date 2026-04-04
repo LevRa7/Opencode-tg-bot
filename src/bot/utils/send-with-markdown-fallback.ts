@@ -1,5 +1,6 @@
 import { logger } from "../../utils/logger.js";
 import type { Api, RawApi } from "grammy";
+import { withMessageThreadId } from "./message-thread.js";
 
 type SendMessageApi = Pick<Api<RawApi>, "sendMessage">;
 type EditMessageApi = Pick<Api<RawApi>, "editMessageText">;
@@ -10,8 +11,10 @@ interface SendMessageWithMarkdownFallbackParams {
   api: SendMessageApi;
   chatId: Parameters<SendMessageApi["sendMessage"]>[0];
   text: string;
+  rawFallbackText?: string;
   options?: TelegramSendMessageOptions;
   parseMode?: "Markdown" | "MarkdownV2";
+  messageThreadId?: number;
 }
 
 interface EditMessageWithMarkdownFallbackParams {
@@ -19,6 +22,7 @@ interface EditMessageWithMarkdownFallbackParams {
   chatId: Parameters<EditMessageApi["editMessageText"]>[0];
   messageId: Parameters<EditMessageApi["editMessageText"]>[1];
   text: string;
+  rawFallbackText?: string;
   options?: TelegramEditMessageOptions;
   parseMode?: "Markdown" | "MarkdownV2";
 }
@@ -30,6 +34,78 @@ const MARKDOWN_PARSE_ERROR_MARKERS = [
   "entity beginning",
   "bad request: can't parse",
 ];
+
+const MARKDOWN_V2_RESERVED_CHARS = new Set([
+  "_",
+  "*",
+  "[",
+  "]",
+  "(",
+  ")",
+  "~",
+  "`",
+  ">",
+  "#",
+  "+",
+  "-",
+  "=",
+  "|",
+  "{",
+  "}",
+  ".",
+  "!",
+  "\\",
+]);
+const MARKDOWN_V2_ESCAPED_CHAR = /\\([_\*\[\]\(\)~`>#+\-=|{}.!\\])/g;
+
+function escapeTelegramMarkdownV2(text: string): string {
+  let result = "";
+  let trailingBackslashes = 0;
+
+  for (const char of text) {
+    if (char === "\\") {
+      result += char;
+      trailingBackslashes += 1;
+      continue;
+    }
+
+    const isEscaped = trailingBackslashes % 2 === 1;
+    trailingBackslashes = 0;
+
+    if (MARKDOWN_V2_RESERVED_CHARS.has(char) && !isEscaped) {
+      result += `\\${char}`;
+      continue;
+    }
+
+    result += char;
+  }
+
+  return result;
+}
+
+function unescapeTelegramMarkdownV2(text: string): string {
+  return text.replace(MARKDOWN_V2_ESCAPED_CHAR, "$1");
+}
+
+function stripMarkdownFormattingOptions<
+  T extends TelegramSendMessageOptions | TelegramEditMessageOptions | undefined,
+>(options: T): T {
+  if (!options) {
+    return options;
+  }
+
+  const rawOptions = {
+    ...options,
+  } as NonNullable<T> & {
+    parse_mode?: unknown;
+    entities?: unknown;
+  };
+
+  delete rawOptions.parse_mode;
+  delete rawOptions.entities;
+
+  return rawOptions as T;
+}
 
 function getErrorText(error: unknown): string {
   const parts: string[] = [];
@@ -74,28 +150,66 @@ export async function sendMessageWithMarkdownFallback({
   api,
   chatId,
   text,
+  rawFallbackText,
   options,
   parseMode,
-}: SendMessageWithMarkdownFallbackParams): Promise<void> {
+  messageThreadId,
+}: SendMessageWithMarkdownFallbackParams): Promise<
+  Awaited<ReturnType<SendMessageApi["sendMessage"]>>
+> {
   if (!parseMode) {
-    await api.sendMessage(chatId, text, options);
-    return;
+    return api.sendMessage(chatId, text, withMessageThreadId(options, messageThreadId));
   }
 
   const markdownOptions: TelegramSendMessageOptions = {
-    ...(options || {}),
+    ...withMessageThreadId(options, messageThreadId),
     parse_mode: parseMode,
   };
 
+  const fallbackText =
+    rawFallbackText ?? (parseMode === "MarkdownV2" ? unescapeTelegramMarkdownV2(text) : text);
+
   try {
-    await api.sendMessage(chatId, text, markdownOptions);
+    return await api.sendMessage(chatId, text, markdownOptions);
   } catch (error) {
     if (!isTelegramMarkdownParseError(error)) {
       throw error;
     }
 
+    if (parseMode === "MarkdownV2") {
+      const escapedText = escapeTelegramMarkdownV2(text);
+      if (escapedText !== text) {
+        logger.warn(
+          "[Bot] Markdown parse failed, retrying assistant message with escaped MarkdownV2",
+          error,
+        );
+
+        try {
+          return await api.sendMessage(chatId, escapedText, markdownOptions);
+        } catch (escapedError) {
+          if (!isTelegramMarkdownParseError(escapedError)) {
+            throw escapedError;
+          }
+
+          logger.warn(
+            "[Bot] Escaped Markdown parse failed, retrying assistant message in raw mode",
+            escapedError,
+          );
+          return api.sendMessage(
+            chatId,
+            fallbackText,
+            stripMarkdownFormattingOptions(withMessageThreadId(options, messageThreadId)),
+          );
+        }
+      }
+    }
+
     logger.warn("[Bot] Markdown parse failed, retrying assistant message in raw mode", error);
-    await api.sendMessage(chatId, text, options);
+    return api.sendMessage(
+      chatId,
+      fallbackText,
+      stripMarkdownFormattingOptions(withMessageThreadId(options, messageThreadId)),
+    );
   }
 }
 
@@ -104,12 +218,14 @@ export async function editMessageWithMarkdownFallback({
   chatId,
   messageId,
   text,
+  rawFallbackText,
   options,
   parseMode,
-}: EditMessageWithMarkdownFallbackParams): Promise<void> {
+}: EditMessageWithMarkdownFallbackParams): Promise<
+  Awaited<ReturnType<EditMessageApi["editMessageText"]>>
+> {
   if (!parseMode) {
-    await api.editMessageText(chatId, messageId, text, options);
-    return;
+    return api.editMessageText(chatId, messageId, text, options);
   }
 
   const markdownOptions: TelegramEditMessageOptions = {
@@ -117,14 +233,51 @@ export async function editMessageWithMarkdownFallback({
     parse_mode: parseMode,
   };
 
+  const fallbackText =
+    rawFallbackText ?? (parseMode === "MarkdownV2" ? unescapeTelegramMarkdownV2(text) : text);
+
   try {
-    await api.editMessageText(chatId, messageId, text, markdownOptions);
+    return await api.editMessageText(chatId, messageId, text, markdownOptions);
   } catch (error) {
     if (!isTelegramMarkdownParseError(error)) {
       throw error;
     }
 
+    if (parseMode === "MarkdownV2") {
+      const escapedText = escapeTelegramMarkdownV2(text);
+      if (escapedText !== text) {
+        logger.warn(
+          "[Bot] Markdown parse failed, retrying edited message with escaped MarkdownV2",
+          error,
+        );
+
+        try {
+          return await api.editMessageText(chatId, messageId, escapedText, markdownOptions);
+        } catch (escapedError) {
+          if (!isTelegramMarkdownParseError(escapedError)) {
+            throw escapedError;
+          }
+
+          logger.warn(
+            "[Bot] Escaped Markdown parse failed, retrying edited message in raw mode",
+            escapedError,
+          );
+          return api.editMessageText(
+            chatId,
+            messageId,
+            fallbackText,
+            stripMarkdownFormattingOptions(options),
+          );
+        }
+      }
+    }
+
     logger.warn("[Bot] Markdown parse failed, retrying edited message in raw mode", error);
-    await api.editMessageText(chatId, messageId, text, options);
+    return api.editMessageText(
+      chatId,
+      messageId,
+      fallbackText,
+      stripMarkdownFormattingOptions(options),
+    );
   }
 }

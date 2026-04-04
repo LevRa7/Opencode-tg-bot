@@ -1,7 +1,7 @@
 import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentSession } from "../../session/manager.js";
-import { getCurrentProject } from "../../settings/manager.js";
+import { getCurrentProject, isTtsEnabled } from "../../settings/manager.js";
 import { fetchCurrentAgent } from "../../agent/manager.js";
 import { getAgentDisplayName } from "../../agent/types.js";
 import { fetchCurrentModel } from "../../model/manager.js";
@@ -11,10 +11,6 @@ import { pinnedMessageManager } from "../../pinned/manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { sendBotText } from "../utils/telegram-text.js";
-import {
-  extractMessageThreadIdFromContext,
-  withMessageThreadId,
-} from "../utils/message-thread.js";
 
 export async function statusCommand(ctx: CommandContext<Context>) {
   try {
@@ -24,32 +20,43 @@ export async function statusCommand(ctx: CommandContext<Context>) {
       throw error || new Error("No data received from server");
     }
 
+    const runtimeInfo = processManager.getCurrentRuntimeInfo();
+
     let message = `${t("status.header_running")}\n\n`;
     const healthLabel = data.healthy ? t("status.health.healthy") : t("status.health.unhealthy");
     message += `${t("status.line.health", { health: healthLabel })}\n`;
     if (data.version) {
       message += `${t("status.line.version", { version: data.version })}\n`;
     }
+    message += `${t("status.line.tts", {
+      tts: isTtsEnabled() ? t("status.tts.on") : t("status.tts.off"),
+    })}\n`;
 
-    // Add process management information
-    if (processManager.isRunning()) {
-      const uptime = processManager.getUptime();
-      const uptimeStr = uptime ? Math.floor(uptime / 1000) : 0;
+    if (runtimeInfo.managed) {
+      const uptime = runtimeInfo.uptimeMs ? Math.floor(runtimeInfo.uptimeMs / 1000) : 0;
       message += `${t("status.line.managed_yes")}\n`;
-      message += `${t("status.line.pid", { pid: processManager.getPID() ?? "-" })}\n`;
-      message += `${t("status.line.uptime_sec", { seconds: uptimeStr })}\n`;
+      message += `${t("status.line.pid", { pid: runtimeInfo.pid ?? "-" })}\n`;
+      message += `${t("status.line.uptime_sec", { seconds: uptime })}\n`;
     } else {
       message += `${t("status.line.managed_no")}\n`;
     }
 
-    // Add agent mode information
+    if (runtimeInfo.kind === "tenant") {
+      message += `${t("status.runtime.tenant")}\n`;
+      if (runtimeInfo.port) {
+        message += `${t("status.line.port", { port: runtimeInfo.port })}\n`;
+      }
+      if (runtimeInfo.tenantId) {
+        message += `${t("status.line.tenant", { tenantId: runtimeInfo.tenantId })}\n`;
+      }
+    } else {
+      message += `${t("status.runtime.host")}\n`;
+    }
+
     const currentAgent = await fetchCurrentAgent();
-    const agentDisplay = currentAgent
-      ? getAgentDisplayName(currentAgent)
-      : t("status.agent_not_set");
+    const agentDisplay = currentAgent ? getAgentDisplayName(currentAgent) : t("status.agent_not_set");
     message += `${t("status.line.mode", { mode: agentDisplay })}\n`;
 
-    // Add model information
     const currentModel = fetchCurrentModel();
     const modelDisplay = `🤖 ${currentModel.providerID}/${currentModel.modelID}`;
     message += `${t("status.line.model", { model: modelDisplay })}\n`;
@@ -75,25 +82,23 @@ export async function statusCommand(ctx: CommandContext<Context>) {
       if (!pinnedMessageManager.isInitialized()) {
         pinnedMessageManager.initialize(ctx.api, ctx.chat.id);
       }
-      // Fetch context limit if not yet loaded (e.g. fresh bot start)
       if (pinnedMessageManager.getContextLimit() === 0) {
         await pinnedMessageManager.refreshContextLimit();
       }
       keyboardManager.initialize(ctx.api, ctx.chat.id);
     }
-    // Sync current context (tokens used + limit) into keyboard state
+
     const contextInfo = pinnedMessageManager.getContextInfo();
     if (contextInfo) {
       keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
     }
     const keyboard = keyboardManager.getKeyboard();
     if (ctx.chat) {
-      const messageThreadId = extractMessageThreadIdFromContext(ctx);
       await sendBotText({
         api: ctx.api,
         chatId: ctx.chat.id,
         text: message,
-        options: withMessageThreadId({ reply_markup: keyboard }, messageThreadId),
+        options: { reply_markup: keyboard },
       });
     } else {
       await ctx.reply(message, { reply_markup: keyboard });

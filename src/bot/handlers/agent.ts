@@ -13,6 +13,7 @@ import {
   replyWithInlineMenu,
 } from "./inline-menu.js";
 import { t } from "../../i18n/index.js";
+import { threadContextManager } from "../../thread/manager.js";
 
 /**
  * Handle agent selection callback
@@ -46,6 +47,7 @@ export async function handleAgentSelect(ctx: Context): Promise<boolean> {
 
     // Select agent and persist
     selectAgent(agentName);
+    threadContextManager.bindAgentToActiveContext(agentName);
 
     // Update keyboard manager state
     keyboardManager.updateAgent(agentName);

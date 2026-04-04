@@ -9,9 +9,15 @@ import { logger } from "../../utils/logger.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { t } from "../../i18n/index.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
-import { sendMessageWithoutDraftEffect } from "../utils/send-message-draft-effect-context.js";
 
 const MAX_BUTTON_LENGTH = 60;
+
+function shouldUseDirectTextAnswer(question: {
+  options: Array<{ label: string; description: string }>;
+  multiple?: boolean;
+}): boolean {
+  return !question.multiple && question.options.length === 1;
+}
 
 function getCallbackMessageId(ctx: Context): number | null {
   const message = ctx.callbackQuery?.message;
@@ -268,29 +274,33 @@ export async function showCurrentQuestion(
   logger.debug(`[QuestionHandler] Showing question: ${question.header} - ${question.question}`);
 
   const text = formatQuestionText(question);
-  const keyboard = buildQuestionKeyboard(
-    question,
-    questionManager.getSelectedOptions(questionManager.getCurrentIndex()),
-  );
+  const useDirectTextAnswer = shouldUseDirectTextAnswer(question);
+  const keyboard = useDirectTextAnswer
+    ? undefined
+    : buildQuestionKeyboard(question, questionManager.getSelectedOptions(questionManager.getCurrentIndex()));
 
-  logger.debug(`[QuestionHandler] Sending message with keyboard, chatId=${chatId}`);
+  logger.debug(`[QuestionHandler] Sending question message, chatId=${chatId}, directText=${useDirectTextAnswer}`);
 
   try {
-    const message = await sendMessageWithoutDraftEffect(bot, chatId, text, {
-      ...withMessageThreadId(
-        {
-          reply_markup: keyboard,
-        },
+    const message = await bot.sendMessage(
+      chatId,
+      text,
+      withMessageThreadId(
+        keyboard
+          ? {
+              reply_markup: keyboard,
+            }
+          : undefined,
         messageThreadId,
       ),
-    });
+    );
 
     logger.debug(`[QuestionHandler] Message sent, messageId=${message.message_id}`);
 
     questionManager.addMessageId(message.message_id);
     questionManager.setActiveMessageId(message.message_id);
     syncQuestionInteractionState(
-      "callback",
+      useDirectTextAnswer ? "mixed" : "callback",
       questionManager.getCurrentIndex(),
       questionManager.getActiveMessageId(),
     );
@@ -311,7 +321,10 @@ export async function handleQuestionTextAnswer(ctx: Context): Promise<void> {
 
   const currentIndex = questionManager.getCurrentIndex();
 
-  if (!questionManager.isWaitingForCustomInput(currentIndex)) {
+  const question = questionManager.getCurrentQuestion();
+  const directTextAnswer = question ? shouldUseDirectTextAnswer(question) : false;
+
+  if (!questionManager.isWaitingForCustomInput(currentIndex) && !directTextAnswer) {
     await ctx.reply(t("question.use_custom_button_first"));
     return;
   }
@@ -369,20 +382,14 @@ async function showPollSummary(
   await sendAllAnswersToAgent(bot, chatId, messageThreadId);
 
   if (answers.length === 0) {
-    await sendMessageWithoutDraftEffect(
-      bot,
+    await bot.sendMessage(
       chatId,
       t("question.completed_no_answers"),
       withMessageThreadId(undefined, messageThreadId),
     );
   } else {
     const summary = formatAnswersSummary(answers);
-    await sendMessageWithoutDraftEffect(
-      bot,
-      chatId,
-      summary,
-      withMessageThreadId(undefined, messageThreadId),
-    );
+    await bot.sendMessage(chatId, summary, withMessageThreadId(undefined, messageThreadId));
   }
 
   clearQuestionInteraction("question_completed");
@@ -403,8 +410,7 @@ async function sendAllAnswersToAgent(
 
   if (!directory) {
     logger.error("[QuestionHandler] No project for sending answers");
-    await sendMessageWithoutDraftEffect(
-      bot,
+    await bot.sendMessage(
       chatId,
       t("question.no_active_project"),
       withMessageThreadId(undefined, messageThreadId),
@@ -414,8 +420,7 @@ async function sendAllAnswersToAgent(
 
   if (!requestID) {
     logger.error("[QuestionHandler] No requestID for sending answers");
-    await sendMessageWithoutDraftEffect(
-      bot,
+    await bot.sendMessage(
       chatId,
       t("question.no_active_request"),
       withMessageThreadId(undefined, messageThreadId),
@@ -463,12 +468,13 @@ async function sendAllAnswersToAgent(
     onSuccess: ({ error }) => {
       if (error) {
         logger.error("[QuestionHandler] Failed to send answers via question.reply:", error);
-        void sendMessageWithoutDraftEffect(
-          bot,
-          chatId,
-          t("question.send_answers_error"),
-          withMessageThreadId(undefined, messageThreadId),
-        ).catch(() => {});
+        void bot
+          .sendMessage(
+            chatId,
+            t("question.send_answers_error"),
+            withMessageThreadId(undefined, messageThreadId),
+          )
+          .catch(() => {});
         return;
       }
 

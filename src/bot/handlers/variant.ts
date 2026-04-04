@@ -18,6 +18,7 @@ import {
   replyWithInlineMenu,
 } from "./inline-menu.js";
 import { t } from "../../i18n/index.js";
+import { threadContextManager } from "../../thread/manager.js";
 
 /**
  * Handle variant selection callback
@@ -64,6 +65,7 @@ export async function handleVariantSelect(ctx: Context): Promise<boolean> {
 
     // Re-read model after variant update
     const updatedModel = getStoredModel();
+    threadContextManager.bindModelToActiveContext(updatedModel);
 
     // Update keyboard manager state
     keyboardManager.updateModel(updatedModel);

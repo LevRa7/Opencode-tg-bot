@@ -8,6 +8,7 @@ import {
   resolveSupportedLocale,
   setRuntimeLocale,
   SUPPORTED_LOCALES,
+  t,
 } from "../../src/i18n/index.js";
 
 describe("i18n/index locale helpers", () => {
@@ -40,6 +41,11 @@ describe("i18n/index locale helpers", () => {
   it("returns locale options from a single registry", () => {
     const optionCodes = getLocaleOptions().map((option) => option.code);
     expect(optionCodes).toEqual(SUPPORTED_LOCALES);
+  });
+
+  it("renders new export_data description in multiple locales", () => {
+    expect(t("cmd.description.export_data", undefined, "en")).toBe("Export data");
+    expect(t("cmd.description.export_data", undefined, "ru")).toBe("Экспорт данных");
   });
 
   it("prefers runtime locale override over env locale", () => {

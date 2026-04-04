@@ -1,6 +1,7 @@
+import { logger } from "../utils/logger.js";
+import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
 import type { ParsedTaskSchedule, ScheduledTaskModel, TaskCreationState } from "./types.js";
 import { cloneParsedTaskSchedule, cloneScheduledTaskModel } from "./types.js";
-import { logger } from "../utils/logger.js";
 
 function cloneState(state: TaskCreationState): TaskCreationState {
   return {
@@ -11,10 +12,21 @@ function cloneState(state: TaskCreationState): TaskCreationState {
 }
 
 class TaskCreationManager {
-  private state: TaskCreationState | null = null;
+  private states = new Map<string, TaskCreationState>();
 
-  start(projectId: string, projectWorktree: string, model: ScheduledTaskModel): TaskCreationState {
-    this.state = {
+  private getScopeState(scopeKey?: string): TaskCreationState | null {
+    const state = this.states.get(resolveTelegramConversationScopeKey(scopeKey));
+    return state ? cloneState(state) : null;
+  }
+
+  start(
+    projectId: string,
+    projectWorktree: string,
+    model: ScheduledTaskModel,
+    scopeKey?: string,
+  ): TaskCreationState {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    const nextState: TaskCreationState = {
       stage: "awaiting_schedule",
       projectId,
       projectWorktree,
@@ -26,42 +38,49 @@ class TaskCreationManager {
       promptRequestMessageId: null,
     };
 
-    logger.info(`[TaskCreationManager] Started task creation flow for project=${projectWorktree}`);
+    this.states.set(resolvedScopeKey, nextState);
 
-    return cloneState(this.state);
+    logger.info(
+      `[TaskCreationManager] Started task creation flow for scope=${resolvedScopeKey}, project=${projectWorktree}`,
+    );
+
+    return cloneState(nextState);
   }
 
-  isActive(): boolean {
-    return this.state !== null;
+  isActive(scopeKey?: string): boolean {
+    return this.states.has(resolveTelegramConversationScopeKey(scopeKey));
   }
 
-  isWaitingForSchedule(): boolean {
-    return this.state?.stage === "awaiting_schedule";
+  isWaitingForSchedule(scopeKey?: string): boolean {
+    return this.states.get(resolveTelegramConversationScopeKey(scopeKey))?.stage === "awaiting_schedule";
   }
 
-  isParsingSchedule(): boolean {
-    return this.state?.stage === "parsing_schedule";
+  isParsingSchedule(scopeKey?: string): boolean {
+    return this.states.get(resolveTelegramConversationScopeKey(scopeKey))?.stage === "parsing_schedule";
   }
 
-  isWaitingForPrompt(): boolean {
-    return this.state?.stage === "awaiting_prompt";
+  isWaitingForPrompt(scopeKey?: string): boolean {
+    return this.states.get(resolveTelegramConversationScopeKey(scopeKey))?.stage === "awaiting_prompt";
   }
 
-  getState(): TaskCreationState | null {
-    return this.state ? cloneState(this.state) : null;
+  getState(scopeKey?: string): TaskCreationState | null {
+    return this.getScopeState(scopeKey);
   }
 
   setParsedSchedule(
     scheduleText: string,
     parsedSchedule: ParsedTaskSchedule,
     previewMessageId: number,
+    scopeKey?: string,
   ): TaskCreationState | null {
-    if (!this.state) {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    const currentState = this.states.get(resolvedScopeKey);
+    if (!currentState) {
       return null;
     }
 
-    this.state = {
-      ...this.state,
+    const nextState: TaskCreationState = {
+      ...currentState,
       stage: "awaiting_prompt",
       scheduleText,
       parsedSchedule: cloneParsedTaskSchedule(parsedSchedule),
@@ -70,59 +89,75 @@ class TaskCreationManager {
       promptRequestMessageId: null,
     };
 
-    logger.info("[TaskCreationManager] Parsed schedule and switched flow to prompt input");
+    this.states.set(resolvedScopeKey, nextState);
 
-    return cloneState(this.state);
+    logger.info(
+      `[TaskCreationManager] Parsed schedule and switched flow to prompt input for scope=${resolvedScopeKey}`,
+    );
+
+    return cloneState(nextState);
   }
 
-  markScheduleParsing(): TaskCreationState | null {
-    if (!this.state) {
+  markScheduleParsing(scopeKey?: string): TaskCreationState | null {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    const currentState = this.states.get(resolvedScopeKey);
+    if (!currentState) {
       return null;
     }
 
-    this.state = {
-      ...this.state,
+    const nextState: TaskCreationState = {
+      ...currentState,
       stage: "parsing_schedule",
     };
 
-    logger.info("[TaskCreationManager] Schedule parsing started");
+    this.states.set(resolvedScopeKey, nextState);
 
-    return cloneState(this.state);
+    logger.info(`[TaskCreationManager] Schedule parsing started for scope=${resolvedScopeKey}`);
+
+    return cloneState(nextState);
   }
 
-  setPromptRequestMessageId(messageId: number): TaskCreationState | null {
-    if (!this.state) {
+  setPromptRequestMessageId(messageId: number, scopeKey?: string): TaskCreationState | null {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    const currentState = this.states.get(resolvedScopeKey);
+    if (!currentState) {
       return null;
     }
 
-    this.state = {
-      ...this.state,
+    const nextState: TaskCreationState = {
+      ...currentState,
       promptRequestMessageId: messageId,
     };
 
-    return cloneState(this.state);
+    this.states.set(resolvedScopeKey, nextState);
+    return cloneState(nextState);
   }
 
-  setScheduleRequestMessageId(messageId: number): TaskCreationState | null {
-    if (!this.state) {
+  setScheduleRequestMessageId(messageId: number, scopeKey?: string): TaskCreationState | null {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    const currentState = this.states.get(resolvedScopeKey);
+    if (!currentState) {
       return null;
     }
 
-    this.state = {
-      ...this.state,
+    const nextState: TaskCreationState = {
+      ...currentState,
       scheduleRequestMessageId: messageId,
     };
 
-    return cloneState(this.state);
+    this.states.set(resolvedScopeKey, nextState);
+    return cloneState(nextState);
   }
 
-  resetSchedule(): TaskCreationState | null {
-    if (!this.state) {
+  resetSchedule(scopeKey?: string): TaskCreationState | null {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    const currentState = this.states.get(resolvedScopeKey);
+    if (!currentState) {
       return null;
     }
 
-    this.state = {
-      ...this.state,
+    const nextState: TaskCreationState = {
+      ...currentState,
       stage: "awaiting_schedule",
       scheduleText: null,
       parsedSchedule: null,
@@ -131,18 +166,27 @@ class TaskCreationManager {
       promptRequestMessageId: null,
     };
 
-    logger.info("[TaskCreationManager] Reset task creation flow back to schedule input");
+    this.states.set(resolvedScopeKey, nextState);
 
-    return cloneState(this.state);
+    logger.info(
+      `[TaskCreationManager] Reset task creation flow back to schedule input for scope=${resolvedScopeKey}`,
+    );
+
+    return cloneState(nextState);
   }
 
-  clear(): void {
-    if (!this.state) {
+  clear(scopeKey?: string): void {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    if (!this.states.has(resolvedScopeKey)) {
       return;
     }
 
-    logger.debug("[TaskCreationManager] Clearing task creation state");
-    this.state = null;
+    logger.debug(`[TaskCreationManager] Clearing task creation state for scope=${resolvedScopeKey}`);
+    this.states.delete(resolvedScopeKey);
+  }
+
+  clearAll(): void {
+    this.states.clear();
   }
 }
 

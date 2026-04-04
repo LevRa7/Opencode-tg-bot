@@ -5,13 +5,16 @@ export const de: I18nDictionary = {
   "cmd.description.new": "Neue Sitzung erstellen",
   "cmd.description.stop": "Aktuelle Aktion stoppen",
   "cmd.description.sessions": "Sitzungen auflisten",
+  "cmd.description.tts": "Audioantworten umschalten",
   "cmd.description.projects": "Projekte auflisten",
   "cmd.description.task": "Geplante Aufgabe erstellen",
   "cmd.description.tasklist": "Geplante Aufgaben anzeigen",
   "cmd.description.commands": "Benutzerdefinierte Befehle",
   "cmd.description.stream": "Nachrichten-Streaming umschalten",
+  "cmd.description.restart": "Bot-Prozess neu starten",
   "cmd.description.opencode_start": "OpenCode-Server starten",
   "cmd.description.opencode_stop": "OpenCode-Server stoppen",
+  "cmd.description.reasoning": "Reasoning-Anzeigemodus ändern (0-3)",
   "cmd.description.help": "Hilfe",
 
   "callback.unknown_command": "Unbekannter Befehl",
@@ -56,11 +59,11 @@ export const de: I18nDictionary = {
     "💡 Nutze die unteren Buttons für Modus, Modell, Variante und Kontextaktionen.",
   "help.text":
     "📖 **Hilfe**\n\n/status - Serverstatus prüfen\n/sessions - Sitzungsliste\n/new - Neue Sitzung erstellen\n/help - Hilfe",
-  "stream.enabled": "✨ Nachrichten-Streaming ist für Assistenten- und Bot-Nachrichten aktiviert.",
+  "stream.enabled": "✨ Nachrichten-Streaming ist aktiviert.",
   "stream.disabled": "⏹ Nachrichten-Streaming ist deaktiviert.",
-  "stream.status_enabled": "✨ Nachrichten-Streaming ist derzeit aktiviert.",
-  "stream.status_disabled": "⏹ Nachrichten-Streaming ist derzeit deaktiviert.",
-  "stream.usage": "Verwende /stream on, /stream off oder /stream status.",
+  "stream.status_enabled": "✨ Nachrichten-Streaming ist aktuell aktiviert.",
+  "stream.status_disabled": "⏹ Nachrichten-Streaming ist aktuell deaktiviert.",
+  "stream.usage": "Nutze /stream on, /stream off oder /stream status.",
 
   "bot.thinking": "💭 Denke...",
   "bot.project_not_selected":
@@ -71,8 +74,6 @@ export const de: I18nDictionary = {
   "bot.session_created": "✅ Sitzung erstellt: {title}",
   "bot.session_busy":
     "⏳ Agent führt bereits eine Aufgabe aus. Warte auf Abschluss oder nutze /abort, um den aktuellen Lauf zu unterbrechen.",
-  "bot.parallel_limit_reached":
-    "⏳ Du hast bereits {limit} aktive Anfragen in verschiedenen Themen. Warte, bis eine abgeschlossen ist, oder nutze /abort.",
   "bot.session_reset_project_mismatch":
     "⚠️ Die aktive Sitzung passt nicht zum ausgewählten Projekt und wurde daher zurückgesetzt. Nutze /sessions zur Auswahl oder /new, um eine neue Sitzung zu erstellen.",
   "bot.prompt_send_error": "Anfrage konnte nicht an OpenCode gesendet werden.",
@@ -88,17 +89,13 @@ export const de: I18nDictionary = {
   "bot.photo_download_error": "🔴 Foto konnte nicht heruntergeladen werden",
   "bot.photo_no_caption":
     "💡 Tipp: Füge eine Bildunterschrift hinzu, um zu beschreiben, was du mit diesem Foto tun möchtest.",
-  "bot.video_downloading": "⏳ Lade Video herunter...",
-  "bot.video_too_long": "⚠️ Video ist zu lang (max. {maxDurationSec} Sek.)",
-  "bot.video_model_no_video":
-    "⚠️ Das aktuelle Modell unterstützt keine Videoeingabe. Sende nur Text.",
-  "bot.video_download_error": "🔴 Video konnte nicht heruntergeladen werden",
   "bot.file_downloading": "⏳ Lade Datei herunter...",
   "bot.file_too_large": "⚠️ Datei ist zu groß (max. {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 Datei konnte nicht heruntergeladen werden",
+  "bot.video_too_long": "⚠️ Video ist zu lang (max. {maxDurationSec} Sek.)",
+  "bot.video_downloading": "⏳ Lade Video herunter...",
+  "bot.video_download_error": "🔴 Video konnte nicht heruntergeladen werden",
   "bot.model_no_pdf": "⚠️ Das aktuelle Modell unterstützt keine PDF-Eingabe. Sende nur Text.",
-  "bot.media_model_no_support":
-    "⚠️ Weder das ausgewählte Modell noch das Gemini-Fallback unterstützen diese Medieneingabe.",
   "bot.text_file_too_large": "⚠️ Textdatei ist zu groß (max. {maxSizeKb}KB)",
 
   "status.header_running": "🟢 OpenCode-Server läuft",
@@ -112,6 +109,9 @@ export const de: I18nDictionary = {
   "status.line.uptime_sec": "Betriebszeit: {seconds} s",
   "status.line.mode": "Modus: {mode}",
   "status.line.model": "Modell: {model}",
+  "status.line.tts": "TTS-Antworten: {tts}",
+  "status.tts.on": "Ein",
+  "status.tts.off": "Aus",
   "status.agent_not_set": "nicht gesetzt",
   "status.project_selected": "Projekt: {project}",
   "status.project_not_selected": "Projekt: nicht ausgewählt",
@@ -121,6 +121,12 @@ export const de: I18nDictionary = {
   "status.session_hint": "Nutze /sessions zur Auswahl oder /new zum Erstellen",
   "status.server_unavailable":
     "🔴 OpenCode-Server ist nicht verfügbar\n\nNutze /opencode_start, um den Server zu starten.",
+
+  "tts.enabled": "🔊 Audioantworten global aktiviert.",
+  "tts.not_configured":
+    "⚠️ Audioantworten sind nicht verfugbar. Setze zuerst `TTS_API_URL` und `TTS_API_KEY`.",
+  "tts.disabled": "🔇 Audioantworten global deaktiviert.",
+  "tts.failed": "⚠️ Audioreply konnte nicht erzeugt werden.",
 
   "projects.empty":
     "📭 Keine Projekte gefunden.\n\nÖffne ein Verzeichnis in OpenCode und erstelle mindestens eine Sitzung, dann erscheint es hier.",
@@ -157,11 +163,23 @@ export const de: I18nDictionary = {
   "sessions.preview.you": "Du:",
   "sessions.preview.agent": "Agent:",
 
+  "ontology.button.view_graph": "Graph anzeigen",
+  "ontology.button.refresh": "Aktualisieren",
+  "ontology.button.prev_page": "⬅️ Zurück",
+  "ontology.button.next_page": "Weiter ➡️",
+  "ontology.button.back": "Zurück",
+  "ontology.button.summary": "Übersicht",
+  "ontology.load_error": "🔴 Ontologieansicht konnte nicht geladen werden.",
+
   "new.project_not_selected":
     "🏗 Projekt ist nicht ausgewählt.\n\nWähle zuerst ein Projekt mit /projects.",
   "new.created": "✅ Neue Sitzung erstellt: {title}",
   "new.create_error":
     "🔴 OpenCode-Server ist nicht verfügbar oder beim Erstellen der Sitzung ist ein Fehler aufgetreten.",
+
+  "restart.in_progress": "⏳ Neustart läuft bereits.",
+  "restart.restarting": "🔄 Bot wird neu gestartet...",
+  "restart.error": "🔴 Bot konnte nicht neu gestartet werden: {error}",
 
   "stop.no_active_session":
     "🛑 Agent wurde nicht gestartet\n\nErstelle eine Sitzung mit /new oder wähle eine über /sessions aus.",
@@ -203,9 +221,6 @@ export const de: I18nDictionary = {
   "opencode_stop.success": "✅ OpenCode-Server erfolgreich gestoppt",
   "opencode_stop.error":
     "🔴 Beim Stoppen des Servers ist ein Fehler aufgetreten.\n\nSiehe Anwendungslogs für Details.",
-  "restart.in_progress": "⚠️ Der Bot-Neustart läuft bereits.",
-  "restart.restarting": "🔄 Starte Bot neu...",
-  "restart.error": "🔴 Bot konnte nicht neu gestartet werden\n\nFehler: {error}",
 
   "agent.changed_callback": "Modus geändert: {name}",
   "agent.changed_message": "✅ Modus geändert zu: {name}",
@@ -309,6 +324,19 @@ export const de: I18nDictionary = {
   "pinned.line.project": "Projekt: {project}",
   "pinned.line.model": "Modell: {model}",
   "pinned.line.context": "Kontext: {used} / {limit} ({percent}%)",
+  "pinned.line.cost": "Kosten: {cost} ausgegeben",
+  "subagent.header": "Subagent {agent}: {description}",
+  "subagent.line.status": "Status: {status}",
+  "subagent.line.task": "Aufgabe: {task}",
+  "subagent.line.agent": "Agent: {agent}",
+  "subagent.working": "Arbeitet...",
+  "subagent.working_with_details": "Arbeitet: {details}",
+  "subagent.completed": "Abgeschlossen",
+  "subagent.failed": "Aufgabe fehlgeschlagen",
+  "subagent.status.pending": "ausstehend",
+  "subagent.status.running": "laeuft",
+  "subagent.status.completed": "abgeschlossen",
+  "subagent.status.error": "Fehler",
   "pinned.files.title": "Dateien ({count}):",
   "pinned.files.item": "  {path}{diff}",
   "pinned.files.more": "  ... und {count} mehr",
@@ -391,7 +419,7 @@ export const de: I18nDictionary = {
     "Der wiederkehrende Zeitplan ist zu häufig. Das minimale erlaubte Intervall ist einmal alle 5 Minuten.",
   "task.kind.cron": "wiederkehrend",
   "task.kind.once": "einmalig",
-  "task.run.success": "⏰ Geplante Aufgabe abgeschlossen: {description}\n\n{result}",
+  "task.run.success": "⏰ Geplante Aufgabe abgeschlossen: {description}",
   "task.run.error": "🔴 Geplante Aufgabe fehlgeschlagen: {description}\n\nFehler: {error}",
 
   "tasklist.empty": "📭 Noch keine geplanten Aufgaben.",
@@ -421,10 +449,14 @@ export const de: I18nDictionary = {
   "commands.arguments_empty":
     "⚠️ Argumente dürfen nicht leer sein. Sende Text oder tippe auf Ausführen.",
   "commands.execute_error": "🔴 OpenCode-Befehl konnte nicht ausgeführt werden.",
+  "commands.select_page": "Wähle einen OpenCode-Befehl (Seite {page}):",
+  "commands.button.prev_page": "⬅️ Zurück",
+  "commands.button.next_page": "Weiter ➡️",
+  "commands.page_empty_callback": "Keine Befehle auf dieser Seite",
+  "commands.page_load_error_callback":
+    "Diese Seite konnte nicht geladen werden. Bitte versuche es erneut.",
 
-  "cmd.description.start": "Bot starten oder zurücksetzen",
   "cmd.description.rename": "Aktuelle Sitzung umbenennen",
-  "cmd.description.restart": "Bot neu starten",
 
   "cli.usage":
     "Verwendung:\n  opencode-telegram [start] [--mode sources|installed]\n  opencode-telegram status\n  opencode-telegram stop\n  opencode-telegram config\n\nHinweise:\n  - Ohne Befehl wird standardmäßig `start` verwendet\n  - `--mode` wird derzeit nur für `start` unterstützt",
@@ -454,4 +486,85 @@ export const de: I18nDictionary = {
     "🎤 Spracherkennung ist nicht konfiguriert.\n\nSetze STT_API_URL und STT_API_KEY in .env, um sie zu aktivieren.",
   "stt.error": "🔴 Audio konnte nicht erkannt werden: {error}",
   "stt.empty_result": "🎤 Keine Sprache in der Audionachricht erkannt.",
+
+  "cmd.description.export_data": "Daten exportieren",
+
+  "export_data.title": "Datenexport-Einstellungen",
+  "export_data.group.personal": "Persönlich",
+  "export_data.group.bots": "Bots",
+  "export_data.group.group_chats": "Gruppenchats",
+  "export_data.group.public_channels": "Öffentliche Kanäle",
+  "export_data.group.interlocutor_channels": "Gesprächspartner-Kanäle",
+
+  "restart.admin_only": "Dieser Befehl ist nur für den Admin verfügbar.",
+
+  "status.runtime.tenant": "Laufzeit: Mandant",
+  "status.runtime.host": "Laufzeit: Host",
+  "status.line.port": "Port: {port}",
+  "status.line.tenant": "Mandant: {tenantId}",
+
+  "auth.button.approve": "✅ Genehmigen",
+  "auth.button.deny": "❌ Ablehnen",
+  "auth.request.title": "🔐 Zugriffsanfrage",
+  "auth.request.user": "Benutzer: {user}",
+  "auth.request.user_id": "Benutzer-ID: {userId}",
+  "auth.request.chat_id": "Chat-ID: {chatId}",
+  "auth.request.chat_type": "Chat-Typ: {chatType}",
+  "auth.request.language": "Sprache: {language}",
+  "auth.requester.sent": "Die Zugriffsanfrage wurde an den Admin gesendet. Nach der Genehmigung kannst du den Bot verwenden.",
+  "auth.error.admin_only": "Nur der Admin kann den Zugriff verwalten",
+  "auth.error.request_not_pending": "Die Zugriffsanfrage ist nicht mehr ausstehend",
+  "auth.callback.pending_approval": "Zugriff wartet auf Admin-Genehmigung",
+  "auth.decision.approved": "✅ Zugriff genehmigt",
+  "auth.decision.denied": "❌ Zugriff verweigert",
+  "auth.decision.user": "Benutzer: {user}",
+  "auth.decision.user_id": "Benutzer-ID: {userId}",
+  "auth.decision.chat_id": "Chat-ID: {chatId}",
+  "auth.decision.chat_type": "Chat-Typ: {chatType}",
+  "auth.decision.language": "Sprache: {language}",
+  "auth.decision.requested_at": "Angefordert am: {requestedAt}",
+  "auth.decision.decided_by": "Entschieden vom Admin: {adminUserId}",
+  "auth.requester.approved": "Der Admin hat den Zugriff genehmigt. Du kannst den Bot jetzt verwenden.",
+  "auth.requester.denied": "Der Admin hat die Zugriffsanfrage abgelehnt.",
+
+  "ontology.summary.title": "🧭 Ontologie-Snapshot",
+  "ontology.summary.chat": "Chat: {chat}",
+  "ontology.summary.session": "Sitzung: {sessionId}",
+  "ontology.summary.query": "Abfrage: {query}",
+  "ontology.summary.messages": "Nachrichten: {messageCount}",
+  "ontology.summary.segments": "Segmente: {segmentCount}",
+  "ontology.summary.facts": "Fakten: {factCount}",
+  "ontology.summary.updated": "Aktualisiert: {generatedAt}",
+  "ontology.summary.counts": "Anzahlen:",
+  "ontology.summary.goals": "Ziele: {count}",
+  "ontology.summary.constraints": "Einschränkungen: {count}",
+  "ontology.summary.locations": "Orte: {count}",
+  "ontology.summary.projects": "Projekte: {count}",
+  "ontology.summary.bonds": "Bindungskomponenten: {count}",
+
+  "ontology.graph.title": "🧬 Ontologie-Graph",
+  "ontology.graph.page": "Seite {current}/{total}",
+  "ontology.graph.empty": "Keine Ontologie-Knoten gefunden.",
+
+  "ontology.node.title": "🪪 Ontologie-Knoten",
+  "ontology.node.empty": "Kein Ontologie-Knoten gefunden.",
+  "ontology.node.index": "Index: {index}",
+  "ontology.node.kind": "Typ: {kind}",
+  "ontology.node.label": "Label: {label}",
+  "ontology.node.summary": "Zusammenfassung: {summary}",
+  "ontology.node.source_message": "Quellnachricht: {msgId}",
+  "ontology.node.raw": "Rohdaten:",
+
+  "ontology.kind.goal": "Ziel",
+  "ontology.kind.constraint": "Einschränkung",
+  "ontology.kind.location": "Ort",
+  "ontology.kind.project": "Projekt",
+  "ontology.kind.bond": "Bindung",
+  "reasoning.title": "🧠 Reasoning-Einstellungen",
+  "reasoning.mode_0": "0 - Nur finale Antwort",
+  "reasoning.mode_1": "1 - Gedanken und Dateien",
+  "reasoning.mode_2": "2 - Stufe 1 + Befehle",
+  "reasoning.mode_3": "3 - Kombinierte Ansicht (Standard)",
+  "reasoning.current": "Aktueller Modus: {mode}",
+  "reasoning.updated": "✅ Reasoning-Modus geändert zu: {mode}",
 };

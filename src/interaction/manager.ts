@@ -1,12 +1,11 @@
+import { logger } from "../utils/logger.js";
+import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
 import type {
   InteractionClearReason,
   InteractionState,
   StartInteractionOptions,
   TransitionInteractionOptions,
 } from "./types.js";
-import type { TelegramConversationScope } from "../telegram/scope.js";
-import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
-import { logger } from "../utils/logger.js";
 
 export const DEFAULT_ALLOWED_INTERACTION_COMMANDS = ["/help", "/status", "/abort"] as const;
 
@@ -54,21 +53,13 @@ function cloneState(state: InteractionState): InteractionState {
 class InteractionManager {
   private states = new Map<string, InteractionState>();
 
-  private getState(scope?: TelegramConversationScope | null): InteractionState | null {
-    return this.states.get(resolveTelegramConversationScopeKey(scope)) ?? null;
-  }
-
-  start(
-    options: StartInteractionOptions,
-    scope?: TelegramConversationScope | null,
-  ): InteractionState {
+  start(options: StartInteractionOptions, scopeKey?: string): InteractionState {
     const now = Date.now();
     let expiresAt: number | null = null;
-    const scopeKey = resolveTelegramConversationScopeKey(scope);
-    const currentState = this.states.get(scopeKey) ?? null;
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
 
-    if (currentState) {
-      this.clear("state_replaced", scope);
+    if (this.states.has(resolvedScopeKey)) {
+      this.clear("state_replaced", resolvedScopeKey);
     }
 
     if (typeof options.expiresInMs === "number") {
@@ -84,17 +75,17 @@ class InteractionManager {
       expiresAt,
     };
 
-    this.states.set(scopeKey, nextState);
+    this.states.set(resolvedScopeKey, nextState);
 
     logger.info(
-      `[InteractionManager] Started interaction: scope=${scopeKey}, kind=${nextState.kind}, expectedInput=${nextState.expectedInput}, allowedCommands=${nextState.allowedCommands.join(",") || "none"}`,
+      `[InteractionManager] Started interaction: scope=${resolvedScopeKey}, kind=${nextState.kind}, expectedInput=${nextState.expectedInput}, allowedCommands=${nextState.allowedCommands.join(",") || "none"}`,
     );
 
     return cloneState(nextState);
   }
 
-  get(scope?: TelegramConversationScope | null): InteractionState | null {
-    const state = this.getState(scope);
+  get(scopeKey?: string): InteractionState | null {
+    const state = this.states.get(resolveTelegramConversationScopeKey(scopeKey));
     if (!state) {
       return null;
     }
@@ -102,19 +93,16 @@ class InteractionManager {
     return cloneState(state);
   }
 
-  getSnapshot(scope?: TelegramConversationScope | null): InteractionState | null {
-    return this.get(scope);
+  getSnapshot(scopeKey?: string): InteractionState | null {
+    return this.get(scopeKey);
   }
 
-  isActive(scope?: TelegramConversationScope | null): boolean {
-    return this.getState(scope) !== null;
+  isActive(scopeKey?: string): boolean {
+    return this.states.has(resolveTelegramConversationScopeKey(scopeKey));
   }
 
-  isExpired(
-    referenceTimeMs: number = Date.now(),
-    scope?: TelegramConversationScope | null,
-  ): boolean {
-    const state = this.getState(scope);
+  isExpired(referenceTimeMs: number = Date.now(), scopeKey?: string): boolean {
+    const state = this.states.get(resolveTelegramConversationScopeKey(scopeKey));
     if (!state || state.expiresAt === null) {
       return false;
     }
@@ -122,56 +110,62 @@ class InteractionManager {
     return referenceTimeMs >= state.expiresAt;
   }
 
-  transition(
-    options: TransitionInteractionOptions,
-    scope?: TelegramConversationScope | null,
-  ): InteractionState | null {
-    const scopeKey = resolveTelegramConversationScopeKey(scope);
-    const state = this.states.get(scopeKey) ?? null;
-    if (!state) {
+  transition(options: TransitionInteractionOptions, scopeKey?: string): InteractionState | null {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    const currentState = this.states.get(resolvedScopeKey);
+    if (!currentState) {
       return null;
     }
 
     const now = Date.now();
 
     const nextState: InteractionState = {
-      ...state,
-      kind: options.kind ?? state.kind,
-      expectedInput: options.expectedInput ?? state.expectedInput,
+      ...currentState,
+      kind: options.kind ?? currentState.kind,
+      expectedInput: options.expectedInput ?? currentState.expectedInput,
       allowedCommands:
         options.allowedCommands !== undefined
           ? normalizeAllowedCommands(options.allowedCommands)
-          : [...state.allowedCommands],
-      metadata: options.metadata ? { ...options.metadata } : { ...state.metadata },
+          : [...currentState.allowedCommands],
+      metadata: options.metadata ? { ...options.metadata } : { ...currentState.metadata },
       expiresAt:
         options.expiresInMs === undefined
-          ? state.expiresAt
+          ? currentState.expiresAt
           : options.expiresInMs === null
             ? null
             : now + options.expiresInMs,
     };
 
-    this.states.set(scopeKey, nextState);
+    this.states.set(resolvedScopeKey, nextState);
 
     logger.debug(
-      `[InteractionManager] Transitioned interaction: scope=${scopeKey}, kind=${nextState.kind}, expectedInput=${nextState.expectedInput}, allowedCommands=${nextState.allowedCommands.join(",") || "none"}`,
+      `[InteractionManager] Transitioned interaction: scope=${resolvedScopeKey}, kind=${nextState.kind}, expectedInput=${nextState.expectedInput}, allowedCommands=${nextState.allowedCommands.join(",") || "none"}`,
     );
 
     return cloneState(nextState);
   }
 
-  clear(reason: InteractionClearReason = "manual", scope?: TelegramConversationScope | null): void {
-    const scopeKey = resolveTelegramConversationScopeKey(scope);
-    const state = this.states.get(scopeKey) ?? null;
+  clear(reason: InteractionClearReason = "manual", scopeKey?: string): void {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    const state = this.states.get(resolvedScopeKey);
     if (!state) {
       return;
     }
 
     logger.info(
-      `[InteractionManager] Cleared interaction: scope=${scopeKey}, reason=${reason}, kind=${state.kind}, expectedInput=${state.expectedInput}`,
+      `[InteractionManager] Cleared interaction: scope=${resolvedScopeKey}, reason=${reason}, kind=${state.kind}, expectedInput=${state.expectedInput}`,
     );
 
-    this.states.delete(scopeKey);
+    this.states.delete(resolvedScopeKey);
+  }
+
+  clearAll(reason: InteractionClearReason = "manual"): void {
+    if (this.states.size === 0) {
+      return;
+    }
+
+    logger.info(`[InteractionManager] Cleared all interactions: reason=${reason}, count=${this.states.size}`);
+    this.states.clear();
   }
 
   __resetForTests(): void {

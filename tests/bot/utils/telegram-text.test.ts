@@ -1,9 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  editBotText,
-  sendBotText,
-  sendBotTextDraft,
-} from "../../../src/bot/utils/telegram-text.js";
+import { editBotText, sendBotText, sendBotTextDraft } from "../../../src/bot/utils/telegram-text.js";
 
 describe("bot/utils/telegram-text", () => {
   it("sends raw messages by default", async () => {
@@ -38,20 +34,25 @@ describe("bot/utils/telegram-text", () => {
     });
   });
 
-  it("uses HTML mode when requested", async () => {
-    const sendMessage = vi.fn().mockResolvedValue(undefined);
+  it("uses raw fallback text when markdown parse fails", async () => {
+    const sendMessage = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error("Bad Request: can't parse entities: Character '.' is reserved"),
+      )
+      .mockRejectedValueOnce(new Error("Bad Request: can't parse entities: unsupported start tag"))
+      .mockResolvedValueOnce(undefined);
 
     await sendBotText({
       api: { sendMessage },
       chatId: 100,
-      text: "<b>formatted</b>",
-      format: "html",
+      text: "Build succeeded.",
+      rawFallbackText: "Build succeeded.",
+      format: "markdown_v2",
     });
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(100, "<b>formatted</b>", {
-      parse_mode: "HTML",
-    });
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sendMessage).toHaveBeenNthCalledWith(3, 100, "Build succeeded.", {});
   });
 
   it("edits raw messages by default", async () => {
@@ -68,20 +69,26 @@ describe("bot/utils/telegram-text", () => {
     expect(editMessageText).toHaveBeenCalledWith(100, 200, "updated", undefined);
   });
 
-  it("sends drafts with a stable draft id", async () => {
-    const sendMessageDraft = vi.fn().mockResolvedValue(true);
+  it("falls back for markdown draft parse errors", async () => {
+    const sendMessageDraft = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Bad Request: can't parse entities: Character '.' is reserved"))
+      .mockResolvedValueOnce(undefined);
 
     await sendBotTextDraft({
       api: { sendMessageDraft },
       chatId: 100,
-      draftId: 7,
-      text: "streaming text",
-      options: { message_thread_id: 99 },
+      draftId: 1,
+      text: "Build succeeded.",
+      format: "markdown_v2",
     });
 
-    expect(sendMessageDraft).toHaveBeenCalledTimes(1);
-    expect(sendMessageDraft).toHaveBeenCalledWith(100, 7, "streaming text", {
-      message_thread_id: 99,
+    expect(sendMessageDraft).toHaveBeenCalledTimes(2);
+    expect(sendMessageDraft).toHaveBeenNthCalledWith(1, 100, 1, "Build succeeded.", {
+      parse_mode: "MarkdownV2",
+    });
+    expect(sendMessageDraft).toHaveBeenNthCalledWith(2, 100, 1, "Build succeeded\\.", {
+      parse_mode: "MarkdownV2",
     });
   });
 });

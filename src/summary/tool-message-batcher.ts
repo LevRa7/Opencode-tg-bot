@@ -1,112 +1,45 @@
 import type { CodeFileData } from "./formatter.js";
 import { logger } from "../utils/logger.js";
-import type { TelegramTextFormat } from "../bot/utils/telegram-text.js";
 
-const DEFAULT_INTERVAL_SECONDS = 5;
-const TELEGRAM_MESSAGE_MAX_LENGTH = 4096;
-
-type SendTextCallback = (
-  sessionId: string,
-  text: string,
-  format?: TelegramTextFormat,
-) => Promise<void>;
+type SendTextCallback = (sessionId: string, text: string) => Promise<void>;
 type SendFileCallback = (sessionId: string, fileData: CodeFileData) => Promise<void>;
 
 interface ToolMessageBatcherOptions {
-  intervalSeconds: number;
   sendText: SendTextCallback;
   sendFile: SendFileCallback;
 }
 
-type QueueItem =
-  | {
-      kind: "text";
-      text: string;
-      format?: TelegramTextFormat;
-    }
-  | {
-      kind: "file";
-      fileData: CodeFileData;
-    };
-
-type FlushItem =
-  | {
-      kind: "text";
-      text: string;
-      format?: TelegramTextFormat;
-    }
-  | {
-      kind: "file";
-      fileData: CodeFileData;
-    };
-
-function normalizeIntervalSeconds(value: number): number {
-  if (!Number.isFinite(value)) {
-    return DEFAULT_INTERVAL_SECONDS;
-  }
-
-  const normalized = Math.floor(value);
-  if (normalized < 0) {
-    return DEFAULT_INTERVAL_SECONDS;
-  }
-
-  return normalized;
-}
-
 export class ToolMessageBatcher {
-  private intervalSeconds: number;
   private readonly sendText: SendTextCallback;
   private readonly sendFile: SendFileCallback;
-  private readonly queues: Map<string, QueueItem[]> = new Map();
-  private readonly timers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private readonly sessionTasks: Map<string, Promise<void>> = new Map();
   private generation = 0;
 
   constructor(options: ToolMessageBatcherOptions) {
-    this.intervalSeconds = normalizeIntervalSeconds(options.intervalSeconds);
     this.sendText = options.sendText;
     this.sendFile = options.sendFile;
   }
 
-  setIntervalSeconds(nextIntervalSeconds: number): void {
-    const normalized = normalizeIntervalSeconds(nextIntervalSeconds);
-    if (this.intervalSeconds === normalized) {
-      return;
-    }
-
-    this.intervalSeconds = normalized;
-    logger.info(`[ToolBatcher] Interval updated: ${normalized}s`);
-
-    if (normalized === 0) {
-      void this.flushAll("interval_updated");
-      return;
-    }
-
-    const sessionIds = Array.from(this.queues.keys());
-    for (const sessionId of sessionIds) {
-      this.restartTimer(sessionId);
-    }
-  }
-
-  getIntervalSeconds(): number {
-    return this.intervalSeconds;
-  }
-
   enqueue(sessionId: string, message: string): void {
-    this.enqueueTextInternal(sessionId, message);
+    this.sendTextNow(sessionId, message, "enqueue");
   }
 
-  enqueueFormatted(sessionId: string, message: string, format: TelegramTextFormat): void {
-    this.enqueueTextInternal(sessionId, message, undefined, format);
+  sendTextNow(sessionId: string, message: string, reason: string): void {
+    const normalizedMessage = message.trim();
+    if (!sessionId || normalizedMessage.length === 0) {
+      return;
+    }
+
+    const expectedGeneration = this.generation;
+    logger.debug(`[ToolBatcher] Sending text message: session=${sessionId}, reason=${reason}`);
+    void this.enqueueTask(sessionId, () =>
+      this.sendTextSafe(sessionId, normalizedMessage, reason, expectedGeneration),
+    );
   }
 
-  enqueueUniqueByPrefix(
-    sessionId: string,
-    message: string,
-    prefix: string,
-    format?: TelegramTextFormat,
-  ): void {
-    this.enqueueTextInternal(sessionId, message, prefix, format);
+  enqueueUniqueByPrefix(sessionId: string, message: string, prefix: string): void {
+    void prefix;
+    this.sendTextNow(sessionId, message, "enqueue_unique_by_prefix");
   }
 
   enqueueFile(sessionId: string, fileData: CodeFileData): void {
@@ -114,94 +47,33 @@ export class ToolMessageBatcher {
       return;
     }
 
-    if (this.intervalSeconds === 0) {
-      const expectedGeneration = this.generation;
-      logger.debug(`[ToolBatcher] Sending immediate file message: session=${sessionId}`);
-      void this.enqueueTask(sessionId, () =>
-        this.sendFileSafe(sessionId, fileData, "immediate", expectedGeneration),
-      );
-      return;
-    }
-
-    const queue = this.queues.get(sessionId) ?? [];
-    queue.push({ kind: "file", fileData });
-    this.queues.set(sessionId, queue);
-    logger.debug(
-      `[ToolBatcher] Queued file message: session=${sessionId}, queueSize=${queue.length}, interval=${this.intervalSeconds}s`,
+    const expectedGeneration = this.generation;
+    logger.debug(`[ToolBatcher] Sending file message: session=${sessionId}`);
+    void this.enqueueTask(sessionId, () =>
+      this.sendFileSafe(sessionId, fileData, "enqueue_file", expectedGeneration),
     );
-
-    this.ensureTimer(sessionId);
   }
 
   async flushSession(sessionId: string, reason: string): Promise<void> {
-    await this.enqueueTask(sessionId, () => this.flushSessionInternal(sessionId, reason));
+    void reason;
+    await (this.sessionTasks.get(sessionId) ?? Promise.resolve());
   }
 
   async flushAll(reason: string): Promise<void> {
-    for (const sessionId of Array.from(this.timers.keys())) {
-      this.clearTimer(sessionId);
-    }
-
-    const sessionIds = Array.from(this.queues.keys());
-    for (const sessionId of sessionIds) {
-      await this.flushSession(sessionId, reason);
+    void reason;
+    for (const task of this.sessionTasks.values()) {
+      await task;
     }
   }
 
   clearSession(sessionId: string, reason: string): void {
     this.generation++;
-    this.clearTimer(sessionId);
-
-    if (this.queues.delete(sessionId)) {
-      logger.debug(`[ToolBatcher] Cleared session queue: session=${sessionId}, reason=${reason}`);
-    }
+    logger.debug(`[ToolBatcher] Cleared session sends: session=${sessionId}, reason=${reason}`);
   }
 
   clearAll(reason: string): void {
     this.generation++;
-
-    for (const timer of this.timers.values()) {
-      clearTimeout(timer);
-    }
-
-    const queuedSessions = this.queues.size;
-    this.timers.clear();
-    this.queues.clear();
-
-    if (queuedSessions > 0) {
-      logger.debug(
-        `[ToolBatcher] Cleared all queued tool messages: sessions=${queuedSessions}, reason=${reason}`,
-      );
-    }
-  }
-
-  private clearTimer(sessionId: string): void {
-    const timer = this.timers.get(sessionId);
-    if (!timer) {
-      return;
-    }
-
-    clearTimeout(timer);
-    this.timers.delete(sessionId);
-  }
-
-  private ensureTimer(sessionId: string): void {
-    if (this.timers.has(sessionId)) {
-      return;
-    }
-
-    this.restartTimer(sessionId);
-  }
-
-  private restartTimer(sessionId: string): void {
-    this.clearTimer(sessionId);
-
-    const timer = setTimeout(() => {
-      this.timers.delete(sessionId);
-      void this.flushSession(sessionId, "interval_elapsed");
-    }, this.intervalSeconds * 1000);
-
-    this.timers.set(sessionId, timer);
+    logger.debug(`[ToolBatcher] Cleared all pending tool sends: reason=${reason}`);
   }
 
   private enqueueTask(sessionId: string, task: () => Promise<void>): Promise<void> {
@@ -219,85 +91,9 @@ export class ToolMessageBatcher {
     return nextTask;
   }
 
-  private enqueueTextInternal(
-    sessionId: string,
-    message: string,
-    uniquePrefix?: string,
-    format?: TelegramTextFormat,
-  ): void {
-    const normalizedMessage = message.trim();
-    if (!sessionId || normalizedMessage.length === 0) {
-      return;
-    }
-
-    if (this.intervalSeconds === 0) {
-      const expectedGeneration = this.generation;
-      logger.debug(`[ToolBatcher] Sending immediate text message: session=${sessionId}`);
-      void this.enqueueTask(sessionId, () =>
-        this.sendTextSafe(sessionId, normalizedMessage, format, "immediate", expectedGeneration),
-      );
-      return;
-    }
-
-    const normalizedPrefix = uniquePrefix?.trim();
-    const queue = this.queues.get(sessionId) ?? [];
-
-    if (normalizedPrefix) {
-      const existingUniqueMessage = queue.find(
-        (item): item is Extract<QueueItem, { kind: "text" }> =>
-          item.kind === "text" && item.text.startsWith(normalizedPrefix) && item.format === format,
-      );
-
-      if (existingUniqueMessage) {
-        existingUniqueMessage.text = normalizedMessage;
-        existingUniqueMessage.format = format;
-        this.queues.set(sessionId, queue);
-        logger.debug(
-          `[ToolBatcher] Updated queued unique text message: session=${sessionId}, prefix=${normalizedPrefix}, interval=${this.intervalSeconds}s`,
-        );
-        this.ensureTimer(sessionId);
-        return;
-      }
-    }
-
-    queue.push({ kind: "text", text: normalizedMessage, format });
-    this.queues.set(sessionId, queue);
-    logger.debug(
-      `[ToolBatcher] Queued text message: session=${sessionId}, queueSize=${queue.length}, interval=${this.intervalSeconds}s`,
-    );
-
-    this.ensureTimer(sessionId);
-  }
-
-  private async flushSessionInternal(sessionId: string, reason: string): Promise<void> {
-    const expectedGeneration = this.generation;
-    this.clearTimer(sessionId);
-
-    const queuedItems = this.queues.get(sessionId);
-    if (!queuedItems || queuedItems.length === 0) {
-      return;
-    }
-
-    this.queues.delete(sessionId);
-
-    const flushItems = this.buildFlushItems(queuedItems);
-    logger.debug(
-      `[ToolBatcher] Flushing ${queuedItems.length} queued items as ${flushItems.length} Telegram sends (session=${sessionId}, reason=${reason})`,
-    );
-
-    for (const item of flushItems) {
-      if (item.kind === "text") {
-        await this.sendTextSafe(sessionId, item.text, item.format, reason, expectedGeneration);
-      } else {
-        await this.sendFileSafe(sessionId, item.fileData, reason, expectedGeneration);
-      }
-    }
-  }
-
   private async sendTextSafe(
     sessionId: string,
     text: string,
-    format: TelegramTextFormat | undefined,
     reason: string,
     expectedGeneration: number,
   ): Promise<void> {
@@ -309,7 +105,7 @@ export class ToolMessageBatcher {
     }
 
     try {
-      await this.sendText(sessionId, text, format);
+      await this.sendText(sessionId, text);
     } catch (err) {
       logger.error(
         `[ToolBatcher] Failed to send tool text message: session=${sessionId}, reason=${reason}`,
@@ -339,112 +135,5 @@ export class ToolMessageBatcher {
         err,
       );
     }
-  }
-
-  private buildFlushItems(entries: QueueItem[]): FlushItem[] {
-    const result: FlushItem[] = [];
-    let textBuffer: Array<{ text: string; format?: TelegramTextFormat }> = [];
-
-    const flushTextBuffer = () => {
-      if (textBuffer.length === 0) {
-        return;
-      }
-
-      const packedTextMessages = this.packMessages(textBuffer);
-      for (const item of packedTextMessages) {
-        result.push({ kind: "text", text: item.text, format: item.format });
-      }
-
-      textBuffer = [];
-    };
-
-    for (const entry of entries) {
-      if (entry.kind === "text") {
-        const lastBuffered = textBuffer[textBuffer.length - 1];
-        if (lastBuffered && lastBuffered.format !== entry.format) {
-          flushTextBuffer();
-        }
-        textBuffer.push({ text: entry.text, format: entry.format });
-      } else {
-        flushTextBuffer();
-        result.push({ kind: "file", fileData: entry.fileData });
-      }
-    }
-
-    flushTextBuffer();
-    return result;
-  }
-
-  private packMessages(
-    messages: Array<{ text: string; format?: TelegramTextFormat }>,
-  ): Array<{ text: string; format?: TelegramTextFormat }> {
-    const normalizedEntries = messages
-      .flatMap((message) =>
-        this.splitLongText(message.text, TELEGRAM_MESSAGE_MAX_LENGTH).map((text) => ({
-          text,
-          format: message.format,
-        })),
-      )
-      .filter((entry) => entry.text.length > 0);
-
-    if (normalizedEntries.length === 0) {
-      return [];
-    }
-
-    const result: Array<{ text: string; format?: TelegramTextFormat }> = [];
-    let current: { text: string; format?: TelegramTextFormat } | null = null;
-
-    for (const entry of normalizedEntries) {
-      if (!current) {
-        current = entry;
-        continue;
-      }
-
-      if (current.format !== entry.format) {
-        result.push(current);
-        current = entry;
-        continue;
-      }
-
-      const candidate: string = `${current.text}\n\n${entry.text}`;
-      if (candidate.length <= TELEGRAM_MESSAGE_MAX_LENGTH) {
-        current = { text: candidate, format: current.format };
-        continue;
-      }
-
-      result.push(current);
-      current = entry;
-    }
-
-    if (current) {
-      result.push(current);
-    }
-
-    return result;
-  }
-
-  private splitLongText(text: string, limit: number): string[] {
-    if (text.length <= limit) {
-      return [text];
-    }
-
-    const chunks: string[] = [];
-    let remaining = text;
-
-    while (remaining.length > limit) {
-      let splitIndex = remaining.lastIndexOf("\n", limit);
-      if (splitIndex <= 0 || splitIndex < Math.floor(limit * 0.5)) {
-        splitIndex = limit;
-      }
-
-      chunks.push(remaining.slice(0, splitIndex));
-      remaining = remaining.slice(splitIndex).replace(/^\n+/, "");
-    }
-
-    if (remaining.length > 0) {
-      chunks.push(remaining);
-    }
-
-    return chunks;
   }
 }

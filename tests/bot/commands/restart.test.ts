@@ -26,10 +26,21 @@ vi.mock("../../../src/settings/manager.js", () => ({
   setLastRestartRequest: mocked.setLastRestartRequestMock,
 }));
 
+vi.mock("../../../src/config.js", () => ({
+  config: {
+    telegram: {
+      adminUserId: 777,
+    },
+    server: {
+      logLevel: "error",
+    },
+  },
+}));
+
 function createContext(updateId: number = 500): CommandContext<Context> {
   return {
     update: { update_id: updateId },
-    from: { id: 123 },
+    from: { id: 777 },
     reply: vi.fn().mockResolvedValue({ message_id: 1 }),
   } as unknown as CommandContext<Context>;
 }

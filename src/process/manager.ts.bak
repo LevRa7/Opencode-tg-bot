@@ -1,0 +1,460 @@
+import { exec, spawn, type ChildProcess } from "child_process";
+import { fileURLToPath } from "url";
+import { promisify } from "util";
+import { config } from "../config.js";
+import {
+  clearServerProcess,
+  clearTenantRuntimeInfo,
+  getServerProcess,
+  getTenantRuntimeInfo,
+  getTenantRuntimes,
+  setServerProcess,
+  setTenantRuntimeInfo,
+  type TenantRuntimeInfo,
+} from "../settings/manager.js";
+import { getCurrentTelegramConversationScope } from "../telegram/scope.js";
+import { logger } from "../utils/logger.js";
+import type {
+  ProcessManagerInterface,
+  ProcessOperationResult,
+  ProcessRuntimeInfo,
+  ProcessState,
+} from "./types.js";
+
+const execAsync = promisify(exec);
+const TENANT_PORT_MIN = 49600;
+const TENANT_PORT_MAX = 49999;
+const TENANT_HEALTH_TIMEOUT_MS = 10_000;
+const TENANT_HEALTH_POLL_MS = 500;
+const TENANT_LAUNCH_SCRIPT_PATH = fileURLToPath(
+  new URL("../../docker/run-opencode-serve.sh", import.meta.url),
+);
+
+class ProcessManager implements ProcessManagerInterface {
+  private state: ProcessState = {
+    process: null,
+    pid: null,
+    startTime: null,
+    isRunning: false,
+  };
+
+  async initialize(): Promise<void> {
+    const savedProcess = getServerProcess();
+
+    if (savedProcess) {
+      logger.info(`[ProcessManager] Found saved host process: PID=${savedProcess.pid}`);
+
+      if (this.isProcessAlive(savedProcess.pid)) {
+        this.state = {
+          process: null,
+          pid: savedProcess.pid,
+          startTime: new Date(savedProcess.startTime),
+          isRunning: true,
+        };
+      } else {
+        logger.warn(`[ProcessManager] Saved host process PID=${savedProcess.pid} is dead, cleaning up`);
+        clearServerProcess();
+      }
+    } else {
+      logger.debug("[ProcessManager] No saved host process found in settings");
+    }
+
+    await this.cleanupDeadTenantRuntimes();
+  }
+
+  async ensureRuntime(): Promise<ProcessOperationResult> {
+    if (this.isAdminScope()) {
+      if (this.isRunning()) {
+        return { success: true };
+      }
+
+      return this.start();
+    }
+
+    return this.ensureTenantRuntime();
+  }
+
+  async start(): Promise<ProcessOperationResult> {
+    if (this.state.isRunning) {
+      return {
+        success: false,
+        error: "Process already running",
+      };
+    }
+
+    try {
+      logger.info("[ProcessManager] Starting host OpenCode server process...");
+
+      const isWindows = process.platform === "win32";
+      const command = isWindows ? "cmd.exe" : "opencode";
+      const args = isWindows ? ["/c", "opencode", "serve"] : ["serve"];
+
+      const childProcess = spawn(command, args, {
+        detached: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: isWindows,
+      });
+
+      if (!childProcess.pid) {
+        throw new Error(
+          "Failed to start OpenCode server process. Ensure 'opencode' is installed and available in PATH.",
+        );
+      }
+
+      childProcess.on("error", (err) => {
+        logger.error("[ProcessManager] Host process error:", err);
+        this.cleanupHostRuntime();
+      });
+
+      childProcess.on("exit", (code, signal) => {
+        logger.info(`[ProcessManager] Host process exited: code=${code}, signal=${signal}`);
+        this.cleanupHostRuntime();
+      });
+
+      if (childProcess.stdout) {
+        childProcess.stdout.on("data", (data) => {
+          logger.debug(`[OpenCode Server] ${data.toString().trim()}`);
+        });
+      }
+
+      if (childProcess.stderr) {
+        childProcess.stderr.on("data", (data) => {
+          logger.warn(`[OpenCode Server Error] ${data.toString().trim()}`);
+        });
+      }
+
+      const startTime = new Date();
+      this.state = {
+        process: childProcess,
+        pid: childProcess.pid,
+        startTime,
+        isRunning: true,
+      };
+
+      setServerProcess({
+        pid: childProcess.pid,
+        startTime: startTime.toISOString(),
+      });
+
+      logger.info(`[ProcessManager] Host OpenCode server started with PID=${childProcess.pid}`);
+      return { success: true };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      logger.error("[ProcessManager] Failed to start host process:", err);
+      this.cleanupHostRuntime();
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  async stop(timeoutMs: number = 5000): Promise<ProcessOperationResult> {
+    if (!this.state.isRunning || !this.state.pid) {
+      return {
+        success: false,
+        error: "Process not running",
+      };
+    }
+
+    try {
+      const pid = this.state.pid;
+      logger.info(`[ProcessManager] Stopping host process PID=${pid}...`);
+
+      if (process.platform === "win32") {
+        try {
+          await execAsync(`taskkill /F /T /PID ${pid}`);
+        } catch (err) {
+          const error = err as Error;
+          if (!error.message?.includes("not found")) {
+            logger.warn(`[ProcessManager] taskkill error for PID=${pid}:`, err);
+          }
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } else if (this.state.process) {
+        const childProcess = this.state.process;
+        childProcess.kill("SIGINT");
+
+        const gracefulExit = await this.waitForProcessExit(childProcess, timeoutMs);
+        if (!gracefulExit && this.state.isRunning) {
+          childProcess.kill("SIGKILL");
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      } else {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch (err) {
+          logger.debug(`[ProcessManager] Failed to send SIGTERM to PID=${pid}:`, err);
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, timeoutMs));
+
+        if (this.isProcessAlive(pid)) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch (err) {
+            logger.error(`[ProcessManager] Failed to send SIGKILL to PID=${pid}:`, err);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      }
+
+      this.cleanupHostRuntime();
+      logger.info(`[ProcessManager] Host process PID=${pid} stopped successfully`);
+      return { success: true };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      logger.error("[ProcessManager] Failed to stop host process:", err);
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  isRunning(): boolean {
+    if (!this.state.isRunning || !this.state.pid) {
+      return false;
+    }
+
+    if (!this.isProcessAlive(this.state.pid)) {
+      logger.warn(`[ProcessManager] Host process PID=${this.state.pid} appears dead, cleaning up`);
+      this.cleanupHostRuntime();
+      return false;
+    }
+
+    return true;
+  }
+
+  getPID(): number | null {
+    return this.state.pid;
+  }
+
+  getUptime(): number | null {
+    if (!this.state.startTime || !this.state.isRunning) {
+      return null;
+    }
+    return Date.now() - this.state.startTime.getTime();
+  }
+
+  getCurrentRuntimeInfo(): ProcessRuntimeInfo {
+    const scope = getCurrentTelegramConversationScope();
+    if (!scope || scope.userId === config.telegram.adminUserId) {
+      return {
+        kind: "host",
+        baseUrl: config.opencode.apiUrl,
+        managed: this.isRunning(),
+        pid: this.getPID(),
+        uptimeMs: this.getUptime(),
+      };
+    }
+
+    const runtime = getTenantRuntimeInfo(scope.userId);
+    return {
+      kind: "tenant",
+      userId: scope.userId,
+      chatId: scope.chatId,
+      tenantId: runtime?.tenantId,
+      baseUrl: runtime?.baseUrl ?? this.buildTenantBaseUrl(TENANT_PORT_MIN),
+      port: runtime?.port,
+      managed: Boolean(runtime?.pid && this.isProcessAlive(runtime.pid)),
+      pid: runtime?.pid ?? null,
+      uptimeMs: runtime?.startTime ? Date.now() - Date.parse(runtime.startTime) : null,
+    };
+  }
+
+  private isAdminScope(): boolean {
+    const scope = getCurrentTelegramConversationScope();
+    return !scope || scope.userId === config.telegram.adminUserId;
+  }
+
+  private async ensureTenantRuntime(): Promise<ProcessOperationResult> {
+    const scope = getCurrentTelegramConversationScope();
+    if (!scope) {
+      return { success: false, error: "Telegram scope is not available for tenant runtime" };
+    }
+
+    const existingRuntime = getTenantRuntimeInfo(scope.userId);
+    if (existingRuntime?.pid && this.isProcessAlive(existingRuntime.pid)) {
+      return { success: true };
+    }
+
+    const tenantPort = existingRuntime?.port ?? (await this.findFreeTenantPort());
+    const tenantId = existingRuntime?.tenantId ?? `tg-${scope.userId}`;
+    const baseUrl = this.buildTenantBaseUrl(tenantPort);
+    const startResult = await this.startTenantRuntime({
+      userId: scope.userId,
+      chatId: scope.chatId,
+      port: tenantPort,
+      tenantId,
+      baseUrl,
+    });
+
+    if (!startResult.success) {
+      return startResult;
+    }
+
+    const ready = await this.waitForTenantHealth(baseUrl);
+    if (!ready) {
+      return { success: false, error: `Tenant runtime did not become ready at ${baseUrl}` };
+    }
+
+    return { success: true };
+  }
+
+  private async startTenantRuntime(runtime: TenantRuntimeInfo): Promise<ProcessOperationResult> {
+    try {
+      logger.info(
+        `[ProcessManager] Starting tenant runtime: userId=${runtime.userId}, port=${runtime.port}, tenantId=${runtime.tenantId}`,
+      );
+
+      const childProcess = spawn("bash", [TENANT_LAUNCH_SCRIPT_PATH], {
+        detached: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: process.platform === "win32",
+        env: {
+          ...process.env,
+          HOST_PORT: String(runtime.port),
+          TG_ID: String(runtime.userId),
+          TG_CHAT_ID: String(runtime.chatId),
+          TG_TENANT_ID: runtime.tenantId,
+        },
+      });
+
+      if (!childProcess.pid) {
+        throw new Error(`Failed to start tenant runtime for userId=${runtime.userId}`);
+      }
+
+      childProcess.on("error", (err) => {
+        logger.error(`[ProcessManager] Tenant process error for userId=${runtime.userId}:`, err);
+      });
+
+      childProcess.on("exit", async (code, signal) => {
+        logger.info(
+          `[ProcessManager] Tenant process exited: userId=${runtime.userId}, code=${code}, signal=${signal}`,
+        );
+        const savedRuntime = getTenantRuntimeInfo(runtime.userId);
+        if (savedRuntime?.pid === childProcess.pid) {
+          await clearTenantRuntimeInfo(runtime.userId);
+        }
+      });
+
+      if (childProcess.stdout) {
+        childProcess.stdout.on("data", (data) => {
+          logger.debug(`[Tenant ${runtime.userId}] ${data.toString().trim()}`);
+        });
+      }
+
+      if (childProcess.stderr) {
+        childProcess.stderr.on("data", (data) => {
+          logger.warn(`[Tenant ${runtime.userId} Error] ${data.toString().trim()}`);
+        });
+      }
+
+      await setTenantRuntimeInfo(runtime.userId, {
+        ...runtime,
+        pid: childProcess.pid,
+        startTime: new Date().toISOString(),
+      });
+
+      return { success: true };
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      logger.error("[ProcessManager] Failed to start tenant runtime:", err);
+      await clearTenantRuntimeInfo(runtime.userId);
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  private async waitForTenantHealth(baseUrl: string): Promise<boolean> {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < TENANT_HEALTH_TIMEOUT_MS) {
+      try {
+        const response = await fetch(`${baseUrl}/health`);
+        if (response.ok) {
+          return true;
+        }
+      } catch {
+        // ignore until timeout
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, TENANT_HEALTH_POLL_MS));
+    }
+
+    return false;
+  }
+
+  private async cleanupDeadTenantRuntimes(): Promise<void> {
+    const runtimes = getTenantRuntimes();
+    await Promise.all(
+      Object.values(runtimes).map(async (runtime) => {
+        if (!runtime.pid || this.isProcessAlive(runtime.pid)) {
+          return;
+        }
+
+        logger.warn(
+          `[ProcessManager] Saved tenant runtime is dead, cleaning up: userId=${runtime.userId}, pid=${runtime.pid}`,
+        );
+        await clearTenantRuntimeInfo(runtime.userId);
+      }),
+    );
+  }
+
+  private async findFreeTenantPort(): Promise<number> {
+    for (let port = TENANT_PORT_MIN; port <= TENANT_PORT_MAX; port += 1) {
+      if (await this.isPortFree(port)) {
+        return port;
+      }
+    }
+
+    throw new Error(`No free tenant ports available in range ${TENANT_PORT_MIN}-${TENANT_PORT_MAX}`);
+  }
+
+  private async isPortFree(port: number): Promise<boolean> {
+    try {
+      const response = await fetch(this.buildTenantBaseUrl(port) + "/health");
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
+  private buildTenantBaseUrl(port: number): string {
+    return `http://127.0.0.1:${port}`;
+  }
+
+  private isProcessAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async waitForProcessExit(
+    childProcess: ChildProcess,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const exitHandler = () => {
+        resolve(true);
+      };
+
+      childProcess.once("exit", exitHandler);
+
+      setTimeout(() => {
+        childProcess.removeListener("exit", exitHandler);
+        resolve(false);
+      }, timeoutMs);
+    });
+  }
+
+  private cleanupHostRuntime(): void {
+    this.state = {
+      process: null,
+      pid: null,
+      startTime: null,
+      isRunning: false,
+    };
+    clearServerProcess();
+  }
+}
+
+export const processManager = new ProcessManager();

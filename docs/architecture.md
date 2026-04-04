@@ -5,7 +5,6 @@ This document describes the real module structure of the bot, how runtime state 
 Related docs:
 
 - Product and user-facing functionality: [`../PRODUCT.md`](../PRODUCT.md)
-- Vendored `tg-cli` clean architecture migration plan: [`./tg-cli-clean-architecture-plan.md`](./tg-cli-clean-architecture-plan.md)
 - Project concept and boundaries: [`../CONCEPT.md`](../CONCEPT.md)
 - Change history and documentation log: [`../CHANGELOG.md`](../CHANGELOG.md)
 

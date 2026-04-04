@@ -8,25 +8,43 @@ const mocked = vi.hoisted(() => ({
     contextKey: string;
     project?: { id: string; worktree: string; name?: string };
     session?: { id: string; title: string; directory: string };
+    agent?: string;
+    model?: { providerID: string; modelID: string; variant?: string };
   }>,
+  currentAgent: undefined as string | undefined,
+  currentModel: undefined as { providerID: string; modelID: string; variant?: string } | undefined,
   setCurrentProjectMock: vi.fn(),
   setCurrentSessionMock: vi.fn(),
+  setCurrentAgentMock: vi.fn(),
+  setCurrentModelMock: vi.fn(),
   clearSessionMock: vi.fn(),
   setThreadContextBindingsMock: vi.fn(),
 }));
 
 vi.mock("../../src/settings/manager.js", () => ({
   getCurrentProject: vi.fn(() => mocked.currentProject),
+  getCurrentAgent: vi.fn(() => mocked.currentAgent),
+  getCurrentModel: vi.fn(() => mocked.currentModel),
   getThreadContextBindings: vi.fn(() =>
     mocked.threadContextBindings.map((binding) => ({
       contextKey: binding.contextKey,
       project: binding.project ? { ...binding.project } : undefined,
       session: binding.session ? { ...binding.session } : undefined,
+      agent: binding.agent,
+      model: binding.model ? { ...binding.model } : undefined,
     })),
   ),
   setCurrentProject: vi.fn((project) => {
     mocked.currentProject = project;
     mocked.setCurrentProjectMock(project);
+  }),
+  setCurrentAgent: vi.fn((agent) => {
+    mocked.currentAgent = agent;
+    mocked.setCurrentAgentMock(agent);
+  }),
+  setCurrentModel: vi.fn((model) => {
+    mocked.currentModel = model;
+    mocked.setCurrentModelMock(model);
   }),
   setThreadContextBindings: vi.fn((bindings) => {
     mocked.threadContextBindings = bindings.map(
@@ -34,6 +52,8 @@ vi.mock("../../src/settings/manager.js", () => ({
         contextKey: binding.contextKey,
         project: binding.project ? { ...binding.project } : undefined,
         session: binding.session ? { ...binding.session } : undefined,
+        agent: binding.agent,
+        model: binding.model ? { ...binding.model } : undefined,
       }),
     );
     mocked.setThreadContextBindingsMock(bindings);
@@ -69,9 +89,13 @@ describe("thread/manager", () => {
   beforeEach(() => {
     mocked.currentProject = undefined;
     mocked.currentSession = null;
+    mocked.currentAgent = undefined;
+    mocked.currentModel = undefined;
     mocked.threadContextBindings = [];
     mocked.setCurrentProjectMock.mockReset();
     mocked.setCurrentSessionMock.mockReset();
+    mocked.setCurrentAgentMock.mockReset();
+    mocked.setCurrentModelMock.mockReset();
     mocked.clearSessionMock.mockReset();
     mocked.setThreadContextBindingsMock.mockReset();
     threadContextManager.__resetForTests();
@@ -92,9 +116,10 @@ describe("thread/manager", () => {
       chatId: -100100,
       messageThreadId: 11,
     });
-    expect(mocked.setThreadContextBindingsMock).toHaveBeenCalledWith([
+    expect(threadContextManager.getSessionDirectory("session-existing")).toBe("/repo");
+    expect(mocked.setThreadContextBindingsMock).toHaveBeenLastCalledWith([
       {
-        contextKey: "-100100:11",
+        contextKey: "1001:-100100:11",
         project: { id: "project-existing", worktree: "/repo" },
         session: {
           id: "session-existing",
@@ -174,6 +199,8 @@ describe("thread/manager", () => {
         contextKey: "1001:-100100:91",
         project: { id: "project-1", worktree: "/repo" },
         session: { id: "session-1", title: "Persisted", directory: "/repo" },
+        agent: "plan",
+        model: { providerID: "anthropic", modelID: "claude", variant: "fast" },
       },
     ];
 
@@ -189,23 +216,24 @@ describe("thread/manager", () => {
       title: "Persisted",
       directory: "/repo",
     });
+    expect(mocked.setCurrentAgentMock).toHaveBeenCalledWith("plan");
+    expect(mocked.setCurrentModelMock).toHaveBeenCalledWith({
+      providerID: "anthropic",
+      modelID: "claude",
+      variant: "fast",
+    });
     expect(threadContextManager.getSessionTarget("session-1")).toEqual({
       chatId: -100100,
       messageThreadId: 91,
     });
-    expect(mocked.setThreadContextBindingsMock).toHaveBeenCalledWith([
-      {
-        contextKey: "-100100:91",
-        project: { id: "project-1", worktree: "/repo" },
-        session: { id: "session-1", title: "Persisted", directory: "/repo" },
-      },
-    ]);
+    expect(threadContextManager.getSessionDirectory("session-1")).toBe("/repo");
+    expect(mocked.setThreadContextBindingsMock).not.toHaveBeenCalled();
   });
 
-  it("recovers persisted topic bindings when stored chat id changed", () => {
+  it("does not recover persisted topic bindings when stored chat id changed", () => {
     mocked.threadContextBindings = [
       {
-        contextKey: "1001:6931112349:238502",
+        contextKey: "1001:2002:238502",
         project: { id: "project-1", worktree: "/repo" },
         session: { id: "session-1", title: "Persisted", directory: "/repo" },
       },
@@ -214,29 +242,15 @@ describe("thread/manager", () => {
     threadContextManager.__resetForTests();
     threadContextManager.activateFromContext(createMessageContext(-100100, 238502));
 
-    expect(mocked.setCurrentProjectMock).toHaveBeenCalledWith({
-      id: "project-1",
-      worktree: "/repo",
-    });
-    expect(mocked.setCurrentSessionMock).toHaveBeenCalledWith({
-      id: "session-1",
-      title: "Persisted",
-      directory: "/repo",
-    });
+    expect(mocked.setCurrentProjectMock).not.toHaveBeenCalled();
+    expect(mocked.setCurrentSessionMock).not.toHaveBeenCalled();
     expect(threadContextManager.getSessionTarget("session-1")).toEqual({
-      chatId: -100100,
+      chatId: 2002,
       messageThreadId: 238502,
     });
-    expect(mocked.setThreadContextBindingsMock).toHaveBeenCalledWith([
-      {
-        contextKey: "-100100:238502",
-        project: { id: "project-1", worktree: "/repo" },
-        session: { id: "session-1", title: "Persisted", directory: "/repo" },
-      },
-    ]);
   });
 
-  it("shares the same topic binding across different users", () => {
+  it("keeps topic bindings isolated per user", () => {
     const userOneCtx = createMessageContext(-100100, 77, 1001);
     const userTwoCtx = createMessageContext(-100100, 77, 2002);
 
@@ -260,13 +274,13 @@ describe("thread/manager", () => {
     threadContextManager.activateFromContext(userTwoCtx);
 
     expect(mocked.setCurrentProjectMock).toHaveBeenCalledWith({
-      id: "project-topic",
-      worktree: "/repo-1",
+      id: "project-user-2",
+      worktree: "/repo-2",
     });
     expect(mocked.setCurrentSessionMock).toHaveBeenCalledWith({
-      id: "session-topic",
-      title: "Shared Topic",
-      directory: "/repo-1",
+      id: "session-user-2",
+      title: "User Two",
+      directory: "/repo-2",
     });
   });
 });

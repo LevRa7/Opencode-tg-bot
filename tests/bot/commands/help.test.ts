@@ -15,11 +15,13 @@ describe("bot/commands/help", () => {
     expect(replyMock).toHaveBeenCalledTimes(1);
 
     const helpText = replyMock.mock.calls[0][0] as string;
-    const commands = getLocalizedBotCommands();
+    const commands = getLocalizedBotCommands({ isAdmin: false });
 
     for (const item of commands) {
       expect(helpText).toContain(`/${item.command}`);
       expect(helpText).toContain(item.description);
     }
+    expect(helpText).toContain("/export_data");
+    expect(helpText).not.toContain("/export_data - Help");
   });
 });

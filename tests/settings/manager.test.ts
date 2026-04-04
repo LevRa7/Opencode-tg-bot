@@ -118,32 +118,37 @@ describe("settings/manager scoped state", () => {
     });
   });
 
-  it("isolates agent, model, and streaming preferences by user scope", async () => {
+  it("isolates agent and model by topic while keeping streaming per user", async () => {
     runWithTelegramConversationScope(scopeA, () => {
       setCurrentAgent("build");
       setCurrentModel({ providerID: "openai", modelID: "gpt-5", variant: "default" });
     });
     await runWithTelegramConversationScope(scopeA, () => setMessageStreamingEnabled(false));
 
-    runWithTelegramConversationScope(scopeB, () => {
+    runWithTelegramConversationScope(scopeAOtherTopic, () => {
       setCurrentAgent("plan");
       setCurrentModel({ providerID: "anthropic", modelID: "claude", variant: "fast" });
+    });
+
+    runWithTelegramConversationScope(scopeB, () => {
+      setCurrentAgent("review");
     });
     await runWithTelegramConversationScope(scopeB, () => setMessageStreamingEnabled(true));
 
     expect(runWithTelegramConversationScope(scopeA, () => getCurrentAgent())).toBe("build");
-    expect(runWithTelegramConversationScope(scopeB, () => getCurrentAgent())).toBe("plan");
+    expect(runWithTelegramConversationScope(scopeAOtherTopic, () => getCurrentAgent())).toBe("plan");
     expect(runWithTelegramConversationScope(scopeA, () => getCurrentModel())).toEqual({
       providerID: "openai",
       modelID: "gpt-5",
       variant: "default",
     });
-    expect(runWithTelegramConversationScope(scopeB, () => getCurrentModel())).toEqual({
+    expect(runWithTelegramConversationScope(scopeAOtherTopic, () => getCurrentModel())).toEqual({
       providerID: "anthropic",
       modelID: "claude",
       variant: "fast",
     });
     expect(runWithTelegramConversationScope(scopeA, () => isMessageStreamingEnabled())).toBe(false);
+    expect(runWithTelegramConversationScope(scopeAOtherTopic, () => isMessageStreamingEnabled())).toBe(false);
     expect(runWithTelegramConversationScope(scopeB, () => isMessageStreamingEnabled())).toBe(true);
   });
 

@@ -26,6 +26,7 @@ const mocked = vi.hoisted(() => ({
   keyboardUpdateModelMock: vi.fn(),
   keyboardUpdateContextMock: vi.fn(),
   keyboardClearContextMock: vi.fn(),
+  threadClearAllMock: vi.fn(),
 }));
 
 vi.mock("../../../src/bot/commands/abort.js", () => ({
@@ -39,7 +40,7 @@ vi.mock("../../../src/session/manager.js", () => ({
 vi.mock("../../../src/settings/manager.js", () => ({
   clearProject: mocked.clearProjectMock,
   getThreadContextBindings: vi.fn(() => []),
-  setThreadContextBindings: vi.fn(() => Promise.resolve()),
+  setThreadContextBindings: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../../src/bot/utils/keyboard.js", () => ({
@@ -76,6 +77,12 @@ vi.mock("../../../src/keyboard/manager.js", () => ({
     updateModel: mocked.keyboardUpdateModelMock,
     updateContext: mocked.keyboardUpdateContextMock,
     clearContext: mocked.keyboardClearContextMock,
+  },
+}));
+
+vi.mock("../../../src/thread/manager.js", () => ({
+  threadContextManager: {
+    clearAll: mocked.threadClearAllMock,
   },
 }));
 
@@ -128,6 +135,7 @@ describe("bot/commands/start", () => {
     mocked.keyboardUpdateModelMock.mockReset();
     mocked.keyboardUpdateContextMock.mockReset();
     mocked.keyboardClearContextMock.mockReset();
+    mocked.threadClearAllMock.mockReset();
   });
 
   it("stops active flow, resets project/session, and sends welcome message", async () => {

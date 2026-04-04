@@ -3,6 +3,10 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { opencodeClient } from "../opencode/client.js";
 import { getSessionDirectoryCache, setSessionDirectoryCache } from "../settings/manager.js";
+import {
+  getCurrentTelegramConversationScope,
+  runWithTelegramConversationScope,
+} from "../telegram/scope.js";
 import { logger } from "../utils/logger.js";
 
 export interface CachedSessionDirectory {
@@ -52,11 +56,11 @@ function createEmptyCacheData(): SessionDirectoryCacheData {
   };
 }
 
-let cacheData: SessionDirectoryCacheData = createEmptyCacheData();
-let cacheLoaded = false;
-let syncInFlight: Promise<void> | null = null;
-let lastSyncAttemptAt = 0;
-let persistQueue: Promise<void> = Promise.resolve();
+const cacheDataByScope = new Map<string, SessionDirectoryCacheData>();
+const cacheLoadedByScope = new Set<string>();
+const syncInFlightByScope = new Map<string, Promise<void>>();
+const lastSyncAttemptAtByScope = new Map<string, number>();
+const persistQueueByScope = new Map<string, Promise<void>>();
 
 function worktreeKey(worktree: string): string {
   if (process.platform === "win32") {
@@ -64,6 +68,27 @@ function worktreeKey(worktree: string): string {
   }
 
   return worktree;
+}
+
+function getActiveCacheScopeKey(): string {
+  const scope = getCurrentTelegramConversationScope();
+  return scope ? `user:${scope.userId}` : "global";
+}
+
+function getScopeCacheData(): SessionDirectoryCacheData {
+  const scopeKey = getActiveCacheScopeKey();
+  const existing = cacheDataByScope.get(scopeKey);
+  if (existing) {
+    return existing;
+  }
+
+  const created = createEmptyCacheData();
+  cacheDataByScope.set(scopeKey, created);
+  return created;
+}
+
+function setScopeCacheData(data: SessionDirectoryCacheData): void {
+  cacheDataByScope.set(getActiveCacheScopeKey(), data);
 }
 
 function isValidWorktree(worktree: string): boolean {
@@ -131,32 +156,37 @@ function dedupeAndTrimDirectories(data: SessionDirectoryCacheData): void {
 }
 
 async function ensureCacheLoaded(): Promise<void> {
-  if (cacheLoaded) {
+  const scopeKey = getActiveCacheScopeKey();
+  if (cacheLoadedByScope.has(scopeKey)) {
     return;
   }
 
   const storedCache = getSessionDirectoryCache();
-  cacheData = normalizeCacheData(storedCache);
-  cacheLoaded = true;
+  const normalizedCache = normalizeCacheData(storedCache);
+  setScopeCacheData(normalizedCache);
+  cacheLoadedByScope.add(scopeKey);
   logger.debug(
-    `[SessionCache] Loaded ${cacheData.directories.length} directories from settings.sessionDirectoryCache`,
+    `[SessionCache] Loaded ${normalizedCache.directories.length} directories for scope=${scopeKey}`,
   );
 }
 
 function queuePersist(): Promise<void> {
-  persistQueue = persistQueue
+  const scopeKey = getActiveCacheScopeKey();
+  const currentQueue = persistQueueByScope.get(scopeKey) ?? Promise.resolve();
+  const nextQueue = currentQueue
     .catch(() => {
       // Keep queue chain alive if previous write failed.
     })
     .then(async () => {
       try {
-        await setSessionDirectoryCache(cacheData);
+        await setSessionDirectoryCache(getScopeCacheData());
       } catch (error) {
         logger.error("[SessionCache] Failed to persist sessions cache", error);
       }
     });
 
-  return persistQueue;
+  persistQueueByScope.set(scopeKey, nextQueue);
+  return nextQueue;
 }
 
 function upsertDirectory(worktree: string, lastUpdated: number): boolean {
@@ -164,6 +194,7 @@ function upsertDirectory(worktree: string, lastUpdated: number): boolean {
     return false;
   }
 
+  const cacheData = getScopeCacheData();
   const normalizedWorktree = worktree.trim();
   const key = worktreeKey(normalizedWorktree);
   const existingIndex = cacheData.directories.findIndex(
@@ -192,6 +223,7 @@ function upsertDirectory(worktree: string, lastUpdated: number): boolean {
 }
 
 function buildListParams(): { limit: number; start?: number } {
+  const cacheData = getScopeCacheData();
   const hasWatermark = cacheData.lastSyncedUpdatedAt > 0;
 
   if (!hasWatermark) {
@@ -275,6 +307,7 @@ function isServerUnavailableError(error: unknown): boolean {
 async function runSync(): Promise<void> {
   await ensureCacheLoaded();
 
+  const cacheData = getScopeCacheData();
   const params = buildListParams();
   const { data: sessions, error } = await opencodeClient.session.list(params);
 
@@ -409,6 +442,7 @@ async function querySessionDirectoriesFromSqlite(
 async function ingestFromSqliteSessionDatabase(): Promise<void> {
   await ensureCacheLoaded();
 
+  const cacheData = getScopeCacheData();
   const fs = await import("node:fs/promises");
   const roots = await getStorageRootsFromApi();
 
@@ -459,6 +493,7 @@ async function ingestFromSqliteSessionDatabase(): Promise<void> {
 async function ingestFromGlobalSessionStorage(): Promise<void> {
   await ensureCacheLoaded();
 
+  const cacheData = getScopeCacheData();
   const fs = await import("node:fs/promises");
   const candidates = await getStorageRootsFromApi();
 
@@ -539,28 +574,31 @@ export async function warmupSessionDirectoryCache(): Promise<void> {
   } catch (error) {
     logger.warn("[SessionCache] Failed sqlite fallback warmup", error);
   }
+}
 
-  try {
-    await ingestFromGlobalSessionStorage();
-  } catch (error) {
-    logger.warn("[SessionCache] Failed storage fallback warmup", error);
-  }
+export async function warmupHostSessionDirectoryCache(): Promise<void> {
+  await runWithTelegramConversationScope(null, async () => {
+    await warmupSessionDirectoryCache();
+  });
 }
 
 export async function syncSessionDirectoryCache(options?: { force?: boolean }): Promise<void> {
   await ensureCacheLoaded();
 
+  const scopeKey = getActiveCacheScopeKey();
+  const lastSyncAttemptAt = lastSyncAttemptAtByScope.get(scopeKey) ?? 0;
   if (!options?.force && Date.now() - lastSyncAttemptAt < SYNC_COOLDOWN_MS) {
     return;
   }
 
+  const syncInFlight = syncInFlightByScope.get(scopeKey);
   if (syncInFlight) {
     return syncInFlight;
   }
 
-  syncInFlight = runSync()
+  const nextSync = runSync()
     .then(() => {
-      lastSyncAttemptAt = Date.now();
+      lastSyncAttemptAtByScope.set(scopeKey, Date.now());
     })
     .catch((error) => {
       if (isServerUnavailableError(error)) {
@@ -569,18 +607,19 @@ export async function syncSessionDirectoryCache(options?: { force?: boolean }): 
         logger.warn("[SessionCache] Failed to sync sessions cache", error);
       }
 
-      lastSyncAttemptAt = 0;
+      lastSyncAttemptAtByScope.set(scopeKey, 0);
     })
     .finally(() => {
-      syncInFlight = null;
+      syncInFlightByScope.delete(scopeKey);
     });
 
-  return syncInFlight;
+  syncInFlightByScope.set(scopeKey, nextSync);
+  return nextSync;
 }
 
 export async function getCachedSessionDirectories(): Promise<CachedSessionDirectory[]> {
   await ensureCacheLoaded();
-  return cacheData.directories.map((item) => ({ ...item }));
+  return getScopeCacheData().directories.map((item) => ({ ...item }));
 }
 
 export async function getCachedSessionProjects(): Promise<SessionDirectoryProject[]> {
@@ -604,6 +643,7 @@ export async function upsertSessionDirectory(
     return;
   }
 
+  const cacheData = getScopeCacheData();
   if (lastUpdated > cacheData.lastSyncedUpdatedAt) {
     cacheData.lastSyncedUpdatedAt = lastUpdated;
   }
@@ -625,9 +665,9 @@ export async function ingestSessionInfoForCache(session: {
 }
 
 export function __resetSessionDirectoryCacheForTests(): void {
-  cacheData = createEmptyCacheData();
-  cacheLoaded = false;
-  syncInFlight = null;
-  lastSyncAttemptAt = 0;
-  persistQueue = Promise.resolve();
+  cacheDataByScope.clear();
+  cacheLoadedByScope.clear();
+  syncInFlightByScope.clear();
+  lastSyncAttemptAtByScope.clear();
+  persistQueueByScope.clear();
 }

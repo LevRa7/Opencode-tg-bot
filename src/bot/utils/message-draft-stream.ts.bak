@@ -1,0 +1,257 @@
+import type { Api, RawApi } from "grammy";
+import { withMessageThreadId, type TelegramThreadTarget } from "./message-thread.js";
+import { sendBotTextDraft, type TelegramTextFormat } from "./telegram-text.js";
+import { logger } from "../../utils/logger.js";
+import {
+  SequentialMessageDraftIdAllocator,
+  type MessageDraftIdAllocator,
+} from "./message-draft-id.js";
+
+type DraftApi = Pick<Api<RawApi>, "sendMessageDraft">;
+
+interface DraftStreamState {
+  draftId: number;
+  lastSentAt: number;
+  lastSentText: string;
+  lastSentFormat: TelegramTextFormat;
+  pendingText: string | null;
+  pendingFormat: TelegramTextFormat;
+  timer: ReturnType<typeof setTimeout> | null;
+  target: TelegramThreadTarget | null;
+  api: DraftApi | null;
+  disabled: boolean;
+}
+
+const TELEGRAM_MESSAGE_LIMIT = 4096;
+const STREAM_APPEND_MIN_CHARS = 16;
+const STREAM_APPEND_MAX_CHARS = 96;
+const STREAM_APPEND_WORD_LOOKAHEAD = 24;
+
+function prepareDraftText(text: string, format: TelegramTextFormat): string | null {
+  if (!text || text.trim().length === 0) {
+    return null;
+  }
+
+  if (format === "html") {
+    return text;
+  }
+
+  if (text.length <= TELEGRAM_MESSAGE_LIMIT) {
+    return text;
+  }
+
+  return `...${text.slice(-(TELEGRAM_MESSAGE_LIMIT - 3))}`;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function resolveNextProgressiveText(
+  previousText: string,
+  nextText: string,
+  format: TelegramTextFormat,
+): string {
+  if (format !== "raw") {
+    return nextText;
+  }
+
+  if (!nextText.startsWith(previousText)) {
+    return nextText;
+  }
+
+  const remainingLength = nextText.length - previousText.length;
+  if (remainingLength <= STREAM_APPEND_MIN_CHARS) {
+    return nextText;
+  }
+
+  const preferredAppendLength = clamp(
+    Math.ceil(remainingLength * 0.35),
+    STREAM_APPEND_MIN_CHARS,
+    STREAM_APPEND_MAX_CHARS,
+  );
+  let nextLength = previousText.length + preferredAppendLength;
+
+  if (nextLength >= nextText.length) {
+    return nextText;
+  }
+
+  const lookaheadEnd = Math.min(nextText.length, nextLength + STREAM_APPEND_WORD_LOOKAHEAD);
+  const lookahead = nextText.slice(nextLength, lookaheadEnd);
+  const boundaryOffset = lookahead.search(/[\s.,!?;:)]/);
+
+  if (boundaryOffset >= 0) {
+    nextLength += boundaryOffset + 1;
+  }
+
+  return nextText.slice(0, nextLength);
+}
+
+export class MessageDraftStreamManager {
+  private readonly states = new Map<string, DraftStreamState>();
+
+  constructor(
+    private readonly minIntervalMs = 120,
+    private readonly draftIdAllocator: MessageDraftIdAllocator = new SequentialMessageDraftIdAllocator(),
+  ) {}
+
+  enqueue(
+    sessionId: string,
+    api: DraftApi,
+    target: TelegramThreadTarget,
+    text: string,
+    format: TelegramTextFormat = "raw",
+  ): void {
+    const preparedText = prepareDraftText(text, format);
+    if (!preparedText) {
+      return;
+    }
+
+    const state = this.getOrCreateState(sessionId);
+    if (state.disabled) {
+      return;
+    }
+
+    if (
+      (preparedText === state.lastSentText && format === state.lastSentFormat) ||
+      (preparedText === state.pendingText && format === state.pendingFormat)
+    ) {
+      return;
+    }
+
+    state.api = api;
+    state.target = target;
+    state.pendingText = preparedText;
+    state.pendingFormat = format;
+
+    if (state.timer) {
+      return;
+    }
+
+    this.scheduleSession(sessionId);
+  }
+
+  async flushSession(sessionId: string): Promise<void> {
+    const state = this.states.get(sessionId);
+    if (!state || state.disabled || !state.pendingText || !state.api || !state.target) {
+      return;
+    }
+
+    if (state.timer) {
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
+
+    const text = state.pendingText;
+    const format = state.pendingFormat;
+    await this.sendDraftText(sessionId, state, text, format);
+    if (!state.disabled) {
+      state.pendingText = null;
+      state.pendingFormat = state.lastSentFormat;
+    }
+  }
+
+  clearSession(sessionId: string): void {
+    const state = this.states.get(sessionId);
+    if (state?.timer) {
+      clearTimeout(state.timer);
+    }
+    this.states.delete(sessionId);
+  }
+
+  clearAll(): void {
+    for (const sessionId of this.states.keys()) {
+      this.clearSession(sessionId);
+    }
+  }
+
+  private getOrCreateState(sessionId: string): DraftStreamState {
+    const existing = this.states.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+
+    const created: DraftStreamState = {
+      draftId: this.draftIdAllocator.next(),
+      lastSentAt: 0,
+      lastSentText: "",
+      lastSentFormat: "raw",
+      pendingText: null,
+      pendingFormat: "raw",
+      timer: null,
+      target: null,
+      api: null,
+      disabled: false,
+    };
+    this.states.set(sessionId, created);
+    return created;
+  }
+
+  private scheduleSession(sessionId: string): void {
+    const state = this.states.get(sessionId);
+    if (!state || state.timer) {
+      return;
+    }
+
+    const elapsedMs = Date.now() - state.lastSentAt;
+    const waitMs = state.lastSentAt === 0 ? 0 : Math.max(this.minIntervalMs - elapsedMs, 0);
+
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      void this.processSession(sessionId);
+    }, waitMs);
+  }
+
+  private async processSession(sessionId: string): Promise<void> {
+    const state = this.states.get(sessionId);
+    if (!state || state.disabled || !state.pendingText || !state.api || !state.target) {
+      return;
+    }
+
+    const nextText = resolveNextProgressiveText(
+      state.lastSentText,
+      state.pendingText,
+      state.pendingFormat,
+    );
+    await this.sendDraftText(sessionId, state, nextText, state.pendingFormat);
+
+    if (state.disabled) {
+      return;
+    }
+
+    if (state.pendingText && state.pendingText !== state.lastSentText) {
+      this.scheduleSession(sessionId);
+      return;
+    }
+
+    state.pendingText = null;
+  }
+
+  private async sendDraftText(
+    sessionId: string,
+    state: DraftStreamState,
+    text: string,
+    format: TelegramTextFormat,
+  ): Promise<void> {
+    try {
+      await sendBotTextDraft({
+        api: state.api!,
+        chatId: state.target!.chatId,
+        draftId: state.draftId,
+        text,
+        format,
+        options: withMessageThreadId(undefined, state.target!.messageThreadId),
+      });
+      state.lastSentAt = Date.now();
+      state.lastSentText = text;
+      state.lastSentFormat = format;
+    } catch (error) {
+      state.disabled = true;
+      state.pendingText = null;
+      logger.warn(
+        `[Bot] Failed to stream assistant draft, disabling drafts for session ${sessionId}`,
+        error,
+      );
+    }
+  }
+}

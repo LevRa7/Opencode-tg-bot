@@ -1,6 +1,6 @@
 {
   "name": "@grinev/opencode-telegram-bot",
-  "version": "0.12.0",
+  "version": "0.14.1",
   "description": "Telegram bot client for OpenCode to run and monitor coding tasks from chat.",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,13 +24,14 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "npm run build && npm start",
+    "patch:custom": "node scripts/apply-custom-patch.mjs",
     "release:prepare": "node scripts/release-prepare.mjs",
     "release:rc": "node scripts/release-prepare.mjs rc",
     "release:notes:preview": "node scripts/release-notes-preview.mjs",
     "lint": "eslint src --ext .ts --max-warnings=0",
     "format": "prettier --write \"src/**/*.ts\"",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test": "node scripts/run-vitest.mjs run",
+    "test:coverage": "node scripts/run-vitest.mjs run --coverage"
   },
   "repository": {
     "type": "git",
@@ -57,12 +58,14 @@
     "dotenv": "^17.2.3",
     "grammy": "^1.39.2",
     "https-proxy-agent": "^7.0.6",
+    "qrcode": "^1.5.4",
     "socks-proxy-agent": "^8.0.5",
     "telegram-markdown-v2": "^0.0.4"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.0.8",
+    "@types/qrcode": "^1.5.6",
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",
     "@vitest/coverage-v8": "^3.2.4",

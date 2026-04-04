@@ -27,6 +27,7 @@ vi.mock("../../../src/opencode/client.js", () => ({
       status: mocked.statusMock,
     },
   },
+  getCurrentOpencodeRuntimeKey: vi.fn(() => "host"),
 }));
 
 const TEST_QUESTION: Question = {

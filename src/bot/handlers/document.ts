@@ -7,15 +7,22 @@ import {
   isTextMimeType,
   isFileSizeAllowed,
 } from "../utils/file-download.js";
+import { getModelCapabilities, supportsInput } from "../../model/capabilities.js";
+import { getStoredModel } from "../../model/manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
-import type { FilePartInput } from "@opencode-ai/sdk/v2";
+import type { FilePartInput, Model } from "@opencode-ai/sdk/v2";
 
 export interface DocumentHandlerDeps extends ProcessPromptDeps {
   downloadFile?: (
     api: Context["api"],
     fileId: string,
   ) => Promise<{ buffer: Buffer; filePath: string }>;
+  getModelCapabilities?: (
+    providerId: string,
+    modelId: string,
+  ) => Promise<Model["capabilities"] | null>;
+  getStoredModel?: () => { providerID: string; modelID: string };
   processPrompt?: (
     ctx: Context,
     text: string,
@@ -29,6 +36,8 @@ export async function handleDocumentMessage(
   deps: DocumentHandlerDeps,
 ): Promise<void> {
   const downloadFile = deps.downloadFile ?? downloadTelegramFile;
+  const getCapabilities = deps.getModelCapabilities ?? getModelCapabilities;
+  const getStored = deps.getStoredModel ?? getStoredModel;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
 
   const doc = ctx.message?.document;
@@ -68,6 +77,21 @@ export async function handleDocumentMessage(
     }
 
     if (mimeType === "application/pdf") {
+      const storedModel = getStored();
+      const capabilities = await getCapabilities(storedModel.providerID, storedModel.modelID);
+
+      if (!supportsInput(capabilities, "pdf")) {
+        logger.warn(
+          `[Document] Model ${storedModel.providerID}/${storedModel.modelID} doesn't support PDF input`,
+        );
+        await ctx.reply(t("bot.model_no_pdf"));
+
+        if (caption.trim().length > 0) {
+          await processPrompt(ctx, caption, deps);
+        }
+        return;
+      }
+
       await ctx.reply(t("bot.file_downloading"));
       const downloadedFile = await downloadFile(ctx.api, doc.file_id);
 

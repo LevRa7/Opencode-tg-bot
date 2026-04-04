@@ -14,6 +14,7 @@ import {
   replyWithInlineMenu,
 } from "./inline-menu.js";
 import { t } from "../../i18n/index.js";
+import { threadContextManager } from "../../thread/manager.js";
 
 function buildModelSelectionMenuText(modelLists: ModelSelectionLists): string {
   const lines = [t("model.menu.select"), t("model.menu.favorites_title")];
@@ -75,6 +76,7 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
 
     // Select model and persist
     selectModel(modelInfo);
+    threadContextManager.bindModelToActiveContext(modelInfo);
 
     // Update keyboard manager state (may not be initialized if no session selected)
     keyboardManager.updateModel(modelInfo);

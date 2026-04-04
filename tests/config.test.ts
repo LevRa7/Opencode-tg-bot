@@ -10,38 +10,8 @@ describe("config boolean env parsing", () => {
   beforeEach(() => {
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "test-telegram-token");
     vi.stubEnv("TELEGRAM_ADMIN_USER_ID", "123456789");
-    vi.stubEnv("TELEGRAM_ALLOWED_USER_IDS", "123456789");
-    vi.stubEnv("TELEGRAM_ALLOWED_USER_ID", "");
     vi.stubEnv("OPENCODE_MODEL_PROVIDER", "test-provider");
     vi.stubEnv("OPENCODE_MODEL_ID", "test-model");
-  });
-
-  it("uses admin user as default allowed user list", async () => {
-    vi.stubEnv("TELEGRAM_ALLOWED_USER_IDS", "");
-
-    const config = await loadConfig();
-
-    expect(config.telegram.adminUserId).toBe(123456789);
-    expect(config.telegram.allowedUserIds).toEqual([123456789]);
-  });
-
-  it("parses additional allowed Telegram user ids", async () => {
-    vi.stubEnv("TELEGRAM_ALLOWED_USER_IDS", "123456789, 987654321 555");
-
-    const config = await loadConfig();
-
-    expect(config.telegram.allowedUserIds).toEqual([123456789, 987654321, 555]);
-  });
-
-  it("supports legacy TELEGRAM_ALLOWED_USER_ID fallback", async () => {
-    vi.stubEnv("TELEGRAM_ADMIN_USER_ID", "");
-    vi.stubEnv("TELEGRAM_ALLOWED_USER_IDS", "");
-    vi.stubEnv("TELEGRAM_ALLOWED_USER_ID", "777");
-
-    const config = await loadConfig();
-
-    expect(config.telegram.adminUserId).toBe(777);
-    expect(config.telegram.allowedUserIds).toEqual([777]);
   });
 
   it("uses false defaults for hide service message flags", async () => {
@@ -129,7 +99,7 @@ describe("config boolean env parsing", () => {
 
     const config = await loadConfig();
 
-    expect(config.bot.locale).toBe("ru");
+    expect(config.bot.locale).toBe("en");
   });
 
   it("uses default task limit when TASK_LIMIT is missing", async () => {
@@ -138,6 +108,30 @@ describe("config boolean env parsing", () => {
     const config = await loadConfig();
 
     expect(config.bot.taskLimit).toBe(10);
+  });
+
+  it("uses default response stream throttle when RESPONSE_STREAM_THROTTLE_MS is missing", async () => {
+    vi.stubEnv("RESPONSE_STREAM_THROTTLE_MS", "");
+
+    const config = await loadConfig();
+
+    expect(config.bot.responseStreamThrottleMs).toBe(500);
+  });
+
+  it("parses RESPONSE_STREAM_THROTTLE_MS as a positive integer", async () => {
+    vi.stubEnv("RESPONSE_STREAM_THROTTLE_MS", "750");
+
+    const config = await loadConfig();
+
+    expect(config.bot.responseStreamThrottleMs).toBe(750);
+  });
+
+  it("falls back to default response stream throttle on invalid value", async () => {
+    vi.stubEnv("RESPONSE_STREAM_THROTTLE_MS", "zero");
+
+    const config = await loadConfig();
+
+    expect(config.bot.responseStreamThrottleMs).toBe(500);
   });
 
   it("parses TASK_LIMIT as a positive integer", async () => {
@@ -154,5 +148,20 @@ describe("config boolean env parsing", () => {
     const config = await loadConfig();
 
     expect(config.bot.taskLimit).toBe(10);
+  });
+
+  it("keeps TTS credentials unset when dedicated vars are missing", async () => {
+    vi.stubEnv("STT_API_URL", "https://api.openai.com/v1");
+    vi.stubEnv("STT_API_KEY", "sk-test-key");
+    vi.stubEnv("TTS_API_URL", "");
+    vi.stubEnv("TTS_API_KEY", "");
+    vi.stubEnv("TTS_VOICE", "");
+
+    const config = await loadConfig();
+
+    expect(config.tts.apiUrl).toBe("");
+    expect(config.tts.apiKey).toBe("");
+    expect(config.tts.model).toBe("gpt-4o-mini-tts");
+    expect(config.tts.voice).toBe("alloy");
   });
 });

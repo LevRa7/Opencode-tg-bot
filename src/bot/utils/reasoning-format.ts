@@ -1,5 +1,33 @@
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 
+function splitTextIntoChunks(text: string, maxLength: number): string[] {
+  if (text.length <= maxLength) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > maxLength) {
+    let splitIndex = remaining.lastIndexOf("\n", maxLength - 100);
+    if (splitIndex <= maxLength / 2) {
+      splitIndex = remaining.lastIndexOf(" ", maxLength - 100);
+    }
+    if (splitIndex <= maxLength / 4) {
+      splitIndex = maxLength;
+    }
+
+    chunks.push(remaining.slice(0, splitIndex));
+    remaining = remaining.slice(splitIndex).trimStart();
+  }
+
+  if (remaining) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
+}
+
 type ReasoningBlock =
   | {
       kind: "heading";
@@ -186,21 +214,12 @@ export function formatReasoningForTelegramHtml(
     ? `<blockquote expandable>${contentHtml}</blockquote>`
     : `<blockquote>${contentHtml}</blockquote>`;
 
-  const fullText = textPrefix ? `${wrapped}\n\n${textPrefix}` : wrapped;
+  // Answer (textPrefix) comes BEFORE reasoning block for better readability
+  const fullText = textPrefix ? `${textPrefix}\n\n${wrapped}` : wrapped;
 
   if (fullText.length <= TELEGRAM_MESSAGE_LIMIT) {
     return [fullText];
   }
 
-  // If too long, we need to split. For simplicity, we just return the prefix and hope it's not too long,
-  // but a real implementation should split chunks.
-  // Given the complexity of splitting HTML, I'll just truncate for now or split into multiple messages.
-  // But Telegram's sendMessageDraft handles long messages by splitting? No.
-  
-  // Let's implement a very basic split if needed.
-  if (fullText.length > TELEGRAM_MESSAGE_LIMIT) {
-    return [fullText.slice(0, TELEGRAM_MESSAGE_LIMIT - 3) + "..."];
-  }
-
-  return [fullText];
+  return splitTextIntoChunks(fullText, TELEGRAM_MESSAGE_LIMIT);
 }

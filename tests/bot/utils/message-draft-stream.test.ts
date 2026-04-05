@@ -86,7 +86,7 @@ describe("bot/utils/message-draft-stream", () => {
     await manager.flushSession("session-1");
 
     expect(sendMessageDraft).toHaveBeenCalledTimes(1);
-    expect(sendMessageDraft).toHaveBeenCalledWith(123, 1, htmlText, {});
+    expect(sendMessageDraft).toHaveBeenCalledWith(123, 1, htmlText, { parse_mode: "HTML" });
   });
 
   it("does not send parallel duplicate drafts while a send is in flight", async () => {

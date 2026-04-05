@@ -621,7 +621,7 @@ describe("summary/aggregator", () => {
       },
     } as unknown as Event);
 
-    expect(onPartial).toHaveBeenCalledWith("session-1", "message-stream-1", "Partial answer");
+    expect(onPartial).toHaveBeenCalledWith("session-1", "message-stream-1", "Partial answer", "", []);
     expect(onComplete).toHaveBeenCalledWith("session-1", "message-stream-1", "Partial answer");
   });
 
@@ -685,7 +685,7 @@ describe("summary/aggregator", () => {
       },
     } as unknown as Event);
 
-    expect(onPartial).toHaveBeenLastCalledWith("session-1", "message-multipart-1", "Hello world");
+    expect(onPartial).toHaveBeenLastCalledWith("session-1", "message-multipart-1", "Hello world", "", []);
     expect(onComplete).toHaveBeenCalledWith("session-1", "message-multipart-1", "Hello world");
   });
 
@@ -723,7 +723,7 @@ describe("summary/aggregator", () => {
     } as unknown as Event);
 
     expect(onPartial).toHaveBeenCalledTimes(1);
-    expect(onPartial).toHaveBeenCalledWith("session-1", "message-unknown-1", "Hello");
+    expect(onPartial).toHaveBeenCalledWith("session-1", "message-unknown-1", "Hello", "", []);
   });
 
   it("does not stream unknown text when only one update arrived", () => {
@@ -816,8 +816,8 @@ describe("summary/aggregator", () => {
       },
     } as unknown as Event);
 
-    expect(onPartial).toHaveBeenNthCalledWith(1, "session-1", "message-delta-1", "Hel");
-    expect(onPartial).toHaveBeenNthCalledWith(2, "session-1", "message-delta-1", "Hello");
+    expect(onPartial).toHaveBeenNthCalledWith(1, "session-1", "message-delta-1", "Hel", "", []);
+    expect(onPartial).toHaveBeenNthCalledWith(2, "session-1", "message-delta-1", "Hello", "", []);
   });
 
   it("streams delta events even when part type is omitted", () => {
@@ -837,7 +837,7 @@ describe("summary/aggregator", () => {
       },
     } as unknown as Event);
 
-    expect(onPartial).toHaveBeenCalledWith("session-1", "message-delta-unknown-type", "Hi");
+    expect(onPartial).toHaveBeenCalledWith("session-1", "message-delta-unknown-type", "Hi", "", []);
   });
 
   it("does not stream unknown delta part after reasoning started", () => {

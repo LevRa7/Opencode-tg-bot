@@ -458,20 +458,23 @@ const toolCallStreamer = new ToolCallStreamer({
 });
 
 async function ensureCommandsInitialized(ctx: Context, next: NextFunction): Promise<void> {
-  if (!ctx.from || ctx.from.id !== config.telegram.adminUserId) {
+  if (!ctx.from || !ctx.chat) {
     await next();
     return;
   }
 
-  if (!ctx.chat) {
-    logger.warn("[Bot] Cannot initialize commands: chat context is missing");
+  const userId = ctx.from.id;
+  const isAdmin = userId === config.telegram.adminUserId;
+  const isAllowedUser = config.telegram.allowedUserIds.includes(userId);
+
+  if (!isAdmin && !isAllowedUser) {
     await next();
     return;
   }
 
   try {
-    await syncAuthorizedChatCommands(ctx.api, ctx.chat.id, ctx.chat.type);
-    logger.debug(`[Bot] Commands initialized for authorized user (chat_id=${ctx.chat.id})`);
+    await syncAuthorizedChatCommands(ctx.api, ctx.chat.id, ctx.chat.type, isAdmin);
+    logger.debug(`[Bot] Commands initialized for user (chat_id=${ctx.chat.id}, isAdmin=${isAdmin})`);
   } catch (err) {
     logger.error("[Bot] Failed to sync commands:", err);
   }
@@ -530,8 +533,9 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           formattedTechnicals,
           assistantText,
         );
-        const textToSend = chunks[0] || assistantText;
-        messageDraftStreamManager.enqueue(sessionId, botApi, target, textToSend, "html");
+        for (const chunk of chunks) {
+          messageDraftStreamManager.enqueue(sessionId, botApi, target, chunk, "html");
+        }
       } else {
         messageDraftStreamManager.enqueue(
           sessionId,
@@ -579,6 +583,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       const finalFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
       let finalText = messageText;
       let finalParseMode: "html" | "raw" | "markdown_v2" = finalFormat;
+      let finalChunks: string[] | undefined;
 
       if (mode > 0) {
         const assistantText =
@@ -590,6 +595,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           assistantText,
         );
         finalText = chunks[0] || assistantText;
+        finalChunks = chunks.length > 1 ? chunks : undefined;
         finalParseMode = "html";
       }
 
@@ -597,6 +603,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         await finalizeAssistantResponse({
           sessionId,
           messageText: finalText,
+          chunks: finalChunks,
           flushDraftStream: (draftSessionId) =>
             messageDraftStreamManager.flushSession(draftSessionId),
           flushPendingServiceMessages: () =>
@@ -640,7 +647,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         clearPromptResponseMode(sessionId);
         messageDraftStreamManager.clearSession(sessionId);
         logger.error("Failed to send message to Telegram:", err);
-        // Stop processing events after critical error to prevent infinite loop
         logger.error("[Bot] CRITICAL: Stopping event processing due to error");
         summaryAggregator.clear();
       } finally {

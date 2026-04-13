@@ -103,6 +103,7 @@ import {
 import { threadContextManager } from "../thread/manager.js";
 import { withMessageThreadId } from "./utils/message-thread.js";
 import {
+  getApprovedTelegramUserIds,
   getReasoningMode,
   getTenantRuntimeInfo,
   getThinkingClearMode,
@@ -651,7 +652,8 @@ async function ensureCommandsInitialized(ctx: Context, next: NextFunction): Prom
 
   const userId = ctx.from.id;
   const isAdmin = userId === config.telegram.adminUserId;
-  const isAllowedUser = config.telegram.allowedUserIds.includes(userId);
+  const isAllowedUser = config.telegram.allowedUserIds.includes(userId) ||
+    getApprovedTelegramUserIds().includes(userId);
 
   if (!isAdmin && !isAllowedUser) {
     await next();

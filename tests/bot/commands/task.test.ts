@@ -189,7 +189,7 @@ describe("bot/commands/task", () => {
 
     await taskCommand(ctx as never);
 
-    expect(ctx.reply).toHaveBeenCalledWith(t("task.limit_reached", { limit: "1" }));
+    expect(ctx.reply).toHaveBeenCalledWith(t("task.limit_reached", { limit: "1" }), {});
     expect(taskCreationManager.isActive()).toBe(false);
     expect(interactionManager.getSnapshot()).toBeNull();
   });
@@ -205,7 +205,7 @@ describe("bot/commands/task", () => {
       "every day at 17:00",
       "D:\\Projects\\Repo",
     );
-    expect(ctx.reply).toHaveBeenNthCalledWith(1, t("task.parse.in_progress"));
+    expect(ctx.reply).toHaveBeenNthCalledWith(1, t("task.parse.in_progress"), {});
     const previewCall = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[1] as [
       string,
       { reply_markup: unknown },
@@ -281,7 +281,7 @@ describe("bot/commands/task", () => {
     expect(handled).toBe(true);
     expect(mocked.addScheduledTaskMock).not.toHaveBeenCalled();
     expect(mocked.registerTaskMock).not.toHaveBeenCalled();
-    expect(ctx.reply).toHaveBeenCalledWith(t("task.limit_reached", { limit: "1" }));
+    expect(ctx.reply).toHaveBeenCalledWith(t("task.limit_reached", { limit: "1" }), {});
     expect(taskCreationManager.isActive()).toBe(false);
     expect(interactionManager.getSnapshot()).toBeNull();
   });
@@ -320,7 +320,7 @@ describe("bot/commands/task", () => {
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
       text: t("task.cancel_callback"),
     });
-    expect(ctx.reply).toHaveBeenCalledWith(t("task.cancelled"));
+    expect(ctx.reply).toHaveBeenCalledWith(t("task.cancelled"), {});
     expect(taskCreationManager.isActive()).toBe(false);
     expect(interactionManager.getSnapshot()).toBeNull();
   });

@@ -1,5 +1,6 @@
 import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { processManager } from "../../process/manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
@@ -27,6 +28,8 @@ async function waitForServerReady(maxWaitMs: number = 10000): Promise<boolean> {
 }
 
 export async function opencodeStartCommand(ctx: CommandContext<Context>) {
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+
   try {
     const runtimeInfo = processManager.getCurrentRuntimeInfo();
 
@@ -38,6 +41,7 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
           pid: runtimeInfo.pid ?? "-",
           seconds: uptime,
         }),
+        withMessageThreadId(undefined, messageThreadId),
       );
       return;
     }
@@ -50,6 +54,7 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
           t("opencode_start.already_running_external", {
             version: data.version || t("common.unknown"),
           }),
+          withMessageThreadId(undefined, messageThreadId),
         );
         return;
       }
@@ -57,7 +62,10 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
       // continue with managed start
     }
 
-    const statusMessage = await ctx.reply(t("opencode_start.starting"));
+    const statusMessage = await ctx.reply(
+      t("opencode_start.starting"),
+      withMessageThreadId(undefined, messageThreadId),
+    );
     const { success, error } = await processManager.ensureRuntime();
 
     if (!success) {
@@ -97,6 +105,6 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
     });
   } catch (err) {
     logger.error("[Bot] Error in /opencode-start command:", err);
-    await ctx.reply(t("opencode_start.error"));
+    await ctx.reply(t("opencode_start.error"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
   }
 }

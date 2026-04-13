@@ -45,7 +45,7 @@ describe("summary/subagent-formatter", () => {
     expect(text).toContain("Model: openai/gpt-5.4");
     expect(text).not.toContain("Context:");
     expect(text).not.toContain("Cost:");
-    expect(text).toContain("📖 read Reading pinned manager");
+    expect(text).toContain('📖 "read" `Reading pinned manager`');
     expect(text).not.toContain("Working:");
   });
 
@@ -168,7 +168,7 @@ describe("summary/subagent-formatter", () => {
       },
     ]);
 
-    expect(text).toContain("⚙️ Working...");
-    expect(text).not.toContain("📖 read\n");
+    expect(text).toContain('📖 "read"');
+    expect(text).not.toContain("⚙️ Working...");
   });
 });

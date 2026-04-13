@@ -1,4 +1,5 @@
 import { CommandContext, Context } from "grammy";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { InlineKeyboard } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { setCurrentSession, SessionInfo } from "../../session/manager.js";
@@ -136,6 +137,8 @@ function buildSessionsKeyboard(pageData: SessionPage, pageSize: number): InlineK
 }
 
 export async function sessionsCommand(ctx: CommandContext<Context>) {
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+
   try {
     if (isForegroundBusy()) {
       await replyBusyBlocked(ctx);
@@ -146,7 +149,7 @@ export async function sessionsCommand(ctx: CommandContext<Context>) {
     const currentProject = getCurrentProject();
 
     if (!currentProject) {
-      await ctx.reply(t("sessions.project_not_selected"));
+      await ctx.reply(t("sessions.project_not_selected"), withMessageThreadId(undefined, messageThreadId));
       return;
     }
 
@@ -160,7 +163,7 @@ export async function sessionsCommand(ctx: CommandContext<Context>) {
     });
 
     if (firstPage.sessions.length === 0) {
-      await ctx.reply(t("sessions.empty"));
+      await ctx.reply(t("sessions.empty"), withMessageThreadId(undefined, messageThreadId));
       return;
     }
 
@@ -173,7 +176,7 @@ export async function sessionsCommand(ctx: CommandContext<Context>) {
     });
   } catch (error) {
     logger.error("[Sessions] Error fetching sessions:", error);
-    await ctx.reply(t("sessions.fetch_error"));
+    await ctx.reply(t("sessions.fetch_error"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
   }
 }
 
@@ -202,7 +205,7 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
     if (!currentProject) {
       clearAllInteractionState("session_select_project_missing");
       await ctx.answerCallbackQuery();
-      await ctx.reply(t("sessions.select_project_first"));
+      await ctx.reply(t("sessions.select_project_first"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
       return true;
     }
 
@@ -265,6 +268,7 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
         const loadingMessage = await ctx.api.sendMessage(
           ctx.chat.id,
           t("sessions.loading_context"),
+          withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
         );
         loadingMessageId = loadingMessage.message_id;
       } catch (err) {
@@ -313,9 +317,11 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
       // Send session selection confirmation with updated keyboard
       const keyboard = keyboardManager.getKeyboard();
       try {
-        await ctx.api.sendMessage(chatId, t("sessions.selected", { title: session.title }), {
-          reply_markup: keyboard,
-        });
+        await ctx.api.sendMessage(
+          chatId,
+          t("sessions.selected", { title: session.title }),
+          withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+        );
       } catch (err) {
         logger.error("[Sessions] Failed to send selection message:", err);
       }
@@ -331,6 +337,7 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
             session.title,
             session.id,
             currentProject.worktree,
+            extractMessageThreadIdFromContext(ctx),
           ),
       });
     }
@@ -340,7 +347,7 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
     clearAllInteractionState("session_select_error");
     logger.error("[Sessions] Error selecting session:", error);
     await ctx.answerCallbackQuery();
-    await ctx.reply(t("sessions.select_error"));
+    await ctx.reply(t("sessions.select_error"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
   }
 
   return true;
@@ -455,6 +462,7 @@ async function sendSessionPreview(
   sessionTitle: string,
   sessionId: string,
   directory: string,
+  messageThreadId?: number,
 ): Promise<void> {
   const previewItems = await loadSessionPreview(sessionId, directory);
   const finalText = formatSessionPreview(sessionTitle, previewItems);
@@ -469,7 +477,7 @@ async function sendSessionPreview(
   }
 
   try {
-    await api.sendMessage(chatId, finalText);
+    await api.sendMessage(chatId, finalText, withMessageThreadId(undefined, messageThreadId));
   } catch (err) {
     logger.error("[Sessions] Failed to send session preview message:", err);
   }

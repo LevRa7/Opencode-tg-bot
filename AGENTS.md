@@ -102,6 +102,24 @@ OpenCode Server
 - Keep functions small and focused.
 - Prefer `async/await` over chained `.then()`.
 
+### Comments and in-code notes
+
+- Add concise comments when the intent is not obvious from the code itself.
+- In production code, explain:
+  - what the code does,
+  - why this approach was chosen,
+  - which constraint or trade-off led to it.
+- When fixing code, leave a short note near the change when the fix is subtle:
+  - when it was fixed,
+  - what caused the issue,
+  - what outcome the fix is meant to achieve.
+- In tests, document:
+  - which function or behavior is being tested,
+  - what properties it must satisfy,
+  - what result counts as a pass,
+  - how the test drives the code path.
+- Treat comments as a working notebook for the change: capture the decision, the reason, and the verification path.
+- Keep comments short, factual, and useful; do not restate obvious code.
 ### Error handling
 
 - Use `try/catch` around async operations.
@@ -212,8 +230,102 @@ Full docs: https://opencode.ai/docs/sdk
 3. Align major architecture changes (including new dependencies) with the user first.
 4. Add or update tests for new functionality.
 5. After code changes, run quality checks: `npm run build`, `npm run lint`, and `npm test`.
-6. Update checkboxes in `PRODUCT.md` when relevant tasks are completed.
-7. Keep code clean, consistent, and maintainable.
+6. After the implementation is green, run two review agents in parallel: one security-focused, one architecture-focused.
+7. Update `CHANGELOG.md` for any user-visible, functional, or architectural change before finishing the task.
+8. Update checkboxes in `PRODUCT.md` when relevant tasks are completed.
+9. Keep code clean, consistent, and maintainable.
+
+### DDD guidance
+
+- Prefer explicit domain concepts over primitive obsession. If a value carries domain meaning or invariants, model it as a named object or dedicated type instead of raw `string` / `number` / `boolean`.
+- Use ubiquitous language in type names, modules, tests, and comments so the code reflects the business/domain vocabulary.
+- Keep value objects immutable and validate invariants at creation time (`factory` / constructor boundary).
+- Do not leak Telegram DTOs, OpenCode SDK payloads, env payloads, or storage records into domain/application logic. Map them at the boundary using adapters.
+- Keep business rules and invariants in domain/application code, not in handlers, controllers, or framework adapters.
+- Introduce value objects only where they reduce ambiguity, encode invariants, or protect a boundary. Do not create abstractions for one-off values.
+- Favor bounded-context refactors over repo-wide primitive rewrites. Migrate one context at a time and keep anti-corruption mapping explicit between contexts.
+- When reviewing a change, check whether public signatures still expose meaningless primitives where a domain concept now exists.
+
+### Preferred review skills and when to use them
+
+- `code-reviewer` — default post-change review for correctness, tests, and maintainability.
+- `security-auditor` — security-sensitive code, auth, secrets, input handling, trust boundaries, and remote-control surfaces.
+- `threat-modeling-expert` — permission flow, abuse scenarios, and attack-surface review when the bot can trigger actions in other systems.
+- `architect-review` — complexity, module boundaries, coupling, scalability, debuggability, DDD boundaries, and Clean Architecture dependency direction.
+- `architecture-patterns` — when the review should explicitly evaluate layering, ports/adapters, and anti-corruption boundaries.
+- `prompt-engineer` / `prompt-engineering-patterns` — crafting clearer, stricter agent instructions.
+- `tdd-orchestrator` — when the task should follow a strict test-first workflow.
+- `unit-testing-test-generate` + `test-automator` — when a dedicated worker should write or expand tests under TDD guidance.
+- `context-driven-development` — when a change needs bounded-context modeling and ubiquitous language alignment before coding.
+- `agent-orchestration-multi-agent-optimize` — when coordinating parallel review agents.
+
+### Recommended agent roles for substantial changes
+
+- **DDD / Context Lead** — model bounded contexts, glossary, and domain boundaries before code changes.
+- **TDD Orchestrator** — enforce Red-Green-Refactor and define the test sequence before implementation.
+- **Test Engineer** — write or expand unit, integration, and contract tests under TDD guidance.
+- **Security Reviewer** — review remote-control flows, permission boundaries, and abuse paths.
+- **Architecture Reviewer** — review DDD boundaries, Clean Architecture dependency direction, and maintainability.
+
+### Post-implementation review prompt template
+
+Use this structure after tests and code are complete:
+
+1. Brief context: what changed and why.
+2. Exact scope: list the touched files and the behavior that changed.
+3. Verification: state which tests or commands already passed.
+4. Review focus: tell each agent exactly what to look for.
+5. Output format: require file:line references, severity, why it matters, and the smallest useful fix.
+6. Run the review agents in parallel, not sequentially, so security and architecture feedback arrive independently.
+7. If the change introduces or reshapes domain concepts, ask the architecture reviewer to evaluate DDD boundaries and Clean Architecture dependency direction explicitly.
+
+#### Security review prompt
+
+```text
+Review these changes for security issues only.
+
+Focus on authn/authz, secrets handling, input validation, injection, SSRF, path traversal, unsafe deserialization, race conditions, logging leaks, privilege escalation, and remote-control abuse paths.
+Pay extra attention to trust boundaries where the Telegram bot can trigger actions in local runtimes or external tools.
+
+For each finding, report: severity, file:line, why it matters, exploitability, and the smallest safe fix.
+If there are no findings, say so and mention any residual risk.
+Do not suggest unrelated refactors.
+```
+
+#### Architecture review prompt
+
+```text
+Review these changes for architecture and complexity quality.
+
+Focus on coupling, cohesion, module boundaries, DDD bounded contexts, ubiquitous language, dependency direction, Clean Architecture layering, testability, observability, debuggability, scalability, and how hard it would be to replace one module with another.
+Call out trade-offs, hotspots, hidden dependencies, and places where primitives leak across domain boundaries.
+For each finding, report: severity, file:line, why it matters, and the smallest refactor that would improve the design.
+Keep the focus on maintainability, not style.
+```
+
+#### Combined prompt for implementation follow-up
+
+```text
+You are reviewing the implementation after tests and code changes have already passed locally.
+
+Context:
+- Summarize what changed in 1-3 sentences.
+- List the touched files.
+- Mention which checks already passed.
+
+Review goals:
+1. Security reviewer: inspect only security risks.
+2. Architecture reviewer: inspect only design, complexity, scalability, and debuggability.
+
+For every finding, include:
+- severity
+- file:line
+- why it matters
+- the smallest useful fix
+
+If nothing is found, say that explicitly and mention any residual risk or follow-up watchpoints.
+Do not repeat the implementation summary in the findings section.
+```
 
 ## TDD Development Approach
 

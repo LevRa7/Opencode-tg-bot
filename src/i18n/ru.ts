@@ -473,15 +473,6 @@ export const ru: I18nDictionary = {
   "stt.error": "🔴 Не удалось распознать аудио: {error}",
   "stt.empty_result": "🎤 В аудиосообщении не обнаружена речь.",
 
-  "cmd.description.export_data": "Экспорт данных",
-
-  "export_data.title": "Настройки экспорта данных",
-  "export_data.group.personal": "Личные",
-  "export_data.group.bots": "Боты",
-  "export_data.group.group_chats": "Групповые чаты",
-  "export_data.group.public_channels": "Публичные каналы",
-  "export_data.group.interlocutor_channels": "Каналы собеседников",
-
   "restart.admin_only": "Эта команда доступна только администратору.",
 
   "status.runtime.tenant": "Режим: tenant",
@@ -546,12 +537,10 @@ export const ru: I18nDictionary = {
   "ontology.kind.location": "Локация",
   "ontology.kind.project": "Проект",
   "ontology.kind.bond": "Связь",
-  "cmd.description.reasoning": "Настройка уровня размышлений (0-3)",
   "reasoning.title": "🧠 Настройки размышлений",
   "reasoning.mode_0": "0 - Только финальный ответ",
   "reasoning.mode_1": "1 - Мысли и файлы",
-  "reasoning.mode_2": "2 - Уровень 1 + команды",
-  "reasoning.mode_3": "3 - Объединенный вид (по умолчанию)",
+  "reasoning.mode_2": "2 - Уровень 1 + команды + отдельные сообщения инструментов (по умолчанию)",
   "reasoning.current": "Текущий режим: {mode}",
   "reasoning.updated": "✅ Режим размышлений изменен на: {mode}",
 };

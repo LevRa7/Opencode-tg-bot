@@ -18,6 +18,9 @@ Documentation rule:
 
 ### Changed
 
+- Replaced the old Telegram login QR follow-up path with automatic local-file follow-ups from assistant replies, sending supported images/audio/video in their native Telegram media format and other files as documents when the referenced local file exists and is 20 MB or smaller.
+  - Why: QR-specific auth delivery should be removed, while assistant replies that point to local artifacts should deliver those files asynchronously without blocking the next response.
+  - Affects: `src/bot/index.ts`, `src/bot/utils/finalize-assistant-response.ts`, `src/bot/utils/telegram-local-file-follow-up.ts`, `tests/bot/utils/finalize-assistant-response.test.ts`, `tests/bot/utils/telegram-local-file-follow-up.test.ts`
 - Expanded product and README documentation to reflect the real command set and current input flows, including `/stream`, `/start` reset behavior, and the current attachment support boundaries.
   - Why: the user-facing docs should match the actual runtime behavior instead of only a partial feature list.
   - Affects: `PRODUCT.md`, `README.md`, `src/bot/commands/definitions.ts`, `src/bot/commands/start.ts`, `src/bot/commands/stream.ts`, `src/bot/handlers/document.ts`
@@ -27,6 +30,15 @@ Documentation rule:
 - Replaced the single-user Telegram auth setting with admin + allowlist parsing, while keeping legacy `TELEGRAM_ALLOWED_USER_ID` as a compatibility fallback.
   - Why: Phase 2 of the multi-user plan needs controlled onboarding for multiple bot users without breaking existing installations.
   - Affects: `src/config.ts`, `src/runtime/bootstrap.ts`, `src/bot/middleware/auth.ts`, `src/bot/index.ts`, `.env.example`, `README.md`
+- Switched the Docker tg-cli build helper to default to the in-repo `docker/tg-cli` tree instead of the old external checkout path.
+  - Why: tg-cli now lives alongside the bot project, so the image build should vendor the relocated source without extra environment overrides.
+  - Affects: `docker/build-opencode-tg-image.sh`, `docker/README.md`, `docker/README-ru.md`
+- Extended `/restart` so the admin restart cascades through all saved isolated tenant runtimes before the main bot process restarts.
+  - Why: admin restarts should refresh every tenant container as part of the same control action, instead of leaving isolated runtimes stale.
+  - Affects: `src/bot/commands/restart.ts`, `src/process/manager.ts`, `src/process/types.ts`, `tests/bot/commands/restart.test.ts`, `tests/process/manager.test.ts`
+- Fixed the tg-cli Docker wrapper to use the actual tg-cli env/config model instead of passing an unsupported `--config` flag.
+  - Why: the tenant containers had tg-cli installed, but the wrapper invoked it with a flag that this build does not accept, so auth commands failed immediately.
+  - Affects: `docker/bin/tg-cli-wrapper.sh`, `docker/skills/tg-cli/SKILL.md`, `docker/tests/tg-cli-path.test.sh`, `docker/README.md`, `docker/README-ru.md`
 - Scoped scheduled-task visibility and deferred delivery by task owner so background results return to the correct Telegram user or forum topic.
   - Why: scheduled tasks were still shared globally, which would leak task lists and background notifications across users.
   - Affects: `src/bot/commands/task.ts`, `src/scheduled-task/store.ts`, `src/scheduled-task/runtime.ts`, `src/scheduled-task/types.ts`, `tests/scheduled-task/*.test.ts`
@@ -39,6 +51,15 @@ Documentation rule:
 
 ### Fixed
 
+- Stopped final assistant delivery from waiting on QR-specific follow-up sending by preparing local-file follow-ups during finalization and dispatching them in the background after the text reply is sent.
+  - Why: follow-up media must not block the main assistant response or queue later replies behind attachment delivery.
+  - Affects: `src/bot/index.ts`, `src/bot/utils/finalize-assistant-response.ts`, `tests/bot/utils/finalize-assistant-response.test.ts`
+- Kept thinking messages visible by default instead of deleting them on assistant completion, so the explicit clear-thinking command now controls whether they are removed.
+  - Why: thinking output should remain available unless the user explicitly enables clearing it.
+  - Affects: `src/settings/manager.ts`, `src/bot/index.ts`, `src/bot/commands/clear-mode.ts`, `src/bot/utils/thinking-message-lifecycle.ts`, `tests/bot/utils/thinking-message-lifecycle.test.ts`, `tests/bot/commands/clear-mode.test.ts`, `tests/settings/manager.test.ts`
+- Kept final assistant replies locked to the thread where the prompt started, instead of falling back to the currently active chat when the session finishes later.
+  - Why: late SSE completion could reuse the active main-chat context and send the final answer outside the originating topic thread.
+  - Affects: `src/bot/index.ts`, `src/thread/manager.ts`, `tests/thread/manager.test.ts`
 - Streamed reasoning previews inside the expandable quote immediately instead of showing the quote only after the reasoning stream finished.
   - Why: Telegram users should see the thinking text appear inside the final quote structure from the start, not watch it move into the quote only after completion.
   - Affects: `src/bot/index.ts`, `src/bot/utils/message-draft-stream.ts`, `tests/bot/utils/message-draft-stream.test.ts`, `PRODUCT.md`, `docs/architecture.md`

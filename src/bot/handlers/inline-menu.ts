@@ -3,9 +3,15 @@ import { interactionManager } from "../../interaction/manager.js";
 import type { InteractionState } from "../../interaction/types.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import {
+  extractCallbackMessageIdFromContext,
+  extractMessageThreadIdFromContext,
+  withMessageThreadId,
+} from "../utils/message-thread.js";
 
 const INLINE_MENU_CANCEL_PREFIX = "inline:cancel:";
 const LEGACY_CONTEXT_CANCEL_CALLBACK = "compact:cancel";
+const INLINE_MENU_TTL_MS = 5 * 60 * 1000;
 
 const INLINE_MENU_KINDS = ["project", "session", "model", "agent", "variant", "context", "ontology"] as const;
 
@@ -21,20 +27,11 @@ interface InlineMenuReplyOptions {
   text: string;
   keyboard: InlineKeyboard;
   parseMode?: "Markdown" | "HTML";
+  messageThreadId?: number;
 }
 
 function isInlineMenuKind(value: string): value is InlineMenuKind {
   return INLINE_MENU_KINDS.includes(value as InlineMenuKind);
-}
-
-function getCallbackMessageId(ctx: Context): number | null {
-  const message = ctx.callbackQuery?.message;
-  if (!message || !("message_id" in message)) {
-    return null;
-  }
-
-  const messageId = (message as { message_id?: number }).message_id;
-  return typeof messageId === "number" ? messageId : null;
 }
 
 function getActiveInlineMenuMetadata(
@@ -100,22 +97,36 @@ export async function replyWithInlineMenu(
     replyOptions.parse_mode = options.parseMode;
   }
 
-  const message = await ctx.reply(options.text, replyOptions);
-
-  interactionManager.start({
-    kind: "inline",
-    expectedInput: "callback",
-    metadata: {
-      menuKind: options.menuKind,
-      messageId: message.message_id,
-    },
-  });
-
-  logger.debug(
-    `[InlineMenu] Opened menu: kind=${options.menuKind}, messageId=${message.message_id}`,
+  const messageThreadId = options.messageThreadId ?? extractMessageThreadIdFromContext(ctx);
+  logger.info(
+    `[InlineMenu] Sending menu: kind=${options.menuKind}, chatId=${ctx.chat?.id ?? "unknown"}, threadId=${messageThreadId ?? "none"}, parseMode=${options.parseMode ?? "raw"}, textLength=${options.text.length}`,
   );
 
-  return message.message_id;
+  try {
+    const message = await ctx.reply(options.text, withMessageThreadId(replyOptions, messageThreadId));
+
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+      expiresInMs: INLINE_MENU_TTL_MS,
+      metadata: {
+        menuKind: options.menuKind,
+        messageId: message.message_id,
+      },
+    });
+
+    logger.info(
+      `[InlineMenu] Opened menu: kind=${options.menuKind}, chatId=${ctx.chat?.id ?? "unknown"}, threadId=${messageThreadId ?? "none"}, messageId=${message.message_id}`,
+    );
+
+    return message.message_id;
+  } catch (error) {
+    logger.error(
+      `[InlineMenu] Failed to send menu: kind=${options.menuKind}, chatId=${ctx.chat?.id ?? "unknown"}, threadId=${messageThreadId ?? "none"}, parseMode=${options.parseMode ?? "raw"}, textLength=${options.text.length}`,
+      error,
+    );
+    throw error;
+  }
 }
 
 export async function ensureActiveInlineMenu(
@@ -123,7 +134,7 @@ export async function ensureActiveInlineMenu(
   menuKind: InlineMenuKind,
 ): Promise<boolean> {
   const activeMetadata = getActiveInlineMenuMetadata(interactionManager.getSnapshot());
-  const callbackMessageId = getCallbackMessageId(ctx);
+  const callbackMessageId = extractCallbackMessageIdFromContext(ctx);
 
   const isActive =
     !!activeMetadata &&

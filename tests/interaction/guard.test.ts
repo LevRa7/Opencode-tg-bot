@@ -3,6 +3,7 @@ import type { Context } from "grammy";
 import { resolveInteractionGuardDecision } from "../../src/interaction/guard.js";
 import { interactionManager } from "../../src/interaction/manager.js";
 import { foregroundSessionState } from "../../src/scheduled-task/foreground-state.js";
+import { runWithTelegramConversationScope } from "../../src/telegram/scope.js";
 
 function createContext({
   text,
@@ -53,6 +54,46 @@ describe("interaction guard", () => {
 
   it("allows input when there is no active interaction", () => {
     const decision = resolveInteractionGuardDecision(createContext({ text: "hello" }));
+
+    expect(decision.allow).toBe(true);
+    expect(decision.state).toBeNull();
+  });
+
+  it("does not block another topic in same chat when scoped interaction exists", () => {
+    runWithTelegramConversationScope(
+      { userId: 1, chatId: 100, messageThreadId: 10 },
+      () => {
+        interactionManager.start({
+          kind: "rename",
+          expectedInput: "text",
+        });
+      },
+    );
+
+    const decision = runWithTelegramConversationScope(
+      { userId: 1, chatId: 100, messageThreadId: 20 },
+      () => resolveInteractionGuardDecision(createContext({ text: "hello from other topic" })),
+    );
+
+    expect(decision.allow).toBe(true);
+    expect(decision.state).toBeNull();
+  });
+
+  it("does not block another user when scoped interaction exists for someone else", () => {
+    runWithTelegramConversationScope(
+      { userId: 1, chatId: 100, messageThreadId: 10 },
+      () => {
+        interactionManager.start({
+          kind: "rename",
+          expectedInput: "text",
+        });
+      },
+    );
+
+    const decision = runWithTelegramConversationScope(
+      { userId: 2, chatId: 200, messageThreadId: 10 },
+      () => resolveInteractionGuardDecision(createContext({ text: "hello from another user" })),
+    );
 
     expect(decision.allow).toBe(true);
     expect(decision.state).toBeNull();

@@ -110,11 +110,9 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
             break;
           }
 
-          await new Promise<void>((resolve) => setImmediate(resolve));
-
           if (state.eventCallback) {
             const callbackSnapshot = state.eventCallback;
-            setImmediate(() => callbackSnapshot(event));
+            queueMicrotask(() => callbackSnapshot(event));
           }
         }
 

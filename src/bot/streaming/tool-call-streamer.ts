@@ -67,6 +67,22 @@ function splitLongText(text: string, limit: number): string[] {
     return [text];
   }
 
+  // Handle <blockquote expandable> wrapper: each chunk must be valid HTML
+  const blockquoteMatch = text.match(/^(<blockquote expandable>)([\s\S]*?)(<\/blockquote>)$/);
+  if (blockquoteMatch) {
+    const openTag = blockquoteMatch[1];
+    const innerContent = blockquoteMatch[2];
+    const closeTag = blockquoteMatch[3];
+
+    if (innerContent.length <= limit - openTag.length - closeTag.length) {
+      return [text];
+    }
+
+    const innerLimit = limit - openTag.length - closeTag.length;
+    const innerChunks = splitLongText(innerContent, innerLimit);
+    return innerChunks.map((chunk) => `${openTag}${chunk}${closeTag}`);
+  }
+
   const chunks: string[] = [];
   let remaining = text;
 
@@ -136,6 +152,9 @@ export class ToolCallStreamer {
     const state = this.getOrCreateState(sessionId);
     const existingEntry = state.entries.find((entry) => entry.prefix === normalizedPrefix);
     if (existingEntry) {
+      if (existingEntry.text === normalizedText) {
+        return;
+      }
       existingEntry.text = normalizedText;
     } else {
       state.entries.push({ prefix: normalizedPrefix, text: normalizedText });

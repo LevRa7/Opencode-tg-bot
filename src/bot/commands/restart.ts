@@ -1,7 +1,10 @@
 import { CommandContext, Context } from "grammy";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { t } from "../../i18n/index.js";
 import { restartCurrentProcess } from "../../runtime/restart.js";
+import { stopBotContainers } from "../../runtime/docker.js";
 import { getLastRestartRequest, setLastRestartRequest } from "../../settings/manager.js";
+import { processManager } from "../../process/manager.js";
 import { logger } from "../../utils/logger.js";
 import { config } from "../../config.js";
 
@@ -13,8 +16,10 @@ export function __resetRestartStateForTests(): void {
 }
 
 export async function restartCommand(ctx: CommandContext<Context>): Promise<void> {
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+
   if (ctx.from?.id !== config.telegram.adminUserId) {
-    await ctx.reply(t("restart.admin_only"));
+    await ctx.reply(t("restart.admin_only"), withMessageThreadId(undefined, messageThreadId));
     return;
   }
 
@@ -27,7 +32,7 @@ export async function restartCommand(ctx: CommandContext<Context>): Promise<void
   }
 
   if (restartInProgress) {
-    await ctx.reply(t("restart.in_progress"));
+    await ctx.reply(t("restart.in_progress"), withMessageThreadId(undefined, messageThreadId));
     return;
   }
 
@@ -39,18 +44,31 @@ export async function restartCommand(ctx: CommandContext<Context>): Promise<void
       requestedAt: new Date().toISOString(),
     });
 
-    await ctx.reply(t("restart.restarting"));
+    await ctx.reply(t("restart.restarting"), withMessageThreadId(undefined, messageThreadId));
 
     const timer = setTimeout(() => {
-      try {
-        restartCurrentProcess();
-      } catch (error) {
-        restartInProgress = false;
+      void (async () => {
+        try {
+          const tenantRestartResult = await processManager.restartTenantRuntimes();
+          if (!tenantRestartResult.success) {
+            restartInProgress = false;
 
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error("[Bot] Deferred /restart failed:", error);
-        void ctx.reply(t("restart.error", { error: errorMessage || t("common.unknown_error") }));
-      }
+            const errorMessage = tenantRestartResult.error || t("common.unknown_error");
+            logger.error("[Bot] Deferred /restart tenant cascade failed:", errorMessage);
+            await ctx.reply(t("restart.error", { error: errorMessage }), withMessageThreadId(undefined, messageThreadId));
+            return;
+          }
+
+          await stopBotContainers();
+          restartCurrentProcess();
+        } catch (error) {
+          restartInProgress = false;
+
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logger.error("[Bot] Deferred /restart failed:", error);
+          void ctx.reply(t("restart.error", { error: errorMessage || t("common.unknown_error") }), withMessageThreadId(undefined, messageThreadId));
+        }
+      })();
     }, RESTART_TRIGGER_DELAY_MS);
 
     timer.unref?.();
@@ -59,6 +77,6 @@ export async function restartCommand(ctx: CommandContext<Context>): Promise<void
 
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error("[Bot] Error in /restart command:", error);
-    await ctx.reply(t("restart.error", { error: errorMessage || t("common.unknown_error") }));
+    await ctx.reply(t("restart.error", { error: errorMessage || t("common.unknown_error") }), withMessageThreadId(undefined, messageThreadId));
   }
 }

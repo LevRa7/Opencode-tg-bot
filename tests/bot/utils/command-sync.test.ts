@@ -28,12 +28,10 @@ describe("command sync helpers", () => {
     });
   });
 
-  it("exposes export_data with dedicated description", async () => {
+  it("does not expose export_data after feature removal", async () => {
     const commands = getLocalizedBotCommands({ isAdmin: false });
-    const exportData = commands.find((item) => item.command === "export_data");
 
-    expect(exportData).toBeDefined();
-    expect(exportData?.description).not.toBe(getLocalizedBotCommands({ isAdmin: false }).find((item) => item.command === "help")?.description);
+    expect(commands.find((item) => item.command === "export_data")).toBeUndefined();
   });
 
   it("syncs only commands for non-private chats", async () => {
@@ -68,6 +66,42 @@ describe("command sync helpers", () => {
 
     expect(api.setChatMenuButton).toHaveBeenCalledWith({
       menu_button: { type: "default" },
+    });
+  });
+
+  it("includes all commands except admin-only for non-admin authorized users", async () => {
+    const commands = getLocalizedBotCommands({ isAdmin: false });
+
+    expect(commands.find((c) => c.command === "restart")).toBeUndefined();
+    expect(commands.find((c) => c.command === "status")).toBeDefined();
+    expect(commands.find((c) => c.command === "help")).toBeDefined();
+  });
+
+  it("includes admin-only commands for admin users", async () => {
+    const commands = getLocalizedBotCommands({ isAdmin: true });
+
+    expect(commands.find((c) => c.command === "restart")).toBeDefined();
+    expect(commands.find((c) => c.command === "status")).toBeDefined();
+  });
+
+  it("shows menu button for authorized non-admin private chats", async () => {
+    const api = createApi();
+
+    await syncAuthorizedChatCommands(api, 999, "private");
+
+    expect(api.setChatMenuButton).toHaveBeenCalledWith({
+      chat_id: 999,
+      menu_button: { type: "commands" },
+    });
+  });
+
+  it("passes isAdmin parameter to filter commands correctly", async () => {
+    const api = createApi();
+
+    await syncAuthorizedChatCommands(api, 1, "private", true);
+
+    expect(api.setMyCommands).toHaveBeenCalledWith(getLocalizedBotCommands({ isAdmin: true }), {
+      scope: { type: "chat", chat_id: 1 },
     });
   });
 });

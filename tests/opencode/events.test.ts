@@ -167,4 +167,57 @@ describe("opencode/events", () => {
     stopEventListening();
     await subscription;
   });
+
+  it("forwards events in microtask phase (before setImmediate)", async () => {
+    const events = [
+      { type: "session.status", properties: { sessionID: "s1" } } as Event,
+    ];
+    subscribeMock.mockResolvedValueOnce({ stream: createStream(events) });
+
+    let microtaskExecuted = false;
+
+    const callback = vi.fn().mockImplementation(() => {
+      microtaskExecuted = true;
+    });
+
+    subscribeToEvents("D:/repo", callback);
+
+    await vi.waitFor(() => {
+      expect(callback).toHaveBeenCalledTimes(1);
+    });
+
+    void new Promise<void>((resolve) =>
+      setImmediate(() => {
+        resolve();
+      }),
+    );
+
+    expect(microtaskExecuted).toBe(true);
+
+    stopEventListening();
+  });
+
+  it("does not defer event callback to setImmediate phase", async () => {
+    const events = [
+      { type: "session.status", properties: { sessionID: "s1" } } as Event,
+    ];
+    subscribeMock.mockResolvedValueOnce({ stream: createStream(events) });
+
+    let afterSetImmediate = false;
+    const callback = vi.fn().mockImplementation(() => {
+      afterSetImmediate = true;
+    });
+
+    subscribeToEvents("D:/repo", callback);
+
+    await vi.waitFor(() => {
+      expect(callback).toHaveBeenCalledTimes(1);
+    });
+
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    expect(afterSetImmediate).toBe(true);
+
+    stopEventListening();
+  });
 });

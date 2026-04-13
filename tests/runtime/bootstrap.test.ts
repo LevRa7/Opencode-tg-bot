@@ -6,8 +6,8 @@ describe("runtime/bootstrap", () => {
     const result = validateRuntimeEnvValues({
       TELEGRAM_BOT_TOKEN: "123456:abcdef",
       TELEGRAM_ADMIN_USER_ID: "123456789",
-      OPENCODE_MODEL_PROVIDER: "opencode",
-      OPENCODE_MODEL_ID: "big-pickle",
+      OPENCODE_MODEL_PROVIDER: "cliproxyapi",
+      OPENCODE_MODEL_ID: "gpt-5.4-mini",
     });
 
     expect(result).toEqual({ isValid: true });
@@ -17,8 +17,8 @@ describe("runtime/bootstrap", () => {
     const result = validateRuntimeEnvValues({
       TELEGRAM_BOT_TOKEN: "123456:abcdef",
       TELEGRAM_ALLOWED_USER_ID: "123456789",
-      OPENCODE_MODEL_PROVIDER: "opencode",
-      OPENCODE_MODEL_ID: "big-pickle",
+      OPENCODE_MODEL_PROVIDER: "cliproxyapi",
+      OPENCODE_MODEL_ID: "gpt-5.4-mini",
     });
 
     expect(result).toEqual({ isValid: true });
@@ -38,8 +38,8 @@ describe("runtime/bootstrap", () => {
     const result = validateRuntimeEnvValues({
       TELEGRAM_BOT_TOKEN: "123456:abcdef",
       TELEGRAM_ADMIN_USER_ID: "0",
-      OPENCODE_MODEL_PROVIDER: "opencode",
-      OPENCODE_MODEL_ID: "big-pickle",
+      OPENCODE_MODEL_PROVIDER: "cliproxyapi",
+      OPENCODE_MODEL_ID: "gpt-5.4-mini",
     });
 
     expect(result.isValid).toBe(false);
@@ -88,8 +88,8 @@ describe("runtime/bootstrap", () => {
       TELEGRAM_ADMIN_USER_ID: "42",
       OPENCODE_SERVER_USERNAME: "opencode",
       OPENCODE_SERVER_PASSWORD: "secret",
-      OPENCODE_MODEL_PROVIDER: "opencode",
-      OPENCODE_MODEL_ID: "big-pickle",
+      OPENCODE_MODEL_PROVIDER: "cliproxyapi",
+      OPENCODE_MODEL_ID: "gpt-5.4-mini",
       OPENCODE_API_URL: "https://localhost:4096",
     });
 
@@ -99,8 +99,8 @@ describe("runtime/bootstrap", () => {
     expect(updated).toContain("OPENCODE_API_URL=https://localhost:4096");
     expect(updated).toContain("OPENCODE_SERVER_USERNAME=opencode");
     expect(updated).toContain("OPENCODE_SERVER_PASSWORD=secret");
-    expect(updated).toContain("OPENCODE_MODEL_PROVIDER=opencode");
-    expect(updated).toContain("OPENCODE_MODEL_ID=big-pickle");
+    expect(updated).toContain("OPENCODE_MODEL_PROVIDER=cliproxyapi");
+    expect(updated).toContain("OPENCODE_MODEL_ID=gpt-5.4-mini");
   });
 
   it("removes server password when wizard value is empty", () => {
@@ -115,8 +115,8 @@ describe("runtime/bootstrap", () => {
       TELEGRAM_BOT_TOKEN: "token:value",
       TELEGRAM_ADMIN_USER_ID: "42",
       OPENCODE_SERVER_USERNAME: "opencode",
-      OPENCODE_MODEL_PROVIDER: "opencode",
-      OPENCODE_MODEL_ID: "big-pickle",
+      OPENCODE_MODEL_PROVIDER: "cliproxyapi",
+      OPENCODE_MODEL_ID: "gpt-5.4-mini",
     });
 
     expect(updated).toContain("OPENCODE_SERVER_USERNAME=opencode");

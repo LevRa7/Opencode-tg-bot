@@ -16,8 +16,8 @@ import {
 
 const DEFAULT_API_URL = "http://localhost:4096";
 const DEFAULT_SERVER_USERNAME = "opencode";
-const FALLBACK_MODEL_PROVIDER = "opencode";
-const FALLBACK_MODEL_ID = "big-pickle";
+const FALLBACK_MODEL_PROVIDER = "cliproxyapi";
+const FALLBACK_MODEL_ID = "gpt-5.4-mini";
 
 interface ModelDefaults {
   provider: string;

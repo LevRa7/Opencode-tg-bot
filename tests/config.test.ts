@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 async function loadConfig() {
   vi.resetModules();
@@ -110,6 +113,22 @@ describe("config boolean env parsing", () => {
     expect(config.bot.taskLimit).toBe(10);
   });
 
+  it("uses enabled streaming by default when RESPONSE_STREAMING is missing", async () => {
+    vi.stubEnv("RESPONSE_STREAMING", "");
+
+    const config = await loadConfig();
+
+    expect(config.bot.responseStreaming).toBe(true);
+  });
+
+  it("parses RESPONSE_STREAMING boolean values", async () => {
+    vi.stubEnv("RESPONSE_STREAMING", "off");
+
+    const config = await loadConfig();
+
+    expect(config.bot.responseStreaming).toBe(false);
+  });
+
   it("uses default response stream throttle when RESPONSE_STREAM_THROTTLE_MS is missing", async () => {
     vi.stubEnv("RESPONSE_STREAM_THROTTLE_MS", "");
 
@@ -118,12 +137,44 @@ describe("config boolean env parsing", () => {
     expect(config.bot.responseStreamThrottleMs).toBe(500);
   });
 
+  it("uses default service messages interval when SERVICE_MESSAGES_INTERVAL_SEC is missing", async () => {
+    vi.stubEnv("SERVICE_MESSAGES_INTERVAL_SEC", "");
+
+    const config = await loadConfig();
+
+    expect(config.bot.serviceMessagesIntervalSec).toBe(5);
+  });
+
+  it("parses SERVICE_MESSAGES_INTERVAL_SEC as a non-negative integer", async () => {
+    vi.stubEnv("SERVICE_MESSAGES_INTERVAL_SEC", "12");
+
+    const config = await loadConfig();
+
+    expect(config.bot.serviceMessagesIntervalSec).toBe(12);
+  });
+
   it("parses RESPONSE_STREAM_THROTTLE_MS as a positive integer", async () => {
     vi.stubEnv("RESPONSE_STREAM_THROTTLE_MS", "750");
 
     const config = await loadConfig();
 
     expect(config.bot.responseStreamThrottleMs).toBe(750);
+  });
+
+  it("parses BASH_TOOL_DISPLAY_MAX_LENGTH as a positive integer", async () => {
+    vi.stubEnv("BASH_TOOL_DISPLAY_MAX_LENGTH", "96");
+
+    const config = await loadConfig();
+
+    expect(config.bot.bashToolDisplayMaxLength).toBe(96);
+  });
+
+  it("falls back to default bash tool display length on invalid value", async () => {
+    vi.stubEnv("BASH_TOOL_DISPLAY_MAX_LENGTH", "zero");
+
+    const config = await loadConfig();
+
+    expect(config.bot.bashToolDisplayMaxLength).toBe(128);
   });
 
   it("falls back to default response stream throttle on invalid value", async () => {
@@ -163,5 +214,47 @@ describe("config boolean env parsing", () => {
     expect(config.tts.apiKey).toBe("");
     expect(config.tts.model).toBe("gpt-4o-mini-tts");
     expect(config.tts.voice).toBe("alloy");
+  });
+
+  it("loads host telegram and bot defaults from admin env file", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-admin-env-"));
+    const admin = path.join(root, "admin");
+    const user = path.join(root, "user");
+    await fs.mkdir(admin, { recursive: true });
+    await fs.mkdir(user, { recursive: true });
+    await fs.writeFile(
+      path.join(admin, ".env"),
+      [
+        "TELEGRAM_BOT_TOKEN=admin-bot-token",
+        "TELEGRAM_ADMIN_USER_ID=777",
+        "BOT_LOCALE=ru",
+        "STT_API_URL=https://host-stt.local/v1",
+        "TTS_API_URL=https://host-tts.local/v1",
+        "OPENCODE_MODEL_PROVIDER=openai",
+        "OPENCODE_MODEL_ID=gpt-5.4",
+      ].join("\n"),
+      "utf-8",
+    );
+    await fs.writeFile(path.join(user, ".env"), "OPENCODE_MODEL_ID=gpt-5.4-mini\n", "utf-8");
+
+    vi.stubEnv("OPENCODE_TELEGRAM_ADMIN_HOME", admin);
+    vi.stubEnv("OPENCODE_TELEGRAM_HOME", user);
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "");
+    vi.stubEnv("TELEGRAM_ADMIN_USER_ID", "");
+    vi.stubEnv("BOT_LOCALE", "");
+    vi.stubEnv("STT_API_URL", "");
+    vi.stubEnv("TTS_API_URL", "");
+    vi.stubEnv("OPENCODE_MODEL_PROVIDER", "");
+    vi.stubEnv("OPENCODE_MODEL_ID", "");
+
+    const config = await loadConfig();
+
+    expect(config.telegram.token).toBe("admin-bot-token");
+    expect(config.telegram.adminUserId).toBe(777);
+    expect(config.bot.locale).toBe("ru");
+    expect(config.stt.apiUrl).toBe("https://host-stt.local/v1");
+    expect(config.tts.apiUrl).toBe("https://host-tts.local/v1");
+    expect(config.opencode.model.provider).toBe("openai");
+    expect(config.opencode.model.modelId).toBe("gpt-5.4-mini");
   });
 });

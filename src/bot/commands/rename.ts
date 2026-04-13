@@ -1,5 +1,6 @@
 import { CommandContext, Context, InlineKeyboard } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { getCurrentSession, setCurrentSession } from "../../session/manager.js";
 import { renameManager } from "../../rename/manager.js";
 import { interactionManager } from "../../interaction/manager.js";
@@ -26,18 +27,20 @@ function clearRenameInteraction(reason: string): void {
 
 export async function renameCommand(ctx: CommandContext<Context>): Promise<void> {
   try {
+    const messageThreadId = extractMessageThreadIdFromContext(ctx);
     const currentSession = getCurrentSession();
 
     if (!currentSession) {
-      await ctx.reply(t("rename.no_session"));
+      await ctx.reply(t("rename.no_session"), withMessageThreadId(undefined, messageThreadId));
       return;
     }
 
     const keyboard = new InlineKeyboard().text(t("rename.button.cancel"), "rename:cancel");
 
-    const message = await ctx.reply(t("rename.prompt", { title: currentSession.title }), {
-      reply_markup: keyboard,
-    });
+    const message = await ctx.reply(
+      t("rename.prompt", { title: currentSession.title }),
+      withMessageThreadId({ reply_markup: keyboard }, messageThreadId),
+    );
 
     renameManager.startWaiting(currentSession.id, currentSession.directory, currentSession.title);
     renameManager.setMessageId(message.message_id);

@@ -25,35 +25,58 @@ describe("summary/tool-message-batcher", () => {
   it("sends text message immediately when enqueued", async () => {
     const sendText = vi.fn().mockResolvedValue(undefined);
     const sendFile = vi.fn().mockResolvedValue(undefined);
-    const batcher = new ToolMessageBatcher({ sendText, sendFile });
+    const batcher = new ToolMessageBatcher({ intervalSeconds: 0, sendText, sendFile });
 
     batcher.enqueue("s1", "tool message");
 
     await vi.waitFor(() => {
       expect(sendText).toHaveBeenCalledTimes(1);
     });
-    expect(sendText).toHaveBeenCalledWith("s1", "tool message");
+    expect(sendText).toHaveBeenCalledWith("s1", "tool message", "raw");
     expect(sendFile).not.toHaveBeenCalled();
   });
 
   it("sends text immediately outside the queue when requested", async () => {
     const sendText = vi.fn().mockResolvedValue(undefined);
     const sendFile = vi.fn().mockResolvedValue(undefined);
-    const batcher = new ToolMessageBatcher({ sendText, sendFile });
+    const batcher = new ToolMessageBatcher({ intervalSeconds: 0, sendText, sendFile });
 
     batcher.sendTextNow("s1", "thinking", "thinking_started_streaming");
 
     await vi.waitFor(() => {
       expect(sendText).toHaveBeenCalledTimes(1);
     });
-    expect(sendText).toHaveBeenCalledWith("s1", "thinking");
+    expect(sendText).toHaveBeenCalledWith("s1", "thinking", "raw");
     expect(sendFile).not.toHaveBeenCalled();
+  });
+
+  it("sends text immediately with explicit html format when requested", async () => {
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const sendFile = vi.fn().mockResolvedValue(undefined);
+    const batcher = new ToolMessageBatcher({ intervalSeconds: 0, sendText, sendFile });
+
+    batcher.sendTextNow(
+      "s1",
+      "<blockquote expandable><b>Thinking</b></blockquote>",
+      "thinking_started",
+      "html",
+    );
+
+    await vi.waitFor(() => {
+      expect(sendText).toHaveBeenCalledTimes(1);
+    });
+
+    expect(sendText).toHaveBeenCalledWith(
+      "s1",
+      "<blockquote expandable><b>Thinking</b></blockquote>",
+      "html",
+    );
   });
 
   it("sends file immediately when enqueued", async () => {
     const sendText = vi.fn().mockResolvedValue(undefined);
     const sendFile = vi.fn().mockResolvedValue(undefined);
-    const batcher = new ToolMessageBatcher({ sendText, sendFile });
+    const batcher = new ToolMessageBatcher({ intervalSeconds: 0, sendText, sendFile });
 
     const fileData = createFileData("edit_a.ts.txt");
     batcher.enqueueFile("s1", fileData);
@@ -69,7 +92,7 @@ describe("summary/tool-message-batcher", () => {
     const deferred = createDeferred();
     const sendText = vi.fn(() => deferred.promise);
     const sendFile = vi.fn().mockResolvedValue(undefined);
-    const batcher = new ToolMessageBatcher({ sendText, sendFile });
+    const batcher = new ToolMessageBatcher({ intervalSeconds: 0, sendText, sendFile });
 
     batcher.sendTextNow("s1", "thinking", "thinking_started");
 
@@ -101,7 +124,7 @@ describe("summary/tool-message-batcher", () => {
       }
     });
     const sendFile = vi.fn().mockResolvedValue(undefined);
-    const batcher = new ToolMessageBatcher({ sendText, sendFile });
+    const batcher = new ToolMessageBatcher({ intervalSeconds: 0, sendText, sendFile });
 
     batcher.enqueue("s1", "first");
     batcher.enqueue("s1", "second");
@@ -125,7 +148,7 @@ describe("summary/tool-message-batcher", () => {
     const sendFile = vi.fn(async (_sessionId: string, fileData: { filename: string }) => {
       sendOrder.push(`file:${fileData.filename}`);
     });
-    const batcher = new ToolMessageBatcher({ sendText, sendFile });
+    const batcher = new ToolMessageBatcher({ intervalSeconds: 0, sendText, sendFile });
 
     batcher.enqueue("s1", "first");
     batcher.enqueueFile("s1", createFileData("edit_d.ts.txt"));
@@ -134,5 +157,26 @@ describe("summary/tool-message-batcher", () => {
     await vi.waitFor(() => {
       expect(sendOrder).toEqual(["text:first", "file:edit_d.ts.txt", "text:second"]);
     });
+  });
+
+  it("does not drop another session after clearing one session", async () => {
+    const sendText = vi.fn().mockResolvedValue(undefined);
+    const sendFile = vi.fn().mockResolvedValue(undefined);
+    const batcher = new ToolMessageBatcher({ intervalSeconds: 0, sendText, sendFile });
+
+    batcher.enqueue("s1", "first");
+    batcher.enqueue("s2", "second");
+
+    await vi.waitFor(() => {
+      expect(sendText).toHaveBeenCalledTimes(2);
+    });
+
+    batcher.clearSession("s1", "clear_first_session");
+    batcher.enqueue("s2", "third");
+
+    await vi.waitFor(() => {
+      expect(sendText).toHaveBeenCalledTimes(3);
+    });
+    expect(sendText).toHaveBeenNthCalledWith(3, "s2", "third", "raw");
   });
 });

@@ -234,7 +234,9 @@ export async function showPermissionRequest(
   request: PermissionRequest,
   messageThreadId?: number,
 ): Promise<void> {
-  logger.debug(`[PermissionHandler] Showing permission request: ${request.permission}`);
+  logger.info(
+    `[PermissionHandler] Sending permission request: permission=${request.permission}, requestID=${request.id}, chatId=${chatId}, threadId=${messageThreadId ?? "none"}, patterns=${request.patterns.length}`,
+  );
 
   const text = formatPermissionText(request);
   const keyboard = buildPermissionKeyboard();
@@ -251,7 +253,9 @@ export async function showPermissionRequest(
       ),
     );
 
-    logger.debug(`[PermissionHandler] Message sent, messageId=${message.message_id}`);
+    logger.info(
+      `[PermissionHandler] Permission message sent: permission=${request.permission}, requestID=${request.id}, chatId=${chatId}, threadId=${messageThreadId ?? "none"}, messageId=${message.message_id}`,
+    );
     permissionManager.startPermission(request, message.message_id);
 
     syncPermissionInteractionState({
@@ -261,7 +265,10 @@ export async function showPermissionRequest(
 
     summaryAggregator.stopTypingIndicator();
   } catch (err) {
-    logger.error("[PermissionHandler] Failed to send permission message:", err);
+    logger.error(
+      `[PermissionHandler] Failed to send permission message: permission=${request.permission}, requestID=${request.id}, chatId=${chatId}, threadId=${messageThreadId ?? "none"}, patterns=${request.patterns.length}`,
+      err,
+    );
     throw err;
   }
 }

@@ -33,7 +33,6 @@ const INCREMENTAL_SYNC_LIMIT = 1000;
 const MAX_CACHED_DIRECTORIES = 10;
 const SYNC_SAFETY_WINDOW_MS = 60_000;
 const SYNC_COOLDOWN_MS = 60_000;
-const STORAGE_FALLBACK_SCAN_LIMIT = 200;
 const SQLITE_FALLBACK_QUERY_LIMIT = 200;
 const SERVER_UNAVAILABLE_ERROR_MARKERS = [
   "fetch failed",
@@ -487,82 +486,6 @@ async function ingestFromSqliteSessionDatabase(): Promise<void> {
     );
 
     return;
-  }
-}
-
-async function ingestFromGlobalSessionStorage(): Promise<void> {
-  await ensureCacheLoaded();
-
-  const cacheData = getScopeCacheData();
-  const fs = await import("node:fs/promises");
-  const candidates = await getStorageRootsFromApi();
-
-  for (const storageRoot of candidates) {
-    const globalDir = path.join(storageRoot, "storage", "session", "global");
-
-    try {
-      const entries = await fs.readdir(globalDir, { withFileTypes: true });
-      const sessionFiles = entries.filter(
-        (entry) => entry.isFile() && entry.name.endsWith(".json"),
-      );
-
-      const withMtime = await Promise.all(
-        sessionFiles.map(async (entry) => {
-          const fullPath = path.join(globalDir, entry.name);
-          const stat = await fs.stat(fullPath);
-          return { fullPath, mtimeMs: stat.mtimeMs };
-        }),
-      );
-
-      const sorted = withMtime
-        .sort((a, b) => b.mtimeMs - a.mtimeMs)
-        .slice(0, STORAGE_FALLBACK_SCAN_LIMIT);
-
-      let changed = false;
-      let maxUpdated = cacheData.lastSyncedUpdatedAt;
-
-      for (const file of sorted) {
-        try {
-          const raw = await fs.readFile(file.fullPath, "utf-8");
-          const session = JSON.parse(raw) as {
-            directory?: string;
-            time?: { updated?: number };
-          };
-
-          if (!session.directory) {
-            continue;
-          }
-
-          const updated = session.time?.updated ?? Math.trunc(file.mtimeMs);
-          if (upsertDirectory(session.directory, updated)) {
-            changed = true;
-          }
-
-          if (updated > maxUpdated) {
-            maxUpdated = updated;
-          }
-        } catch {
-          // Ignore malformed session files.
-        }
-      }
-
-      if (maxUpdated !== cacheData.lastSyncedUpdatedAt) {
-        cacheData.lastSyncedUpdatedAt = maxUpdated;
-        changed = true;
-      }
-
-      if (changed) {
-        await queuePersist();
-      }
-
-      logger.debug(
-        `[SessionCache] Storage fallback loaded: root=${storageRoot}, scanned=${sorted.length}, directories=${cacheData.directories.length}`,
-      );
-
-      return;
-    } catch {
-      // Try next candidate path.
-    }
   }
 }
 

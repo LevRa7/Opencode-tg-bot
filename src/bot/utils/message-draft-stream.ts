@@ -1,6 +1,6 @@
 import type { Api, RawApi } from "grammy";
 import { withMessageThreadId, type TelegramThreadTarget } from "./message-thread.js";
-import { sendBotTextDraft, type TelegramTextFormat } from "./telegram-text.js";
+import { editBotText, sendBotText, sendBotTextDraft, type TelegramTextFormat } from "./telegram-text.js";
 import { logger } from "../../utils/logger.js";
 import {
   SequentialMessageDraftIdAllocator,
@@ -8,17 +8,23 @@ import {
 } from "./message-draft-id.js";
 
 type DraftApi = Pick<Api<RawApi>, "sendMessageDraft">;
+type SendApi = Pick<Api<RawApi>, "sendMessage">;
+type EditApi = Pick<Api<RawApi>, "editMessageText">;
 
 interface DraftStreamState {
   draftId: number;
   lastSentAt: number;
   lastSentText: string;
   lastSentFormat: TelegramTextFormat;
+  lastSentMessageId: number | null;
+  lastPayloadSignature: string | null;
   pendingText: string | null;
   pendingFormat: TelegramTextFormat;
   timer: ReturnType<typeof setTimeout> | null;
   target: TelegramThreadTarget | null;
   api: DraftApi | null;
+  sendApi: SendApi | null;
+  editApi: EditApi | null;
   disabled: boolean;
   inFlight: boolean;
 }
@@ -91,6 +97,22 @@ function resolveNextProgressiveText(
 export class MessageDraftStreamManager {
   private readonly states = new Map<string, DraftStreamState>();
 
+  getLastPayloadSignature(sessionId: string): string | null {
+    return this.states.get(sessionId)?.lastPayloadSignature ?? null;
+  }
+
+  getLastSentMessageId(sessionId: string): number | null {
+    return this.states.get(sessionId)?.lastSentMessageId ?? null;
+  }
+
+  consumeLastSentMessageId(sessionId: string): number | null {
+    const state = this.states.get(sessionId);
+    if (!state) return null;
+    const messageId = state.lastSentMessageId;
+    state.lastSentMessageId = null;
+    return messageId;
+  }
+
   constructor(
     private readonly minIntervalMs = 120,
     private readonly draftIdAllocator: MessageDraftIdAllocator = new SequentialMessageDraftIdAllocator(),
@@ -130,6 +152,14 @@ export class MessageDraftStreamManager {
     }
 
     this.scheduleSession(sessionId);
+  }
+
+  setSendEditApi(sessionId: string, sendApi: SendApi, editApi: EditApi): void {
+    const state = this.states.get(sessionId);
+    if (state) {
+      state.sendApi = sendApi;
+      state.editApi = editApi;
+    }
   }
 
   async flushSession(sessionId: string): Promise<void> {
@@ -188,11 +218,15 @@ export class MessageDraftStreamManager {
       lastSentAt: 0,
       lastSentText: "",
       lastSentFormat: "raw",
+      lastSentMessageId: null,
+      lastPayloadSignature: null,
       pendingText: null,
       pendingFormat: "raw",
       timer: null,
       target: null,
       api: null,
+      sendApi: null,
+      editApi: null,
       disabled: false,
       inFlight: false,
     };
@@ -257,17 +291,41 @@ export class MessageDraftStreamManager {
     format: TelegramTextFormat,
   ): Promise<void> {
     try {
-      await sendBotTextDraft({
-        api: state.api!,
-        chatId: state.target!.chatId,
-        draftId: state.draftId,
-        text,
-        format,
-        options: withMessageThreadId(undefined, state.target!.messageThreadId),
-      });
+      if (state.lastSentMessageId && state.editApi) {
+        await editBotText({
+          api: state.editApi,
+          chatId: state.target!.chatId,
+          messageId: state.lastSentMessageId,
+          text,
+          options: undefined,
+          format,
+        });
+      } else if (state.sendApi) {
+        const messageId = await sendBotText({
+          api: state.sendApi,
+          chatId: state.target!.chatId,
+          text,
+          options: withMessageThreadId(undefined, state.target!.messageThreadId),
+          format,
+          messageThreadId: state.target!.messageThreadId,
+        });
+        if (messageId) {
+          state.lastSentMessageId = messageId;
+        }
+      } else {
+        await sendBotTextDraft({
+          api: state.api!,
+          chatId: state.target!.chatId,
+          draftId: state.draftId,
+          text,
+          format,
+          options: withMessageThreadId(undefined, state.target!.messageThreadId),
+        });
+      }
       state.lastSentAt = Date.now();
       state.lastSentText = text;
       state.lastSentFormat = format;
+      state.lastPayloadSignature = `${format}::${JSON.stringify([text])}`;
     } catch (error) {
       state.disabled = true;
       state.pendingText = null;

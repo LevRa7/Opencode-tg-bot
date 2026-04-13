@@ -14,7 +14,6 @@ export const de: I18nDictionary = {
   "cmd.description.restart": "Bot-Prozess neu starten",
   "cmd.description.opencode_start": "OpenCode-Server starten",
   "cmd.description.opencode_stop": "OpenCode-Server stoppen",
-  "cmd.description.reasoning": "Reasoning-Anzeigemodus ändern (0-3)",
   "cmd.description.help": "Hilfe",
 
   "callback.unknown_command": "Unbekannter Befehl",
@@ -487,15 +486,6 @@ export const de: I18nDictionary = {
   "stt.error": "🔴 Audio konnte nicht erkannt werden: {error}",
   "stt.empty_result": "🎤 Keine Sprache in der Audionachricht erkannt.",
 
-  "cmd.description.export_data": "Daten exportieren",
-
-  "export_data.title": "Datenexport-Einstellungen",
-  "export_data.group.personal": "Persönlich",
-  "export_data.group.bots": "Bots",
-  "export_data.group.group_chats": "Gruppenchats",
-  "export_data.group.public_channels": "Öffentliche Kanäle",
-  "export_data.group.interlocutor_channels": "Gesprächspartner-Kanäle",
-
   "restart.admin_only": "Dieser Befehl ist nur für den Admin verfügbar.",
 
   "status.runtime.tenant": "Laufzeit: Mandant",
@@ -563,8 +553,7 @@ export const de: I18nDictionary = {
   "reasoning.title": "🧠 Reasoning-Einstellungen",
   "reasoning.mode_0": "0 - Nur finale Antwort",
   "reasoning.mode_1": "1 - Gedanken und Dateien",
-  "reasoning.mode_2": "2 - Stufe 1 + Befehle",
-  "reasoning.mode_3": "3 - Kombinierte Ansicht (Standard)",
+  "reasoning.mode_2": "2 - Stufe 1 + Befehle + separate Tool-Meldungen (Standard)",
   "reasoning.current": "Aktueller Modus: {mode}",
   "reasoning.updated": "✅ Reasoning-Modus geändert zu: {mode}",
 };

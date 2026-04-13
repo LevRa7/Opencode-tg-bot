@@ -29,6 +29,7 @@ export interface ProcessManagerInterface {
   ensureRuntime(): Promise<ProcessOperationResult>;
   start(): Promise<ProcessOperationResult>;
   stop(timeoutMs?: number): Promise<ProcessOperationResult>;
+  restartTenantRuntimes(): Promise<ProcessOperationResult>;
   isRunning(): boolean;
   getPID(): number | null;
   getUptime(): number | null;

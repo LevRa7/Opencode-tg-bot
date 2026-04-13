@@ -76,6 +76,24 @@ describe("summary/aggregator", () => {
     expect(onSessionCompacted).toHaveBeenCalledWith("session-1", "D:/isolated");
   });
 
+  it("notifies when the current root session becomes idle", async () => {
+    const onSessionIdle = vi.fn();
+    summaryAggregator.setOnSessionIdle(onSessionIdle);
+    summaryAggregator.setSession("session-1");
+
+    summaryAggregator.processEvent({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onSessionIdle).toHaveBeenCalledTimes(1);
+    expect(onSessionIdle).toHaveBeenCalledWith("session-1");
+  });
+
   it("includes sessionId in tool callback payload", () => {
     const onTool = vi.fn();
     summaryAggregator.setOnTool(onTool);
@@ -121,6 +139,88 @@ describe("summary/aggregator", () => {
         callId: "call-1",
         tool: "bash",
         hasFileAttachment: false,
+      }),
+    );
+  });
+
+  it("emits running bash tool updates when stdout metadata changes", () => {
+    const onTool = vi.fn();
+    summaryAggregator.setOnTool(onTool);
+    summaryAggregator.setSession("session-1");
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-running",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-running-1",
+          sessionID: "session-1",
+          messageID: "message-running",
+          type: "tool",
+          callID: "call-running",
+          tool: "bash",
+          state: {
+            status: "running",
+            input: {
+              command: "python watcher.py",
+            },
+            metadata: {
+              output: '{"ok":true,"data":{"step":"scan-started"}}',
+            },
+            time: { start: Date.now() },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-running-2",
+          sessionID: "session-1",
+          messageID: "message-running",
+          type: "tool",
+          callID: "call-running",
+          tool: "bash",
+          state: {
+            status: "running",
+            input: {
+              command: "python watcher.py",
+            },
+            metadata: {
+              output: '{"ok":true,"data":{"step":"scan-started"}}\n{"ok":true,"data":{"step":"scan-complete"}}',
+            },
+            time: { start: Date.now() },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    expect(onTool).toHaveBeenCalledTimes(2);
+    expect(onTool.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        sessionId: "session-1",
+        callId: "call-running",
+        tool: "bash",
+      }),
+    );
+    expect(onTool.mock.calls[1][0]).toEqual(
+      expect.objectContaining({
+        sessionId: "session-1",
+        callId: "call-running",
+        tool: "bash",
       }),
     );
   });
@@ -575,6 +675,90 @@ describe("summary/aggregator", () => {
     expect(onThinking).toHaveBeenCalledWith("session-1");
   });
 
+  it("fires thinking callback only once per session run even when multiple assistant messages reason", async () => {
+    const onThinking = vi.fn();
+    summaryAggregator.setOnThinking(onThinking);
+    summaryAggregator.setSession("session-1");
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-a",
+          sessionID: "session-1",
+          messageID: "message-a",
+          type: "reasoning",
+          text: "first thought",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-b",
+          sessionID: "session-1",
+          messageID: "message-b",
+          type: "reasoning",
+          text: "second thought",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onThinking).toHaveBeenCalledTimes(1);
+    expect(onThinking).toHaveBeenCalledWith("session-1");
+  });
+
+  it("allows thinking callback again after session becomes idle", async () => {
+    const onThinking = vi.fn();
+    summaryAggregator.setOnThinking(onThinking);
+    summaryAggregator.setSession("session-1");
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-first-run",
+          sessionID: "session-1",
+          messageID: "message-first-run",
+          type: "reasoning",
+          text: "first run",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-second-run",
+          sessionID: "session-1",
+          messageID: "message-second-run",
+          type: "reasoning",
+          text: "second run",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onThinking).toHaveBeenCalledTimes(2);
+  });
+
   it("streams partial text and passes messageId on completion", () => {
     const onPartial = vi.fn();
     const onComplete = vi.fn();
@@ -622,7 +806,13 @@ describe("summary/aggregator", () => {
     } as unknown as Event);
 
     expect(onPartial).toHaveBeenCalledWith("session-1", "message-stream-1", "Partial answer", "", []);
-    expect(onComplete).toHaveBeenCalledWith("session-1", "message-stream-1", "Partial answer");
+    expect(onComplete).toHaveBeenCalledWith(
+      "session-1",
+      "message-stream-1",
+      "Partial answer",
+      "",
+      [],
+    );
   });
 
   it("combines multiple text parts into a single final message", () => {
@@ -686,7 +876,13 @@ describe("summary/aggregator", () => {
     } as unknown as Event);
 
     expect(onPartial).toHaveBeenLastCalledWith("session-1", "message-multipart-1", "Hello world", "", []);
-    expect(onComplete).toHaveBeenCalledWith("session-1", "message-multipart-1", "Hello world");
+    expect(onComplete).toHaveBeenCalledWith(
+      "session-1",
+      "message-multipart-1",
+      "Hello world",
+      "",
+      [],
+    );
   });
 
   it("starts optimistic partial streaming after second unknown text update", () => {
@@ -724,6 +920,73 @@ describe("summary/aggregator", () => {
 
     expect(onPartial).toHaveBeenCalledTimes(1);
     expect(onPartial).toHaveBeenCalledWith("session-1", "message-unknown-1", "Hello", "", []);
+  });
+
+  it("keeps streaming events for an earlier active root session after another session becomes current", () => {
+    const onPartial = vi.fn();
+    summaryAggregator.setOnPartial(onPartial);
+
+    summaryAggregator.setSession("session-1");
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-s1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.setSession("session-2");
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-s2",
+          sessionID: "session-2",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-s1-1",
+          sessionID: "session-1",
+          messageID: "message-s1",
+          type: "text",
+          text: "Hello from session 1",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-s1-1",
+          sessionID: "session-1",
+          messageID: "message-s1",
+          type: "text",
+          text: "Hello from session 1 again",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    expect(onPartial).toHaveBeenCalledWith(
+      "session-1",
+      "message-s1",
+      "Hello from session 1 again",
+      "",
+      [],
+    );
   });
 
   it("does not stream unknown text when only one update arrived", () => {
@@ -782,7 +1045,13 @@ describe("summary/aggregator", () => {
     } as unknown as Event);
 
     expect(onPartial).not.toHaveBeenCalled();
-    expect(onComplete).toHaveBeenCalledWith("session-1", "message-pending-complete", "Final text");
+    expect(onComplete).toHaveBeenCalledWith(
+      "session-1",
+      "message-pending-complete",
+      "Final text",
+      "",
+      [],
+    );
   });
 
   it("streams text from message.part.delta events", () => {
@@ -1278,5 +1547,102 @@ describe("summary/aggregator", () => {
     } as unknown as Event);
 
     expect(onTokens).not.toHaveBeenCalled();
+  });
+
+  it("fires onComplete only once for a completed assistant message", () => {
+    const onComplete = vi.fn();
+    summaryAggregator.setOnComplete(onComplete);
+    summaryAggregator.setSession("session-1");
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-complete-once",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-complete-once",
+          sessionID: "session-1",
+          messageID: "message-complete-once",
+          type: "text",
+          text: "Only once",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-complete-once",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith("session-1", "message-complete-once", "Only once", "", []);
+  });
+
+  it("keeps first root session partial state after second root session starts", () => {
+    const onPartial = vi.fn();
+    summaryAggregator.setOnPartial(onPartial);
+
+    summaryAggregator.setSession("session-a");
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-a",
+          sessionID: "session-a",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-a-1",
+          sessionID: "session-a",
+          messageID: "message-a",
+          type: "text",
+          text: "Hello",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.setSession("session-b");
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-a-2",
+          sessionID: "session-a",
+          messageID: "message-a",
+          type: "text",
+          text: " world",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    expect(onPartial).toHaveBeenLastCalledWith("session-a", "message-a", "Hello world", "", []);
   });
 });

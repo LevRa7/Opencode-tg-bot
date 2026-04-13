@@ -43,9 +43,9 @@ describe("i18n/index locale helpers", () => {
     expect(optionCodes).toEqual(SUPPORTED_LOCALES);
   });
 
-  it("renders new export_data description in multiple locales", () => {
-    expect(t("cmd.description.export_data", undefined, "en")).toBe("Export data");
-    expect(t("cmd.description.export_data", undefined, "ru")).toBe("Экспорт данных");
+  it("does not expose removed export_data description keys", () => {
+    expect(t("cmd.description.export_data" as never, undefined, "en")).toBe("cmd.description.export_data");
+    expect(t("cmd.description.export_data" as never, undefined, "ru")).toBe("cmd.description.export_data");
   });
 
   it("prefers runtime locale override over env locale", () => {

@@ -245,4 +245,37 @@ describe("bot/streaming/tool-call-streamer", () => {
 
     expect(sendText).toHaveBeenNthCalledWith(2, "s1", "after break");
   });
+
+  it("keeps the current stream editable after a thinking flush", async () => {
+    vi.useFakeTimers();
+
+    const sendText = vi.fn().mockResolvedValue(10);
+    const editText = vi.fn().mockResolvedValue(undefined);
+    const deleteText = vi.fn().mockResolvedValue(undefined);
+    const streamer = new ToolCallStreamer({
+      throttleMs: 0,
+      sendText,
+      editText,
+      deleteText,
+    });
+
+    streamer.replaceByPrefix("s1", "tool:1", "💻 \"bash\" `python watcher.py`");
+    await vi.waitFor(() => {
+      expect(sendText).toHaveBeenCalledTimes(1);
+    });
+
+    await streamer.flushSession("s1", "thinking_started");
+    streamer.replaceByPrefix("s1", "tool:1", "💻 \"bash\" `python watcher.py --watch 1`");
+
+    await vi.waitFor(() => {
+      expect(editText).toHaveBeenCalledTimes(1);
+    });
+
+    expect(sendText).toHaveBeenCalledTimes(1);
+    expect(editText).toHaveBeenCalledWith(
+      "s1",
+      10,
+      '💻 "bash" `python watcher.py --watch 1`',
+    );
+  });
 });

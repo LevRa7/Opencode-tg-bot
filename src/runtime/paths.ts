@@ -5,7 +5,9 @@ import { getRuntimeMode, type RuntimeMode } from "./mode.js";
 export interface RuntimePaths {
   mode: RuntimeMode;
   appHome: string;
+  adminHome: string | null;
   envFilePath: string;
+  adminEnvFilePath: string | null;
   settingsFilePath: string;
   logsDirPath: string;
   runDirPath: string;
@@ -44,10 +46,17 @@ export function getRuntimePaths(): RuntimePaths {
   const mode = getRuntimeMode();
   const appHome = resolveAppHome(mode);
 
+  const adminHomeOverride = process.env.OPENCODE_TELEGRAM_ADMIN_HOME;
+  const adminHome = adminHomeOverride && adminHomeOverride.trim().length > 0
+    ? path.resolve(adminHomeOverride)
+    : null;
+
   return {
     mode,
     appHome,
+    adminHome,
     envFilePath: path.join(appHome, ".env"),
+    adminEnvFilePath: adminHome ? path.join(adminHome, ".env") : null,
     settingsFilePath: path.join(appHome, "settings.json"),
     logsDirPath: path.join(appHome, "logs"),
     runDirPath: path.join(appHome, "run"),

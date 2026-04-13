@@ -1,5 +1,6 @@
 import { Context } from "grammy";
 import { t } from "../../i18n/index.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { config } from "../../config.js";
 import { getLocalizedBotCommands } from "./definitions.js";
 
@@ -16,5 +17,8 @@ ${t("help.keyboard_hint")}`;
 
 export async function helpCommand(ctx: Context): Promise<void> {
   const isAdmin = ctx.from?.id === config.telegram.adminUserId;
-  await ctx.reply(formatHelpText(isAdmin));
+  await ctx.reply(
+    formatHelpText(isAdmin),
+    withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
+  );
 }

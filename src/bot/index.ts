@@ -40,8 +40,6 @@ import {
   handleQuestionTextAnswer,
 } from "./handlers/question.js";
 import { handlePermissionCallback, showPermissionRequest } from "./handlers/permission.js";
-import { exportDataCommand } from "./commands/export-data.js";
-import { reasoningCommand } from "./commands/reasoning.js";
 import { handleAgentSelect, showAgentSelectionMenu } from "./handlers/agent.js";
 import { handleModelSelect, showModelSelectionMenu } from "./handlers/model.js";
 import { handleVariantSelect, showVariantSelectionMenu } from "./handlers/variant.js";
@@ -61,7 +59,6 @@ import {
 } from "../summary/formatter.js";
 import { renderSubagentCards } from "../summary/subagent-formatter.js";
 import { ToolMessageBatcher } from "../summary/tool-message-batcher.js";
-import { getCurrentSession } from "../session/manager.js";
 import { ingestSessionInfoForCache } from "../session/cache-manager.js";
 import { logger } from "../utils/logger.js";
 import { safeBackgroundTask } from "../utils/safe-background-task.js";
@@ -80,17 +77,24 @@ import { handleVideoMessage } from "./handlers/video.js";
 import { downloadTelegramFile, toDataUri } from "./utils/file-download.js";
 import { finalizeAssistantResponse } from "./utils/finalize-assistant-response.js";
 import { sendTtsResponseForSession } from "./utils/send-tts-response.js";
-import { deliverThinkingMessage } from "./utils/thinking-message.js";
 import { MessageDraftStreamManager } from "./utils/message-draft-stream.js";
-import { sendBotText } from "./utils/telegram-text.js";
-import { sendTelegramQrImages } from "./utils/telegram-qr.js";
+import { ThinkingMessageLifecycleManager } from "./utils/thinking-message-lifecycle.js";
+import { deliverThinkingMessage } from "./utils/thinking-message.js";
+import { editBotText, sendBotText } from "./utils/telegram-text.js";
+import {
+  buildLocalFileFollowUpCaption,
+  createLocalFileFollowUpTracker,
+  extractLocalFilePaths,
+  prepareLocalFileFollowUpsFromPaths,
+  type PreparedLocalFileFollowUp,
+} from "./utils/telegram-local-file-follow-up.js";
+import { createPendingAssistantResponseStore } from "./utils/pending-assistant-response.js";
 import { getModelCapabilities, supportsInput } from "../model/capabilities.js";
 import { getStoredModel } from "../model/manager.js";
 import type { FilePartInput } from "@opencode-ai/sdk/v2";
 import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
 import { scheduledTaskRuntime } from "../scheduled-task/runtime.js";
 import { ResponseStreamer } from "./streaming/response-streamer.js";
-import type { StreamingMessagePayload } from "./streaming/response-streamer.js";
 import { ToolCallStreamer } from "./streaming/tool-call-streamer.js";
 import {
   editMessageWithMarkdownFallback,
@@ -100,11 +104,15 @@ import { threadContextManager } from "../thread/manager.js";
 import { withMessageThreadId } from "./utils/message-thread.js";
 import {
   getReasoningMode,
+  getTenantRuntimeInfo,
+  getThinkingClearMode,
   isMessageStreamingEnabled,
 } from "../settings/manager.js";
 import {
   escapeHtml,
   formatReasoningForTelegramHtml,
+  formatToolCallAsSpoiler,
+  markdownToHtml,
 } from "./utils/reasoning-format.js";
 import {
   buildTelegramConversationScopeKey,
@@ -117,7 +125,6 @@ let activeBotInstance: Bot<Context> | null = null;
 
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
 const RESPONSE_STREAM_THROTTLE_MS = config.bot.responseStreamThrottleMs;
-const RESPONSE_STREAM_TEXT_LIMIT = 3800;
 const SESSION_RETRY_PREFIX = "🔁";
 const SUBAGENT_STREAM_PREFIX = "🧩";
 const __filename = fileURLToPath(import.meta.url);
@@ -178,11 +185,11 @@ function getCurrentReplyKeyboard() {
 }
 
 function getThreadTargetForSession(sessionId?: string) {
-  if (sessionId) {
-    return threadContextManager.getSessionTarget(sessionId) ?? threadContextManager.getActiveTarget();
+  if (!sessionId) {
+    return null;
   }
 
-  return threadContextManager.getActiveTarget();
+  return threadContextManager.getSessionTarget(sessionId);
 }
 
 function getMessageThreadIdForSession(sessionId?: string): number | undefined {
@@ -217,6 +224,16 @@ async function runWithSessionRoutingScope<T>(
   return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), fn);
 }
 
+function getReasoningModeForSession(sessionId: string) {
+  return runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () => getReasoningMode());
+}
+
+function isMessageStreamingEnabledForSession(sessionId: string): boolean {
+  return runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
+    isMessageStreamingEnabled(),
+  );
+}
+
 function isSessionCurrent(sessionId: string): boolean {
   return getSessionRoutingApi(sessionId) !== null && getSessionRoutingTarget(sessionId) !== undefined;
 }
@@ -234,24 +251,169 @@ function prepareDocumentCaption(caption: string): string {
   return `${normalizedCaption.slice(0, TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH - 3)}...`;
 }
 
-function prepareStreamingPayload(messageText: string): StreamingMessagePayload | null {
-  const parts = formatSummaryWithMode(
-    messageText,
-    config.bot.messageFormatMode,
-    RESPONSE_STREAM_TEXT_LIMIT,
-  );
-  if (parts.length === 0) {
-    return null;
+interface TelegramMediaApi {
+  sendPhoto: Bot<Context>["api"]["sendPhoto"];
+  sendAudio: Bot<Context>["api"]["sendAudio"];
+  sendVideo: Bot<Context>["api"]["sendVideo"];
+  sendDocument: Bot<Context>["api"]["sendDocument"];
+}
+
+function getSessionLocalFilePathResolver(sessionId: string): ((filePath: string) => string) | undefined {
+  const scope = getSessionRoutingScope(sessionId);
+  if (!scope || scope.userId === config.telegram.adminUserId) {
+    return undefined;
   }
 
-  return {
-    parts,
-    format: "raw",
+  const tenantRuntime = getTenantRuntimeInfo(scope.userId);
+  if (!tenantRuntime?.tenantId) {
+    return undefined;
+  }
+
+  const workspacesRoot = process.env.WORKSPACES_ROOT || "/home/me/Workspaces";
+  const tenantRoot = path.join(workspacesRoot, tenantRuntime.tenantId);
+  const tenantStateRoot = path.join(tenantRoot, "state");
+  const tenantWorkspaceRoot = path.join(tenantRoot, "workspace");
+
+  return (filePath: string): string => {
+    if (filePath === "/state" || filePath.startsWith("/state/")) {
+      const relativePath = path.posix.relative("/state", filePath);
+      return relativePath === "" || relativePath === "."
+        ? tenantStateRoot
+        : path.join(tenantStateRoot, relativePath);
+    }
+
+    if (filePath === "/workspace" || filePath.startsWith("/workspace/")) {
+      const relativePath = path.posix.relative("/workspace", filePath);
+      return relativePath === "" || relativePath === "."
+        ? tenantWorkspaceRoot
+        : path.join(tenantWorkspaceRoot, relativePath);
+    }
+
+    return filePath;
   };
 }
 
+async function sendPreparedLocalFileFollowUp(
+  api: TelegramMediaApi,
+  target: { chatId: number; messageThreadId?: number },
+  followUp: PreparedLocalFileFollowUp,
+): Promise<void> {
+  // Что делает этот код:
+  // - выбирает правильный Telegram media method по уже подготовленному kind,
+  // - отправляет локальный файл отдельным follow-up сообщением,
+  // - использует HTML monospace caption для безопасного показа пути.
+  // Почему выбрано это решение:
+  // - routing типа медиа должен быть централизован и предсказуем,
+  //   а подпись должна быть одинаковой для photo/audio/video/document.
+  // Исправлено:
+  // - вместо QR-only follow-up появился общий media follow-up для локальных файлов.
+  // Цель:
+  // - отправлять изображения, аудио и видео в нативном Telegram формате.
+  const inputFile = new InputFile(followUp.resolvedPath ?? followUp.path);
+  const options = withMessageThreadId(
+    {
+      caption: followUp.caption,
+      parse_mode: "HTML" as const,
+      disable_notification: true,
+    },
+    target.messageThreadId,
+  );
+
+  if (followUp.kind === "photo") {
+    await api.sendPhoto(target.chatId, inputFile, options);
+    return;
+  }
+
+  if (followUp.kind === "audio") {
+    await api.sendAudio(target.chatId, inputFile, options);
+    return;
+  }
+
+  if (followUp.kind === "video") {
+    await api.sendVideo(target.chatId, inputFile, options);
+    return;
+  }
+
+  await api.sendDocument(target.chatId, inputFile, options);
+}
+
+async function enqueueLocalFileFollowUpsFromText(sessionId: string, text: string): Promise<void> {
+  if (!text.trim()) {
+    return;
+  }
+
+  const botApi = getSessionRoutingApi(sessionId);
+  const target = getSessionRoutingTarget(sessionId);
+  if (!botApi || !target || !isSessionCurrent(sessionId)) {
+    return;
+  }
+
+  const reservedPaths = localFileFollowUpTracker.reserve(sessionId, extractLocalFilePaths(text));
+  if (reservedPaths.length === 0) {
+    return;
+  }
+
+  const resolveLocalFilePath = getSessionLocalFilePathResolver(sessionId);
+  const preparedFollowUps = await prepareLocalFileFollowUpsFromPaths(
+    reservedPaths,
+    resolveLocalFilePath,
+  );
+  if (preparedFollowUps.length === 0) {
+    localFileFollowUpTracker.release(sessionId, reservedPaths);
+    return;
+  }
+
+  const preparedPaths = new Set(preparedFollowUps.map((followUp) => followUp.path));
+  const unusedPaths = reservedPaths.filter((filePath) => !preparedPaths.has(filePath));
+  if (unusedPaths.length > 0) {
+    localFileFollowUpTracker.release(sessionId, unusedPaths);
+  }
+
+  safeBackgroundTask({
+    taskName: `telegram.local-file-follow-up.${sessionId}`,
+    task: async () => {
+      const sentPaths: string[] = [];
+      try {
+        for (const followUp of preparedFollowUps) {
+          const currentTarget = getSessionRoutingTarget(sessionId);
+          const currentApi = getSessionRoutingApi(sessionId);
+          if (!currentTarget || !currentApi || !isSessionCurrent(sessionId)) {
+            break;
+          }
+
+          await sendPreparedLocalFileFollowUp(currentApi, currentTarget, followUp);
+          sentPaths.push(followUp.path);
+        }
+      } finally {
+        if (sentPaths.length > 0) {
+          localFileFollowUpTracker.markSent(sessionId, sentPaths);
+        }
+
+        const unsentPaths = preparedFollowUps
+          .map((followUp) => followUp.path)
+          .filter((filePath) => !sentPaths.includes(filePath));
+        if (unsentPaths.length > 0) {
+          localFileFollowUpTracker.release(sessionId, unsentPaths);
+        }
+      }
+    },
+  });
+}
+
+function joinFollowUpCandidateTexts(...texts: Array<string | undefined>): string {
+  return texts
+    .map((text) => text?.trim() ?? "")
+    .filter((text) => text.length > 0)
+    .join("\n\n");
+}
+
+function buildFollowUpCandidateText(messageText?: string, reasoningText?: string): string {
+  return joinFollowUpCandidateTexts(messageText, reasoningText);
+}
+
 const toolMessageBatcher = new ToolMessageBatcher({
-  sendText: async (sessionId, text) => {
+  intervalSeconds: config.bot.serviceMessagesIntervalSec,
+  sendText: async (sessionId, text, format) => {
     const botApi = getSessionRoutingApi(sessionId);
     const target = getSessionRoutingTarget(sessionId);
     if (!botApi || !target || !isSessionCurrent(sessionId)) {
@@ -260,17 +422,17 @@ const toolMessageBatcher = new ToolMessageBatcher({
 
     const keyboard = getCurrentReplyKeyboard();
 
-    await botApi.sendMessage(
-      target.chatId,
+    await sendBotText({
+      api: botApi,
+      chatId: target.chatId,
       text,
-      withMessageThreadId(
-        {
-          disable_notification: true,
-          ...(keyboard ? { reply_markup: keyboard } : {}),
-        },
-        target.messageThreadId,
-      ),
-    );
+      format,
+      messageThreadId: target.messageThreadId,
+      options: {
+        disable_notification: true,
+        ...(keyboard ? { reply_markup: keyboard } : {}),
+      },
+    });
   },
   sendFile: async (sessionId, fileData) => {
     const botApi = getSessionRoutingApi(sessionId);
@@ -308,6 +470,8 @@ const toolMessageBatcher = new ToolMessageBatcher({
     }
   },
 });
+const pendingAssistantResponses = createPendingAssistantResponseStore();
+const localFileFollowUpTracker = createLocalFileFollowUpTracker();
 
 const responseStreamer = new ResponseStreamer({
   throttleMs: RESPONSE_STREAM_THROTTLE_MS,
@@ -349,8 +513,17 @@ const responseStreamer = new ResponseStreamer({
         parseMode,
       });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+      const errorParts: string[] = [];
+      if (error instanceof Error) {
+        errorParts.push(error.message);
+      }
+      if (typeof error === "object" && error !== null) {
+        const desc = Reflect.get(error, "description");
+        if (typeof desc === "string") {
+          errorParts.push(desc);
+        }
+      }
+      const errorMessage = errorParts.join(" ").toLowerCase();
       if (errorMessage.includes("message is not modified")) {
         return;
       }
@@ -381,6 +554,7 @@ const responseStreamer = new ResponseStreamer({
 });
 
 const messageDraftStreamManager = new MessageDraftStreamManager(RESPONSE_STREAM_THROTTLE_MS);
+const thinkingMessageLifecycle = new ThinkingMessageLifecycleManager();
 
 const toolCallStreamer = new ToolCallStreamer({
   throttleMs: RESPONSE_STREAM_THROTTLE_MS,
@@ -401,6 +575,7 @@ const toolCallStreamer = new ToolCallStreamer({
       withMessageThreadId(
         {
           disable_notification: true,
+          parse_mode: "HTML" as const,
         },
         target.messageThreadId,
       ),
@@ -420,10 +595,21 @@ const toolCallStreamer = new ToolCallStreamer({
     }
 
     try {
-      await botApi.editMessageText(target.chatId, messageId, text);
+      await botApi.editMessageText(target.chatId, messageId, text, {
+        parse_mode: "HTML",
+      });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+      const errorParts: string[] = [];
+      if (error instanceof Error) {
+        errorParts.push(error.message);
+      }
+      if (typeof error === "object" && error !== null) {
+        const desc = Reflect.get(error, "description");
+        if (typeof desc === "string") {
+          errorParts.push(desc);
+        }
+      }
+      const errorMessage = errorParts.join(" ").toLowerCase();
       if (errorMessage.includes("message is not modified")) {
         return;
       }
@@ -497,11 +683,14 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     toolCallStreamer.clearAll("summary_aggregator_clear");
     responseStreamer.clearAll("summary_aggregator_clear");
     messageDraftStreamManager.clearAll();
+    thinkingMessageLifecycle.clearAll();
+    pendingAssistantResponses.clearAll();
+    localFileFollowUpTracker.clearAll();
   });
 
   summaryAggregator.setOnPartial(
-    (sessionId, _messageId, messageText, reasoningText, toolCalls) => {
-      if (!isMessageStreamingEnabled()) {
+    async (sessionId, _messageId, messageText, reasoningText, toolCalls) => {
+      if (!isMessageStreamingEnabledForSession(sessionId)) {
         return;
       }
 
@@ -512,21 +701,26 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         return;
       }
 
-      const mode = getReasoningMode();
+      const mode = await getReasoningModeForSession(sessionId);
       if (!messageText.trim() && !reasoningText?.trim() && !toolCalls?.length) {
         return;
       }
 
       const formattedTechnicals = (toolCalls || []).map((t) => ({
         description: t.title || t.tool,
-        command: (t.input as any)?.command,
+        command:
+          t.input && typeof t.input === "object" && "command" in t.input && typeof t.input.command === "string"
+            ? t.input.command
+            : undefined,
       }));
 
       const assistantFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
 
+      messageDraftStreamManager.setSendEditApi(sessionId, botApi, botApi);
+
       if (mode > 0) {
         const assistantText =
-          (assistantFormat as string) === "html" ? messageText : escapeHtml(messageText);
+          (assistantFormat as string) === "html" ? messageText : markdownToHtml(messageText);
         const chunks = formatReasoningForTelegramHtml(
           mode,
           reasoningText || "",
@@ -545,25 +739,19 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           assistantFormat,
         );
       }
+
+      void enqueueLocalFileFollowUpsFromText(
+        sessionId,
+        buildFollowUpCandidateText(messageText, reasoningText),
+      );
     },
   );
 
   summaryAggregator.setOnComplete(
     async (sessionId, _messageId, messageText, reasoningText, toolCalls) => {
-      syncSessionRoutingContext(sessionId);
-      const botApi = getSessionRoutingApi(sessionId);
-      const target = getSessionRoutingTarget(sessionId);
-      if (!botApi || !target) {
-        logger.error("Bot or chat ID not available for sending message");
-        clearPromptResponseMode(sessionId);
-        clearSessionRoutingContext(sessionId);
-        messageDraftStreamManager.clearSession(sessionId);
-        toolCallStreamer.clearSession(sessionId, "bot_context_missing");
-        foregroundSessionState.markIdle(sessionId);
-        return;
-      }
-
       if (!isSessionCurrent(sessionId)) {
+        pendingAssistantResponses.clear(sessionId);
+        localFileFollowUpTracker.clearSession(sessionId);
         clearPromptResponseMode(sessionId);
         clearSessionRoutingContext(sessionId);
         messageDraftStreamManager.clearSession(sessionId);
@@ -573,24 +761,76 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         return;
       }
 
+      pendingAssistantResponses.set(sessionId, {
+        messageText,
+        reasoningText,
+        toolCalls,
+      });
+    },
+  );
+
+  summaryAggregator.setOnSessionIdle(async (sessionId) => {
+      syncSessionRoutingContext(sessionId);
+      const pendingResponse = pendingAssistantResponses.consume(sessionId);
+      const botApi = getSessionRoutingApi(sessionId);
+      const target = getSessionRoutingTarget(sessionId);
+      if (!botApi || !target) {
+        logger.error("Bot or chat ID not available for sending message");
+        pendingAssistantResponses.clear(sessionId);
+        localFileFollowUpTracker.clearSession(sessionId);
+        clearPromptResponseMode(sessionId);
+        clearSessionRoutingContext(sessionId);
+        messageDraftStreamManager.clearSession(sessionId);
+        toolCallStreamer.clearSession(sessionId, "bot_context_missing");
+        foregroundSessionState.markIdle(sessionId);
+        return;
+      }
+
+      if (!isSessionCurrent(sessionId)) {
+        pendingAssistantResponses.clear(sessionId);
+        localFileFollowUpTracker.clearSession(sessionId);
+        clearPromptResponseMode(sessionId);
+        clearSessionRoutingContext(sessionId);
+        messageDraftStreamManager.clearSession(sessionId);
+        toolCallStreamer.clearSession(sessionId, "session_mismatch");
+        foregroundSessionState.markIdle(sessionId);
+        await scheduledTaskRuntime.flushDeferredDeliveries();
+        return;
+      }
+
+      if (!pendingResponse) {
+        clearPromptResponseMode(sessionId);
+        localFileFollowUpTracker.clearSession(sessionId);
+        clearSessionRoutingContext(sessionId);
+        messageDraftStreamManager.clearSession(sessionId);
+        foregroundSessionState.markIdle(sessionId);
+        await scheduledTaskRuntime.flushDeferredDeliveries();
+        return;
+      }
+
       const chatId = target.chatId;
-      const mode = getReasoningMode();
-      const formattedTechnicals = (toolCalls || []).map((t) => ({
+      const mode = await getReasoningModeForSession(sessionId);
+      const formattedTechnicals = (pendingResponse.toolCalls || []).map((t) => ({
         description: t.title || t.tool,
-        command: (t.input as any)?.command,
+        command:
+          t.input && typeof t.input === "object" && "command" in t.input && typeof t.input.command === "string"
+            ? t.input.command
+            : undefined,
       }));
 
       const finalFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
-      let finalText = messageText;
+      let finalText = pendingResponse.messageText;
       let finalParseMode: "html" | "raw" | "markdown_v2" = finalFormat;
       let finalChunks: string[] | undefined;
 
       if (mode > 0) {
         const assistantText =
-          (finalFormat as string) === "html" ? messageText : escapeHtml(messageText);
+          (finalFormat as string) === "html"
+            ? pendingResponse.messageText
+            : markdownToHtml(pendingResponse.messageText);
         const chunks = formatReasoningForTelegramHtml(
           mode,
-          reasoningText || "",
+          pendingResponse.reasoningText || "",
           formattedTechnicals,
           assistantText,
         );
@@ -600,9 +840,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       }
 
       try {
-        await finalizeAssistantResponse({
+        const finalizeResult = await finalizeAssistantResponse({
           sessionId,
           messageText: finalText,
+          sourceText: pendingResponse.messageText,
           chunks: finalChunks,
           flushDraftStream: (draftSessionId) =>
             messageDraftStreamManager.flushSession(draftSessionId),
@@ -615,42 +856,113 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           formatRawSummary: (text) => formatSummaryWithMode(text, "raw"),
           resolveFormat: () => finalParseMode,
           getReplyKeyboard: getCurrentReplyKeyboard,
-          sendQrCodes: async (text) => {
-            await sendTelegramQrImages({
-              api: botApi,
-              chatId,
-              messageText: text,
-              messageThreadId: getMessageThreadIdForSession(sessionId),
-            });
-          },
+          prepareLocalFileFollowUps: () =>
+            prepareLocalFileFollowUpsFromPaths(
+              extractLocalFilePaths(
+                buildFollowUpCandidateText(
+                  pendingResponse.messageText,
+                  pendingResponse.reasoningText,
+                ),
+              ),
+              getSessionLocalFilePathResolver(sessionId),
+            ),
           sendText: async (text, rawFallbackText, options, format) => {
-            await sendBotText({
-              api: botApi,
-              chatId,
-              text,
-              rawFallbackText,
-              options: options as Parameters<typeof sendBotText>[0]["options"],
-              format,
-              messageThreadId: getMessageThreadIdForSession(sessionId),
-            });
+            const draftMessageId = messageDraftStreamManager.consumeLastSentMessageId(sessionId);
+            if (draftMessageId) {
+              await editBotText({
+                api: botApi,
+                chatId,
+                messageId: draftMessageId,
+                text: rawFallbackText ?? text,
+                rawFallbackText: text,
+                options: undefined,
+                format,
+              });
+            } else {
+              await sendBotText({
+                api: botApi,
+                chatId,
+                text,
+                rawFallbackText,
+                options: options as Parameters<typeof sendBotText>[0]["options"],
+                format,
+                messageThreadId: getMessageThreadIdForSession(sessionId),
+              });
+            }
           },
         });
+
+        if (finalizeResult.followUpFiles.length > 0) {
+          const reservedPaths = localFileFollowUpTracker.reserve(
+            sessionId,
+            finalizeResult.followUpFiles.map((followUp) => followUp.path),
+          );
+          const reservedPathSet = new Set(reservedPaths);
+          const reservedFollowUps = finalizeResult.followUpFiles.filter((followUp) =>
+            reservedPathSet.has(followUp.path),
+          );
+
+          if (reservedFollowUps.length > 0) {
+            safeBackgroundTask({
+              taskName: `telegram.local-file-follow-up.${sessionId}`,
+              task: async () => {
+                const sentPaths: string[] = [];
+                try {
+                  for (const followUp of reservedFollowUps) {
+                    const currentTarget = getSessionRoutingTarget(sessionId);
+                    const currentApi = getSessionRoutingApi(sessionId);
+                    if (!currentTarget || !currentApi || !isSessionCurrent(sessionId)) {
+                      break;
+                    }
+
+                    await sendPreparedLocalFileFollowUp(currentApi, currentTarget, followUp);
+                    sentPaths.push(followUp.path);
+                  }
+                } finally {
+                  if (sentPaths.length > 0) {
+                    localFileFollowUpTracker.markSent(sessionId, sentPaths);
+                  }
+
+                  const unsentPaths = reservedFollowUps
+                    .map((followUp) => followUp.path)
+                    .filter((filePath) => !sentPaths.includes(filePath));
+                  if (unsentPaths.length > 0) {
+                    localFileFollowUpTracker.release(sessionId, unsentPaths);
+                  }
+                }
+              },
+            });
+          }
+        }
 
         await sendTtsResponseForSession({
           api: botApi,
           sessionId,
           chatId,
-          text: messageText,
+          text: pendingResponse.messageText,
           messageThreadId: getMessageThreadIdForSession(sessionId),
         });
       } catch (err) {
+        pendingAssistantResponses.clear(sessionId);
+        localFileFollowUpTracker.clearSession(sessionId);
         clearPromptResponseMode(sessionId);
         messageDraftStreamManager.clearSession(sessionId);
         logger.error("Failed to send message to Telegram:", err);
         logger.error("[Bot] CRITICAL: Stopping event processing due to error");
         summaryAggregator.clear();
       } finally {
+        const shouldClearThinking = await runWithSessionRoutingScope(sessionId, async () =>
+          getThinkingClearMode(),
+        );
+        await thinkingMessageLifecycle.finalize(sessionId, shouldClearThinking, {
+          sendText: async () => 0,
+          editText: async () => undefined,
+          deleteText: async (messageId) => {
+            await botApi.deleteMessage(chatId, messageId).catch(() => {});
+          },
+        });
         clearSessionRoutingContext(sessionId);
+        localFileFollowUpTracker.clearSession(sessionId);
         messageDraftStreamManager.clearSession(sessionId);
         foregroundSessionState.markIdle(sessionId);
         await scheduledTaskRuntime.flushDeferredDeliveries();
@@ -672,8 +984,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     if (
       config.bot.hideToolCallMessages ||
       shouldIncludeToolInfoInFileCaption ||
-      toolInfo.tool === "task" ||
-      getReasoningMode() >= 2
+      toolInfo.tool === "task"
     ) {
       return;
     }
@@ -681,7 +992,9 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     try {
       const message = formatToolInfo(toolInfo);
       if (message) {
-        toolCallStreamer.append(toolInfo.sessionId, message);
+        const spoilerMessage = formatToolCallAsSpoiler(message);
+        toolCallStreamer.replaceByPrefix(toolInfo.sessionId, `tool:${toolInfo.callId}`, spoilerMessage);
+        void enqueueLocalFileFollowUpsFromText(toolInfo.sessionId, spoilerMessage);
       }
     } catch (err) {
       logger.error("Failed to send tool notification to Telegram:", err);
@@ -704,7 +1017,9 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         return;
       }
 
-      toolCallStreamer.replaceByPrefix(sessionId, SUBAGENT_STREAM_PREFIX, renderedCards);
+      const spoilerCards = formatToolCallAsSpoiler(renderedCards);
+      toolCallStreamer.replaceByPrefix(sessionId, SUBAGENT_STREAM_PREFIX, spoilerCards);
+      void enqueueLocalFileFollowUpsFromText(sessionId, spoilerCards);
     } catch (err) {
       logger.error("Failed to render subagent activity for Telegram:", err);
     }
@@ -809,7 +1124,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
   summaryAggregator.setOnThinking(async (sessionId) => {
     syncSessionRoutingContext(sessionId);
-    if (!isSessionCurrent(sessionId)) {
+    if (!getSessionRoutingContext(sessionId)) {
       return;
     }
 
@@ -894,6 +1209,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     const target = getSessionRoutingTarget(sessionId);
     if (!routing || !target) {
       clearPromptResponseMode(sessionId);
+      localFileFollowUpTracker.clearSession(sessionId);
       clearSessionRoutingContext(sessionId);
       messageDraftStreamManager.clearSession(sessionId);
       foregroundSessionState.markIdle(sessionId);
@@ -901,6 +1217,17 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
 
     messageDraftStreamManager.clearSession(sessionId);
+    localFileFollowUpTracker.clearSession(sessionId);
+    const shouldClearThinking = await runWithSessionRoutingScope(sessionId, async () =>
+      getThinkingClearMode(),
+    );
+    await thinkingMessageLifecycle.finalize(sessionId, shouldClearThinking, {
+      sendText: async () => 0,
+      editText: async () => undefined,
+      deleteText: async (messageId) => {
+        await routing.bot.api.deleteMessage(target.chatId, messageId).catch(() => {});
+      },
+    });
     clearPromptResponseMode(sessionId);
     await Promise.all([
       toolMessageBatcher.flushSession(sessionId, "session_error"),
@@ -926,6 +1253,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     );
 
     clearSessionRoutingContext(sessionId);
+    localFileFollowUpTracker.clearSession(sessionId);
     foregroundSessionState.markIdle(sessionId);
     await scheduledTaskRuntime.flushDeferredDeliveries();
   });
@@ -1087,8 +1415,16 @@ export function createBot(): Bot<Context> {
       return false;
     }
 
-    logger.debug(
-      `[Bot] Blocking menu open while interaction active: kind=${activeInteraction.kind}, expectedInput=${activeInteraction.expectedInput}`,
+    if (activeInteraction.kind === "inline" && interactionManager.isExpired()) {
+      logger.warn(
+        `[Bot] Clearing expired inline interaction before opening menu: metadata=${JSON.stringify(activeInteraction.metadata)}, createdAt=${activeInteraction.createdAt}, expiresAt=${activeInteraction.expiresAt}`,
+      );
+      interactionManager.clear("expired_inline_menu_before_open");
+      return false;
+    }
+
+    logger.warn(
+      `[Bot] Blocking menu open while interaction active: kind=${activeInteraction.kind}, expectedInput=${activeInteraction.expectedInput}, metadata=${JSON.stringify(activeInteraction.metadata)}, createdAt=${activeInteraction.createdAt}, expiresAt=${activeInteraction.expiresAt}`,
     );
     await ctx.reply(t("interaction.blocked.finish_current"));
     return true;
@@ -1110,8 +1446,6 @@ export function createBot(): Bot<Context> {
   bot.command("tasklist", taskListCommand);
   bot.command("rename", renameCommand);
   bot.command("commands", commandsCommand);
-  bot.command("export_data", exportDataCommand);
-  bot.command("reasoning", reasoningCommand);
 
   bot.on("message:text", unknownCommandMiddleware);
 

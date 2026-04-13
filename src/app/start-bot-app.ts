@@ -10,6 +10,7 @@ import { warmupHostSessionDirectoryCache } from "../session/cache-manager.js";
 import { reconcileStoredModelSelection } from "../model/manager.js";
 import { getRuntimeMode } from "../runtime/mode.js";
 import { getRuntimePaths } from "../runtime/paths.js";
+import { stopBotContainers } from "../runtime/docker.js";
 import { logger } from "../utils/logger.js";
 
 const STARTUP_LOCK_FILE_NAME = "bot-start.lock";
@@ -79,6 +80,24 @@ async function acquireStartupLock(runtimePaths: { runDirPath: string }): Promise
   };
 }
 
+export async function tryAutoStartServer(): Promise<boolean> {
+  const runtimeResult = await processManager.ensureRuntime();
+  if (runtimeResult.success) {
+    return true;
+  }
+
+  logger.info("[App] OpenCode server is not running, attempting auto-start...");
+  const startResult = await processManager.start();
+
+  if (!startResult.success) {
+    logger.warn(`[App] Failed to auto-start OpenCode server: ${startResult.error}`);
+    return false;
+  }
+
+  logger.info("[App] OpenCode server auto-started successfully");
+  return true;
+}
+
 export async function startBotApp(): Promise<void> {
   const mode = getRuntimeMode();
   const runtimePaths = getRuntimePaths();
@@ -90,14 +109,34 @@ export async function startBotApp(): Promise<void> {
   logger.info(`Admin User ID: ${config.telegram.adminUserId}`);
   logger.debug(`[Runtime] Application start mode: ${mode}`);
 
+  let bot: ReturnType<typeof createBot> | null = null;
+  let shutdownRequested = false;
+
+  const shutdownBotContainers = async (): Promise<void> => {
+    try {
+      await stopBotContainers();
+    } catch (error) {
+      logger.error("[App] Failed to stop bot containers:", error);
+    }
+  };
+
+  const handleSignal = (signal: NodeJS.Signals): void => {
+    logger.info(`[App] Received ${signal}, stopping bot...`);
+    shutdownRequested = true;
+    void bot?.stop();
+  };
+
+  process.once("SIGINT", handleSignal);
+  process.once("SIGTERM", handleSignal);
+
   try {
     await loadSettings();
     await processManager.initialize();
-    await processManager.ensureRuntime();
+    await tryAutoStartServer();
     await reconcileStoredModelSelection();
     await warmupHostSessionDirectoryCache();
 
-    const bot = createBot();
+    bot = createBot();
     await scheduledTaskRuntime.initialize(bot);
 
     const webhookInfo = await bot.api.getWebhookInfo();
@@ -107,12 +146,17 @@ export async function startBotApp(): Promise<void> {
       logger.info("[Bot] Webhook removed, switching to long polling");
     }
 
-    await bot.start({
-      onStart: (botInfo) => {
-        logger.info(`Bot @${botInfo.username} started!`);
-      },
-    });
+    if (!shutdownRequested) {
+      await bot.start({
+        onStart: (botInfo) => {
+          logger.info(`Bot @${botInfo.username} started!`);
+        },
+      });
+    }
   } finally {
+    process.off("SIGINT", handleSignal);
+    process.off("SIGTERM", handleSignal);
+    await shutdownBotContainers();
     await releaseStartupLock();
   }
 }

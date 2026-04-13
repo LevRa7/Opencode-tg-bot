@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   editMessageWithMarkdownFallback,
   isTelegramMarkdownParseError,
+  sendMessageDraftWithMarkdownFallback,
   sendMessageWithMarkdownFallback,
 } from "../../../src/bot/utils/send-with-markdown-fallback.js";
 
@@ -178,7 +179,50 @@ describe("bot/utils/send-with-markdown-fallback", () => {
     });
   });
 
-  it("does not swallow non-markdown Telegram errors", async () => {
+  it("retries HTML send in raw mode when Telegram rejects entities", async () => {
+    const sendMessage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Bad Request: can't parse entities: unsupported start tag"))
+      .mockResolvedValueOnce(undefined);
+
+    await sendMessageWithMarkdownFallback({
+      api: { sendMessage },
+      chatId: 555,
+      text: "<blockquote expandable><b>Done</b></blockquote>",
+      rawFallbackText: "Done",
+      parseMode: "HTML",
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenNthCalledWith(1, 555, "<blockquote expandable><b>Done</b></blockquote>", {
+      parse_mode: "HTML",
+    });
+    expect(sendMessage).toHaveBeenNthCalledWith(2, 555, "Done", {});
+  });
+
+  it("retries HTML draft in raw mode when Telegram rejects entities", async () => {
+    const sendMessageDraft = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Bad Request: can't parse entities: unsupported start tag"))
+      .mockResolvedValueOnce(undefined);
+
+    await sendMessageDraftWithMarkdownFallback({
+      api: { sendMessageDraft },
+      chatId: 556,
+      draftId: 9,
+      text: "<blockquote expandable><b>Done</b></blockquote>",
+      rawFallbackText: "Done",
+      parseMode: "HTML",
+    });
+
+    expect(sendMessageDraft).toHaveBeenCalledTimes(2);
+    expect(sendMessageDraft).toHaveBeenNthCalledWith(1, 556, 9, "<blockquote expandable><b>Done</b></blockquote>", {
+      parse_mode: "HTML",
+    });
+    expect(sendMessageDraft).toHaveBeenNthCalledWith(2, 556, 9, "Done", undefined);
+  });
+
+  it("does not swallow non-markup Telegram errors", async () => {
     const sendMessage = vi
       .fn()
       .mockRejectedValueOnce(new Error("Bad Request: message is too long"));
@@ -195,7 +239,7 @@ describe("bot/utils/send-with-markdown-fallback", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("detects parse errors from api error description fields", () => {
+  it("detects parse errors from api description fields", () => {
     const error = {
       description: "Bad Request: can't find end of the entity starting at byte offset 42",
     };

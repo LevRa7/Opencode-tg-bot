@@ -1,7 +1,8 @@
 import type { Api, RawApi } from "grammy";
+import { logger } from "../../utils/logger.js";
 import {
   editMessageWithMarkdownFallback,
-  isTelegramMarkdownParseError,
+  sendMessageDraftWithMarkdownFallback,
   sendMessageWithMarkdownFallback,
 } from "./send-with-markdown-fallback.js";
 import { withMessageThreadId } from "./message-thread.js";
@@ -9,28 +10,6 @@ import { withMessageThreadId } from "./message-thread.js";
 type SendMessageApi = Pick<Api<RawApi>, "sendMessage">;
 type SendMessageDraftApi = Pick<Api<RawApi>, "sendMessageDraft">;
 type EditMessageApi = Pick<Api<RawApi>, "editMessageText">;
-
-const MARKDOWN_V2_RESERVED_CHARS = new Set([
-  "_",
-  "*",
-  "[",
-  "]",
-  "(",
-  ")",
-  "~",
-  "`",
-  ">",
-  "#",
-  "+",
-  "-",
-  "=",
-  "|",
-  "{",
-  "}",
-  ".",
-  "!",
-  "\\",
-]);
 
 type TelegramSendMessageOptions = Parameters<SendMessageApi["sendMessage"]>[2];
 type TelegramSendMessageDraftOptions = Parameters<SendMessageDraftApi["sendMessageDraft"]>[3];
@@ -67,6 +46,23 @@ interface SendBotTextDraftParams {
   format?: TelegramTextFormat;
 }
 
+function getFullErrorText(error: unknown): string {
+  const parts: string[] = [];
+  if (error instanceof Error) {
+    parts.push(error.message);
+  }
+  if (typeof error === "object" && error !== null) {
+    const description = Reflect.get(error, "description");
+    if (typeof description === "string") {
+      parts.push(description);
+    }
+  }
+  if (typeof error === "string") {
+    parts.push(error);
+  }
+  return parts.join(" ").toLowerCase();
+}
+
 function resolveMarkdownParseMode(
   format: TelegramTextFormat | undefined,
 ): "MarkdownV2" | undefined {
@@ -77,31 +73,6 @@ function resolveMarkdownParseMode(
   return undefined;
 }
 
-function escapeTelegramMarkdownV2(text: string): string {
-  let result = "";
-  let trailingBackslashes = 0;
-
-  for (const char of text) {
-    if (char === "\\") {
-      result += char;
-      trailingBackslashes += 1;
-      continue;
-    }
-
-    const isEscaped = trailingBackslashes % 2 === 1;
-    trailingBackslashes = 0;
-
-    if (MARKDOWN_V2_RESERVED_CHARS.has(char) && !isEscaped) {
-      result += `\\${char}`;
-      continue;
-    }
-
-    result += char;
-  }
-
-  return result;
-}
-
 export async function sendBotText({
   api,
   chatId,
@@ -110,24 +81,36 @@ export async function sendBotText({
   options,
   format = "raw",
   messageThreadId,
-}: SendBotTextParams): Promise<void> {
-  if (format === "html") {
-    await api.sendMessage(chatId, text, {
-      ...(options || {}),
-      ...withMessageThreadId(undefined, messageThreadId),
-      parse_mode: "HTML",
-    });
-    return;
+}: SendBotTextParams): Promise<number | null> {
+  logger.debug(
+    `[TelegramText] sendBotText: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, format=${format}, textLength=${text.length}`,
+  );
+
+  if (!text.trim()) {
+    logger.debug(
+      `[TelegramText] sendBotText skipped empty text: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, format=${format}`,
+    );
+    return null;
   }
 
-  await sendMessageWithMarkdownFallback({
-    api,
-    chatId,
-    text,
-    rawFallbackText,
-    options: withMessageThreadId(options, messageThreadId),
-    parseMode: resolveMarkdownParseMode(format),
-  });
+  try {
+    const result = await sendMessageWithMarkdownFallback({
+      api,
+      chatId,
+      text,
+      rawFallbackText: format === "html" ? text : rawFallbackText,
+      options: withMessageThreadId(options, messageThreadId),
+      parseMode: format === "html" ? "HTML" : resolveMarkdownParseMode(format),
+      messageThreadId,
+    });
+    return (result as { message_id?: number })?.message_id ?? null;
+  } catch (error) {
+    logger.error(
+      `[TelegramText] sendBotText failed: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, format=${format}, textLength=${text.length}`,
+      error,
+    );
+    throw error;
+  }
 }
 
 export async function editBotText({
@@ -139,23 +122,41 @@ export async function editBotText({
   options,
   format = "raw",
 }: EditBotTextParams): Promise<void> {
-  if (format === "html") {
-    await api.editMessageText(chatId, messageId, text, {
-      ...(options || {}),
-      parse_mode: "HTML",
-    });
+  logger.debug(
+    `[TelegramText] editBotText: chatId=${chatId}, messageId=${messageId}, format=${format}, textLength=${text.length}`,
+  );
+
+  if (!text.trim()) {
+    logger.debug(
+      `[TelegramText] editBotText skipped empty text: chatId=${chatId}, messageId=${messageId}, format=${format}`,
+    );
     return;
   }
 
-  await editMessageWithMarkdownFallback({
-    api,
-    chatId,
-    messageId,
-    text,
-    rawFallbackText,
-    options,
-    parseMode: resolveMarkdownParseMode(format),
-  });
+  try {
+    await editMessageWithMarkdownFallback({
+      api,
+      chatId,
+      messageId,
+      text,
+      rawFallbackText: format === "html" ? text : rawFallbackText,
+      options,
+      parseMode: format === "html" ? "HTML" : resolveMarkdownParseMode(format),
+    });
+  } catch (error) {
+    const errorText = getFullErrorText(error);
+    if (errorText.includes("message is not modified")) {
+      logger.debug(
+        `[TelegramText] editBotText skipped: message already has same content, chatId=${chatId}, messageId=${messageId}`,
+      );
+      return;
+    }
+    logger.error(
+      `[TelegramText] editBotText failed: chatId=${chatId}, messageId=${messageId}, format=${format}, textLength=${text.length}`,
+      error,
+    );
+    throw error;
+  }
 }
 
 export async function sendBotTextDraft({
@@ -166,29 +167,34 @@ export async function sendBotTextDraft({
   options,
   format = "raw",
 }: SendBotTextDraftParams): Promise<void> {
+  if (!text.trim()) {
+    logger.debug(
+      `[TelegramText] sendBotTextDraft skipped empty text: chatId=${chatId}, draftId=${draftId}, format=${format}`,
+    );
+    return;
+  }
+
   const parseMode = format === "html" ? "HTML" : resolveMarkdownParseMode(format);
-  const draftOptions = parseMode
-    ? {
-        ...(options || {}),
-        parse_mode: parseMode as "MarkdownV2" | "HTML",
-      }
-    : (options || {});
+
+  logger.debug(
+    `[TelegramText] sendBotTextDraft: chatId=${chatId}, draftId=${draftId}, format=${format}, textLength=${text.length}`,
+  );
 
   try {
-    await api.sendMessageDraft(chatId, draftId, text, draftOptions as any);
+    await sendMessageDraftWithMarkdownFallback({
+      api,
+      chatId,
+      draftId,
+      text,
+      rawFallbackText: format === "html" ? text : undefined,
+      options,
+      parseMode,
+    });
   } catch (error) {
-    if (format === "html" || !parseMode || !isTelegramMarkdownParseError(error)) {
-      throw error;
-    }
-
-    if (parseMode === "MarkdownV2") {
-      const escapedText = escapeTelegramMarkdownV2(text);
-      if (escapedText !== text) {
-        await api.sendMessageDraft(chatId, draftId, escapedText, draftOptions as any);
-        return;
-      }
-    }
-
+    logger.error(
+      `[TelegramText] sendBotTextDraft failed: chatId=${chatId}, draftId=${draftId}, format=${format}, textLength=${text.length}`,
+      error,
+    );
     throw error;
   }
 }

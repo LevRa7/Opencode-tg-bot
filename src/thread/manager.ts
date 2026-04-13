@@ -26,6 +26,7 @@ import {
   extractTelegramConversationScopeFromContext,
   type TelegramConversationScope,
 } from "../telegram/scope.js";
+import { ConversationContextKey } from "./conversation-context-key.js";
 import { logger } from "../utils/logger.js";
 import type { ModelInfo } from "../model/types.js";
 import type { ProjectInfo, SessionInfo } from "../settings/manager.js";
@@ -40,12 +41,6 @@ function cloneSession(session: SessionInfo): SettingsSessionInfo {
 
 function cloneModel(model: ModelInfo): ModelInfo {
   return { ...model };
-}
-
-interface ParsedContextKey {
-  userId: number | null;
-  chatId: number;
-  messageThreadId?: number;
 }
 
 function buildContextKey(scope: TelegramConversationScope): string {
@@ -75,13 +70,10 @@ class ThreadContextManager {
 
       if (binding.session) {
         this.sessionByContext.set(binding.contextKey, { ...binding.session });
-        const target = this.parseContextKey(binding.contextKey);
-        if (target && target.userId !== null) {
-          this.scopeBySessionId.set(binding.session.id, {
-            userId: target.userId,
-            chatId: target.chatId,
-            messageThreadId: target.messageThreadId,
-          });
+        const contextKey = this.parseContextKey(binding.contextKey);
+        const scope = contextKey?.toScope();
+        if (scope) {
+          this.scopeBySessionId.set(binding.session.id, scope);
         }
       }
 
@@ -97,46 +89,8 @@ class ThreadContextManager {
     this.hydratedFromSettings = true;
   }
 
-  private parseContextKey(contextKey: string): ParsedContextKey | null {
-    const parts = contextKey.split(":");
-    if (parts.length !== 2 && parts.length !== 3) {
-      return null;
-    }
-
-    if (parts.length === 2) {
-      const [chatIdRaw, messageThreadIdRaw] = parts;
-      const chatId = Number(chatIdRaw);
-      const messageThreadId = Number(messageThreadIdRaw);
-
-      if (!Number.isInteger(chatId) || !Number.isInteger(messageThreadId)) {
-        return null;
-      }
-
-      return {
-        userId: null,
-        chatId,
-        messageThreadId: messageThreadId > 0 ? messageThreadId : undefined,
-      };
-    }
-
-    const [userIdRaw, chatIdRaw, messageThreadIdRaw] = parts;
-    const userId = Number(userIdRaw);
-    const chatId = Number(chatIdRaw);
-    const messageThreadId = Number(messageThreadIdRaw);
-
-    if (
-      !Number.isInteger(userId) ||
-      !Number.isInteger(chatId) ||
-      !Number.isInteger(messageThreadId)
-    ) {
-      return null;
-    }
-
-    return {
-      userId,
-      chatId,
-      messageThreadId: messageThreadId > 0 ? messageThreadId : undefined,
-    };
+  private parseContextKey(contextKey: string): ConversationContextKey | null {
+    return ConversationContextKey.parse(contextKey);
   }
 
   private persistBindings(): void {
@@ -170,20 +124,24 @@ class ThreadContextManager {
     void setThreadContextBindings(bindings);
   }
 
+  private rememberSessionScope(sessionId: string, scope: TelegramConversationScope): void {
+    if (!this.scopeBySessionId.has(sessionId)) {
+      this.scopeBySessionId.set(sessionId, { ...scope });
+    }
+  }
+
   private findRecoverableContextKey(scope: TelegramConversationScope): string | null {
     const exactCandidates = new Set<string>();
 
+    const scopeKey = ConversationContextKey.fromScope(scope);
+
     const registerCandidate = (contextKey: string): void => {
-      const target = this.parseContextKey(contextKey);
-      if (!target) {
+      const parsedKey = this.parseContextKey(contextKey);
+      if (!parsedKey) {
         return;
       }
 
-      if (
-        target.userId === scope.userId &&
-        target.chatId === scope.chatId &&
-        target.messageThreadId === scope.messageThreadId
-      ) {
+      if (parsedKey.equals(scopeKey)) {
         exactCandidates.add(contextKey);
       }
     };
@@ -258,7 +216,9 @@ class ThreadContextManager {
 
     const scope = extractTelegramConversationScopeFromContext(ctx);
     const target = extractThreadTargetFromContext(ctx);
-    if (!target || !scope) {
+    if (!target || !scope || target.messageThreadId === undefined) {
+      this.activeScope = null;
+      this.activeContextKey = null;
       return null;
     }
 
@@ -339,7 +299,18 @@ class ThreadContextManager {
         setCurrentSession(cloneSession(boundSession));
       }
 
-      this.scopeBySessionId.set(boundSession.id, { ...scope });
+      this.rememberSessionScope(boundSession.id, scope);
+      return { ...target };
+    }
+
+    if (currentSession && target.messageThreadId !== undefined) {
+      if (effectiveProject && currentSession.directory !== effectiveProject.worktree) {
+        clearSession();
+        return { ...target };
+      }
+
+      this.sessionByContext.set(this.activeContextKey, cloneSession(currentSession));
+      this.rememberSessionScope(currentSession.id, scope);
       return { ...target };
     }
 
@@ -350,7 +321,7 @@ class ThreadContextManager {
       }
 
       this.sessionByContext.set(this.activeContextKey, cloneSession(currentSession));
-      this.scopeBySessionId.set(currentSession.id, { ...scope });
+      this.rememberSessionScope(currentSession.id, scope);
       this.persistBindings();
       return { ...target };
     }
@@ -478,13 +449,8 @@ class ThreadContextManager {
     }
 
     const contextKey = this.findSessionContextKey(sessionId);
-    const target = contextKey ? this.parseContextKey(contextKey) : null;
-    return target
-      ? {
-          chatId: target.chatId,
-          messageThreadId: target.messageThreadId,
-        }
-      : null;
+    const parsedKey = contextKey ? this.parseContextKey(contextKey) : null;
+    return parsedKey ? parsedKey.toTarget() : null;
   }
 
   getSessionScope(sessionId: string): TelegramConversationScope | null {

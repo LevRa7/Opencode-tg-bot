@@ -303,7 +303,7 @@ describe("bot/commands/sessions", () => {
     expect(handled).toBe(true);
     expect(mocked.clearInteractionMock).toHaveBeenCalledWith("session_select_error");
     expect(ctx.answerCallbackQuery).toHaveBeenCalled();
-    expect(ctx.reply).toHaveBeenCalledWith(t("sessions.select_error"));
+    expect(ctx.reply).toHaveBeenCalledWith(t("sessions.select_error"), {});
   });
 
   it("blocks session selection callback while foreground session is busy", async () => {

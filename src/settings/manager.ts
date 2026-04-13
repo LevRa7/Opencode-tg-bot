@@ -7,6 +7,7 @@ import {
 import path from "node:path";
 import { getRuntimePaths } from "../runtime/paths.js";
 import { logger } from "../utils/logger.js";
+import { config } from "../config.js";
 
 export interface ProjectInfo {
   id: string;
@@ -14,7 +15,7 @@ export interface ProjectInfo {
   name?: string;
 }
 
-export type ReasoningMode = 0 | 1 | 2 | 3;
+export type ReasoningMode = 0 | 1 | 2;
 
 export interface SessionInfo {
   id: string;
@@ -85,6 +86,7 @@ export interface ScopedConversationSettings {
 export interface ScopedUserSettings {
   ttsEnabled?: boolean;
   messageStreamingEnabled?: boolean;
+  thinkingClearMode?: boolean;
 }
 
 export interface Settings {
@@ -245,6 +247,7 @@ function cloneScopedUserSettings(
   return {
     ttsEnabled: settings.ttsEnabled,
     messageStreamingEnabled: settings.messageStreamingEnabled,
+    thinkingClearMode: settings.thinkingClearMode,
   };
 }
 
@@ -269,12 +272,15 @@ function isScopedConversationSettingsEmpty(settings: ScopedConversationSettings 
       settings.currentSession === undefined &&
       settings.currentAgent === undefined &&
       settings.currentModel === undefined &&
-      settings.pinnedMessageId === undefined);
+      settings.pinnedMessageId === undefined &&
+      settings.reasoningMode === undefined);
 }
 
 function isScopedUserSettingsEmpty(settings: ScopedUserSettings | undefined): boolean {
   return !settings ||
-    (settings.ttsEnabled === undefined && settings.messageStreamingEnabled === undefined);
+    (settings.ttsEnabled === undefined &&
+      settings.messageStreamingEnabled === undefined &&
+      settings.thinkingClearMode === undefined);
 }
 
 function getSettingsFilePath(): string {
@@ -518,7 +524,7 @@ export function isMessageStreamingEnabled(): boolean {
     return scopedSettings.messageStreamingEnabled;
   }
 
-  return getActiveUserScopeKey() ? true : (currentSettings.messageStreamingEnabled ?? true);
+  return currentSettings.messageStreamingEnabled ?? config.bot.responseStreaming;
 }
 
 export function setMessageStreamingEnabled(enabled: boolean): Promise<void> {
@@ -530,6 +536,27 @@ export function setMessageStreamingEnabled(enabled: boolean): Promise<void> {
   }
 
   return writeSettingsFile(currentSettings);
+}
+
+export function getThinkingClearMode(): boolean {
+  const scopedSettings = getUserScopedSettings();
+  if (scopedSettings) {
+    return scopedSettings.thinkingClearMode ?? false;
+  }
+
+  return false;
+}
+
+export function setThinkingClearMode(enabled: boolean): void {
+  const scopedSettings = getOrCreateUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.thinkingClearMode = enabled;
+  pruneUserScopedSettings();
+
+  void writeSettingsFile(currentSettings);
 }
 
 export function getCurrentAgent(): string | undefined {
@@ -639,10 +666,10 @@ export function getReasoningMode(): ReasoningMode {
   }
 
   if (getActiveConversationScopeKey()) {
-    return 3; // Default for new conversations
+    return 2; // Default for new conversations
   }
 
-  return currentSettings.reasoningMode ?? 3;
+  return currentSettings.reasoningMode ?? 2;
 }
 
 export function setReasoningMode(mode: ReasoningMode): void {
@@ -800,7 +827,11 @@ export async function loadSettings(): Promise<void> {
     pinnedMessageId: loadedSettings.pinnedMessageId,
     reasoningMode:
       typeof loadedSettings.reasoningMode === "number"
-        ? (loadedSettings.reasoningMode as ReasoningMode)
+        ? loadedSettings.reasoningMode >= 2
+          ? 2
+          : loadedSettings.reasoningMode <= 0
+            ? 0
+            : 1
         : undefined,
     ttsEnabled:
       typeof loadedSettings.ttsEnabled === "boolean" ? loadedSettings.ttsEnabled : undefined,

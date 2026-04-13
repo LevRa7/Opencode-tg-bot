@@ -27,9 +27,7 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "restart", descriptionKey: "cmd.description.restart", adminOnly: true },
   { command: "opencode_start", descriptionKey: "cmd.description.opencode_start" },
   { command: "opencode_stop", descriptionKey: "cmd.description.opencode_stop" },
-  { command: "reasoning", descriptionKey: "cmd.description.reasoning" },
   { command: "help", descriptionKey: "cmd.description.help" },
-  { command: "export_data", descriptionKey: "cmd.description.export_data" },
 ];
 
 export function getLocalizedBotCommands(options?: { isAdmin?: boolean }): BotCommandDefinition[] {

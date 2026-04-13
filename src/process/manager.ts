@@ -40,6 +40,8 @@ class ProcessManager implements ProcessManagerInterface {
     isRunning: false,
   };
 
+  private tenantStartupLocks = new Map<number, Promise<ProcessOperationResult>>();
+
   async initialize(): Promise<void> {
     const savedProcess = getServerProcess();
 
@@ -47,12 +49,20 @@ class ProcessManager implements ProcessManagerInterface {
       logger.info(`[ProcessManager] Found saved host process: PID=${savedProcess.pid}`);
 
       if (this.isProcessAlive(savedProcess.pid)) {
-        this.state = {
-          process: null,
-          pid: savedProcess.pid,
-          startTime: new Date(savedProcess.startTime),
-          isRunning: true,
-        };
+        const healthy = await this.waitForHostHealth();
+        if (healthy) {
+          this.state = {
+            process: null,
+            pid: savedProcess.pid,
+            startTime: new Date(savedProcess.startTime),
+            isRunning: true,
+          };
+        } else {
+          logger.warn(
+            `[ProcessManager] Saved host process PID=${savedProcess.pid} is alive but not responding, cleaning up`,
+          );
+          clearServerProcess();
+        }
       } else {
         logger.warn(`[ProcessManager] Saved host process PID=${savedProcess.pid} is dead, cleaning up`);
         clearServerProcess();
@@ -310,20 +320,39 @@ class ProcessManager implements ProcessManagerInterface {
       return { success: false, error: "Telegram scope is not available for tenant runtime" };
     }
 
-    const existingRuntime = getTenantRuntimeInfo(scope.userId);
+    const existingLock = this.tenantStartupLocks.get(scope.userId);
+    if (existingLock) {
+      return existingLock;
+    }
+
+    const startupPromise = this.doEnsureTenantRuntime(scope.userId).finally(() => {
+      this.tenantStartupLocks.delete(scope.userId);
+    });
+
+    this.tenantStartupLocks.set(scope.userId, startupPromise);
+    return startupPromise;
+  }
+
+  private async doEnsureTenantRuntime(userId: number): Promise<ProcessOperationResult> {
+    const scope = getCurrentTelegramConversationScope();
+    if (!scope) {
+      return { success: false, error: "Telegram scope is not available for tenant runtime" };
+    }
+
+    const existingRuntime = getTenantRuntimeInfo(userId);
     if (existingRuntime?.pid && this.isProcessAlive(existingRuntime.pid)) {
       return { success: true };
     }
 
     if (existingRuntime?.pid && !this.isProcessAlive(existingRuntime.pid)) {
-      await clearTenantRuntimeInfo(scope.userId);
+      await clearTenantRuntimeInfo(userId);
     }
 
     const tenantPort = existingRuntime?.port ?? (await this.findFreeTenantPort());
-    const tenantId = existingRuntime?.tenantId ?? `tg-${scope.userId}`;
+    const tenantId = existingRuntime?.tenantId ?? `tg-${userId}`;
     const baseUrl = this.buildTenantBaseUrl(tenantPort);
     const startResult = await this.startTenantRuntime({
-      userId: scope.userId,
+      userId,
       chatId: scope.chatId,
       port: tenantPort,
       tenantId,
@@ -353,20 +382,70 @@ class ProcessManager implements ProcessManagerInterface {
       return { success: false, error: "Process not running" };
     }
 
+    return await this.stopTenantRuntimeByInfo(runtime, timeoutMs);
+  }
+
+  async restartTenantRuntimes(): Promise<ProcessOperationResult> {
+    const runtimes = Object.values(getTenantRuntimes()).sort((left, right) => left.userId - right.userId);
+    if (runtimes.length === 0) {
+      return { success: true };
+    }
+
+    for (const runtime of runtimes) {
+      if (runtime.pid && this.isProcessAlive(runtime.pid)) {
+        const stopResult = await this.stopTenantRuntimeByInfo(runtime, 10_000);
+        if (!stopResult.success) {
+          return stopResult;
+        }
+      } else if (runtime.pid) {
+        await clearTenantRuntimeInfo(runtime.userId);
+      }
+
+      const startResult = await this.startTenantRuntime(runtime);
+      if (!startResult.success) {
+        return startResult;
+      }
+
+      const ready = await this.waitForTenantHealth(runtime.baseUrl);
+      if (!ready) {
+        const runningRuntime = getTenantRuntimeInfo(runtime.userId);
+        if (runningRuntime?.pid) {
+          await this.stopTenantRuntimeByInfo(runningRuntime, 10_000);
+        } else {
+          await clearTenantRuntimeInfo(runtime.userId);
+        }
+
+        return { success: false, error: `Tenant runtime did not become ready at ${runtime.baseUrl}` };
+      }
+    }
+
+    return { success: true };
+  }
+
+  private async stopTenantRuntimeByInfo(
+    runtime: TenantRuntimeInfo,
+    timeoutMs: number,
+  ): Promise<ProcessOperationResult> {
     try {
       logger.info(
         `[ProcessManager] Stopping tenant runtime: userId=${runtime.userId}, pid=${runtime.pid}`,
       );
 
+      const runtimePid = runtime.pid;
+      if (runtimePid == null) {
+        await clearTenantRuntimeInfo(runtime.userId);
+        return { success: true };
+      }
+
       try {
-        process.kill(runtime.pid, "SIGTERM");
+        process.kill(runtimePid, "SIGTERM");
       } catch (err) {
-        logger.debug(`[ProcessManager] Failed to send SIGTERM to tenant PID=${runtime.pid}:`, err);
+        logger.debug(`[ProcessManager] Failed to send SIGTERM to tenant PID=${runtimePid}:`, err);
       }
 
       const startedAt = Date.now();
       while (Date.now() - startedAt < timeoutMs) {
-        if (!this.isProcessAlive(runtime.pid)) {
+        if (!this.isProcessAlive(runtimePid)) {
           await clearTenantRuntimeInfo(runtime.userId);
           return { success: true };
         }
@@ -374,9 +453,9 @@ class ProcessManager implements ProcessManagerInterface {
       }
 
       try {
-        process.kill(runtime.pid, "SIGKILL");
+        process.kill(runtimePid, "SIGKILL");
       } catch (err) {
-        logger.debug(`[ProcessManager] Failed to send SIGKILL to tenant PID=${runtime.pid}:`, err);
+        logger.debug(`[ProcessManager] Failed to send SIGKILL to tenant PID=${runtimePid}:`, err);
       }
 
       await clearTenantRuntimeInfo(runtime.userId);

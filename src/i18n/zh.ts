@@ -14,7 +14,6 @@ export const zh: I18nDictionary = {
   "cmd.description.restart": "重启机器人进程",
   "cmd.description.opencode_start": "启动 OpenCode 服务器",
   "cmd.description.opencode_stop": "停止 OpenCode 服务器",
-  "cmd.description.reasoning": "Config reasoning mode (0-3)",
   "cmd.description.help": "帮助",
 
   "callback.unknown_command": "未知命令",
@@ -432,15 +431,6 @@ export const zh: I18nDictionary = {
   "stt.error": "🔴 识别音频失败：{error}",
   "stt.empty_result": "🎤 音频消息中未检测到语音。",
 
-  "cmd.description.export_data": "导出数据",
-
-  "export_data.title": "数据导出设置",
-  "export_data.group.personal": "个人",
-  "export_data.group.bots": "机器人",
-  "export_data.group.group_chats": "群聊",
-  "export_data.group.public_channels": "公开频道",
-  "export_data.group.interlocutor_channels": "对话者频道",
-
   "restart.admin_only": "此命令仅管理员可用。",
 
   "status.runtime.tenant": "运行时：租户",
@@ -508,8 +498,7 @@ export const zh: I18nDictionary = {
   "reasoning.title": "🧠 Reasoning settings",
   "reasoning.mode_0": "0 - Final answer only",
   "reasoning.mode_1": "1 - Thoughts and files",
-  "reasoning.mode_2": "2 - Level 1 + commands",
-  "reasoning.mode_3": "3 - Combined view (default)",
+  "reasoning.mode_2": "2 - Level 1 + commands + separate tool messages (default)",
   "reasoning.current": "Current mode: {mode}",
   "reasoning.updated": "✅ Reasoning mode changed to: {mode}",
 };

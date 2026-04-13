@@ -1,4 +1,5 @@
 import { CommandContext, Context } from "grammy";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentSession } from "../../session/manager.js";
 import { getCurrentProject, isTtsEnabled } from "../../settings/manager.js";
@@ -13,6 +14,8 @@ import { t } from "../../i18n/index.js";
 import { sendBotText } from "../utils/telegram-text.js";
 
 export async function statusCommand(ctx: CommandContext<Context>) {
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+
   try {
     const { data, error } = await opencodeClient.global.health();
 
@@ -99,12 +102,13 @@ export async function statusCommand(ctx: CommandContext<Context>) {
         chatId: ctx.chat.id,
         text: message,
         options: { reply_markup: keyboard },
+        messageThreadId,
       });
     } else {
-      await ctx.reply(message, { reply_markup: keyboard });
+      await ctx.reply(message, withMessageThreadId({ reply_markup: keyboard }, messageThreadId));
     }
   } catch (error) {
     logger.error("[Bot] Error checking server status:", error);
-    await ctx.reply(t("status.server_unavailable"));
+    await ctx.reply(t("status.server_unavailable"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
   }
 }

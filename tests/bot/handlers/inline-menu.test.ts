@@ -90,6 +90,7 @@ describe("bot/handlers/inline-menu", () => {
     expect(state?.expectedInput).toBe("callback");
     expect(state?.metadata.menuKind).toBe("model");
     expect(state?.metadata.messageId).toBe(42);
+    expect(typeof state?.expiresAt).toBe("number");
   });
 
   it("accepts callback from active inline menu", async () => {

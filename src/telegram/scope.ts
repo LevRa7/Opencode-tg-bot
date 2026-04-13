@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Context } from "grammy";
 import { extractMessageThreadIdFromContext } from "../bot/utils/message-thread.js";
+import { ConversationContextKey } from "../thread/conversation-context-key.js";
 
 export interface TelegramConversationScope {
   userId: number;
@@ -48,7 +49,7 @@ export function buildTelegramConversationScopeKey(
     return GLOBAL_TELEGRAM_SCOPE_KEY;
   }
 
-  return `${scope.userId}:${scope.chatId}:${scope.messageThreadId ?? 0}`;
+  return ConversationContextKey.fromScope(scope).toString();
 }
 
 export function getCurrentTelegramConversationScope(): TelegramConversationScope | null {

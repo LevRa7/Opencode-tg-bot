@@ -1,9 +1,36 @@
 import dotenv from "dotenv";
+import fs from "node:fs";
 import { getRuntimePaths } from "./runtime/paths.js";
 import { normalizeLocale, type Locale } from "./i18n/index.js";
 
 const runtimePaths = getRuntimePaths();
-dotenv.config({ path: runtimePaths.envFilePath, quiet: true });
+
+function loadEnvFile(filePath: string | null): Record<string, string> {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return {};
+  }
+
+  return dotenv.parse(fs.readFileSync(filePath, "utf-8"));
+}
+
+function loadMergedEnv(): void {
+  const admin = loadEnvFile(runtimePaths.adminEnvFilePath);
+  const user = loadEnvFile(runtimePaths.envFilePath);
+
+  for (const [key, value] of Object.entries(admin)) {
+    if (!process.env[key] || process.env[key]?.trim().length === 0) {
+      process.env[key] = value;
+    }
+  }
+
+  for (const [key, value] of Object.entries(user)) {
+    if (value.trim().length > 0) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadMergedEnv();
 
 export type MessageFormatMode = "raw" | "markdown";
 
@@ -30,6 +57,24 @@ function getOptionalPositiveIntEnvVar(key: string, defaultValue: number): number
   }
 
   return parsedValue;
+}
+
+function getOptionalNonNegativeIntEnvVarFromKeys(keys: string[], defaultValue: number): number {
+  for (const key of keys) {
+    const value = getEnvVar(key, false);
+    if (!value) {
+      continue;
+    }
+
+    const parsedValue = Number.parseInt(value, 10);
+    if (Number.isNaN(parsedValue) || parsedValue < 0) {
+      return defaultValue;
+    }
+
+    return parsedValue;
+  }
+
+  return defaultValue;
 }
 
 function getOptionalLocaleEnvVar(key: string, defaultValue: Locale): Locale {
@@ -153,7 +198,13 @@ export const config = {
     projectsListLimit: getOptionalPositiveIntEnvVar("PROJECTS_LIST_LIMIT", 10),
     commandsListLimit: getOptionalPositiveIntEnvVar("COMMANDS_LIST_LIMIT", 10),
     taskLimit: getOptionalPositiveIntEnvVar("TASK_LIMIT", 10),
+    responseStreaming: getOptionalBooleanEnvVar("RESPONSE_STREAMING", true),
     responseStreamThrottleMs: getOptionalPositiveIntEnvVar("RESPONSE_STREAM_THROTTLE_MS", 500),
+    bashToolDisplayMaxLength: getOptionalPositiveIntEnvVar("BASH_TOOL_DISPLAY_MAX_LENGTH", 128),
+    serviceMessagesIntervalSec: getOptionalNonNegativeIntEnvVarFromKeys(
+      ["SERVICE_MESSAGES_INTERVAL_SEC", "TOOL_MESSAGES_INTERVAL_SEC"],
+      5,
+    ),
     locale: getOptionalLocaleEnvVar("BOT_LOCALE", "en"),
     hideThinkingMessages: getOptionalBooleanEnvVar("HIDE_THINKING_MESSAGES", false),
     hideToolCallMessages: getOptionalBooleanEnvVar("HIDE_TOOL_CALL_MESSAGES", false),

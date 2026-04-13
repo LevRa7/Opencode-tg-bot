@@ -12,7 +12,6 @@ export const en = {
   "cmd.description.restart": "Restart bot process",
   "cmd.description.opencode_start": "Start OpenCode server",
   "cmd.description.opencode_stop": "Stop OpenCode server",
-  "cmd.description.reasoning": "Configure reasoning level (0-3)",
   "cmd.description.help": "Help",
 
   "callback.unknown_command": "Unknown command",
@@ -470,15 +469,6 @@ export const en = {
   "stt.error": "🔴 Failed to recognize audio: {error}",
   "stt.empty_result": "🎤 No speech detected in the audio message.",
 
-  "cmd.description.export_data": "Export data",
-
-  "export_data.title": "Data export settings",
-  "export_data.group.personal": "Personal",
-  "export_data.group.bots": "Bots",
-  "export_data.group.group_chats": "Group chats",
-  "export_data.group.public_channels": "Public channels",
-  "export_data.group.interlocutor_channels": "Interlocutor channels",
-
   "restart.admin_only": "This command is available only to the admin.",
 
   "status.runtime.tenant": "Runtime: tenant",
@@ -547,8 +537,7 @@ export const en = {
   "reasoning.title": "🧠 Reasoning settings",
   "reasoning.mode_0": "0 - Final answer only",
   "reasoning.mode_1": "1 - Thoughts and files",
-  "reasoning.mode_2": "2 - Level 1 + commands",
-  "reasoning.mode_3": "3 - Combined view (default)",
+  "reasoning.mode_2": "2 - Level 1 + commands + separate tool messages (default)",
   "reasoning.current": "Current mode: {mode}",
   "reasoning.updated": "✅ Reasoning mode changed to: {mode}",
 } as const;

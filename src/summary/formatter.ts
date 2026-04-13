@@ -10,6 +10,18 @@ import { getCurrentProject } from "../settings/manager.js";
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 const MARKDOWN_V2_RESERVED_CHARS = /([_\*\[\]\(\)~`>#+\-=|{}.!\\])/g;
 
+function truncateWithEllipsis(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  if (maxLength <= 3) {
+    return ".".repeat(Math.max(0, maxLength));
+  }
+
+  return `${text.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
 interface SplitTextOptions {
   avoidTrailingMarkdownEscape?: boolean;
 }
@@ -399,18 +411,18 @@ function getToolIcon(tool: string): string {
 function formatTodos(todos: Array<{ id: string; content: string; status: string }>): string {
   const MAX_TODOS = 20;
 
-  const statusToMarker: Record<string, string> = {
-    completed: "✅",
-    in_progress: "🔄",
-    pending: "🔲",
+  const statusToTag: Record<string, string> = {
+    completed: "[done]",
+    in_progress: "[in_progress]",
+    pending: "[pending]",
   };
 
   const formattedTodos: string[] = [];
 
   for (let i = 0; i < Math.min(todos.length, MAX_TODOS); i++) {
     const todo = todos[i];
-    const marker = statusToMarker[todo.status] ?? "🔲";
-    formattedTodos.push(`${marker} ${todo.content}`);
+    const tag = statusToTag[todo.status] ?? "[pending]";
+    formattedTodos.push(`${tag.padEnd(14, " ")} ${todo.content}`);
   }
 
   let result = formattedTodos.join("\n");
@@ -426,10 +438,14 @@ function formatDiffLineInfo(filediff: { additions?: number; deletions?: number }
   const parts = [];
   if (filediff.additions && filediff.additions > 0) parts.push(`+${filediff.additions}`);
   if (filediff.deletions && filediff.deletions > 0) parts.push(`-${filediff.deletions}`);
-  return parts.length > 0 ? ` (${parts.join(" ")})` : "";
+  return parts.length > 0 ? ` (${parts.join(" ")} lines)` : "";
 }
 
-function countDiffChangesFromText(text: string): { additions: number; deletions: number } {
+function formatLineCountInfo(lines: number): string {
+  return ` (+${lines} lines)`;
+}
+
+export function countDiffChangesFromText(text: string): { additions: number; deletions: number } {
   let additions = 0;
   let deletions = 0;
 
@@ -447,7 +463,7 @@ function countDiffChangesFromText(text: string): { additions: number; deletions:
   return { additions, deletions };
 }
 
-function extractFirstUpdatedFileFromTitle(title: string): string {
+export function extractFirstUpdatedFileFromTitle(title: string): string {
   for (const rawLine of title.split("\n")) {
     const line = rawLine.trim();
     if (line.length >= 3 && line[1] === " " && /[AMDURC]/.test(line[0])) {
@@ -472,7 +488,7 @@ export function formatToolInfo(toolInfo: ToolInfo): string | null {
     }>;
     const toolIcon = getToolIcon(tool);
     const todosList = formatTodos(todos);
-    return `${toolIcon} ${tool} (${todos.length})\n\n${todosList}`;
+    return `${toolIcon} "${tool}" (${todos.length})\n\n${todosList}`;
   }
 
   let details = title || getToolDetails(tool, input);
@@ -484,7 +500,7 @@ export function formatToolInfo(toolInfo: ToolInfo): string | null {
   }
 
   if (tool === "bash" && input && typeof input.command === "string") {
-    details = input.command;
+    details = truncateWithEllipsis(input.command, config.bot.bashToolDisplayMaxLength);
   }
 
   if (tool === "apply_patch") {
@@ -502,12 +518,12 @@ export function formatToolInfo(toolInfo: ToolInfo): string | null {
     }
   }
 
-  const detailsStr = details ? ` ${details}` : "";
+  const detailsStr = details ? ` \`${details}\`` : "";
   let lineInfo = "";
 
   if (tool === "write" && input && "content" in input && typeof input.content === "string") {
     const lines = countLines(input.content);
-    lineInfo = ` (+${lines})`;
+    lineInfo = formatLineCountInfo(lines);
   }
 
   if (
@@ -533,7 +549,7 @@ export function formatToolInfo(toolInfo: ToolInfo): string | null {
     }
   }
 
-  return `${toolIcon} ${description}${tool}${detailsStr}${lineInfo}`;
+  return `${toolIcon} ${description}"${tool}"${detailsStr}${lineInfo}`;
 }
 
 export function formatCompactToolInfo(toolInfo: ToolInfo, maxLength = 64, fallback = "-"): string {

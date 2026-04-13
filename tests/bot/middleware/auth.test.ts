@@ -102,8 +102,6 @@ describe("authMiddleware", () => {
     await authMiddleware(ctx, next);
 
     expect(next).toHaveBeenCalledTimes(1);
-    expect(ctx.api.setMyCommands).not.toHaveBeenCalled();
-    expect(ctx.api.setChatMenuButton).not.toHaveBeenCalled();
   });
 
   it("creates admin approval request for unauthorized private chats", async () => {

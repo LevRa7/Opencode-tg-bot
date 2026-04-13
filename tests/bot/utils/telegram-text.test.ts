@@ -1,7 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { editBotText, sendBotText, sendBotTextDraft } from "../../../src/bot/utils/telegram-text.js";
+import { logger } from "../../../src/utils/logger.js";
+
+vi.mock("../../../src/utils/logger.js", () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
 
 describe("bot/utils/telegram-text", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
   it("sends raw messages by default", async () => {
     const sendMessage = vi.fn().mockResolvedValue(undefined);
 
@@ -90,5 +103,22 @@ describe("bot/utils/telegram-text", () => {
     expect(sendMessageDraft).toHaveBeenNthCalledWith(2, 100, 1, "Build succeeded\\.", {
       parse_mode: "MarkdownV2",
     });
+  });
+
+  it("logs transport attempts and send failures", async () => {
+    const sendMessage = vi.fn().mockRejectedValue(new Error("send failed"));
+
+    await expect(
+      sendBotText({
+        api: { sendMessage },
+        chatId: 100,
+        text: "plain text",
+        format: "raw",
+        messageThreadId: 7,
+      }),
+    ).rejects.toThrow("send failed");
+
+    expect(logger.debug).toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalled();
   });
 });

@@ -54,15 +54,21 @@ export function extractMessageThreadIdFromContext(ctx: Context): number | undefi
   return normalizeMessageThreadId(callbackMessage?.message_thread_id);
 }
 
+export function extractCallbackMessageIdFromContext(ctx: Context): number | null {
+  const callbackMessage = ctx.callbackQuery?.message as { message_id?: unknown } | undefined;
+  return typeof callbackMessage?.message_id === "number" ? callbackMessage.message_id : null;
+}
+
 export function extractThreadTargetFromContext(ctx: Context): TelegramThreadTarget | null {
   const chatId = extractChatIdFromContext(ctx);
-  if (chatId === undefined) {
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+  if (chatId === undefined || messageThreadId === undefined) {
     return null;
   }
 
   return {
     chatId,
-    messageThreadId: extractMessageThreadIdFromContext(ctx),
+    messageThreadId,
   };
 }
 

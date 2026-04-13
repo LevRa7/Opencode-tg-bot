@@ -22,6 +22,7 @@ describe("unknownCommandMiddleware", () => {
       t("bot.unknown_command", {
         command: "/foobar",
       }),
+      {},
     );
   });
 
@@ -43,6 +44,21 @@ describe("unknownCommandMiddleware", () => {
 
     expect(next).toHaveBeenCalledTimes(1);
     expect(ctx.reply).not.toHaveBeenCalled();
+  });
+
+  it("treats removed export_data command as unknown", async () => {
+    const ctx = createTextContext("/export_data");
+    const next: NextFunction = vi.fn().mockResolvedValue(undefined);
+
+    await unknownCommandMiddleware(ctx, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith(
+      t("bot.unknown_command", {
+        command: "/export_data",
+      }),
+      {},
+    );
   });
 
   it("passes through non-command text", async () => {

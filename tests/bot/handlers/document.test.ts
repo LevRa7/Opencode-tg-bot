@@ -228,7 +228,7 @@ describe("bot/handlers/document", () => {
     });
 
     it("sends caption-only when model does not support PDF but caption exists", async () => {
-      const { ctx, replyMock } = createDocumentContext({
+      const { ctx } = createDocumentContext({
         document: {
           file_id: "pdf-file-id",
           file_unique_id: "pdf-unique-id",

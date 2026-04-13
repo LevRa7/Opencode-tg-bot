@@ -17,6 +17,11 @@ import {
   type TaskCreationState,
 } from "../../scheduled-task/types.js";
 import { logger } from "../../utils/logger.js";
+import {
+  extractCallbackMessageIdFromContext,
+  extractMessageThreadIdFromContext,
+  withMessageThreadId,
+} from "../utils/message-thread.js";
 
 const TASK_RETRY_SCHEDULE_CALLBACK = "task:retry-schedule";
 const TASK_CANCEL_CALLBACK = "task:cancel";
@@ -38,16 +43,6 @@ function buildRetryScheduleKeyboard(): InlineKeyboard {
 
 function buildCancelKeyboard(): InlineKeyboard {
   return new InlineKeyboard().text(t("task.button.cancel"), TASK_CANCEL_CALLBACK);
-}
-
-function getCallbackMessageId(ctx: Context): number | null {
-  const message = ctx.callbackQuery?.message;
-  if (!message || !("message_id" in message)) {
-    return null;
-  }
-
-  const messageId = (message as { message_id?: number }).message_id;
-  return typeof messageId === "number" ? messageId : null;
 }
 
 function clearTaskInteraction(reason: string): void {
@@ -298,14 +293,15 @@ function buildScheduledTask(
 }
 
 export async function taskCommand(ctx: CommandContext<Context>): Promise<void> {
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
   const currentProject = getCurrentProject();
   if (!currentProject) {
-    await ctx.reply(t("bot.project_not_selected"));
+    await ctx.reply(t("bot.project_not_selected"), withMessageThreadId(undefined, messageThreadId));
     return;
   }
 
   if (isTaskLimitReached()) {
-    await ctx.reply(t("task.limit_reached", { limit: String(config.bot.taskLimit) }));
+    await ctx.reply(t("task.limit_reached", { limit: String(config.bot.taskLimit) }), withMessageThreadId(undefined, messageThreadId));
     return;
   }
 
@@ -322,9 +318,10 @@ export async function taskCommand(ctx: CommandContext<Context>): Promise<void> {
     ),
   });
 
-  const message = await ctx.reply(t("task.prompt.schedule"), {
-    reply_markup: buildCancelKeyboard(),
-  });
+  const message = await ctx.reply(
+    t("task.prompt.schedule"),
+    withMessageThreadId({ reply_markup: buildCancelKeyboard() }, extractMessageThreadIdFromContext(ctx)),
+  );
   taskCreationManager.setScheduleRequestMessageId(message.message_id);
 }
 
@@ -336,7 +333,7 @@ export async function handleTaskCallback(ctx: Context): Promise<boolean> {
 
   const flowState = taskCreationManager.getState();
   const interactionState = interactionManager.getSnapshot();
-  const callbackMessageId = getCallbackMessageId(ctx);
+  const callbackMessageId = extractCallbackMessageIdFromContext(ctx);
 
   if (
     !flowState ||
@@ -358,7 +355,7 @@ export async function handleTaskCallback(ctx: Context): Promise<boolean> {
     await deleteMessageIfPresent(ctx, flowState.previewMessageId);
     await deleteMessageIfPresent(ctx, flowState.promptRequestMessageId);
     clearTaskFlow("task_cancelled");
-    await ctx.reply(t("task.cancelled"));
+    await ctx.reply(t("task.cancelled"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
     return true;
   }
 
@@ -384,9 +381,10 @@ export async function handleTaskCallback(ctx: Context): Promise<boolean> {
   await ctx.answerCallbackQuery({ text: t("task.retry_schedule_callback") });
   await deleteMessageIfPresent(ctx, flowState.promptRequestMessageId);
   await deleteMessageIfPresent(ctx, flowState.previewMessageId);
-  const message = await ctx.reply(t("task.prompt.schedule"), {
-    reply_markup: buildCancelKeyboard(),
-  });
+  const message = await ctx.reply(
+    t("task.prompt.schedule"),
+    withMessageThreadId({ reply_markup: buildCancelKeyboard() }, extractMessageThreadIdFromContext(ctx)),
+  );
   taskCreationManager.setScheduleRequestMessageId(message.message_id);
 
   return true;
@@ -405,26 +403,26 @@ export async function handleTaskTextInput(ctx: Context): Promise<boolean> {
   const interactionState = interactionManager.getSnapshot();
   if (!isTaskInteraction(interactionState)) {
     taskCreationManager.clear();
-    await ctx.reply(t("task.inactive"));
+    await ctx.reply(t("task.inactive"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
     return true;
   }
 
   const flowState = taskCreationManager.getState();
   if (!flowState) {
     clearTaskFlow("task_state_missing");
-    await ctx.reply(t("task.inactive"));
+    await ctx.reply(t("task.inactive"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
     return true;
   }
 
   if (taskCreationManager.isParsingSchedule()) {
-    await ctx.reply(t("task.parse.in_progress"));
+    await ctx.reply(t("task.parse.in_progress"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
     return true;
   }
 
   if (taskCreationManager.isWaitingForSchedule()) {
     const scheduleText = text.trim();
     if (!scheduleText) {
-      await ctx.reply(t("task.schedule_empty"));
+      await ctx.reply(t("task.schedule_empty"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
       return true;
     }
 
@@ -439,7 +437,7 @@ export async function handleTaskTextInput(ctx: Context): Promise<boolean> {
       ),
     });
 
-    const parsingMessage = await ctx.reply(t("task.parse.in_progress"));
+    const parsingMessage = await ctx.reply(t("task.parse.in_progress"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
 
     try {
       const parsedSchedule = await parseTaskSchedule(scheduleText, flowState.projectWorktree);
@@ -447,9 +445,13 @@ export async function handleTaskTextInput(ctx: Context): Promise<boolean> {
       await deleteMessageIfPresent(ctx, parsingMessage.message_id);
       await deleteMessageIfPresent(ctx, flowState.scheduleRequestMessageId);
 
-      const previewMessage = await ctx.reply(formatParsedSchedulePromptMessage(parsedSchedule), {
-        reply_markup: buildRetryScheduleKeyboard(),
-      });
+      const previewMessage = await ctx.reply(
+        formatParsedSchedulePromptMessage(parsedSchedule),
+        withMessageThreadId(
+          { reply_markup: buildRetryScheduleKeyboard() },
+          extractMessageThreadIdFromContext(ctx),
+        ),
+      );
 
       taskCreationManager.setParsedSchedule(
         scheduleText,
@@ -482,9 +484,10 @@ export async function handleTaskTextInput(ctx: Context): Promise<boolean> {
         ),
       });
       await deleteMessageIfPresent(ctx, parsingMessage.message_id);
-      const errorReply = await ctx.reply(t("task.parse_error", { message: errorMessage }), {
-        reply_markup: buildCancelKeyboard(),
-      });
+      const errorReply = await ctx.reply(
+        t("task.parse_error", { message: errorMessage }),
+        withMessageThreadId({ reply_markup: buildCancelKeyboard() }, extractMessageThreadIdFromContext(ctx)),
+      );
       taskCreationManager.setScheduleRequestMessageId(errorReply.message_id);
     }
 
@@ -497,13 +500,13 @@ export async function handleTaskTextInput(ctx: Context): Promise<boolean> {
 
   const prompt = text.trim();
   if (!prompt) {
-    await ctx.reply(t("task.prompt_empty"));
+    await ctx.reply(t("task.prompt_empty"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
     return true;
   }
 
   if (!flowState.parsedSchedule || !flowState.scheduleText) {
     clearTaskFlow("task_missing_schedule_before_save");
-    await ctx.reply(t("task.inactive"));
+    await ctx.reply(t("task.inactive"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
     return true;
   }
 
@@ -512,7 +515,7 @@ export async function handleTaskTextInput(ctx: Context): Promise<boolean> {
       await deleteMessageIfPresent(ctx, flowState.previewMessageId);
       await deleteMessageIfPresent(ctx, flowState.promptRequestMessageId);
       clearTaskFlow("task_limit_reached_before_save");
-      await ctx.reply(t("task.limit_reached", { limit: String(config.bot.taskLimit) }));
+      await ctx.reply(t("task.limit_reached", { limit: String(config.bot.taskLimit) }), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
       return true;
     }
 
@@ -530,10 +533,10 @@ export async function handleTaskTextInput(ctx: Context): Promise<boolean> {
     await deleteMessageIfPresent(ctx, flowState.previewMessageId);
     await deleteMessageIfPresent(ctx, flowState.promptRequestMessageId);
     clearTaskFlow("task_completed");
-    await ctx.reply(formatTaskCreatedMessage(task));
+    await ctx.reply(formatTaskCreatedMessage(task), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
   } catch (error) {
     logger.error("[TaskCommand] Failed to save scheduled task", error);
-    await ctx.reply(t("error.generic"));
+    await ctx.reply(t("error.generic"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
   }
 
   return true;

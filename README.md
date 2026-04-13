@@ -156,8 +156,8 @@ When installed via npm, the configuration wizard handles the initial setup. The 
 | `OPENCODE_API_URL`              | OpenCode server URL                                                                                          |    No    | `http://localhost:4096`  |
 | `OPENCODE_SERVER_USERNAME`      | Server auth username                                                                                         |    No    | `opencode`               |
 | `OPENCODE_SERVER_PASSWORD`      | Server auth password                                                                                         |    No    | —                        |
-| `OPENCODE_MODEL_PROVIDER`       | Default model provider                                                                                       |   Yes    | `opencode`               |
-| `OPENCODE_MODEL_ID`             | Default model ID                                                                                             |   Yes    | `big-pickle`             |
+| `OPENCODE_MODEL_PROVIDER`       | Default model provider                                                                                       |   Yes    | `cliproxyapi`            |
+| `OPENCODE_MODEL_ID`             | Default model ID                                                                                             |   Yes    | `gpt-5.4-mini`           |
 | `BOT_LOCALE`                    | Bot UI language (supported locale code, e.g. `en`, `de`, `es`, `fr`, `ru`, `zh`)                             |    No    | `en`                     |
 | `SESSIONS_LIST_LIMIT`           | Sessions per page in `/sessions`                                                                             |    No    | `10`                     |
 | `PROJECTS_LIST_LIMIT`           | Projects per page in `/projects`                                                                             |    No    | `10`                     |

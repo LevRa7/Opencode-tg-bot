@@ -2,8 +2,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelegramConversationScope } from "../../src/telegram/scope.js";
 import { runWithTelegramConversationScope } from "../../src/telegram/scope.js";
 
+vi.mock("../../src/config.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/config.js")>("../../src/config.js");
+  return {
+    ...actual,
+    config: {
+      ...actual.config,
+      bot: {
+        ...actual.config.bot,
+        responseStreaming: false,
+      },
+    },
+  };
+});
+
 const mocked = vi.hoisted(() => ({
-  settingsFilePath: "/tmp/opencode-telegram-bot-settings-manager.test.json",
+  settingsFilePath: `${process.env.TMPDIR ?? "/home/me/.claude/debug"}/opencode-telegram-bot-settings-manager.test.json`,
 }));
 
 vi.mock("../../src/runtime/paths.js", () => ({
@@ -23,12 +37,16 @@ import {
   getCurrentModel,
   getCurrentProject,
   getCurrentSession,
+  getReasoningMode,
+  getThinkingClearMode,
   getPinnedMessageId,
   isMessageStreamingEnabled,
   setCurrentAgent,
   setCurrentModel,
   setCurrentProject,
   setCurrentSession,
+  setReasoningMode,
+  setThinkingClearMode,
   setPinnedMessageId,
   setMessageStreamingEnabled,
 } from "../../src/settings/manager.js";
@@ -118,20 +136,27 @@ describe("settings/manager scoped state", () => {
     });
   });
 
-  it("isolates agent and model by topic while keeping streaming per user", async () => {
+  it("defaults streaming to env-configured value when settings are unset", () => {
+    expect(runWithTelegramConversationScope(scopeA, () => isMessageStreamingEnabled())).toBe(false);
+  });
+
+  it("isolates agent, model, and reasoning mode by topic while keeping streaming per user", async () => {
     runWithTelegramConversationScope(scopeA, () => {
       setCurrentAgent("build");
       setCurrentModel({ providerID: "openai", modelID: "gpt-5", variant: "default" });
+      setReasoningMode(2);
     });
     await runWithTelegramConversationScope(scopeA, () => setMessageStreamingEnabled(false));
 
     runWithTelegramConversationScope(scopeAOtherTopic, () => {
       setCurrentAgent("plan");
       setCurrentModel({ providerID: "anthropic", modelID: "claude", variant: "fast" });
+      setReasoningMode(2);
     });
 
     runWithTelegramConversationScope(scopeB, () => {
       setCurrentAgent("review");
+      setReasoningMode(1);
     });
     await runWithTelegramConversationScope(scopeB, () => setMessageStreamingEnabled(true));
 
@@ -147,6 +172,9 @@ describe("settings/manager scoped state", () => {
       modelID: "claude",
       variant: "fast",
     });
+    expect(runWithTelegramConversationScope(scopeA, () => getReasoningMode())).toBe(2);
+    expect(runWithTelegramConversationScope(scopeAOtherTopic, () => getReasoningMode())).toBe(2);
+    expect(runWithTelegramConversationScope(scopeB, () => getReasoningMode())).toBe(1);
     expect(runWithTelegramConversationScope(scopeA, () => isMessageStreamingEnabled())).toBe(false);
     expect(runWithTelegramConversationScope(scopeAOtherTopic, () => isMessageStreamingEnabled())).toBe(false);
     expect(runWithTelegramConversationScope(scopeB, () => isMessageStreamingEnabled())).toBe(true);
@@ -190,6 +218,7 @@ describe("settings/manager scoped state", () => {
       setCurrentSession({ id: "session-a", title: "A", directory: "/repo-a" });
       setCurrentAgent("build");
       setCurrentModel({ providerID: "openai", modelID: "gpt-5", variant: "default" });
+      setReasoningMode(2);
     });
     await runWithTelegramConversationScope(scopeA, () => setMessageStreamingEnabled(false));
 
@@ -208,6 +237,7 @@ describe("settings/manager scoped state", () => {
     expect(runWithTelegramConversationScope(scopeA, () => getCurrentSession())).toBeUndefined();
     expect(runWithTelegramConversationScope(scopeA, () => getCurrentAgent())).toBeUndefined();
     expect(runWithTelegramConversationScope(scopeA, () => getCurrentModel())).toBeUndefined();
+    expect(runWithTelegramConversationScope(scopeA, () => getReasoningMode())).toBe(2);
     expect(runWithTelegramConversationScope(scopeB, () => getCurrentProject())).toEqual({
       id: "project-b",
       worktree: "/repo-b",
@@ -236,5 +266,35 @@ describe("settings/manager scoped state", () => {
     expect(runWithTelegramConversationScope(scopeAOtherTopic, () => getPinnedMessageId())).toBe(
       202,
     );
+  });
+
+  it("defaults thinking clear mode to off and stores it as a user-scoped setting", () => {
+    expect(runWithTelegramConversationScope(scopeA, () => getThinkingClearMode())).toBe(false);
+
+    runWithTelegramConversationScope(scopeA, () => {
+      setThinkingClearMode(true);
+    });
+
+    expect(runWithTelegramConversationScope(scopeA, () => getThinkingClearMode())).toBe(true);
+  });
+
+  it("does not leak thinking clear mode across users", () => {
+    runWithTelegramConversationScope(scopeA, () => {
+      setThinkingClearMode(true);
+    });
+
+    expect(runWithTelegramConversationScope(scopeB, () => getThinkingClearMode())).toBe(false);
+  });
+
+  it("keeps reasoning mode after scoped project and session are cleared", () => {
+    runWithTelegramConversationScope(scopeA, () => {
+      setReasoningMode(1);
+      setCurrentProject({ id: "project-a", worktree: "/repo-a" });
+      setCurrentSession({ id: "session-a", title: "A", directory: "/repo-a" });
+      clearProject();
+      clearSession();
+    });
+
+    expect(runWithTelegramConversationScope(scopeA, () => getReasoningMode())).toBe(1);
   });
 });

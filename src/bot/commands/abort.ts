@@ -1,5 +1,6 @@
 import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { stopEventListening } from "../../opencode/events.js";
 import { getCurrentSession } from "../../session/manager.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
@@ -68,12 +69,13 @@ export async function abortCurrentOperation(
   const notifyUser = options.notifyUser ?? true;
 
   try {
+    const messageThreadId = extractMessageThreadIdFromContext(ctx);
     const currentSession = getCurrentSession();
     abortLocalStreaming(currentSession?.directory);
 
     if (!currentSession) {
       if (notifyUser) {
-        await ctx.reply(t("stop.no_active_session"));
+        await ctx.reply(t("stop.no_active_session"), withMessageThreadId(undefined, messageThreadId));
       }
       return;
     }
@@ -82,7 +84,10 @@ export async function abortCurrentOperation(
     let chatId: number | null = null;
 
     if (notifyUser) {
-      const waitingMessage = await ctx.reply(t("stop.in_progress"));
+      const waitingMessage = await ctx.reply(
+        t("stop.in_progress"),
+        withMessageThreadId(undefined, messageThreadId),
+      );
       waitingMessageId = waitingMessage.message_id;
       chatId = ctx.chat?.id ?? null;
 
@@ -153,7 +158,7 @@ export async function abortCurrentOperation(
     }
   } catch (error) {
     logger.error("[Abort] Unexpected error:", error);
-    await ctx.reply(t("stop.error"));
+    await ctx.reply(t("stop.error"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
   }
 }
 

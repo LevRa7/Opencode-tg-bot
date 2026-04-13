@@ -34,7 +34,7 @@ describe("bot/commands/stream", () => {
     await streamCommand(ctx);
 
     expect(mocked.setMessageStreamingEnabledMock).toHaveBeenCalledWith(true);
-    expect(ctx.reply).toHaveBeenCalledWith(t("stream.enabled"));
+    expect(ctx.reply).toHaveBeenCalledWith(t("stream.enabled"), {});
   });
 
   it("disables streaming with /stream off", async () => {
@@ -43,7 +43,7 @@ describe("bot/commands/stream", () => {
     await streamCommand(ctx);
 
     expect(mocked.setMessageStreamingEnabledMock).toHaveBeenCalledWith(false);
-    expect(ctx.reply).toHaveBeenCalledWith(t("stream.disabled"));
+    expect(ctx.reply).toHaveBeenCalledWith(t("stream.disabled"), {});
   });
 
   it("shows current status", async () => {
@@ -52,7 +52,7 @@ describe("bot/commands/stream", () => {
 
     await streamCommand(ctx);
 
-    expect(ctx.reply).toHaveBeenCalledWith(t("stream.status_disabled"));
+    expect(ctx.reply).toHaveBeenCalledWith(t("stream.status_disabled"), {});
   });
 
   it("shows usage for unknown arguments", async () => {
@@ -60,6 +60,6 @@ describe("bot/commands/stream", () => {
 
     await streamCommand(ctx);
 
-    expect(ctx.reply).toHaveBeenCalledWith(t("stream.usage"));
+    expect(ctx.reply).toHaveBeenCalledWith(t("stream.usage"), {});
   });
 });

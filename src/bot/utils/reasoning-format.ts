@@ -46,6 +46,53 @@ export function escapeHtml(text: string): string {
     .replaceAll('"', "&quot;");
 }
 
+/**
+ * Convert basic markdown to Telegram HTML format.
+ * Handles: **bold**, *italic*, `code`, ```code blocks~~~, [text](url), ~~strikethrough~~.
+ */
+export function markdownToHtml(text: string): string {
+  // Process code blocks first (before inline code, before escaping)
+  // We need to escape everything outside code blocks, but preserve code content
+  const codeBlocks: string[] = [];
+  let result = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, _lang, code) => {
+    const index = codeBlocks.length;
+    codeBlocks.push(`<pre>${escapeHtml(code.trim())}</pre>`);
+    return `\x00CB${index}\x00`;
+  });
+
+  // Process inline code
+  const inlineCodes: string[] = [];
+  result = result.replace(/`([^`\n]+)`/g, (_match, code) => {
+    const index = inlineCodes.length;
+    inlineCodes.push(`<code>${escapeHtml(code)}</code>`);
+    return `\x00IC${index}\x00`;
+  });
+
+  // Escape HTML entities in remaining text
+  result = escapeHtml(result);
+
+  // Now apply markdown conversions on the escaped text
+  // Bold: **text** or __text__
+  result = result.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  result = result.replace(/__(.+?)__/g, "<b>$1</b>");
+
+  // Italic: *text* or _text_ (but not inside words for underscore)
+  result = result.replace(/\*(.+?)\*/g, "<i>$1</i>");
+  result = result.replace(/(?<!\w)_(.+?)_(?!\w)/g, "<i>$1</i>");
+
+  // Strikethrough: ~~text~~
+  result = result.replace(/~~(.+?)~~/g, "<s>$1</s>");
+
+  // Links: [text](url)
+  result = result.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2">$1</a>');
+
+  // Restore code blocks and inline codes (they're already HTML-escaped)
+  result = result.replace(/\x00CB(\d+)\x00/g, (_match, index) => codeBlocks[Number(index)]);
+  result = result.replace(/\x00IC(\d+)\x00/g, (_match, index) => inlineCodes[Number(index)]);
+
+  return result;
+}
+
 function normalizeReasoning(text: string): string {
   return text.replace(/\r\n/g, "\n").trim();
 }
@@ -164,6 +211,20 @@ function renderReasoningBlocks(blocks: ReasoningBlock[]): string {
     .join("\n\n");
 }
 
+function buildReasoningEnvelope(textPrefix: string, contentHtml: string): string {
+  const parts: string[] = [];
+
+  if (textPrefix) {
+    parts.push(escapeHtml(textPrefix));
+  }
+
+  if (contentHtml) {
+    parts.push(contentHtml);
+  }
+
+  return `<blockquote expandable>${parts.join("\n\n")}</blockquote>`;
+}
+
 export function formatReasoningBlock(text: string): string {
   const normalized = normalizeReasoning(text);
   if (!normalized) {
@@ -185,41 +246,51 @@ export function formatTechnicalBlock(description: string, command?: string): str
   return `${escapedDesc}\n${escapedCmd}`;
 }
 
+export function formatToolCallAsSpoiler(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  return `<blockquote expandable>${escapeHtml(trimmed)}</blockquote>`;
+}
+
 export function formatReasoningForTelegramHtml(
   reasoningMode: number,
   reasoningText: string,
   technicals: Array<{ description: string; command?: string }>,
   textPrefix: string = "",
 ): string[] {
-  let contentHtml = "";
+  let spoilerContentHtml = "";
 
   if (reasoningMode >= 1 && reasoningText) {
-    contentHtml += formatReasoningBlock(reasoningText);
+    spoilerContentHtml += formatReasoningBlock(reasoningText);
   }
 
   if (reasoningMode >= 2 && technicals.length > 0) {
     for (const tech of technicals) {
-      if (contentHtml) contentHtml += "\n\n";
-      contentHtml += formatTechnicalBlock(tech.description, tech.command);
+      if (spoilerContentHtml) spoilerContentHtml += "\n\n";
+      spoilerContentHtml += formatTechnicalBlock(tech.description, tech.command);
     }
   }
 
-  if (!contentHtml) {
+  if (!spoilerContentHtml) {
     return [textPrefix];
   }
 
-  // Combined block mode 3 or simple split mode for others
-  const isCombined = reasoningMode === 3;
-  const wrapped = isCombined
-    ? `<blockquote expandable>${contentHtml}</blockquote>`
-    : `<blockquote>${contentHtml}</blockquote>`;
+  const spoilerHtml = `<blockquote expandable>${spoilerContentHtml}</blockquote>`;
 
-  // Answer (textPrefix) comes BEFORE reasoning block for better readability
-  const fullText = textPrefix ? `${textPrefix}\n\n${wrapped}` : wrapped;
-
-  if (fullText.length <= TELEGRAM_MESSAGE_LIMIT) {
-    return [fullText];
+  if (textPrefix) {
+    const fullText = `${textPrefix}\n\n${spoilerHtml}`;
+    if (fullText.length <= TELEGRAM_MESSAGE_LIMIT) {
+      return [fullText];
+    }
+    return splitTextIntoChunks(fullText, TELEGRAM_MESSAGE_LIMIT);
   }
 
-  return splitTextIntoChunks(fullText, TELEGRAM_MESSAGE_LIMIT);
+  if (spoilerHtml.length <= TELEGRAM_MESSAGE_LIMIT) {
+    return [spoilerHtml];
+  }
+
+  return splitTextIntoChunks(spoilerHtml, TELEGRAM_MESSAGE_LIMIT);
 }

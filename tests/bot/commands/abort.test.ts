@@ -77,7 +77,7 @@ describe("bot/commands/abort", () => {
 
     await abortCommand(ctx as never);
 
-    expect(replyMock).toHaveBeenCalledWith(t("stop.no_active_session"));
+    expect(replyMock).toHaveBeenCalledWith(t("stop.no_active_session"), {});
     expect(questionManager.isActive()).toBe(false);
     expect(permissionManager.isActive()).toBe(false);
     expect(renameManager.isWaitingForName()).toBe(false);
@@ -115,7 +115,7 @@ describe("bot/commands/abort", () => {
 
     await abortCommand(ctx as never);
 
-    expect(replyMock).toHaveBeenCalledWith(t("stop.in_progress"));
+    expect(replyMock).toHaveBeenCalledWith(t("stop.in_progress"), {});
     expect(mocked.abortMock).toHaveBeenCalled();
     expect(editMessageTextMock).toHaveBeenCalledWith(777, 88, t("stop.success"));
 

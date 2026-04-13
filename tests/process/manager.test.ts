@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchMock = vi.fn();
 
@@ -9,19 +9,43 @@ const { spawnMock, execMock } = vi.hoisted(() => ({
   execMock: vi.fn(),
 }));
 
+type TenantRuntimeRecord = {
+  userId: number;
+  chatId: number;
+  port: number;
+  baseUrl: string;
+  pid?: number;
+  startTime?: string;
+  tenantId: string;
+};
+
 const {
   getServerProcessMock,
   setServerProcessMock,
   clearServerProcessMock,
+  tenantRuntimesState,
   getTenantRuntimesMock,
+  getTenantRuntimeInfoMock,
+  setTenantRuntimeInfoMock,
   clearTenantRuntimeInfoMock,
-} = vi.hoisted(() => ({
-  getServerProcessMock: vi.fn(),
-  setServerProcessMock: vi.fn(),
-  clearServerProcessMock: vi.fn(),
-  getTenantRuntimesMock: vi.fn(() => ({})),
-  clearTenantRuntimeInfoMock: vi.fn(),
-}));
+} = vi.hoisted(() => {
+  const tenantRuntimesState: Record<string, TenantRuntimeRecord> = {};
+
+  return {
+    getServerProcessMock: vi.fn(),
+    setServerProcessMock: vi.fn(),
+    clearServerProcessMock: vi.fn(),
+    tenantRuntimesState,
+    getTenantRuntimesMock: vi.fn(() => tenantRuntimesState),
+    getTenantRuntimeInfoMock: vi.fn((userId: number) => tenantRuntimesState[String(userId)]),
+    setTenantRuntimeInfoMock: vi.fn(async (userId: number, runtimeInfo: TenantRuntimeRecord) => {
+      tenantRuntimesState[String(userId)] = runtimeInfo;
+    }),
+    clearTenantRuntimeInfoMock: vi.fn(async (userId: number) => {
+      delete tenantRuntimesState[String(userId)];
+    }),
+  };
+});
 
 vi.mock("child_process", () => ({
   spawn: spawnMock,
@@ -33,6 +57,7 @@ vi.mock("../../src/settings/manager.js", () => ({
   setServerProcess: setServerProcessMock,
   clearServerProcess: clearServerProcessMock,
   getTenantRuntimes: getTenantRuntimesMock,
+  setTenantRuntimeInfo: setTenantRuntimeInfoMock,
   clearTenantRuntimeInfo: clearTenantRuntimeInfoMock,
 }));
 
@@ -70,8 +95,19 @@ describe("process/manager", () => {
     setServerProcessMock.mockReset();
     clearServerProcessMock.mockReset();
     getTenantRuntimesMock.mockReset();
+    setTenantRuntimeInfoMock.mockReset();
     clearTenantRuntimeInfoMock.mockReset();
-    getTenantRuntimesMock.mockReturnValue({});
+    for (const key of Object.keys(tenantRuntimesState)) {
+      delete tenantRuntimesState[key];
+    }
+    getTenantRuntimesMock.mockReturnValue(tenantRuntimesState);
+    getTenantRuntimeInfoMock.mockImplementation((userId: number) => tenantRuntimesState[String(userId)]);
+    setTenantRuntimeInfoMock.mockImplementation(async (userId: number, runtimeInfo: TenantRuntimeRecord) => {
+      tenantRuntimesState[String(userId)] = runtimeInfo;
+    });
+    clearTenantRuntimeInfoMock.mockImplementation(async (userId: number) => {
+      delete tenantRuntimesState[String(userId)];
+    });
     fetchMock.mockResolvedValue({ ok: true });
 
     execMock.mockImplementation((_command: string, callback?: (...args: unknown[]) => void) => {
@@ -80,6 +116,15 @@ describe("process/manager", () => {
       }
       return {};
     });
+  });
+
+  afterEach(() => {
+    try {
+      vi.runOnlyPendingTimers();
+    } catch {
+      // timers may not be mocked in tests that do not need them
+    }
+    vi.useRealTimers();
   });
 
   it("restores running process from settings on initialize", async () => {
@@ -206,6 +251,54 @@ describe("process/manager", () => {
     }
   });
 
+  it("restarts tenant runtimes in order", async () => {
+    vi.useFakeTimers();
+    tenantRuntimesState["22"] = {
+      userId: 22,
+      chatId: 220,
+      port: 49602,
+      baseUrl: "http://127.0.0.1:49602",
+      pid: 2222,
+      tenantId: "tg-22",
+    };
+    tenantRuntimesState["11"] = {
+      userId: 11,
+      chatId: 110,
+      port: 49601,
+      baseUrl: "http://127.0.0.1:49601",
+      pid: 1111,
+      tenantId: "tg-11",
+    };
+    const pidCalls: number[] = [];
+    vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: number | NodeJS.Signals) => {
+      pidCalls.push(pid);
+      return signal === 0 ? false : true;
+    });
+    spawnMock.mockReturnValueOnce(createMockChildProcess(333)).mockReturnValueOnce(
+      createMockChildProcess(444),
+    );
+    fetchMock.mockResolvedValue({ ok: true });
+
+    const resultPromise = processManager.restartTenantRuntimes();
+    await vi.runAllTimersAsync();
+    const result = await resultPromise;
+    vi.useRealTimers();
+
+    expect(result).toEqual({ success: true });
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(spawnMock.mock.calls[0][2]).toEqual(
+      expect.objectContaining({
+        env: expect.objectContaining({ TG_ID: "11" }),
+      }),
+    );
+    expect(spawnMock.mock.calls[1][2]).toEqual(
+      expect.objectContaining({
+        env: expect.objectContaining({ TG_ID: "22" }),
+      }),
+    );
+    expect(pidCalls).toEqual(expect.arrayContaining([1111, 2222]));
+  });
+
   it("returns error when stopping non-running process", async () => {
     const result = await processManager.stop();
     expect(result).toEqual({ success: false, error: "Process not running" });
@@ -227,5 +320,55 @@ describe("process/manager", () => {
     } finally {
       restorePlatform();
     }
+  });
+
+  it("cleans saved PID on initialize when health check fails", async () => {
+    vi.useFakeTimers();
+    getServerProcessMock.mockReturnValue({
+      pid: 500,
+      startTime: new Date(Date.now() - 10_000).toISOString(),
+    });
+    vi.spyOn(process, "kill").mockImplementation(() => true);
+    fetchMock.mockRejectedValue(new Error("connection refused"));
+
+    const resultPromise = processManager.initialize();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await resultPromise;
+
+    expect(clearServerProcessMock).toHaveBeenCalledTimes(1);
+    expect(processManager.isRunning()).toBe(false);
+  });
+
+  it("restores saved PID on initialize when health check passes", async () => {
+    getServerProcessMock.mockReturnValue({
+      pid: 501,
+      startTime: new Date(Date.now() - 10_000).toISOString(),
+    });
+    vi.spyOn(process, "kill").mockImplementation(() => true);
+    fetchMock.mockResolvedValue({ ok: true });
+
+    await processManager.initialize();
+
+    expect(clearServerProcessMock).not.toHaveBeenCalled();
+    expect(processManager.isRunning()).toBe(true);
+    expect(processManager.getPID()).toBe(501);
+  });
+
+  it("deduplicates parallel tenant runtime startups", async () => {
+    vi.useFakeTimers();
+    getTenantRuntimeInfoMock.mockReturnValue(undefined);
+    spawnMock.mockReturnValue(createMockChildProcess(7777));
+    fetchMock.mockResolvedValue({ ok: true });
+    vi.spyOn(process, "kill").mockImplementation(() => true);
+
+    const result1Promise = processManager.ensureRuntime();
+    const result2Promise = processManager.ensureRuntime();
+
+    await vi.runAllTimersAsync();
+    const [result1, result2] = await Promise.all([result1Promise, result2Promise]);
+
+    expect(result1).toEqual({ success: true });
+    expect(result2).toEqual({ success: true });
+    expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 });

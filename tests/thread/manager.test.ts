@@ -1,16 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 
+type ThreadBindingMock = {
+  contextKey: string;
+  project?: { id: string; worktree: string; name?: string };
+  session?: { id: string; title: string; directory: string };
+  agent?: string;
+  model?: { providerID: string; modelID: string; variant?: string };
+};
+
 const mocked = vi.hoisted(() => ({
   currentProject: undefined as { id: string; worktree: string; name?: string } | undefined,
   currentSession: null as { id: string; title: string; directory: string } | null,
-  threadContextBindings: [] as Array<{
-    contextKey: string;
-    project?: { id: string; worktree: string; name?: string };
-    session?: { id: string; title: string; directory: string };
-    agent?: string;
-    model?: { providerID: string; modelID: string; variant?: string };
-  }>,
+  threadContextBindings: [] as ThreadBindingMock[],
   currentAgent: undefined as string | undefined,
   currentModel: undefined as { providerID: string; modelID: string; variant?: string } | undefined,
   setCurrentProjectMock: vi.fn(),
@@ -117,30 +119,25 @@ describe("thread/manager", () => {
       messageThreadId: 11,
     });
     expect(threadContextManager.getSessionDirectory("session-existing")).toBe("/repo");
-    expect(mocked.setThreadContextBindingsMock).toHaveBeenLastCalledWith([
-      {
-        contextKey: "1001:-100100:11",
-        project: { id: "project-existing", worktree: "/repo" },
-        session: {
-          id: "session-existing",
-          title: "Existing",
-          directory: "/repo",
-        },
-      },
-    ]);
   });
 
-  it("keeps existing session in non-threaded chats", () => {
+  it("ignores non-threaded chats and clears the active topic", () => {
+    const topicCtx = createMessageContext(-100100, 11);
+    threadContextManager.activateFromContext(topicCtx);
+
     mocked.currentSession = {
       id: "session-direct",
       title: "Direct",
       directory: "/repo",
     };
 
-    threadContextManager.activateFromContext(createMessageContext(123456));
+    const target = threadContextManager.activateFromContext(createMessageContext(123456));
 
+    expect(target).toBeNull();
+    expect(threadContextManager.getActiveTarget()).toBeNull();
     expect(mocked.clearSessionMock).not.toHaveBeenCalled();
-    expect(threadContextManager.getSessionTarget("session-direct")).toEqual({ chatId: 123456 });
+    expect(threadContextManager.getSessionTarget("session-direct")).toBeNull();
+    expect(mocked.setThreadContextBindingsMock).not.toHaveBeenCalled();
   });
 
   it("allows auto assignment only until topic bindings are created", () => {
@@ -264,12 +261,19 @@ describe("thread/manager", () => {
 
     mocked.currentProject = { id: "project-user-2", worktree: "/repo-2" };
     mocked.currentSession = { id: "session-user-2", title: "User Two", directory: "/repo-2" };
+    mocked.currentAgent = "plan";
+    mocked.currentModel = { providerID: "anthropic", modelID: "claude-3-5", variant: "sonnet" };
     threadContextManager.activateFromContext(userTwoCtx);
 
     mocked.setCurrentProjectMock.mockReset();
     mocked.setCurrentSessionMock.mockReset();
+    mocked.setCurrentAgentMock.mockReset();
+    mocked.setCurrentModelMock.mockReset();
+    mocked.setThreadContextBindingsMock.mockReset();
     mocked.currentProject = { id: "other", worktree: "/other" };
     mocked.currentSession = { id: "other-session", title: "Other", directory: "/other" };
+    mocked.currentAgent = "other-agent";
+    mocked.currentModel = { providerID: "openai", modelID: "gpt-4" };
 
     threadContextManager.activateFromContext(userTwoCtx);
 
@@ -277,10 +281,96 @@ describe("thread/manager", () => {
       id: "project-user-2",
       worktree: "/repo-2",
     });
-    expect(mocked.setCurrentSessionMock).toHaveBeenCalledWith({
-      id: "session-user-2",
-      title: "User Two",
-      directory: "/repo-2",
+    expect(mocked.setCurrentAgentMock).toHaveBeenCalledWith("plan");
+    expect(mocked.setCurrentModelMock).toHaveBeenCalledWith({
+      providerID: "anthropic",
+      modelID: "claude-3-5",
+      variant: "sonnet",
     });
+    expect(mocked.setThreadContextBindingsMock).not.toHaveBeenCalled();
+  });
+
+  it("does NOT auto-bind existing session to new topic - creates isolation", () => {
+    mocked.currentProject = { id: "project-existing", worktree: "/repo" };
+    mocked.currentSession = {
+      id: "session-existing",
+      title: "Existing Session",
+      directory: "/repo",
+    };
+
+    threadContextManager.activateFromContext(createMessageContext(-100100, 10));
+
+    expect(threadContextManager.getSessionTarget("session-existing")).toEqual({
+      chatId: -100100,
+      messageThreadId: 10,
+    });
+
+    mocked.currentProject = { id: "project-existing", worktree: "/repo" };
+    mocked.currentSession = {
+      id: "session-existing",
+      title: "Existing Session",
+      directory: "/repo",
+    };
+    mocked.threadContextBindings = [
+      {
+        contextKey: "1001:-100100:10",
+        session: { id: "session-existing", title: "Existing Session", directory: "/repo" },
+        project: { id: "project-existing", worktree: "/repo" },
+      },
+    ];
+
+    threadContextManager.__resetForTests();
+    threadContextManager.activateFromContext(createMessageContext(-100100, 20));
+
+    const bindings = mocked.setThreadContextBindingsMock.mock.calls[0]?.[0] ?? [];
+    const topic20Binding = bindings.find((b: ThreadBindingMock) => b.contextKey === "1001:-100100:20");
+    expect(topic20Binding?.session).toBeUndefined();
+  });
+
+  it("keeps a session locked to its original thread after switching to main chat", () => {
+    mocked.currentProject = { id: "project-existing", worktree: "/repo" };
+    mocked.currentSession = {
+      id: "session-existing",
+      title: "Existing Session",
+      directory: "/repo",
+    };
+
+    threadContextManager.activateFromContext(createMessageContext(-100100, 10));
+    expect(threadContextManager.getSessionTarget("session-existing")).toEqual({
+      chatId: -100100,
+      messageThreadId: 10,
+    });
+
+    threadContextManager.activateFromContext(createMessageContext(123456));
+
+    expect(threadContextManager.getSessionTarget("session-existing")).toEqual({
+      chatId: -100100,
+      messageThreadId: 10,
+    });
+  });
+
+  it("new topic without binding should not inherit session from another topic", () => {
+    mocked.threadContextBindings = [
+      {
+        contextKey: "1001:-100100:10",
+        session: { id: "session-topic-10", title: "Topic 10 Session", directory: "/repo" },
+        project: { id: "project-1", worktree: "/repo" },
+      },
+    ];
+
+    threadContextManager.__resetForTests();
+
+    mocked.currentSession = {
+      id: "session-topic-10",
+      title: "Topic 10 Session",
+      directory: "/repo",
+    };
+    mocked.currentProject = { id: "project-1", worktree: "/repo" };
+
+    threadContextManager.activateFromContext(createMessageContext(-100100, 20));
+
+    const bindings = mocked.setThreadContextBindingsMock.mock.calls[0]?.[0] ?? [];
+    const topic20Binding = bindings.find((b: ThreadBindingMock) => b.contextKey === "1001:-100100:20");
+    expect(topic20Binding?.session).toBeUndefined();
   });
 });

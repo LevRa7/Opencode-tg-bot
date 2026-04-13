@@ -1,7 +1,12 @@
 import { Event, ToolState } from "@opencode-ai/sdk/v2";
 import type { Bot } from "grammy";
 import type { CodeFileData } from "./formatter.js";
-import { normalizePathForDisplay, prepareCodeFile } from "./formatter.js";
+import {
+  countDiffChangesFromText,
+  extractFirstUpdatedFileFromTitle,
+  normalizePathForDisplay,
+  prepareCodeFile,
+} from "./formatter.js";
 import type { Question } from "../question/types.js";
 import type { PermissionRequest } from "../permission/types.js";
 import type { FileChange } from "../pinned/types.js";
@@ -16,12 +21,18 @@ export interface SummaryInfo {
   lastUpdated: number;
 }
 
+type AggregatedToolCall = {
+  tool: string;
+  title?: string;
+  input?: { [key: string]: unknown };
+};
+
 type MessageCompleteCallback = (
   sessionId: string,
   messageId: string,
   messageText: string,
   reasoningText?: string,
-  toolCalls?: Array<{ tool: string; title?: string; input?: any }>,
+  toolCalls?: AggregatedToolCall[],
 ) => void;
 
 type MessagePartialCallback = (
@@ -29,8 +40,8 @@ type MessagePartialCallback = (
   messageId: string,
   messageText: string,
   reasoningText?: string,
-  toolCalls?: Array<{ tool: string; title?: string; input?: any }>,
-) => void;
+  toolCalls?: AggregatedToolCall[],
+) => void | Promise<void>;
 
 interface MessagePartDeltaEventRaw {
   type: "message.part.delta";
@@ -76,6 +87,8 @@ type QuestionCallback = (sessionId: string, questions: Question[], requestID: st
 type QuestionErrorCallback = (sessionId: string) => void;
 
 type ThinkingCallback = (sessionId: string) => void;
+
+type SessionIdleCallback = (sessionId: string) => void | Promise<void>;
 
 export interface TokensInfo {
   input: number;
@@ -146,7 +159,7 @@ interface TextMessageState {
   partTexts: Map<string, string>;
   orderedThoughtPartIds: string[];
   thoughtTexts: Map<string, string>;
-  toolCalls: Array<{ tool: string; title?: string; input?: any }>;
+  toolCalls: AggregatedToolCall[];
   optimisticUpdateCount: number;
 }
 
@@ -155,34 +168,6 @@ interface SubagentState extends SubagentInfo {
   hasTaskToolMetadata: boolean;
   hasSessionTitleMetadata: boolean;
   createdAt: number;
-}
-
-function extractFirstUpdatedFileFromTitle(title: string): string {
-  for (const rawLine of title.split("\n")) {
-    const line = rawLine.trim();
-    if (line.length >= 3 && line[1] === " " && /[AMDURC]/.test(line[0])) {
-      return line.slice(2).trim();
-    }
-  }
-  return "";
-}
-
-function countDiffChangesFromText(text: string): { additions: number; deletions: number } {
-  let additions = 0;
-  let deletions = 0;
-
-  for (const line of text.split("\n")) {
-    if (line.startsWith("+") && !line.startsWith("+++")) {
-      additions++;
-      continue;
-    }
-
-    if (line.startsWith("-") && !line.startsWith("---")) {
-      deletions++;
-    }
-  }
-
-  return { additions, deletions };
 }
 
 class SummaryAggregator {
@@ -201,6 +186,7 @@ class SummaryAggregator {
   private onTokensCallback: TokensCallback | null = null;
   private onCostCallback: CostCallback | null = null;
   private onSubagentCallback: SubagentCallback | null = null;
+  private onSessionIdleCallback: SessionIdleCallback | null = null;
   private onSessionCompactedCallback: SessionCompactedCallback | null = null;
   private onSessionErrorCallback: SessionErrorCallback | null = null;
   private onSessionRetryCallback: SessionRetryCallback | null = null;
@@ -210,7 +196,9 @@ class SummaryAggregator {
   private onClearedCallback: ClearedCallback | null = null;
   private resolveSessionDirectory: SessionDirectoryResolver = () => null;
   private processedToolStates: Set<string> = new Set();
+  private lastRunningToolOutputHashes: Map<string, string> = new Map();
   private thinkingFiredForMessages: Set<string> = new Set();
+  private thinkingFiredForSessionRun = false;
   private knownTextPartIds: Map<string, Set<string>> = new Map();
   private bot: Bot | null = null;
   private chatId: number | null = null;
@@ -264,6 +252,10 @@ class SummaryAggregator {
 
   setOnTokens(callback: TokensCallback): void {
     this.onTokensCallback = callback;
+  }
+
+  setOnSessionIdle(callback: SessionIdleCallback): void {
+    this.onSessionIdleCallback = callback;
   }
 
   setOnCost(callback: CostCallback): void {
@@ -410,10 +402,12 @@ class SummaryAggregator {
   }
 
   setSession(sessionId: string): void {
-    if (this.currentSessionId !== sessionId) {
-      this.clear();
-      this.currentSessionId = sessionId;
+    if (!this.trackedSessionParents.has(sessionId)) {
       this.trackedSessionParents.set(sessionId, null);
+    }
+
+    if (this.currentSessionId !== sessionId) {
+      this.currentSessionId = sessionId;
     }
   }
 
@@ -425,7 +419,9 @@ class SummaryAggregator {
     this.partHashes.clear();
     this.knownTextPartIds.clear();
     this.processedToolStates.clear();
+    this.lastRunningToolOutputHashes.clear();
     this.thinkingFiredForMessages.clear();
+    this.thinkingFiredForSessionRun = false;
     this.trackedSessionParents.clear();
     this.subagentStates.clear();
     this.subagentOrder = [];
@@ -446,7 +442,12 @@ class SummaryAggregator {
   }
 
   private isTrackedChildSession(sessionId: string): boolean {
-    return this.trackedSessionParents.has(sessionId) && sessionId !== this.currentSessionId;
+    const parentSessionId = this.trackedSessionParents.get(sessionId);
+    return typeof parentSessionId === "string";
+  }
+
+  private isTrackedRootSession(sessionId: string): boolean {
+    return this.trackedSessionParents.has(sessionId) && this.trackedSessionParents.get(sessionId) === null;
   }
 
   private getQueue(map: Map<string, string[]>, parentSessionId: string): string[] {
@@ -956,7 +957,7 @@ class SummaryAggregator {
       return;
     }
 
-    if (info.sessionID !== this.currentSessionId) {
+    if (!this.isTrackedRootSession(info.sessionID)) {
       return;
     }
 
@@ -977,13 +978,16 @@ class SummaryAggregator {
       const time = assistantMessage.time;
       const isCompleted = Boolean(time?.completed);
       const messageText = this.getCombinedMessageText(messageID);
+      const reasoningText = this.getCombinedReasoningText(messageID);
+      const hasFinalContent =
+        messageText.trim().length > 0 || reasoningText.trim().length > 0 || textState.toolCalls.length > 0;
 
-      if (isCompleted && this.onCompleteCallback) {
+      if (isCompleted && this.onCompleteCallback && hasFinalContent) {
         this.onCompleteCallback(
           info.sessionID,
           messageID,
           messageText,
-          this.getCombinedReasoningText(messageID),
+          reasoningText,
           textState.toolCalls,
         );
       }
@@ -1019,17 +1023,13 @@ class SummaryAggregator {
         const finalText = messageText;
 
         logger.debug(
-          `[Aggregator] Message part completed: messageId=${messageID}, textLength=${finalText.length}, totalParts=${textState.orderedPartIds.length}, session=${this.currentSessionId}`,
+          `[Aggregator] Message part completed: messageId=${messageID}, textLength=${finalText.length}, totalParts=${textState.orderedPartIds.length}, session=${info.sessionID}`,
         );
 
         // Extract and report cost
         if (this.onCostCallback && assistantInfo.cost !== undefined) {
           logger.debug(`[Aggregator] Cost: $${assistantInfo.cost.toFixed(2)}`);
           this.onCostCallback(assistantInfo.cost);
-        }
-
-        if (this.onCompleteCallback && finalText.length > 0) {
-          this.onCompleteCallback(this.currentSessionId!, messageID, finalText);
         }
 
         this.textMessageStates.delete(messageID);
@@ -1066,7 +1066,7 @@ class SummaryAggregator {
       this.attachUnknownSessionToPendingSubagent(part.sessionID);
     }
 
-    const isCurrentRootSession = part.sessionID === this.currentSessionId;
+    const isCurrentRootSession = this.isTrackedRootSession(part.sessionID);
     const isTrackedChildSession = this.isTrackedChildSession(part.sessionID);
 
     if (!isCurrentRootSession && !isTrackedChildSession) {
@@ -1189,6 +1189,32 @@ class SummaryAggregator {
         `[Aggregator] Tool event: callID=${part.callID}, tool=${part.tool}, status=${"status" in state ? state.status : "unknown"}`,
       );
 
+      if (
+        "status" in state &&
+        state.status === "running" &&
+        this.onToolCallback &&
+        typeof state.metadata?.output === "string"
+      ) {
+        const runningKey = `running-${part.callID}`;
+        const output = state.metadata.output;
+        const outputHash = this.hashString(output);
+
+        if (this.lastRunningToolOutputHashes.get(runningKey) !== outputHash) {
+          this.lastRunningToolOutputHashes.set(runningKey, outputHash);
+          this.onToolCallback({
+            sessionId: part.sessionID,
+            messageId: messageID,
+            callId: part.callID,
+            tool: part.tool,
+            state: part.state,
+            input,
+            title,
+            metadata: state.metadata as { [key: string]: unknown },
+            hasFileAttachment: false,
+          });
+        }
+      }
+
       if (part.tool === "question") {
         logger.debug(`[Aggregator] Question tool part update:`, JSON.stringify(part, null, 2));
 
@@ -1211,15 +1237,21 @@ class SummaryAggregator {
         // This ensures we have access to the requestID needed for question.reply().
       }
 
-      if ("status" in state && state.status === "completed") {
-        logger.debug(
-          `[Aggregator] Tool completed: callID=${part.callID}, tool=${part.tool}`,
-          JSON.stringify(state, null, 2),
-        );
+      const isTerminalToolState =
+        "status" in state && (state.status === "completed" || state.status === "error");
+
+      if (isTerminalToolState) {
+        if (state.status === "completed") {
+          logger.debug(
+            `[Aggregator] Tool completed: callID=${part.callID}, tool=${part.tool}`,
+            JSON.stringify(state, null, 2),
+          );
+        }
 
         const completedKey = `completed-${part.callID}`;
+        this.lastRunningToolOutputHashes.delete(`running-${part.callID}`);
 
-        if (!this.processedToolStates.has(completedKey)) {
+        if (state.status === "completed" && !this.processedToolStates.has(completedKey)) {
           this.processedToolStates.add(completedKey);
 
           const preparedFileContext = this.prepareToolFileContext(
@@ -1318,7 +1350,7 @@ class SummaryAggregator {
     partID: string,
     delta: string,
   ): void {
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isTrackedRootSession(sessionID)) {
       return;
     }
 
@@ -1343,7 +1375,7 @@ class SummaryAggregator {
     delta: string,
     fullTextHint?: string,
   ): void {
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isTrackedRootSession(sessionID)) {
       return;
     }
 
@@ -1371,14 +1403,19 @@ class SummaryAggregator {
     messageId: string,
     messageText: string,
     reasoningText?: string,
-    toolCalls?: Array<{ tool: string; title?: string; input?: any }>,
+    toolCalls?: AggregatedToolCall[],
   ): void {
     if (!this.onPartialCallback) {
       return;
     }
 
     try {
-      this.onPartialCallback(sessionId, messageId, messageText, reasoningText, toolCalls);
+      const result = this.onPartialCallback(sessionId, messageId, messageText, reasoningText, toolCalls);
+      if (result instanceof Promise) {
+        result.catch((err) => {
+          logger.error("[Aggregator] Error in partial callback:", err);
+        });
+      }
     } catch (err) {
       logger.error("[Aggregator] Error in partial callback:", err);
     }
@@ -1418,15 +1455,23 @@ class SummaryAggregator {
   }
 
   private fireThinkingCallbackOnce(messageID: string, sessionID: string): void {
-    if (!this.thinkingFiredForMessages.has(messageID) && this.onThinkingCallback) {
-      this.thinkingFiredForMessages.add(messageID);
-      const callback = this.onThinkingCallback;
-      setImmediate(() => {
-        if (typeof callback === "function") {
-          callback(sessionID);
-        }
-      });
+    if (this.thinkingFiredForMessages.has(messageID)) {
+      return;
     }
+
+    this.thinkingFiredForMessages.add(messageID);
+
+    if (this.thinkingFiredForSessionRun || !this.onThinkingCallback) {
+      return;
+    }
+
+    this.thinkingFiredForSessionRun = true;
+    const callback = this.onThinkingCallback;
+    setImmediate(() => {
+      if (typeof callback === "function") {
+        callback(sessionID);
+      }
+    });
   }
 
   private setReasoningPartSnapshot(messageID: string, partID: string, text: string): boolean {
@@ -1673,6 +1718,23 @@ class SummaryAggregator {
 
     // Stop typing indicator when session goes idle
     this.stopTypingIndicator();
+    this.thinkingFiredForSessionRun = false;
+
+    if (this.onSessionIdleCallback) {
+      const callback = this.onSessionIdleCallback;
+      setImmediate(() => {
+        try {
+          const result = callback(sessionID);
+          if (result instanceof Promise) {
+            result.catch((err) => {
+              logger.error("[Aggregator] Error in session idle callback:", err);
+            });
+          }
+        } catch (err) {
+          logger.error("[Aggregator] Error in session idle callback:", err);
+        }
+      });
+    }
   }
 
   private handleSessionCompacted(

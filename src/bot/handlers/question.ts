@@ -279,7 +279,9 @@ export async function showCurrentQuestion(
     ? undefined
     : buildQuestionKeyboard(question, questionManager.getSelectedOptions(questionManager.getCurrentIndex()));
 
-  logger.debug(`[QuestionHandler] Sending question message, chatId=${chatId}, directText=${useDirectTextAnswer}`);
+  logger.info(
+    `[QuestionHandler] Sending question message: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, requestID=${questionManager.getRequestID() ?? "none"}, questionIndex=${questionManager.getCurrentIndex()}, directText=${useDirectTextAnswer}, textLength=${text.length}`,
+  );
 
   try {
     const message = await bot.sendMessage(
@@ -295,7 +297,9 @@ export async function showCurrentQuestion(
       ),
     );
 
-    logger.debug(`[QuestionHandler] Message sent, messageId=${message.message_id}`);
+    logger.info(
+      `[QuestionHandler] Question message sent: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, messageId=${message.message_id}, requestID=${questionManager.getRequestID() ?? "none"}, questionIndex=${questionManager.getCurrentIndex()}`,
+    );
 
     questionManager.addMessageId(message.message_id);
     questionManager.setActiveMessageId(message.message_id);
@@ -310,7 +314,10 @@ export async function showCurrentQuestion(
     questionManager.clear();
     clearQuestionInteraction("question_message_send_failed");
 
-    logger.error("[QuestionHandler] Failed to send question message:", err);
+    logger.error(
+      `[QuestionHandler] Failed to send question message: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, requestID=${questionManager.getRequestID() ?? "none"}, questionIndex=${questionManager.getCurrentIndex()}, directText=${useDirectTextAnswer}, textLength=${text.length}`,
+      err,
+    );
     throw err;
   }
 }

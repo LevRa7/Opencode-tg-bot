@@ -9,9 +9,10 @@ export async function syncAuthorizedChatCommands(
   api: CommandSyncApi,
   chatId: number,
   chatType: TelegramChatType,
+  isAdmin?: boolean,
 ): Promise<void> {
-  const isAdmin = chatId === config.telegram.adminUserId;
-  const commands = getLocalizedBotCommands({ isAdmin });
+  const isAdminUser = isAdmin ?? chatId === config.telegram.adminUserId;
+  const commands = getLocalizedBotCommands({ isAdmin: isAdminUser });
 
   const tasks: Promise<unknown>[] = [
     api.setMyCommands(commands, {

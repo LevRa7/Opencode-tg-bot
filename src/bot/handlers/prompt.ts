@@ -22,11 +22,72 @@ import { t } from "../../i18n/index.js";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { getDefaultProject } from "../../project/manager.js";
+import { processManager } from "../../process/manager.js";
 import {
   extractTelegramConversationScopeFromContext,
   runWithTelegramConversationScope,
   type TelegramConversationScope,
 } from "../../telegram/scope.js";
+
+const PROMPT_TIMEOUT_MS = 60_000;
+
+function isNetworkError(error: unknown): boolean {
+  const errorText = String(error).toLowerCase();
+  return errorText.includes("fetch failed") || errorText.includes("econnrefused");
+}
+
+interface RetryPromptOptions {
+  promptOptions: Parameters<typeof opencodeClient.session.prompt>[0];
+  sessionId: string;
+  quiet: boolean;
+  routingContext: PromptRoutingContext;
+  promptErrorLogContext: Record<string, unknown>;
+}
+
+async function retryPromptWithTenantRestart({
+  promptOptions,
+  sessionId,
+  quiet,
+  routingContext,
+  promptErrorLogContext,
+}: RetryPromptOptions): Promise<{ error: unknown | null }> {
+  try {
+    const restartResult = await processManager.ensureRuntime();
+    if (!restartResult.success) {
+      logger.error(
+        `[Bot] Failed to restart tenant: ${restartResult.error}`,
+      );
+      return { error: new Error(`tenant restart failed: ${restartResult.error}`) };
+    }
+
+    logger.info(`[Bot] Tenant restarted, retrying session.prompt: sessionId=${sessionId}`);
+    const retryResult = await opencodeClient.session.prompt(promptOptions);
+    if (retryResult.error) {
+      logger.error("[Bot] session.prompt retry also returned an error", promptErrorLogContext);
+      return { error: retryResult.error };
+    }
+
+    if (!quiet) {
+      logger.info("[Bot] session.prompt retry succeeded");
+    }
+    return { error: null };
+  } catch (retryError) {
+    logger.error("[Bot] session.prompt retry also threw:", retryError);
+    return { error: retryError };
+  }
+}
+
+function wrapPromptWithTimeout<T>(
+  promptPromise: Promise<T>,
+): Promise<T> {
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(
+      () => reject(new Error(`session.prompt timed out after ${PROMPT_TIMEOUT_MS}ms`)),
+      PROMPT_TIMEOUT_MS,
+    );
+  });
+  return Promise.race([promptPromise, timeoutPromise]) as Promise<T>;
+}
 
 const promptResponseModes = new Map<string, PromptResponseMode>();
 
@@ -340,18 +401,33 @@ export async function processUserPrompt(
     // The processing result will arrive via SSE events.
     safeBackgroundTask({
       taskName: "session.prompt",
-      task: () => opencodeClient.session.prompt(promptOptions),
-      onSuccess: ({ error }) => {
+      task: () => wrapPromptWithTimeout(opencodeClient.session.prompt(promptOptions)),
+      onSuccess: async ({ error }) => {
         if (error) {
+          if (isNetworkError(error)) {
+            logger.warn(
+              `[Bot] session.prompt returned network error, attempting tenant restart and retry: sessionId=${currentSession.id}`,
+            );
+            const retryResult = await retryPromptWithTenantRestart({
+              promptOptions,
+              sessionId: currentSession.id,
+              quiet: quietPrompt,
+              routingContext,
+              promptErrorLogContext,
+            });
+            if (!retryResult.error) {
+              return;
+            }
+            // Retry failed — fall through to error notification below
+          }
+
           foregroundSessionState.markIdle(currentSession.id);
           clearPromptResponseMode(currentSession.id);
           const details = formatErrorDetails(error, 6000);
           logger.error(
-            "[Bot] OpenCode API returned an error for session.prompt",
-            promptErrorLogContext,
+            "[Bot] session.prompt error",
+            { ...promptErrorLogContext, details },
           );
-          logger.error("[Bot] session.prompt error details:", details);
-          logger.error("[Bot] session.prompt raw API error object:", error);
 
           const routing = getPromptRoutingContext(currentSession.id) ?? routingContext;
           if (routing) {
@@ -369,13 +445,31 @@ export async function processUserPrompt(
           logger.info("[Bot] session.prompt completed");
         }
       },
-      onError: (error) => {
+      onError: async (error) => {
+        if (isNetworkError(error)) {
+          logger.warn(
+            `[Bot] session.prompt failed with network error, attempting tenant restart and retry: sessionId=${currentSession.id}`,
+          );
+          const retryResult = await retryPromptWithTenantRestart({
+            promptOptions,
+            sessionId: currentSession.id,
+            quiet: quietPrompt,
+            routingContext,
+            promptErrorLogContext,
+          });
+          if (!retryResult.error) {
+            return;
+          }
+          // Retry failed — fall through to error notification below
+        }
+
         foregroundSessionState.markIdle(currentSession.id);
         clearPromptResponseMode(currentSession.id);
         const details = formatErrorDetails(error, 6000);
-        logger.error("[Bot] session.prompt background task failed", promptErrorLogContext);
-        logger.error("[Bot] session.prompt background failure details:", details);
-        logger.error("[Bot] session.prompt raw background error object:", error);
+        logger.error(
+          "[Bot] session.prompt error",
+          { ...promptErrorLogContext, details },
+        );
         const routing = getPromptRoutingContext(currentSession.id) ?? routingContext;
         if (routing) {
           void runWithTelegramConversationScope(routing.scope, () => {

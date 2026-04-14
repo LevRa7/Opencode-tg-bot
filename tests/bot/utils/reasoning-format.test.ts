@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatReasoningForTelegramHtml,
   formatToolCallAsSpoiler,
+  markdownToHtml,
 } from "../../../src/bot/utils/reasoning-format.js";
 
 describe("bot/utils/reasoning-format", () => {
@@ -184,6 +185,78 @@ describe("bot/utils/reasoning-format", () => {
       const result = formatToolCallAsSpoiler("  some tool  ");
 
       expect(result).toBe("<blockquote expandable>some tool</blockquote>");
+    });
+  });
+
+  describe("markdownToHtml", () => {
+    it("converts bold and italic to valid HTML with paired tags", () => {
+      const result = markdownToHtml("**bold** and *italic*");
+      expect(result).toBe("<b>bold</b> and <i>italic</i>");
+    });
+
+    it("produces valid HTML for nested bold+italic", () => {
+      const result = markdownToHtml("**bold *inside* bold**");
+      // After sanitizer: interleaved tags are fixed
+      expect(result).toContain("<b>");
+      expect(result).toContain("</b>");
+      expect(result).toContain("<i>");
+      expect(result).toContain("</i>");
+      // Verify tag pairing: count opens == count closes for each tag
+      const bOpens = (result.match(/<b>/g) ?? []).length;
+      const bCloses = (result.match(/<\/b>/g) ?? []).length;
+      expect(bOpens).toBe(bCloses);
+    });
+
+    it("produces valid HTML for code blocks", () => {
+      const result = markdownToHtml("```\ncode here\n```");
+      expect(result).toBe("<pre>code here</pre>");
+    });
+
+    it("produces valid HTML for inline code", () => {
+      const result = markdownToHtml("use `console.log` here");
+      expect(result).toBe("use <code>console.log</code> here");
+    });
+
+    it("produces valid HTML for strikethrough", () => {
+      const result = markdownToHtml("~~deleted~~");
+      expect(result).toBe("<s>deleted</s>");
+    });
+
+    it("produces valid HTML for links", () => {
+      const result = markdownToHtml("[click](https://example.com)");
+      expect(result).toBe('<a href="https://example.com">click</a>');
+    });
+
+    it("escapes HTML entities in non-code text", () => {
+      const result = markdownToHtml("use <script> & tags");
+      expect(result).toContain("&lt;script&gt;");
+      expect(result).toContain("&amp;");
+    });
+
+    it("always produces tag-balanced HTML", () => {
+      // Test various tricky inputs that could cause interleaved tags
+      const inputs = [
+        "**a*b**c*",
+        "*a**b*c*",
+        "**__nested__**",
+        "~~*combo*~~",
+        "**bold** text *italic* **more**",
+      ];
+
+      for (const input of inputs) {
+        const result = markdownToHtml(input);
+        // Verify every tag has a matching pair
+        const bOpens = (result.match(/<b>/g) ?? []).length;
+        const bCloses = (result.match(/<\/b>/g) ?? []).length;
+        const iOpens = (result.match(/<i>/g) ?? []).length;
+        const iCloses = (result.match(/<\/i>/g) ?? []).length;
+        const sOpens = (result.match(/<s>/g) ?? []).length;
+        const sCloses = (result.match(/<\/s>/g) ?? []).length;
+
+        expect(bOpens, `b mismatch for "${input}"`).toBe(bCloses);
+        expect(iOpens, `i mismatch for "${input}"`).toBe(iCloses);
+        expect(sOpens, `s mismatch for "${input}"`).toBe(sCloses);
+      }
     });
   });
 });

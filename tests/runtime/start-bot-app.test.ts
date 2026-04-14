@@ -5,6 +5,7 @@ const loadSettingsMock = vi.hoisted(() => vi.fn());
 const processManagerMock = vi.hoisted(() => ({
   initialize: vi.fn(),
   ensureRuntime: vi.fn(),
+  dispose: vi.fn(),
 }));
 const reconcileStoredModelSelectionMock = vi.hoisted(() => vi.fn());
 const warmupHostSessionDirectoryCacheMock = vi.hoisted(() => vi.fn());

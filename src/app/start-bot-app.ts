@@ -156,6 +156,7 @@ export async function startBotApp(): Promise<void> {
   } finally {
     process.off("SIGINT", handleSignal);
     process.off("SIGTERM", handleSignal);
+    processManager.dispose();
     await shutdownBotContainers();
     await releaseStartupLock();
   }

@@ -1,6 +1,7 @@
 import { logger } from "../../utils/logger.js";
 import type { Api, RawApi } from "grammy";
 import { withMessageThreadId } from "./message-thread.js";
+import { sanitizeHtmlForTelegram } from "./html-sanitize.js";
 
 type SendMessageApi = Pick<Api<RawApi>, "sendMessage">;
 type SendMessageDraftApi = Pick<Api<RawApi>, "sendMessageDraft">;
@@ -196,6 +197,9 @@ export async function sendMessageWithMarkdownFallback({
     return api.sendMessage(chatId, text, withMessageThreadId(options, messageThreadId));
   }
 
+  // Sanitize HTML before sending to prevent Telegram parse errors from mismatched tags
+  const sanitizedText = parseMode === "HTML" ? sanitizeHtmlForTelegram(text) : text;
+
   const telegramOptions: TelegramSendMessageOptions = {
     ...withMessageThreadId(options, messageThreadId),
     parse_mode: parseMode,
@@ -204,7 +208,7 @@ export async function sendMessageWithMarkdownFallback({
   const fallbackText = rawFallbackText ?? (parseMode === "MarkdownV2" ? unescapeTelegramMarkdownV2(text) : text);
 
   try {
-    return await api.sendMessage(chatId, text, telegramOptions);
+    return await api.sendMessage(chatId, sanitizedText, telegramOptions);
   } catch (error) {
     if (!isTelegramParseError(error)) {
       throw error;
@@ -263,6 +267,9 @@ export async function sendMessageDraftWithMarkdownFallback({
     return api.sendMessageDraft(chatId, draftId, text, options);
   }
 
+  // Sanitize HTML before sending to prevent Telegram parse errors from mismatched tags
+  const sanitizedText = parseMode === "HTML" ? sanitizeHtmlForTelegram(text) : text;
+
   const draftOptions: TelegramSendMessageDraftOptions = {
     ...(options || {}),
     parse_mode: parseMode,
@@ -271,7 +278,7 @@ export async function sendMessageDraftWithMarkdownFallback({
   const fallbackText = rawFallbackText ?? (parseMode === "MarkdownV2" ? unescapeTelegramMarkdownV2(text) : text);
 
   try {
-    return await api.sendMessageDraft(chatId, draftId, text, draftOptions);
+    return await api.sendMessageDraft(chatId, draftId, sanitizedText, draftOptions);
   } catch (error) {
     if (!isTelegramParseError(error)) {
       throw error;
@@ -332,6 +339,9 @@ export async function editMessageWithMarkdownFallback({
     return api.editMessageText(chatId, messageId, text, options);
   }
 
+  // Sanitize HTML before sending to prevent Telegram parse errors from mismatched tags
+  const sanitizedText = parseMode === "HTML" ? sanitizeHtmlForTelegram(text) : text;
+
   const telegramOptions: TelegramEditMessageOptions = {
     ...(options || {}),
     parse_mode: parseMode,
@@ -340,7 +350,7 @@ export async function editMessageWithMarkdownFallback({
   const fallbackText = rawFallbackText ?? (parseMode === "MarkdownV2" ? unescapeTelegramMarkdownV2(text) : text);
 
   try {
-    return await api.editMessageText(chatId, messageId, text, telegramOptions);
+    return await api.editMessageText(chatId, messageId, sanitizedText, telegramOptions);
   } catch (error) {
     if (!isTelegramParseError(error)) {
       throw error;

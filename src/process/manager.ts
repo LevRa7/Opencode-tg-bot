@@ -72,6 +72,53 @@ class ProcessManager implements ProcessManagerInterface {
     }
 
     await this.cleanupDeadTenantRuntimes();
+
+    // Start periodic tenant health watcher to detect and recover from dead tenants
+    this.startTenantWatcher();
+  }
+
+  private tenantWatcherTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * Periodically checks all tenant runtimes for liveness.
+   * Dead tenants are cleaned up automatically.
+   */
+  private startTenantWatcher(intervalMs: number = 30_000): void {
+    if (this.tenantWatcherTimer) {
+      return;
+    }
+
+    this.tenantWatcherTimer = setInterval(async () => {
+      await this.checkAndCleanupDeadTenants();
+    }, intervalMs);
+
+    // Don't block process exit on this timer
+    this.tenantWatcherTimer.unref?.();
+
+    logger.debug("[ProcessManager] Tenant health watcher started");
+  }
+
+  private async checkAndCleanupDeadTenants(): Promise<void> {
+    const runtimes = getTenantRuntimes();
+    for (const runtime of Object.values(runtimes)) {
+      if (!runtime.pid) continue;
+
+      if (!this.isProcessAlive(runtime.pid)) {
+        logger.warn(
+          `[ProcessManager] Tenant process dead: userId=${runtime.userId}, pid=${runtime.pid}`,
+        );
+        await clearTenantRuntimeInfo(runtime.userId);
+        continue;
+      }
+
+      // Process alive but check HTTP health
+      if (runtime.baseUrl && !await this.isTenantHttpHealthy(runtime.baseUrl)) {
+        logger.warn(
+          `[ProcessManager] Tenant HTTP unhealthy: userId=${runtime.userId}, pid=${runtime.pid}, baseUrl=${runtime.baseUrl}`,
+        );
+        await clearTenantRuntimeInfo(runtime.userId);
+      }
+    }
   }
 
   async ensureRuntime(): Promise<ProcessOperationResult> {
@@ -341,7 +388,16 @@ class ProcessManager implements ProcessManagerInterface {
 
     const existingRuntime = getTenantRuntimeInfo(userId);
     if (existingRuntime?.pid && this.isProcessAlive(existingRuntime.pid)) {
-      return { success: true };
+      // Process is alive, but verify HTTP server is actually responding.
+      // A zombie process can pass PID check while its HTTP server is dead.
+      if (existingRuntime.baseUrl && await this.isTenantHttpHealthy(existingRuntime.baseUrl)) {
+        return { success: true };
+      }
+
+      logger.warn(
+        `[ProcessManager] Tenant process alive but HTTP unhealthy: userId=${userId}, pid=${existingRuntime.pid}`,
+      );
+      await clearTenantRuntimeInfo(userId);
     }
 
     if (existingRuntime?.pid && !this.isProcessAlive(existingRuntime.pid)) {
@@ -539,6 +595,22 @@ class ProcessManager implements ProcessManagerInterface {
     return this.waitForHealth(baseUrl, TENANT_HEALTH_TIMEOUT_MS, TENANT_HEALTH_POLL_MS);
   }
 
+  /**
+   * Quick HTTP health check for a tenant.
+   * Returns true if the tenant responds to /global/health within a short timeout.
+   */
+  private async isTenantHttpHealthy(baseUrl: string): Promise<boolean> {
+    try {
+      const response = await fetch(`${baseUrl}/global/health`, {
+        headers: this.getOpencodeAuthHeaders(),
+        signal: AbortSignal.timeout(5000),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
   private async waitForHealth(
     baseUrl: string,
     timeoutMs: number,
@@ -650,6 +722,18 @@ class ProcessManager implements ProcessManagerInterface {
       isRunning: false,
     };
     clearServerProcess();
+  }
+
+  /**
+   * Stop the periodic tenant health watcher.
+   * Call this during graceful shutdown.
+   */
+  dispose(): void {
+    if (this.tenantWatcherTimer) {
+      clearInterval(this.tenantWatcherTimer);
+      this.tenantWatcherTimer = null;
+      logger.debug("[ProcessManager] Tenant health watcher stopped");
+    }
   }
 }
 

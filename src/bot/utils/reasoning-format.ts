@@ -1,28 +1,40 @@
+import { sanitizeHtmlForTelegram } from "./html-sanitize.js";
+
 const TELEGRAM_MESSAGE_LIMIT = 4096;
+
+/**
+ * Maximum extra characters the sanitizer can add (closing tags for all allowed nestable tags).
+ * Worst case: </blockquote></pre></code></s></u></i></b> = ~50 chars.
+ * We use a generous headroom so sanitized chunks never exceed the limit.
+ */
+const SANITIZER_HEADROOM = 64;
 
 function splitTextIntoChunks(text: string, maxLength: number): string[] {
   if (text.length <= maxLength) {
-    return [text];
+    return [sanitizeHtmlForTelegram(text)];
   }
 
   const chunks: string[] = [];
   let remaining = text;
+  // Leave headroom for closing tags the sanitizer may append
+  const splitLimit = maxLength - SANITIZER_HEADROOM;
 
   while (remaining.length > maxLength) {
-    let splitIndex = remaining.lastIndexOf("\n", maxLength - 100);
-    if (splitIndex <= maxLength / 2) {
-      splitIndex = remaining.lastIndexOf(" ", maxLength - 100);
+    let splitIndex = remaining.lastIndexOf("\n", splitLimit - 100);
+    if (splitIndex <= splitLimit / 2) {
+      splitIndex = remaining.lastIndexOf(" ", splitLimit - 100);
     }
-    if (splitIndex <= maxLength / 4) {
-      splitIndex = maxLength;
+    if (splitIndex <= splitLimit / 4) {
+      splitIndex = splitLimit;
     }
 
-    chunks.push(remaining.slice(0, splitIndex));
+    // Sanitize each chunk to close any tags severed by the split
+    chunks.push(sanitizeHtmlForTelegram(remaining.slice(0, splitIndex)));
     remaining = remaining.slice(splitIndex).trimStart();
   }
 
   if (remaining) {
-    chunks.push(remaining);
+    chunks.push(sanitizeHtmlForTelegram(remaining));
   }
 
   return chunks;
@@ -90,7 +102,8 @@ export function markdownToHtml(text: string): string {
   result = result.replace(/\x00CB(\d+)\x00/g, (_match, index) => codeBlocks[Number(index)]);
   result = result.replace(/\x00IC(\d+)\x00/g, (_match, index) => inlineCodes[Number(index)]);
 
-  return result;
+  // Sanitize to fix any interleaved or mismatched tags from sequential regex replacements
+  return sanitizeHtmlForTelegram(result);
 }
 
 function normalizeReasoning(text: string): string {

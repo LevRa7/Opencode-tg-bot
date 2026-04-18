@@ -8,7 +8,12 @@ import { getStoredAgent } from "../../agent/manager.js";
 import { getStoredModel } from "../../model/manager.js";
 import { formatVariantForButton } from "../../variant/manager.js";
 import { createMainKeyboard } from "../utils/keyboard.js";
-import { extractThreadTargetFromContext, type TelegramThreadTarget } from "../utils/message-thread.js";
+import {
+  extractMessageThreadIdFromContext,
+  extractThreadTargetFromContext,
+  type TelegramThreadTarget,
+  withMessageThreadId,
+} from "../utils/message-thread.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { summaryAggregator } from "../../summary/aggregator.js";
@@ -95,6 +100,7 @@ interface PromptRoutingContext {
   bot: Bot<Context>;
   target: TelegramThreadTarget;
   scope: TelegramConversationScope | null;
+  sourceMessageId?: number;
   quiet: boolean;
 }
 
@@ -289,9 +295,10 @@ export async function processUserPrompt(
       variantName,
     );
 
-    await ctx.reply(t("bot.session_created", { title: session.title }), {
-      reply_markup: keyboard,
-    });
+    await ctx.reply(
+      t("bot.session_created", { title: session.title }),
+      withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+    );
   } else {
     logger.info(
       `[Bot] Using existing session: id=${currentSession.id}, title="${currentSession.title}"`,
@@ -391,6 +398,7 @@ export async function processUserPrompt(
       bot,
       target,
       scope,
+      sourceMessageId: typeof ctx.message?.message_id === "number" ? ctx.message.message_id : undefined,
       quiet: quietPrompt,
     };
     setPromptRoutingContext(currentSession.id, routingContext);

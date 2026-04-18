@@ -15,6 +15,7 @@ TG_TENANT_ID="${TG_TENANT_ID:-}"
 CONFIG_DIR="${OPENCODE_TELEGRAM_ADMIN_HOME:-${HOME}/.config/opencode}"
 HOST_DATA_DIR="${HOME}/.local/share/opencode"
 HOST_AUTH_FILE="${HOST_DATA_DIR}/auth.json"
+GLOBAL_AGENTS_FILE="${CONFIG_DIR}/AGENTS.md"
 TG_API_ID="${TG_API_ID:-29814416}"
 TG_API_HASH="${TG_API_HASH:-58768c18060fee87a1ce635fefd959ab}"
 CLIPROXYAPI_BASE_URL="${CLIPROXYAPI_BASE_URL:-http://192.168.2.166:8317/v1}"
@@ -23,6 +24,42 @@ TG_EMBEDDING_MODEL_ID="${TG_EMBEDDING_MODEL_ID:-google/embeddinggemma-300m}"
 TG_EMBEDDING_DIMENSIONS="${TG_EMBEDDING_DIMENSIONS:-768}"
 SERVER_USERNAME="${OPENCODE_SERVER_USERNAME:-opencode}"
 SERVER_PASSWORD="${OPENCODE_SERVER_PASSWORD:-change-me}"
+GEMINI_MEDIA_UPSTREAM_BASE_URL="${GEMINI_MEDIA_UPSTREAM_BASE_URL:-http://192.168.2.166:8124/v1}"
+GEMINI_MEDIA_MODEL="${GEMINI_MEDIA_MODEL:-gemini-3.1-flash-lite-preview}"
+
+read_gemini_cli_server_token() {
+  local env_file="${HOME}/.gemini/.env"
+  if [[ ! -f "$env_file" ]]; then
+    return 1
+  fi
+
+  node -e '
+const fs = require("fs");
+const file = process.argv[1];
+const content = fs.readFileSync(file, "utf8");
+for (const rawLine of content.split(/\r?\n/)) {
+  const line = rawLine.trim();
+  if (!line || line.startsWith("#")) continue;
+  const idx = line.indexOf("=");
+  if (idx === -1) continue;
+  const key = line.slice(0, idx).trim();
+  let value = line.slice(idx + 1).trim();
+  if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.slice(1, -1);
+  }
+  if (key === "GEMINI_CLI_SERVER_TOKEN") {
+    process.stdout.write(value);
+    process.exit(0);
+  }
+}
+process.exit(1);
+' "$env_file"
+}
+
+GEMINI_MEDIA_UPSTREAM_API_KEY="${GEMINI_MEDIA_UPSTREAM_API_KEY:-}"
+if [[ -z "$GEMINI_MEDIA_UPSTREAM_API_KEY" ]]; then
+  GEMINI_MEDIA_UPSTREAM_API_KEY="$(read_gemini_cli_server_token || true)"
+fi
 
 if ! [[ "$HOST_PORT" =~ ^[0-9]+$ ]] || (( HOST_PORT < 49600 || HOST_PORT > 49999 )); then
   echo "HOST_PORT must be in range 49600-49999" >&2
@@ -109,6 +146,7 @@ mkdir -p "$XDG_STATE_DIR"
 mkdir -p "$OPENCODE_DATA_DIR"
 mkdir -p "$STATE_SKILLS_DIR/tg-cli"
 mkdir -p "$STATE_SKILLS_DIR/embedding-strategies"
+mkdir -p "$STATE_SKILLS_DIR/openai-media-transcriber"
 
 cp "$HOST_AUTH_FILE" "$OPENCODE_DATA_DIR/auth.json"
 
@@ -138,6 +176,27 @@ const config = {
         baseURL: cliproxyApiBaseUrl,
       },
     },
+    local: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Local Gemma4",
+      options: {
+        baseURL: "http://192.168.2.166:18080/v1",
+      },
+      models: {
+        gemma4: {
+          name: "Gemma 4 26b",
+          attachment: true,
+          limit: {
+            context: 128000,
+            output: 32000,
+          },
+          modalities: {
+            input: ["text", "image"],
+            output: ["text"],
+          },
+        },
+      },
+    },
   },
 };
 if (typeof host.model === "string" && host.model.startsWith("cliproxyapi/")) {
@@ -149,6 +208,8 @@ fs.writeFileSync(dst, JSON.stringify(config, null, 2) + "\n", "utf8");
 cp "$SCRIPT_DIR/skills/tg-cli/SKILL.md" "$STATE_SKILLS_DIR/tg-cli/SKILL.md"
 cp "$SCRIPT_DIR/skills/embedding-strategies/SKILL.md" \
   "$STATE_SKILLS_DIR/embedding-strategies/SKILL.md"
+cp "$SCRIPT_DIR/skills/openai-media-transcriber/SKILL.md" \
+  "$STATE_SKILLS_DIR/openai-media-transcriber/SKILL.md"
 
 cat > "$STATE_DIR/MAP.md" <<'EOF'
 # Tenant State Map
@@ -278,11 +339,15 @@ docker run --rm "${TTY_FLAGS[@]}" \
   -e OPENCODE_SERVER_PASSWORD="${SERVER_PASSWORD}" \
   -e TG_API_ID="${TG_API_ID}" \
   -e TG_API_HASH="${TG_API_HASH}" \
+  -e GEMINI_MEDIA_UPSTREAM_BASE_URL="${GEMINI_MEDIA_UPSTREAM_BASE_URL}" \
+  -e GEMINI_MEDIA_UPSTREAM_API_KEY="${GEMINI_MEDIA_UPSTREAM_API_KEY}" \
+  -e GEMINI_MEDIA_MODEL="${GEMINI_MEDIA_MODEL}" \
   -e TG_CONFIG_DIR="/state/tg-cli" \
   -v "${XDG_CONFIG_DIR}:/bootstrap/opencode-config:ro" \
   -v "${HOST_AUTH_FILE}:/bootstrap/opencode-auth/auth.json:ro" \
   -v "${WORKSPACE}:/workspace" \
   -v "${STATE_DIR}:/state" \
+  -v "${GLOBAL_AGENTS_FILE}:/etc/opencode/AGENTS.md:ro" \
   -w /workspace \
   --name "$CONTAINER_NAME" \
   "$IMAGE" \

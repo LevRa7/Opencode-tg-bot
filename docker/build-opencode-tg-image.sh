@@ -8,11 +8,11 @@ opencode_init_docker_env
 IMAGE="${OPENCODE_DOCKER_IMAGE:-opencode-tg:local}"
 TG_CLI_SOURCE_DIR="${TG_CLI_SOURCE_DIR:-${SCRIPT_DIR}/tg-cli}"
 VENDOR_DIR="${SCRIPT_DIR}/vendor"
-BASE_IMAGE="${OPENCODE_BASE_IMAGE:-ghcr.io/anomalyco/opencode:latest}"
+TENANT_IMAGE="${OPENCODE_TENANT_IMAGE:-opencode-tenant:local}"
 
-if ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
-  echo "Required local base image not found: $BASE_IMAGE" >&2
-  echo "Load or pull it once before offline rebuilds." >&2
+if ! docker image inspect "$TENANT_IMAGE" >/dev/null 2>&1; then
+  echo "Required tenant image not found: $TENANT_IMAGE" >&2
+  echo "Build it first with the tenant rebuild process." >&2
   exit 1
 fi
 
@@ -33,7 +33,7 @@ rsync -a --delete \
   --exclude '.ruff_cache' \
   "$TG_CLI_SOURCE_DIR/" "$VENDOR_DIR/python-tg-cli/"
 
-echo "Using local base image: $BASE_IMAGE"
+echo "Using tenant image: $TENANT_IMAGE"
 echo "Vendored Python tg-cli source from: $TG_CLI_SOURCE_DIR"
 echo "Building tg-cli into the image from local vendored source"
-docker build -t "$IMAGE" "$SCRIPT_DIR"
+docker build -t "$IMAGE" --build-arg "TENANT_IMAGE=${TENANT_IMAGE}" "$SCRIPT_DIR"

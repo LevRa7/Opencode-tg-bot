@@ -19,6 +19,7 @@ import { t } from "../../i18n/index.js";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
 import { config } from "../../config.js";
 import { threadContextManager } from "../../thread/manager.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 
 const COMMANDS_CALLBACK_PREFIX = "commands:";
 const COMMANDS_CALLBACK_SELECT_PREFIX = `${COMMANDS_CALLBACK_PREFIX}select:`;
@@ -495,9 +496,10 @@ export async function commandsCommand(ctx: CommandContext<Context>): Promise<voi
 
     const pageSize = config.bot.commandsListLimit;
     const keyboard = buildCommandsListKeyboard(commands, 0, pageSize);
-    const message = await ctx.reply(formatCommandsSelectText(0), {
-      reply_markup: keyboard,
-    });
+    const message = await ctx.reply(
+      formatCommandsSelectText(0),
+      withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+    );
 
     interactionManager.start({
       kind: "custom",

@@ -1,0 +1,14 @@
+# Rebuild tenant image with locally built opencode and tg-cli
+# This uses the existing tenant image as base and swaps in the local binaries
+FROM opencode-tenant:latest
+
+USER root
+
+# Replace opencode binary with locally built version
+COPY local-build/opencode-linux-x64/bin/opencode /usr/local/bin/opencode
+RUN chmod +x /usr/local/bin/opencode && opencode --version
+
+# Replace tg-cli with locally built wheel
+COPY local-build/kabi_tg_cli-*.whl /tmp/
+RUN python3 -m pip install --break-system-packages --force-reinstall /tmp/kabi_tg_cli-*.whl \
+  && rm -f /tmp/kabi_tg_cli-*.whl

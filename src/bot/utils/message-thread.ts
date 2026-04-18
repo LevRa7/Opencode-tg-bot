@@ -15,6 +15,12 @@ type WithChatId = {
   };
 };
 
+type WithForumFlag = {
+  chat?: {
+    is_forum?: unknown;
+  };
+};
+
 function normalizeMessageThreadId(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
 }
@@ -39,6 +45,20 @@ function extractChatIdFromContext(ctx: Context): number | undefined {
   return normalizeChatId(ctx.chat?.id);
 }
 
+function isForumChat(ctx: Context): boolean {
+  const messageForum = (ctx.message as WithForumFlag | undefined)?.chat?.is_forum;
+  if (messageForum === true) {
+    return true;
+  }
+
+  const callbackForum = (ctx.callbackQuery?.message as WithForumFlag | undefined)?.chat?.is_forum;
+  if (callbackForum === true) {
+    return true;
+  }
+
+  return ctx.chat?.is_forum === true;
+}
+
 export function extractMessageThreadIdFromContext(ctx: Context): number | undefined {
   const messageThreadIdFromMessage = normalizeMessageThreadId(
     (ctx.message as { message_thread_id?: unknown } | undefined)?.message_thread_id,
@@ -48,9 +68,7 @@ export function extractMessageThreadIdFromContext(ctx: Context): number | undefi
     return messageThreadIdFromMessage;
   }
 
-  const callbackMessage = ctx.callbackQuery?.message as
-    | { message_thread_id?: unknown }
-    | undefined;
+  const callbackMessage = ctx.callbackQuery?.message as { message_thread_id?: unknown } | undefined;
   return normalizeMessageThreadId(callbackMessage?.message_thread_id);
 }
 
@@ -62,13 +80,24 @@ export function extractCallbackMessageIdFromContext(ctx: Context): number | null
 export function extractThreadTargetFromContext(ctx: Context): TelegramThreadTarget | null {
   const chatId = extractChatIdFromContext(ctx);
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
-  if (chatId === undefined || messageThreadId === undefined) {
+  if (chatId === undefined) {
+    return null;
+  }
+
+  if (messageThreadId !== undefined) {
+    return {
+      chatId,
+      messageThreadId,
+    };
+  }
+
+  if (!isForumChat(ctx)) {
     return null;
   }
 
   return {
     chatId,
-    messageThreadId,
+    messageThreadId: undefined,
   };
 }
 

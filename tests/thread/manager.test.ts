@@ -77,10 +77,17 @@ vi.mock("../../src/session/manager.js", () => ({
 
 import { threadContextManager } from "../../src/thread/manager.js";
 
-function createMessageContext(chatId: number, messageThreadId?: number, userId = 1001): Context {
+function createMessageContext(
+  chatId: number,
+  messageThreadId?: number,
+  userId = 1001,
+  isForum = true,
+): Context {
   return {
     from: { id: userId },
-    chat: { id: chatId },
+    chat: isForum
+      ? { id: chatId, type: "supergroup", is_forum: true }
+      : { id: chatId, type: "private" },
     message: {
       message_thread_id: messageThreadId,
     } as Context["message"],
@@ -131,13 +138,58 @@ describe("thread/manager", () => {
       directory: "/repo",
     };
 
-    const target = threadContextManager.activateFromContext(createMessageContext(123456));
+    const target = threadContextManager.activateFromContext(
+      createMessageContext(123456, undefined, 1001, false),
+    );
 
     expect(target).toBeNull();
     expect(threadContextManager.getActiveTarget()).toBeNull();
     expect(mocked.clearSessionMock).not.toHaveBeenCalled();
     expect(threadContextManager.getSessionTarget("session-direct")).toBeNull();
     expect(mocked.setThreadContextBindingsMock).not.toHaveBeenCalled();
+  });
+
+  it("activates forum main topic even without a message thread id", () => {
+    const mainCtx = createMessageContext(-100100, undefined);
+
+    const target = threadContextManager.activateFromContext(mainCtx);
+
+    expect(target).toEqual({
+      chatId: -100100,
+      messageThreadId: undefined,
+    });
+    expect(threadContextManager.getActiveTarget()).toEqual({
+      chatId: -100100,
+      messageThreadId: undefined,
+    });
+
+    threadContextManager.bindProjectToActiveContext({ id: "project-main", worktree: "/repo" });
+    threadContextManager.bindSessionToActiveContext({
+      id: "session-main",
+      title: "Main Topic",
+      directory: "/repo",
+    });
+
+    expect(threadContextManager.getSessionTarget("session-main")).toEqual({
+      chatId: -100100,
+      messageThreadId: undefined,
+    });
+  });
+
+  it("ignores private chats without a thread id", () => {
+    mocked.currentSession = {
+      id: "session-direct",
+      title: "Direct",
+      directory: "/repo",
+    };
+
+    const target = threadContextManager.activateFromContext(
+      createMessageContext(123456, undefined, 1001, false),
+    );
+
+    expect(target).toBeNull();
+    expect(threadContextManager.getActiveTarget()).toBeNull();
+    expect(threadContextManager.getSessionTarget("session-direct")).toBeNull();
   });
 
   it("allows auto assignment only until topic bindings are created", () => {
@@ -323,7 +375,9 @@ describe("thread/manager", () => {
     threadContextManager.activateFromContext(createMessageContext(-100100, 20));
 
     const bindings = mocked.setThreadContextBindingsMock.mock.calls[0]?.[0] ?? [];
-    const topic20Binding = bindings.find((b: ThreadBindingMock) => b.contextKey === "1001:-100100:20");
+    const topic20Binding = bindings.find(
+      (b: ThreadBindingMock) => b.contextKey === "1001:-100100:20",
+    );
     expect(topic20Binding?.session).toBeUndefined();
   });
 
@@ -370,7 +424,9 @@ describe("thread/manager", () => {
     threadContextManager.activateFromContext(createMessageContext(-100100, 20));
 
     const bindings = mocked.setThreadContextBindingsMock.mock.calls[0]?.[0] ?? [];
-    const topic20Binding = bindings.find((b: ThreadBindingMock) => b.contextKey === "1001:-100100:20");
+    const topic20Binding = bindings.find(
+      (b: ThreadBindingMock) => b.contextKey === "1001:-100100:20",
+    );
     expect(topic20Binding?.session).toBeUndefined();
   });
 });

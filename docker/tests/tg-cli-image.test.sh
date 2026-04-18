@@ -19,5 +19,6 @@ fi
   -e TG_API_HASH=abc \
   "${IMAGE}" \
   -lc 'command -v opencode-tg-cli >/dev/null && opencode-tg-cli --help >/dev/null'
+"${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'command -v opencode-gemini-media >/dev/null && test -f /usr/local/lib/opencode-gemini-media/gemini-media-proxy.mjs && test -f /usr/local/bin/docker-entrypoint.sh'
 
 printf 'ok: tg-cli is present in the image\n'

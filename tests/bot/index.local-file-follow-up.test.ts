@@ -14,6 +14,11 @@ const sendAudioMock = vi.hoisted(() => vi.fn().mockResolvedValue({ message_id: 4
 const sendVideoMock = vi.hoisted(() => vi.fn().mockResolvedValue({ message_id: 45 }));
 const sendChatActionMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const editMessageTextMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
+const keyboardGetKeyboardMock = vi.hoisted(() => vi.fn(() => undefined));
+const keyboardIsInitializedMock = vi.hoisted(() => vi.fn(() => false));
+const runWithTelegramConversationScopeMock = vi.hoisted(() =>
+  vi.fn(async (_scope: unknown, fn: () => Promise<unknown> | unknown) => await fn()),
+);
 const subscribeToEventsMock = vi.hoisted(() =>
   vi.fn(async (_directory: string, callback: (event: Event) => void) => {
     capturedEventCallback = callback;
@@ -173,8 +178,8 @@ vi.mock("../../src/bot/utils/keyboard.js", () => ({
 vi.mock("../../src/keyboard/manager.js", () => ({
   keyboardManager: {
     initialize: vi.fn(),
-    isInitialized: vi.fn(() => false),
-    getKeyboard: vi.fn(() => undefined),
+    isInitialized: keyboardIsInitializedMock,
+    getKeyboard: keyboardGetKeyboardMock,
     updateContext: vi.fn(),
     clearContext: vi.fn(),
   },
@@ -221,9 +226,7 @@ vi.mock("../../src/telegram/scope.js", () => ({
     messageThreadId: ctx.message?.message_thread_id,
   })),
   buildTelegramConversationScopeKey: vi.fn(() => "scope"),
-  runWithTelegramConversationScope: vi.fn(async (_scope: unknown, fn: () => Promise<unknown> | unknown) =>
-    await fn(),
-  ),
+  runWithTelegramConversationScope: runWithTelegramConversationScopeMock,
 }));
 
 vi.mock("../../src/i18n/index.js", () => ({
@@ -347,7 +350,8 @@ vi.mock("../../src/bot/handlers/question.js", () => ({
   handleQuestionTextAnswer: vi.fn(async () => undefined),
 }));
 
-import { getTenantRuntimeInfo, isMessageStreamingEnabled } from "../../src/settings/manager.js";
+import { config } from "../../src/config.js";
+import { getReasoningMode, getTenantRuntimeInfo, isMessageStreamingEnabled } from "../../src/settings/manager.js";
 import { createBot } from "../../src/bot/index.js";
 
 describe("bot/index local file follow-up orchestration", () => {
@@ -363,6 +367,11 @@ describe("bot/index local file follow-up orchestration", () => {
     sendVideoMock.mockClear();
     sendChatActionMock.mockClear();
     editMessageTextMock.mockClear();
+    keyboardGetKeyboardMock.mockReset();
+    keyboardGetKeyboardMock.mockReturnValue(undefined);
+    keyboardIsInitializedMock.mockReset();
+    keyboardIsInitializedMock.mockReturnValue(false);
+    runWithTelegramConversationScopeMock.mockClear();
     subscribeToEventsMock.mockClear();
     sessionPromptMock.mockClear();
     sessionStatusMock.mockClear();
@@ -474,6 +483,255 @@ describe("bot/index local file follow-up orchestration", () => {
     deferredDocument.resolve({ message_id: 41 });
     await Promise.resolve();
     await Promise.resolve();
+  });
+
+  it("resolves reply keyboard inside the session routing scope for background final sends", async () => {
+    keyboardIsInitializedMock.mockReturnValue(true);
+    keyboardGetKeyboardMock.mockReturnValue({ keyboard: [[{ text: "A" }]] });
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "show scoped keyboard",
+        chat: { id: 123 },
+        message_thread_id: 42,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallback?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-scope-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-scope-1",
+          sessionID: "session-1",
+          messageID: "message-scope-1",
+          type: "text",
+          text: "Scoped reply",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-scope-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    expect(runWithTelegramConversationScopeMock).toHaveBeenCalled();
+    expect(keyboardGetKeyboardMock).toHaveBeenCalled();
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      123,
+      "Scoped reply",
+      expect.objectContaining({
+        reply_markup: { keyboard: [[{ text: "A" }]] },
+      }),
+    );
+  });
+
+  it("uses the routing target thread id for background final sends", async () => {
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "route by target",
+        chat: { id: 123 },
+        message_thread_id: 42,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallback?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-route-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-route-1",
+          sessionID: "session-1",
+          messageID: "message-route-1",
+          type: "text",
+          text: "Route-target reply",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-route-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      123,
+      "Route-target reply",
+      expect.objectContaining({ message_thread_id: 42 }),
+    );
+  });
+
+  it("replies to the source user message when sending the final keyboard-bearing response", async () => {
+    keyboardIsInitializedMock.mockReturnValue(true);
+    keyboardGetKeyboardMock.mockReturnValue({ keyboard: [[{ text: "A" }]] });
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        message_id: 321,
+        text: "reply with keyboard",
+        chat: { id: 123 },
+        message_thread_id: 42,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallback?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-reply-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-reply-1",
+          sessionID: "session-1",
+          messageID: "message-reply-1",
+          type: "text",
+          text: "Reply-bound keyboard",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-reply-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      123,
+      "Reply-bound keyboard",
+      expect.objectContaining({
+        message_thread_id: 42,
+        reply_parameters: expect.objectContaining({ message_id: 321 }),
+        reply_markup: { keyboard: [[{ text: "A" }]] },
+      }),
+    );
   });
 
   it("keeps sending a long final response after a partial follow-up file starts sending", async () => {
@@ -871,6 +1129,162 @@ describe("bot/index local file follow-up orchestration", () => {
     deferredDocument.resolve({ message_id: 41 });
     await Promise.resolve();
     await Promise.resolve();
+  });
+
+  it("streams assistant text in one evolving message during reasoning mode and sends the final answer last", async () => {
+    let nextMessageId = 100;
+    sendMessageMock.mockImplementation(async () => ({ message_id: ++nextMessageId }));
+
+    const originalHideThinkingMessages = config.bot.hideThinkingMessages;
+    config.bot.hideThinkingMessages = false;
+    vi.mocked(getReasoningMode).mockReturnValue(1);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "reasoning stream ordering",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallback?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-reasoning-order-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-order-part-1",
+          sessionID: "session-1",
+          messageID: "message-reasoning-order-1",
+          type: "reasoning",
+          text: "Planning the response carefully.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    expect(String(sendMessageMock.mock.calls[0]?.[1] ?? "")).toContain("bot.thinking");
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-order-part-1",
+          sessionID: "session-1",
+          messageID: "message-reasoning-order-1",
+          type: "text",
+          text: "С",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageDraftMock.mock.calls.length).toBeGreaterThan(0));
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-order-part-1",
+          sessionID: "session-1",
+          messageID: "message-reasoning-order-1",
+          type: "text",
+          text: "Сначала проверю замечания review по коду.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(2));
+    expect(String(sendMessageMock.mock.calls[1]?.[1] ?? "")).toContain("Сначала проверю замечания");
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-order-part-1",
+          sessionID: "session-1",
+          messageID: "message-reasoning-order-1",
+          type: "text",
+          text: "Сначала проверю замечания review по коду и решу, что реально стоит чинить сейчас.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(editMessageTextMock).toHaveBeenCalledWith(
+        123,
+        102,
+        "Сначала проверю замечания review по коду и решу, что реально стоит чинить сейчас.",
+        undefined,
+      ),
+    );
+    expect(sendMessageMock).toHaveBeenCalledTimes(2);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-reasoning-order-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(editMessageTextMock.mock.calls.length).toBeGreaterThan(0));
+    const assistantMessages = sendMessageMock.mock.calls.map((call) => String(call[1] ?? ""));
+    expect(assistantMessages).toHaveLength(2);
+    expect(assistantMessages[assistantMessages.length - 1]).toContain("Сначала проверю замечания");
+    expect(editMessageTextMock).toHaveBeenCalledWith(
+      123,
+      102,
+      "Сначала проверю замечания review по коду и решу, что реально стоит чинить сейчас.",
+      undefined,
+    );
+    const latestEditCall = editMessageTextMock.mock.calls[editMessageTextMock.mock.calls.length - 1];
+    const latestEditedText = String(latestEditCall?.[2] ?? "");
+    expect(latestEditedText).not.toContain("<blockquote expandable>");
+
+    config.bot.hideThinkingMessages = originalHideThinkingMessages;
+    vi.mocked(getReasoningMode).mockReturnValue(0);
   });
 
   it("detects a local file path from the final-only response when streaming is disabled", async () => {

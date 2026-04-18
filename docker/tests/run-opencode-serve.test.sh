@@ -30,6 +30,11 @@ mkdir -p \
   "${FAKE_BIN}" \
   "${FAKE_RUNTIME_DIR}"
 touch "${FAKE_HOME}/.local/share/opencode/auth.json"
+cat > "${FAKE_HOME}/.config/opencode/AGENTS.md" <<'EOF'
+# User global instructions
+
+- Prefer terse answers.
+EOF
 cat > "${FAKE_HOME}/.config/opencode/opencode.json" <<'EOF'
 {
   "plugin": [
@@ -168,11 +173,18 @@ grep -Fx -- "OPENCODE_CONFIG_DIR=/bootstrap/opencode-config" "${DOCKER_ARGS_FILE
 grep -Fx -- "OPENCODE_DISABLE_EXTERNAL_SKILLS=true" "${DOCKER_ARGS_FILE}"
 grep -Fx -- "${STATE_DIR}/config:/bootstrap/opencode-config:ro" "${DOCKER_ARGS_FILE}"
 grep -Fx -- "${FAKE_HOME}/.local/share/opencode/auth.json:/bootstrap/opencode-auth/auth.json:ro" "${DOCKER_ARGS_FILE}"
+grep -Fx -- "${FAKE_HOME}/.config/opencode/AGENTS.md:/etc/opencode/AGENTS.md:ro" "${DOCKER_ARGS_FILE}"
 grep -Fx -- "${WORKSPACE_DIR}:/workspace" "${DOCKER_ARGS_FILE}"
 grep -Fq '"baseURL": "http://192.168.2.166:8317/v1"' "${STATE_DIR}/config/opencode.json"
 grep -Fq '"model": "cliproxyapi/gpt-5.4-mini"' "${STATE_DIR}/config/opencode.json"
 grep -Fq '"gpt-5.4-mini"' "${STATE_DIR}/config/opencode.json"
 grep -Fq '"gpt-5.4"' "${STATE_DIR}/config/opencode.json"
+grep -Fq '"local"' "${STATE_DIR}/config/opencode.json"
+grep -Fq '"name": "Local Gemma4"' "${STATE_DIR}/config/opencode.json"
+grep -Fq '"baseURL": "http://192.168.2.166:18080/v1"' "${STATE_DIR}/config/opencode.json"
+grep -Fq '"gemma4"' "${STATE_DIR}/config/opencode.json"
+grep -Fq '"context": 128000' "${STATE_DIR}/config/opencode.json"
+grep -Fq '"output": 32000' "${STATE_DIR}/config/opencode.json"
 if grep -Fq '"plugin"' "${STATE_DIR}/config/opencode.json"; then
   echo "tenant config should not inherit host plugins" >&2
   exit 1
@@ -183,6 +195,15 @@ if grep -Fq '"mcp"' "${STATE_DIR}/config/opencode.json"; then
 fi
 test -f "${STATE_DIR}/skills/tg-cli/SKILL.md"
 test -f "${STATE_DIR}/skills/embedding-strategies/SKILL.md"
+test -f "${STATE_DIR}/skills/openai-media-transcriber/SKILL.md"
+if grep -Fq '192.168.2.166:8124' "${STATE_DIR}/config/opencode.json"; then
+  echo "tenant config should not expose gemini media endpoint" >&2
+  exit 1
+fi
+if grep -Fq 'GEMINI' "${STATE_DIR}/config/opencode.json"; then
+  echo "tenant config should not expose gemini media secrets" >&2
+  exit 1
+fi
 grep -Fx -- "${STATE_DIR}:/state" "${DOCKER_ARGS_FILE}"
 grep -Fx -- "-p" "${DOCKER_ARGS_FILE}"
 grep -Fx -- "127.0.0.1:49601:4096" "${DOCKER_ARGS_FILE}"

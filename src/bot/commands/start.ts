@@ -11,6 +11,7 @@ import { foregroundSessionState } from "../../scheduled-task/foreground-state.js
 import { abortCurrentOperation } from "./abort.js";
 import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 
 export async function startCommand(ctx: Context): Promise<void> {
   if (ctx.chat) {
@@ -56,5 +57,8 @@ export async function startCommand(ctx: Context): Promise<void> {
     variantName,
   );
 
-  await ctx.reply(t("start.welcome"), { reply_markup: keyboard });
+  await ctx.reply(
+    t("start.welcome"),
+    withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+  );
 }

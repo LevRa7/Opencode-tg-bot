@@ -19,6 +19,9 @@ vi.mock("../../../src/opencode/client.js", () => ({
 
 vi.mock("../../../src/settings/manager.js", () => ({
   getCurrentProject: mocked.getCurrentProjectMock,
+  setCurrentProject: vi.fn(),
+  getThreadContextBindings: vi.fn(() => []),
+  setThreadContextBindings: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../../src/session/manager.js", () => ({
@@ -43,6 +46,7 @@ vi.mock("../../../src/pinned/manager.js", () => ({
     isInitialized: vi.fn(() => false),
     initialize: vi.fn(),
     onSessionChange: vi.fn().mockResolvedValue(undefined),
+    getContextInfo: vi.fn(() => null),
   },
 }));
 
@@ -71,6 +75,7 @@ vi.mock("../../../src/bot/utils/keyboard.js", () => ({
 function createContext(): Context {
   return {
     chat: { id: 123 },
+    message: { message_thread_id: 88 },
     api: {},
     reply: vi.fn().mockResolvedValue({ message_id: 1 }),
   } as unknown as Context;
@@ -92,5 +97,20 @@ describe("bot/commands/new", () => {
 
     expect(mocked.sessionCreateMock).not.toHaveBeenCalled();
     expect(ctx.reply).toHaveBeenCalledWith(t("interaction.blocked.finish_current"));
+  });
+
+  it("attaches keyboard reply to the current topic when a session is created", async () => {
+    mocked.sessionCreateMock.mockResolvedValue({
+      data: { id: "session-1", title: "Topic Session" },
+      error: null,
+    });
+
+    const ctx = createContext();
+    await newCommand(ctx as never);
+
+    expect(ctx.reply).toHaveBeenCalledWith(t("new.created", { title: "Topic Session" }), {
+      reply_markup: { keyboard: true },
+      message_thread_id: 88,
+    });
   });
 });

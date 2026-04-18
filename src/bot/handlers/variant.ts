@@ -19,6 +19,7 @@ import {
 } from "./inline-menu.js";
 import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 
 /**
  * Handle variant selection callback
@@ -97,9 +98,10 @@ export async function handleVariantSelect(ctx: Context): Promise<boolean> {
     clearActiveInlineMenu("variant_selected");
 
     await ctx.answerCallbackQuery({ text: t("variant.changed_callback", { name: displayName }) });
-    await ctx.reply(t("variant.changed_message", { name: displayName }), {
-      reply_markup: keyboard,
-    });
+    await ctx.reply(
+      t("variant.changed_message", { name: displayName }),
+      withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+    );
 
     // Delete the inline menu message
     await ctx.deleteMessage().catch(() => {});

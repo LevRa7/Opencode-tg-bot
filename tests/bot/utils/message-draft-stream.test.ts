@@ -155,7 +155,30 @@ describe("bot/utils/message-draft-stream", () => {
     expect(manager.getLastSentMessageId("session-1")).toBe(42);
   });
 
-  it("uses editMessageText for subsequent sends when message id is known", async () => {
+  it("edits the message only when new text is a progressive continuation of the previous", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 42 });
+    const editMessageText = vi.fn().mockResolvedValue(true);
+    const sendMessageDraft = vi.fn().mockResolvedValue(true);
+    const manager = new MessageDraftStreamManager(0);
+
+    manager.enqueue("session-1", { sendMessageDraft }, { chatId: 123 }, "hello world");
+    manager.setSendEditApi("session-1", { sendMessage }, { editMessageText });
+    await manager.flushSession("session-1");
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(editMessageText).not.toHaveBeenCalled();
+
+    // Progressive continuation: new text starts with previous
+    manager.enqueue("session-1", { sendMessageDraft }, { chatId: 123 }, "hello world extended");
+    await manager.flushSession("session-1");
+
+    // Should edit because it's a continuation
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+    expect(editMessageText).toHaveBeenCalledWith(123, 42, "hello world extended", undefined);
+  });
+
+  it("keeps editing the same message for raw updates inside one ongoing streamed answer", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 42 });
     const editMessageText = vi.fn().mockResolvedValue(true);
     const sendMessageDraft = vi.fn().mockResolvedValue(true);
@@ -166,14 +189,14 @@ describe("bot/utils/message-draft-stream", () => {
     await manager.flushSession("session-1");
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(editMessageText).not.toHaveBeenCalled();
 
+    // Even if the text no longer starts with the previous frame, draft streaming still belongs
+    // to the same evolving assistant answer and should keep editing the current message.
     manager.enqueue("session-1", { sendMessageDraft }, { chatId: 123 }, "second");
     await manager.flushSession("session-1");
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(editMessageText).toHaveBeenCalledTimes(1);
-    expect(editMessageText).toHaveBeenCalledWith(123, 42, "second", undefined);
   });
 
   it("returns null for message id when only draft API is available", async () => {
@@ -206,5 +229,60 @@ describe("bot/utils/message-draft-stream", () => {
   it("consumeLastSentMessageId returns null when no message was sent", async () => {
     const manager = new MessageDraftStreamManager(0);
     expect(manager.consumeLastSentMessageId("unknown")).toBeNull();
+  });
+
+  it("edits the same message when reasoning html replaces the current streamed frame", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 42 });
+    const editMessageText = vi.fn().mockResolvedValue(true);
+    const sendMessageDraft = vi.fn().mockResolvedValue(true);
+    const manager = new MessageDraftStreamManager(0);
+
+    // First: assistant text is sent
+    manager.enqueue("session-1", { sendMessageDraft }, { chatId: 123 }, "Hello world");
+    manager.setSendEditApi("session-1", { sendMessage }, { editMessageText });
+    await manager.flushSession("session-1");
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(editMessageText).not.toHaveBeenCalled();
+
+    // Second: reasoning html replaces the current streamed frame for the same answer
+    manager.enqueue(
+      "session-1",
+      { sendMessageDraft },
+      { chatId: 123 },
+      '<blockquote expandable><b>Thinking</b></blockquote>',
+      "html",
+    );
+    await manager.flushSession("session-1");
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+  });
+
+  it("edits the same message for non-raw format updates within one streamed answer", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 42 });
+    const editMessageText = vi.fn().mockResolvedValue(true);
+    const sendMessageDraft = vi.fn().mockResolvedValue(true);
+    const manager = new MessageDraftStreamManager(0);
+
+    // First message
+    manager.enqueue("session-1", { sendMessageDraft }, { chatId: 123 }, "First message", "html");
+    manager.setSendEditApi("session-1", { sendMessage }, { editMessageText });
+    await manager.flushSession("session-1");
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    // Second message: completely different HTML content
+    manager.enqueue(
+      "session-1",
+      { sendMessageDraft },
+      { chatId: 123 },
+      '<blockquote expandable><b>New thought</b></blockquote>',
+      "html",
+    );
+    await manager.flushSession("session-1");
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(editMessageText).toHaveBeenCalledTimes(1);
   });
 });

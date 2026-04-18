@@ -1,0 +1,11 @@
+[Unit]
+Description=tg-cli refresh local Telegram cache
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/path/to/tg-cli
+Environment=TG_API_ID=123456
+Environment=TG_API_HASH=your_telegram_app_hash
+ExecStart=/path/to/uv run tg refresh --yaml

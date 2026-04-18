@@ -45,6 +45,7 @@ No public inbound ports are required for normal usage.
 - Select and attach to an existing session
 - Create a new session
 - Use OpenCode-generated session title (based on conversation)
+- When a session is selected inside a Telegram forum topic, sync the topic name with the selected session title
 
 ### Task handling
 
@@ -58,8 +59,9 @@ No public inbound ports are required for normal usage.
 ### Result delivery
 
 - Send each completed assistant response after completion signal from SSE
-- Do not expose raw chain-of-thought; send a lightweight thinking indicator instead
+- Keep thinking output in a dedicated `Думаю...` message and stream the expandable reasoning trace there instead of repeating it in the final answer
 - Split long responses into multiple Telegram messages
+- Split long HTML assistant replies into multiple Telegram messages without overwriting already delivered chunks
 - Send code updates as files (size-limited)
 
 ### Session status in chat
@@ -161,7 +163,7 @@ Open tasks for upcoming iterations:
 - [ ] `/mcps` command: browse available MCP servers
 - [x] Dynamic subagent activity display during task execution
 - [ ] Git tree support
-- [ ] Docker runtime support and deployment guide
+- [x] Docker runtime support and deployment guide
 - [ ] OpenCode server monitoring with automatic restart on stop/crash
 
 ## Possible Improvements

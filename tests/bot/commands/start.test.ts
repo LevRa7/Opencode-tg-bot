@@ -89,6 +89,7 @@ vi.mock("../../../src/thread/manager.js", () => ({
 function createStartContext(): Context {
   return {
     chat: { id: 100 },
+    message: { message_thread_id: 77 },
     api: {},
     reply: vi.fn().mockResolvedValue({ message_id: 1 }),
   } as unknown as Context;
@@ -155,6 +156,7 @@ describe("bot/commands/start", () => {
 
     expect(ctx.reply).toHaveBeenCalledWith(t("start.welcome"), {
       reply_markup: { keyboard: true },
+      message_thread_id: 77,
     });
   });
 });

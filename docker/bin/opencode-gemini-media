@@ -1,0 +1,59 @@
+#!/usr/bin/env node
+
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+const PROXY_BASE_URL = process.env.OPENCODE_GEMINI_MEDIA_PROXY_URL || 'http://127.0.0.1:18124';
+
+const DEFAULT_PROMPTS = {
+  audio: 'Produce a faithful transcript of the spoken audio.',
+  video: 'Briefly describe the visual content and transcribe the spoken audio.',
+  photo: 'Describe the visible content and extract any readable text.',
+  document: 'Extract the readable text and preserve the document structure when possible.',
+};
+
+function usage() {
+  console.error('Usage: opencode-gemini-media <audio|video|photo|document> <filePath> [prompt]');
+}
+
+async function main() {
+  const mode = process.argv[2];
+  const filePath = process.argv[3];
+  const prompt = process.argv[4] ?? DEFAULT_PROMPTS[mode];
+
+  if (!mode || !filePath || !DEFAULT_PROMPTS[mode]) {
+    usage();
+    process.exit(1);
+  }
+
+  const resolvedPath = path.resolve(filePath);
+  const fileBuffer = await fs.readFile(resolvedPath);
+  const payload = {
+    mode,
+    filePath: resolvedPath,
+    filename: path.basename(resolvedPath),
+    prompt,
+    fileBase64: fileBuffer.toString('base64'),
+  };
+
+  const response = await fetch(`${PROXY_BASE_URL}/process`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    console.error(data?.error ?? 'Media processing failed');
+    process.exit(1);
+  }
+
+  process.stdout.write(`${data.output ?? ''}\n`);
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

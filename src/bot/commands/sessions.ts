@@ -23,6 +23,45 @@ import { threadContextManager } from "../../thread/manager.js";
 const SESSION_CALLBACK_PREFIX = "session:";
 const SESSION_PAGE_CALLBACK_PREFIX = "session:page:";
 const SESSION_FETCH_EXTRA_COUNT = 1;
+const TELEGRAM_TOPIC_NAME_MAX_LENGTH = 128;
+
+/**
+ * Rename the Telegram forum topic to match the session title.
+ * Only applies when the current chat is a forum (message_thread_id present).
+ * Silently ignores errors since topic renaming is non-critical.
+ */
+async function syncThreadTopicName(
+  ctx: Context,
+  sessionTitle: string,
+): Promise<void> {
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+  if (!messageThreadId || !ctx.chat) {
+    return;
+  }
+
+  if (ctx.from?.id !== config.telegram.adminUserId) {
+    return;
+  }
+
+  const truncatedTitle = sessionTitle.length > TELEGRAM_TOPIC_NAME_MAX_LENGTH
+    ? sessionTitle.slice(0, TELEGRAM_TOPIC_NAME_MAX_LENGTH - 1)
+    : sessionTitle;
+
+  try {
+    await ctx.api.editForumTopic(ctx.chat.id, messageThreadId, {
+      name: truncatedTitle,
+    });
+    logger.info(
+      `[Sessions] Forum topic renamed: chatId=${ctx.chat.id}, threadId=${messageThreadId}, title="${truncatedTitle}"`,
+    );
+  } catch (err) {
+    // Non-critical: forum topic rename failure should not block session switching
+    logger.warn(
+      `[Sessions] Failed to rename forum topic: chatId=${ctx.chat.id}, threadId=${messageThreadId}`,
+      err,
+    );
+  }
+}
 
 type SessionListItem = {
   id: string;
@@ -259,6 +298,9 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
     threadContextManager.bindSessionToActiveContext(sessionInfo);
     summaryAggregator.clear();
     clearAllInteractionState("session_switched");
+
+    // Sync the forum topic name with the session title (Telegram forums only)
+    await syncThreadTopicName(ctx, session.title);
 
     await ctx.answerCallbackQuery();
 

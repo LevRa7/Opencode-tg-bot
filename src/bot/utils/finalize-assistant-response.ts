@@ -1,5 +1,46 @@
 import type { PreparedLocalFileFollowUp } from "./telegram-local-file-follow-up.js";
 import type { TelegramTextFormat } from "./telegram-text.js";
+import { sanitizeHtmlForTelegram } from "./html-sanitize.js";
+
+const TELEGRAM_MESSAGE_LIMIT = 4096;
+/**
+ * Maximum extra characters the sanitizer can add (closing tags for all allowed nestable tags).
+ * Worst case: </blockquote></pre></code></s></u></i></b> = ~50 chars.
+ */
+const SANITIZER_HEADROOM = 64;
+
+/**
+ * Split HTML text into chunks that fit within the Telegram message limit.
+ * Sanitizes each chunk to close any severed HTML tags.
+ * Prefers splitting at newlines; falls back to hard split at the limit.
+ */
+function splitHtmlIntoChunks(html: string): string[] {
+  if (html.length <= TELEGRAM_MESSAGE_LIMIT) {
+    return [html];
+  }
+
+  const chunks: string[] = [];
+  const splitLimit = TELEGRAM_MESSAGE_LIMIT - SANITIZER_HEADROOM;
+  let remaining = html;
+
+  while (remaining.length > TELEGRAM_MESSAGE_LIMIT) {
+    // Try to split at the last newline within the limit
+    let splitIndex = remaining.lastIndexOf("\n", splitLimit - 100);
+    if (splitIndex <= splitLimit / 4) {
+      // No good newline found, hard split at limit
+      splitIndex = splitLimit;
+    }
+    // Sanitize the chunk to close any severed HTML tags
+    chunks.push(sanitizeHtmlForTelegram(remaining.slice(0, splitIndex)));
+    remaining = remaining.slice(splitIndex).trimStart();
+  }
+
+  if (remaining.length > 0) {
+    chunks.push(sanitizeHtmlForTelegram(remaining));
+  }
+
+  return chunks;
+}
 
 interface FinalizeAssistantResponseOptions {
   sessionId: string;
@@ -12,7 +53,7 @@ interface FinalizeAssistantResponseOptions {
   formatSummary: (messageText: string) => string[];
   formatRawSummary: (messageText: string) => string[];
   resolveFormat: () => TelegramTextFormat;
-  getReplyKeyboard: () => unknown;
+  getReplyKeyboard: () => Promise<unknown>;
   prepareLocalFileFollowUps?: (messageText: string) => Promise<PreparedLocalFileFollowUp[]>;
   sendText: (
     text: string,
@@ -62,7 +103,7 @@ export async function finalizeAssistantResponse({
   await flushPendingServiceMessages();
 
   const format = resolveFormat();
-  const keyboard = getReplyKeyboard();
+  const keyboard = await getReplyKeyboard();
   const options = keyboard ? { reply_markup: keyboard } : undefined;
 
   if (chunks && chunks.length > 0) {
@@ -71,14 +112,36 @@ export async function finalizeAssistantResponse({
         continue;
       }
 
-      await sendText(chunk, undefined, options, format);
+      // Split oversized chunks to respect Telegram's message limit
+      if (format === "html" && chunk.length > TELEGRAM_MESSAGE_LIMIT) {
+        const subChunks = splitHtmlIntoChunks(chunk);
+        for (let subIndex = 0; subIndex < subChunks.length; subIndex++) {
+          const subChunk = subChunks[subIndex];
+          if (!subChunk.trim()) {
+            continue;
+          }
+          const subOptions = subIndex === 0 ? options : undefined;
+          await sendText(subChunk, undefined, subOptions, format);
+        }
+      } else {
+        await sendText(chunk, undefined, options, format);
+      }
     }
     return { followUpFiles };
   }
 
   if (format === "html") {
     if (messageText.trim().length > 0) {
-      await sendText(messageText, undefined, options, format);
+      const htmlChunks = splitHtmlIntoChunks(messageText);
+      for (let chunkIndex = 0; chunkIndex < htmlChunks.length; chunkIndex++) {
+        const chunk = htmlChunks[chunkIndex];
+        if (!chunk.trim()) {
+          continue;
+        }
+        // Only attach keyboard to the first chunk
+        const chunkOptions = chunkIndex === 0 ? options : undefined;
+        await sendText(chunk, undefined, chunkOptions, format);
+      }
     }
     return { followUpFiles };
   }

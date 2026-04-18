@@ -47,6 +47,8 @@ function prepareDraftText(text: string, format: TelegramTextFormat): string | nu
     return text;
   }
 
+  // For raw format, truncate to show the tail of long text during progressive streaming.
+  // The full text will be sent properly split during finalization.
   return `...${text.slice(-(TELEGRAM_MESSAGE_LIMIT - 3))}`;
 }
 
@@ -291,11 +293,14 @@ export class MessageDraftStreamManager {
     format: TelegramTextFormat,
   ): Promise<void> {
     try {
-      if (state.lastSentMessageId && state.editApi) {
+      const targetMessageId = state.lastSentMessageId;
+      const canEdit = targetMessageId !== null && state.editApi !== null;
+
+      if (canEdit) {
         await editBotText({
-          api: state.editApi,
+          api: state.editApi!,
           chatId: state.target!.chatId,
-          messageId: state.lastSentMessageId,
+          messageId: targetMessageId,
           text,
           options: undefined,
           format,

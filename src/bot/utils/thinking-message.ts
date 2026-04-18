@@ -1,8 +1,7 @@
 import type { ToolMessageBatcher } from "../../summary/tool-message-batcher.js";
 import { t } from "../../i18n/index.js";
-import { escapeHtml } from "./reasoning-format.js";
+import { escapeHtml, formatReasoningBlock } from "./reasoning-format.js";
 import type { TelegramTextFormat } from "./telegram-text.js";
-import { formatReasoningBlock } from "./reasoning-format.js";
 
 interface ThinkingMessageOptions {
   hideThinkingMessages: boolean;
@@ -11,13 +10,6 @@ interface ThinkingMessageOptions {
 
 type ThinkingBatcher = Pick<ToolMessageBatcher, "enqueue" | "sendTextNow">;
 
-function formatThinkingMessage(message: string): { text: string; format: TelegramTextFormat } {
-  return {
-    text: `<blockquote><b>${escapeHtml(message)}</b></blockquote>`,
-    format: "html",
-  };
-}
-
 export function buildThinkingMessageHtml(title: string, reasoningText: string): string {
   const renderedReasoning = formatReasoningBlock(reasoningText);
   if (!renderedReasoning) {
@@ -25,6 +17,19 @@ export function buildThinkingMessageHtml(title: string, reasoningText: string): 
   }
 
   return `<blockquote><b>${escapeHtml(title)}</b></blockquote>\n\n<blockquote expandable>${renderedReasoning}</blockquote>`;
+}
+
+/**
+ * Format a thinking message with optional reasoning content.
+ * The reasoning is rendered as an expandable quote block inside the thinking message.
+ * When reasoningText is empty, returns only the title.
+ */
+export function formatThinkingMessageWithReasoning(
+  title: string,
+  reasoningText: string,
+): { text: string; format: TelegramTextFormat } {
+  const html = buildThinkingMessageHtml(title, reasoningText);
+  return { text: html, format: "html" };
 }
 
 export function deliverThinkingMessage(
@@ -37,6 +42,6 @@ export function deliverThinkingMessage(
   }
 
   const message = options.message ?? t("bot.thinking");
-  const formatted = formatThinkingMessage(message);
+  const formatted = formatThinkingMessageWithReasoning(message, "");
   batcher.sendTextNow(sessionId, formatted.text, "thinking_started", formatted.format);
 }

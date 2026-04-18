@@ -15,6 +15,7 @@ import {
 } from "./inline-menu.js";
 import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 
 function buildModelSelectionMenuText(modelLists: ModelSelectionLists): string {
   const lines = [t("model.menu.select"), t("model.menu.favorites_title")];
@@ -109,9 +110,10 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
 
     // Send confirmation message with updated keyboard
     await ctx.answerCallbackQuery({ text: t("model.changed_callback", { name: displayName }) });
-    await ctx.reply(t("model.changed_message", { name: displayName }), {
-      reply_markup: keyboard,
-    });
+    await ctx.reply(
+      t("model.changed_message", { name: displayName }),
+      withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+    );
 
     // Delete the inline menu message
     await ctx.deleteMessage().catch(() => {});

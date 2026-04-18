@@ -36,6 +36,20 @@ describe("bot/utils/message-thread", () => {
     });
   });
 
+  it("keeps forum main topic as a valid target without a thread id", () => {
+    const ctx = {
+      from: { id: 1001 },
+      chat: { id: -100123, type: "supergroup", is_forum: true },
+      message: { chat: { id: -100123, type: "supergroup", is_forum: true } },
+    } as unknown as Context;
+
+    expect(extractMessageThreadIdFromContext(ctx)).toBeUndefined();
+    expect(extractThreadTargetFromContext(ctx)).toEqual({
+      chatId: -100123,
+      messageThreadId: undefined,
+    });
+  });
+
   it("merges message_thread_id into send options", () => {
     expect(withMessageThreadId({ disable_notification: true }, 7)).toEqual({
       disable_notification: true,

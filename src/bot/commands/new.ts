@@ -16,6 +16,7 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { getDefaultProject } from "../../project/manager.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 
 export async function newCommand(ctx: CommandContext<Context>) {
   try {
@@ -90,9 +91,10 @@ export async function newCommand(ctx: CommandContext<Context>) {
       variantName,
     );
 
-    await ctx.reply(t("new.created", { title: session.title }), {
-      reply_markup: keyboard,
-    });
+    await ctx.reply(
+      t("new.created", { title: session.title }),
+      withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+    );
   } catch (error) {
     logger.error("[Bot] Error creating session:", error);
     await ctx.reply(t("new.create_error"));

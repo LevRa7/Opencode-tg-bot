@@ -23,6 +23,7 @@ import { t } from "../../i18n/index.js";
 import { config } from "../../config.js";
 import { ProjectInfo } from "../../settings/manager.js";
 import { threadContextManager } from "../../thread/manager.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 
 const MAX_INLINE_BUTTON_LABEL_LENGTH = 64;
 const PROJECT_PAGE_CALLBACK_PREFIX = "projects:page:";
@@ -298,9 +299,10 @@ export async function handleProjectSelect(ctx: Context): Promise<boolean> {
     const projectName = selectedProject.name || selectedProject.worktree;
 
     await ctx.answerCallbackQuery();
-    await ctx.reply(t("projects.selected", { project: projectName }), {
-      reply_markup: keyboard,
-    });
+    await ctx.reply(
+      t("projects.selected", { project: projectName }),
+      withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+    );
 
     await ctx.deleteMessage();
   } catch (error) {

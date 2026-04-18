@@ -14,6 +14,7 @@ import {
 } from "./inline-menu.js";
 import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 
 /**
  * Handle agent selection callback
@@ -80,9 +81,10 @@ export async function handleAgentSelect(ctx: Context): Promise<boolean> {
 
     // Send confirmation message with updated keyboard
     await ctx.answerCallbackQuery({ text: t("agent.changed_callback", { name: displayName }) });
-    await ctx.reply(t("agent.changed_message", { name: displayName }), {
-      reply_markup: keyboard,
-    });
+    await ctx.reply(
+      t("agent.changed_message", { name: displayName }),
+      withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+    );
 
     // Delete the inline menu message
     await ctx.deleteMessage().catch(() => {});

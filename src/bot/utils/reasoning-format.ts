@@ -95,8 +95,15 @@ export function markdownToHtml(text: string): string {
   // Strikethrough: ~~text~~
   result = result.replace(/~~(.+?)~~/g, "<s>$1</s>");
 
-  // Links: [text](url)
-  result = result.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2">$1</a>');
+  // Links: [text](url) but only for explicitly safe schemes.
+  result = result.replace(/\[(.+?)\]\((.+?)\)/g, (match, label, url) => {
+    const normalizedUrl = String(url).trim();
+    if (!/^https?:\/\//i.test(normalizedUrl)) {
+      return escapeHtml(match);
+    }
+
+    return `<a href="${normalizedUrl}">${label}</a>`;
+  });
 
   // Restore code blocks and inline codes (they're already HTML-escaped)
   result = result.replace(/\x00CB(\d+)\x00/g, (_match, index) => codeBlocks[Number(index)]);

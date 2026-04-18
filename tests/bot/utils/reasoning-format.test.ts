@@ -227,6 +227,16 @@ describe("bot/utils/reasoning-format", () => {
       expect(result).toBe('<a href="https://example.com">click</a>');
     });
 
+    it("keeps unsupported link schemes as plain escaped text", () => {
+      const result = markdownToHtml("[open](tg://settings)");
+      expect(result).toBe("[open](tg://settings)");
+    });
+
+    it("keeps javascript links as plain escaped text", () => {
+      const result = markdownToHtml("[boom](javascript:alert(1))");
+      expect(result).toBe("[boom](javascript:alert(1))");
+    });
+
     it("escapes HTML entities in non-code text", () => {
       const result = markdownToHtml("use <script> & tags");
       expect(result).toContain("&lt;script&gt;");

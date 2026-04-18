@@ -23,6 +23,7 @@ const mocked = vi.hoisted(() => ({
   pinnedOnSessionChangeMock: vi.fn(),
   pinnedLoadContextFromHistoryMock: vi.fn(),
   pinnedGetContextInfoMock: vi.fn(() => null),
+  configAdminUserId: 777,
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -36,6 +37,8 @@ vi.mock("../../../src/opencode/client.js", () => ({
 
 vi.mock("../../../src/settings/manager.js", () => ({
   getCurrentProject: vi.fn(() => mocked.currentProject),
+  getThreadContextBindings: vi.fn(() => []),
+  setThreadContextBindings: vi.fn(),
 }));
 
 vi.mock("../../../src/session/manager.js", () => ({
@@ -67,6 +70,20 @@ vi.mock("../../../src/pinned/manager.js", () => ({
     onSessionChange: mocked.pinnedOnSessionChangeMock,
     loadContextFromHistory: mocked.pinnedLoadContextFromHistoryMock,
     getContextInfo: mocked.pinnedGetContextInfoMock,
+  },
+}));
+
+vi.mock("../../../src/config.js", () => ({
+  config: {
+    server: {
+      logLevel: "info",
+    },
+    bot: {
+      sessionsListLimit: 10,
+    },
+    telegram: {
+      adminUserId: mocked.configAdminUserId,
+    },
   },
 }));
 
@@ -111,6 +128,7 @@ function createCommandContext(): Context {
 function createCallbackContext(data: string, messageId: number): Context {
   return {
     chat: { id: 111 },
+    from: { id: mocked.configAdminUserId },
     callbackQuery: {
       data,
       message: {
@@ -127,6 +145,14 @@ function createCallbackContext(data: string, messageId: number): Context {
       editMessageText: vi.fn().mockResolvedValue(true),
     },
   } as unknown as Context;
+}
+
+function setCallbackMessage(
+  ctx: Context,
+  message: { message_id: number; message_thread_id?: number },
+): void {
+  (ctx.callbackQuery as unknown as { message: { message_id: number; message_thread_id?: number } }).message =
+    message;
 }
 
 function getKeyboardButtons(ctx: Context): Array<Array<{ text: string; callback_data?: string }>> {
@@ -327,5 +353,109 @@ describe("bot/commands/sessions", () => {
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
       text: t("interaction.blocked.finish_current"),
     });
+  });
+
+  it("renames the forum topic to match the session title when a thread is active", async () => {
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+      metadata: {
+        menuKind: "session",
+        messageId: 456,
+      },
+    });
+
+    mocked.sessionGetMock.mockResolvedValueOnce({
+      data: {
+        id: "session-1",
+        title: "New Session Title",
+        directory: "/repo",
+        time: { created: 1700000000000 },
+      },
+      error: null,
+    });
+
+    const editForumTopic = vi.fn().mockResolvedValue(true);
+    const ctx = createCallbackContext("session:session-1", 456);
+    (ctx.api as unknown as Record<string, unknown>).editForumTopic = editForumTopic;
+    // Simulate a forum topic context (message_thread_id present)
+    setCallbackMessage(ctx, {
+      message_id: 456,
+      message_thread_id: 100,
+    });
+
+    const handled = await handleSessionSelect(ctx);
+
+    expect(handled).toBe(true);
+    expect(editForumTopic).toHaveBeenCalledWith(111, 100, { name: "New Session Title" });
+  });
+
+  it("does not attempt to rename the topic when there is no message_thread_id", async () => {
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+      metadata: {
+        menuKind: "session",
+        messageId: 456,
+      },
+    });
+
+    mocked.sessionGetMock.mockResolvedValueOnce({
+      data: {
+        id: "session-1",
+        title: "Some Session",
+        directory: "/repo",
+        time: { created: 1700000000000 },
+      },
+      error: null,
+    });
+
+    const editForumTopic = vi.fn().mockResolvedValue(true);
+    const ctx = createCallbackContext("session:session-1", 456);
+    (ctx.api as unknown as Record<string, unknown>).editForumTopic = editForumTopic;
+    // No message_thread_id on the message
+    setCallbackMessage(ctx, {
+      message_id: 456,
+    });
+
+    const handled = await handleSessionSelect(ctx);
+
+    expect(handled).toBe(true);
+    expect(editForumTopic).not.toHaveBeenCalled();
+  });
+
+  it("does not rename the forum topic for non-admin approved users", async () => {
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+      metadata: {
+        menuKind: "session",
+        messageId: 456,
+      },
+    });
+
+    mocked.sessionGetMock.mockResolvedValueOnce({
+      data: {
+        id: "session-1",
+        title: "User Session Title",
+        directory: "/repo",
+        time: { created: 1700000000000 },
+      },
+      error: null,
+    });
+
+    const editForumTopic = vi.fn().mockResolvedValue(true);
+    const ctx = createCallbackContext("session:session-1", 456);
+    (ctx.api as unknown as Record<string, unknown>).editForumTopic = editForumTopic;
+    (ctx as unknown as { from: { id: number } }).from = { id: 12345 };
+    setCallbackMessage(ctx, {
+      message_id: 456,
+      message_thread_id: 100,
+    });
+
+    const handled = await handleSessionSelect(ctx);
+
+    expect(handled).toBe(true);
+    expect(editForumTopic).not.toHaveBeenCalled();
   });
 });

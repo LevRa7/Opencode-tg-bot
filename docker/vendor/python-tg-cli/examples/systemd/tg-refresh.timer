@@ -1,0 +1,10 @@
+[Unit]
+Description=Run tg-cli refresh every 15 minutes
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=15m
+Unit=tg-refresh.service
+
+[Install]
+WantedBy=timers.target

@@ -266,4 +266,45 @@ describe("bot/utils/finalize-assistant-response", () => {
     expect(sendText).toHaveBeenCalledWith(formattedHtml, undefined, undefined, "html");
     expect(result.followUpFiles).toEqual([]);
   });
+
+  it("splits html final response into multiple messages when text exceeds 4096 chars", async () => {
+    // Что тестируем:
+    // - длинный HTML-ответ (>4096 символов) разбивается на несколько сообщений.
+    // Положительный результат:
+    // - каждое сообщение <= 4096 символов,
+    // - все части отправлены (количество > 1).
+    const flushDraftStream = vi.fn().mockResolvedValue(undefined);
+    const flushPendingServiceMessages = vi.fn().mockResolvedValue(undefined);
+    const sendText = vi.fn().mockResolvedValue(undefined);
+
+    // Build HTML text that exceeds 4096 chars
+    const longContent = "A".repeat(4100);
+    const longHtml = `<b>${longContent}</b>`;
+
+    await finalizeAssistantResponse({
+      sessionId: "s1",
+      messageText: longHtml,
+      flushDraftStream,
+      flushPendingServiceMessages,
+      formatSummary: vi.fn(() => [longHtml]),
+      formatRawSummary: vi.fn(() => [longContent]),
+      resolveFormat: vi.fn(() => "html" as const),
+      getReplyKeyboard: vi.fn(() => undefined),
+      sendText,
+    });
+
+    // Should be split into multiple sendText calls
+    expect(sendText).toHaveBeenCalledTimes(2);
+
+    // Each part should be <= 4096 chars
+    const sentTexts = sendText.mock.calls.map((call: unknown[]) => call[0] as string);
+    for (const text of sentTexts) {
+      expect(text.length).toBeLessThanOrEqual(4096);
+    }
+
+    // Each chunk should be non-empty
+    for (const text of sentTexts) {
+      expect(text.length).toBeGreaterThan(0);
+    }
+  });
 });

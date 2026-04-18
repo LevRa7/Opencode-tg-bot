@@ -216,7 +216,7 @@ class ThreadContextManager {
 
     const scope = extractTelegramConversationScopeFromContext(ctx);
     const target = extractThreadTargetFromContext(ctx);
-    if (!target || !scope || target.messageThreadId === undefined) {
+    if (!target || !scope) {
       this.activeScope = null;
       this.activeContextKey = null;
       return null;
@@ -226,7 +226,6 @@ class ThreadContextManager {
     this.activeContextKey = buildContextKey(scope);
 
     if (
-      target.messageThreadId !== undefined &&
       !this.projectByContext.has(this.activeContextKey) &&
       !this.sessionByContext.has(this.activeContextKey) &&
       !this.agentByContext.has(this.activeContextKey) &&
@@ -253,7 +252,7 @@ class ThreadContextManager {
       setCurrentProject(cloneProject(boundProject));
     }
 
-    if (!boundProject && currentProject && target.messageThreadId !== undefined) {
+    if (!boundProject && currentProject) {
       this.projectByContext.set(this.activeContextKey, cloneProject(currentProject));
       this.persistBindings();
     }
@@ -270,7 +269,7 @@ class ThreadContextManager {
       setCurrentAgent(boundAgent);
     }
 
-    if (!boundAgent && currentAgent && target.messageThreadId !== undefined) {
+    if (!boundAgent && currentAgent) {
       this.agentByContext.set(this.activeContextKey, currentAgent);
       this.persistBindings();
     }
@@ -285,7 +284,7 @@ class ThreadContextManager {
       setCurrentModel(cloneModel(boundModel));
     }
 
-    if (!boundModel && currentModel && target.messageThreadId !== undefined) {
+    if (!boundModel && currentModel) {
       this.modelByContext.set(this.activeContextKey, cloneModel(currentModel));
       this.persistBindings();
     }
@@ -300,17 +299,6 @@ class ThreadContextManager {
       }
 
       this.rememberSessionScope(boundSession.id, scope);
-      return { ...target };
-    }
-
-    if (currentSession && target.messageThreadId !== undefined) {
-      if (effectiveProject && currentSession.directory !== effectiveProject.worktree) {
-        clearSession();
-        return { ...target };
-      }
-
-      this.sessionByContext.set(this.activeContextKey, cloneSession(currentSession));
-      this.rememberSessionScope(currentSession.id, scope);
       return { ...target };
     }
 

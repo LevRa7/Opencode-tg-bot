@@ -15,9 +15,18 @@ Documentation rule:
 - Added a real architecture map in `docs/architecture.md` with concrete runtime entrypoints, managers, handlers, scheduled-task modules, and API integration paths.
   - Why: the project now requires not just feature lists, but also explicit documentation of how modules, managers, and external APIs interact.
   - Affects: `docs/architecture.md`, `src/app/start-bot-app.ts`, `src/bot/index.ts`, `src/opencode/events.ts`, `src/summary/aggregator.ts`, `src/scheduled-task/runtime.ts`
+- Added a local `openai-media-transcriber` project skill that targets the Gemini CLI OpenAI-compatible server on `http://localhost:8124` and reads its auth token from `~/.gemini/.env` when no explicit override is provided.
+  - Why: this workspace already runs a local Gemini CLI media API, so `opencode` should reuse the same secure media upload and transcription path without duplicating secrets into the project.
+  - Affects: `skills/openai-media-transcriber/SKILL.md`, `skills/openai-media-transcriber/scripts/*`, `tests/skills/openai-media-transcriber/media-client.test.mjs`
+- Added a Docker-bundled `openai-media-transcriber` skill that is materialized into each tenant's `/state/skills` and routed through a root-owned local proxy instead of exposing the upstream Gemini media endpoint or API key to tenant-visible config.
+  - Why: Docker tenants need immediate media transcription support, but the Gemini CLI API credentials at `192.168.2.166:8124/v1` must stay outside the tenant-visible workspace and OpenCode config.
+  - Affects: `docker/skills/openai-media-transcriber/SKILL.md`, `docker/bin/opencode-gemini-media`, `docker/bin/gemini-media-proxy.mjs`, `docker/bin/docker-entrypoint.sh`, `docker/Dockerfile`, `docker/run-opencode-serve.sh`, `docker/tests/*.sh`
 
 ### Changed
 
+- Added a Docker-only bundled `local/gemma4` model entry to the generated tenant OpenCode config.
+  - Why: Docker users need the local Gemma 4 endpoint to appear in the model picker without changing the non-Docker runtime configuration.
+  - Affects: `docker/run-opencode-serve.sh`, `docker/tests/run-opencode-serve.test.sh`
 - Replaced the old Telegram login QR follow-up path with automatic local-file follow-ups from assistant replies, sending supported images/audio/video in their native Telegram media format and other files as documents when the referenced local file exists and is 20 MB or smaller.
   - Why: QR-specific auth delivery should be removed, while assistant replies that point to local artifacts should deliver those files asynchronously without blocking the next response.
   - Affects: `src/bot/index.ts`, `src/bot/utils/finalize-assistant-response.ts`, `src/bot/utils/telegram-local-file-follow-up.ts`, `tests/bot/utils/finalize-assistant-response.test.ts`, `tests/bot/utils/telegram-local-file-follow-up.test.ts`
@@ -33,6 +42,9 @@ Documentation rule:
 - Switched the Docker tg-cli build helper to default to the in-repo `docker/tg-cli` tree instead of the old external checkout path.
   - Why: tg-cli now lives alongside the bot project, so the image build should vendor the relocated source without extra environment overrides.
   - Affects: `docker/build-opencode-tg-image.sh`, `docker/README.md`, `docker/README-ru.md`
+- Changed the Docker entrypoint to start OpenCode as an unprivileged uid/gid `1000` tenant process after bootstrapping root-only runtime helpers.
+  - Why: tenant-visible skills now depend on a root-owned local proxy for secure Gemini media access, so the OpenCode process must not retain read access to the proxy config file that contains upstream credentials.
+  - Affects: `docker/bin/docker-entrypoint.sh`, `docker/Dockerfile`, `docker/tests/gemini-media-image.test.sh`
 - Extended `/restart` so the admin restart cascades through all saved isolated tenant runtimes before the main bot process restarts.
   - Why: admin restarts should refresh every tenant container as part of the same control action, instead of leaving isolated runtimes stale.
   - Affects: `src/bot/commands/restart.ts`, `src/process/manager.ts`, `src/process/types.ts`, `tests/bot/commands/restart.test.ts`, `tests/process/manager.test.ts`
@@ -51,6 +63,15 @@ Documentation rule:
 
 ### Fixed
 
+- Synced Telegram forum topic names with the selected OpenCode session title when switching sessions via `/sessions`, and kept long-running forum threads aligned with the active session context.
+  - Why: in forum workflows the thread title could drift away from the bound OpenCode session, which made session switching harder to follow from Telegram alone.
+  - Affects: `src/bot/commands/sessions.ts`, `tests/bot/commands/sessions.test.ts`
+- Stopped streamed assistant drafts, reasoning updates, and oversized final HTML replies from overwriting previously delivered text when the content changed shape or crossed Telegram's 4096-character limit.
+  - Why: the draft stream edited the last Telegram message too aggressively, so new reasoning blocks and long continuations could replace earlier text instead of continuing in a new message.
+  - Affects: `src/bot/utils/message-draft-stream.ts`, `src/bot/utils/finalize-assistant-response.ts`, `tests/bot/utils/message-draft-stream.test.ts`, `tests/bot/utils/finalize-assistant-response.test.ts`
+- Moved streamed reasoning details into the dedicated `bot.thinking` message and removed the duplicate reasoning quote from the final assistant reply.
+  - Why: Telegram users should see `Думаю...` as the explicit thinking marker, with the expandable reasoning trace attached there instead of being repeated at the end of the final answer.
+  - Affects: `src/bot/index.ts`, `src/bot/utils/thinking-message.ts`, `tests/bot/utils/thinking-message.test.ts`
 - Stopped final assistant delivery from waiting on QR-specific follow-up sending by preparing local-file follow-ups during finalization and dispatching them in the background after the text reply is sent.
   - Why: follow-up media must not block the main assistant response or queue later replies behind attachment delivery.
   - Affects: `src/bot/index.ts`, `src/bot/utils/finalize-assistant-response.ts`, `tests/bot/utils/finalize-assistant-response.test.ts`

@@ -79,10 +79,9 @@ import { finalizeAssistantResponse } from "./utils/finalize-assistant-response.j
 import { sendTtsResponseForSession } from "./utils/send-tts-response.js";
 import { MessageDraftStreamManager } from "./utils/message-draft-stream.js";
 import { ThinkingMessageLifecycleManager } from "./utils/thinking-message-lifecycle.js";
-import { deliverThinkingMessage } from "./utils/thinking-message.js";
-import { editBotText, sendBotText } from "./utils/telegram-text.js";
+import { buildThinkingMessageHtml } from "./utils/thinking-message.js";
+import { sendBotText } from "./utils/telegram-text.js";
 import {
-  buildLocalFileFollowUpCaption,
   createLocalFileFollowUpTracker,
   extractLocalFilePaths,
   prepareLocalFileFollowUpsFromPaths,
@@ -110,7 +109,6 @@ import {
   isMessageStreamingEnabled,
 } from "../settings/manager.js";
 import {
-  escapeHtml,
   formatReasoningForTelegramHtml,
   formatToolCallAsSpoiler,
   markdownToHtml,
@@ -139,6 +137,7 @@ interface SessionRoutingContext {
     messageThreadId?: number;
   };
   scope: TelegramConversationScope | null;
+  sourceMessageId?: number;
 }
 
 const routingBySessionId = new Map<string, SessionRoutingContext>();
@@ -157,6 +156,7 @@ function syncSessionRoutingContext(sessionId: string): SessionRoutingContext | n
     bot: promptRouting.bot,
     target: getThreadTargetForSession(sessionId) ?? promptRouting.target,
     scope: promptRouting.scope,
+    sourceMessageId: promptRouting.sourceMessageId,
   };
 
   setSessionRoutingContext(sessionId, routing);
@@ -223,6 +223,10 @@ async function runWithSessionRoutingScope<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), fn);
+}
+
+async function getReplyKeyboardForSession(sessionId: string) {
+  return await runWithSessionRoutingScope(sessionId, async () => getCurrentReplyKeyboard());
 }
 
 function getReasoningModeForSession(sessionId: string) {
@@ -421,7 +425,7 @@ const toolMessageBatcher = new ToolMessageBatcher({
       return;
     }
 
-    const keyboard = getCurrentReplyKeyboard();
+    const keyboard = await getReplyKeyboardForSession(sessionId);
 
     await sendBotText({
       api: botApi,
@@ -452,7 +456,7 @@ const toolMessageBatcher = new ToolMessageBatcher({
       await fs.mkdir(TEMP_DIR, { recursive: true });
       await fs.writeFile(tempFilePath, fileData.buffer);
 
-      const keyboard = getCurrentReplyKeyboard();
+      const keyboard = await getReplyKeyboardForSession(sessionId);
 
       await botApi.sendDocument(
         target.chatId,
@@ -708,29 +712,45 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         return;
       }
 
-      const formattedTechnicals = (toolCalls || []).map((t) => ({
-        description: t.title || t.tool,
-        command:
-          t.input && typeof t.input === "object" && "command" in t.input && typeof t.input.command === "string"
-            ? t.input.command
-            : undefined,
-      }));
-
       const assistantFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
 
       messageDraftStreamManager.setSendEditApi(sessionId, botApi, botApi);
 
       if (mode > 0) {
-        const assistantText =
-          (assistantFormat as string) === "html" ? messageText : markdownToHtml(messageText);
-        const chunks = formatReasoningForTelegramHtml(
-          mode,
-          reasoningText || "",
-          formattedTechnicals,
-          assistantText,
-        );
-        for (const chunk of chunks) {
-          messageDraftStreamManager.enqueue(sessionId, botApi, target, chunk, "html");
+        if (messageText.trim()) {
+          messageDraftStreamManager.enqueue(
+            sessionId,
+            botApi,
+            target,
+            messageText,
+            assistantFormat,
+          );
+        }
+
+        // Update the thinking message with accumulated reasoning content during streaming.
+        // This replaces the initial "Думаю..." marker with the full reasoning content
+        // as an expandable quote, so the user sees the thinking progress.
+        if (reasoningText?.trim()) {
+          const thinkingTitle = t("bot.thinking");
+          const thinkingHtml = buildThinkingMessageHtml(thinkingTitle, reasoningText);
+          await thinkingMessageLifecycle.render(sessionId, thinkingHtml, {
+            sendText: async (text) => {
+              const result = await botApi.sendMessage(
+                target.chatId,
+                text,
+                { parse_mode: "HTML", ...withMessageThreadId(undefined, target.messageThreadId) },
+              );
+              return (result as { message_id?: number })?.message_id ?? 0;
+            },
+            editText: async (messageId, text) => {
+              await botApi.editMessageText(target.chatId, messageId, text, {
+                parse_mode: "HTML",
+              });
+            },
+            deleteText: async (messageId) => {
+              await botApi.deleteMessage(target.chatId, messageId).catch(() => {});
+            },
+          });
         }
       } else {
         messageDraftStreamManager.enqueue(
@@ -826,14 +846,23 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       let finalChunks: string[] | undefined;
 
       if (mode > 0) {
+        // Reasoning content is already displayed in the thinking message (updated during streaming
+        // via thinkingMessageLifecycle.render). The final response should only contain the
+        // assistant text, not the reasoning again.
         const assistantText =
           (finalFormat as string) === "html"
             ? pendingResponse.messageText
             : markdownToHtml(pendingResponse.messageText);
+
+        // Still include technical blocks (tool calls) as expandable spoilers
+        const technicalsOnly = formattedTechnicals.map((t) => ({
+          description: t.description,
+          command: t.command,
+        }));
         const chunks = formatReasoningForTelegramHtml(
           mode,
-          pendingResponse.reasoningText || "",
-          formattedTechnicals,
+          "",  // No reasoning - already in thinking message
+          technicalsOnly,
           assistantText,
         );
         finalText = chunks[0] || assistantText;
@@ -857,7 +886,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           formatSummary,
           formatRawSummary: (text) => formatSummaryWithMode(text, "raw"),
           resolveFormat: () => finalParseMode,
-          getReplyKeyboard: getCurrentReplyKeyboard,
+          getReplyKeyboard: () => getReplyKeyboardForSession(sessionId),
           prepareLocalFileFollowUps: () =>
             prepareLocalFileFollowUpsFromPaths(
               extractLocalFilePaths(
@@ -871,26 +900,29 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           sendText: async (text, rawFallbackText, options, format) => {
             const draftMessageId = messageDraftStreamManager.consumeLastSentMessageId(sessionId);
             if (draftMessageId) {
-              await editBotText({
-                api: botApi,
-                chatId,
-                messageId: draftMessageId,
-                text: rawFallbackText ?? text,
-                rawFallbackText: text,
-                options: undefined,
-                format,
-              });
-            } else {
-              await sendBotText({
-                api: botApi,
-                chatId,
-                text,
-                rawFallbackText,
-                options: options as Parameters<typeof sendBotText>[0]["options"],
-                format,
-                messageThreadId: getMessageThreadIdForSession(sessionId),
-              });
+              await botApi.deleteMessage(chatId, draftMessageId).catch(() => {});
             }
+
+            const replyOptions =
+              routingBySessionId.get(sessionId)?.sourceMessageId && options?.reply_markup
+                ? {
+                    ...options,
+                    reply_parameters: {
+                      message_id: routingBySessionId.get(sessionId)!.sourceMessageId,
+                      allow_sending_without_reply: true,
+                    },
+                  }
+                : options;
+
+            await sendBotText({
+              api: botApi,
+              chatId,
+              text,
+              rawFallbackText,
+              options: replyOptions as Parameters<typeof sendBotText>[0]["options"],
+              format,
+              messageThreadId: target.messageThreadId,
+            });
           },
         });
 
@@ -942,7 +974,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           sessionId,
           chatId,
           text: pendingResponse.messageText,
-          messageThreadId: getMessageThreadIdForSession(sessionId),
+          messageThreadId: target.messageThreadId,
         });
       } catch (err) {
         pendingAssistantResponses.clear(sessionId);
@@ -953,9 +985,15 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         logger.error("[Bot] CRITICAL: Stopping event processing due to error");
         summaryAggregator.clear();
       } finally {
-        const shouldClearThinking = await runWithSessionRoutingScope(sessionId, async () =>
-          getThinkingClearMode(),
-        );
+        // When reasoning content was present, keep the thinking message visible
+        // (it now contains the reasoning as an expandable quote).
+        // Only clear it if the user setting says so AND there was no reasoning.
+        const hadReasoning = mode > 0 && !!pendingResponse.reasoningText?.trim();
+        const shouldClearThinking = hadReasoning
+          ? false
+          : await runWithSessionRoutingScope(sessionId, async () =>
+              getThinkingClearMode(),
+            );
         await thinkingMessageLifecycle.finalize(sessionId, shouldClearThinking, {
           sendText: async () => 0,
           editText: async () => undefined,
@@ -1126,7 +1164,9 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
   summaryAggregator.setOnThinking(async (sessionId) => {
     syncSessionRoutingContext(sessionId);
-    if (!getSessionRoutingContext(sessionId)) {
+    const botApi = getSessionRoutingApi(sessionId);
+    const target = getSessionRoutingTarget(sessionId);
+    if (!botApi || !target) {
       return;
     }
 
@@ -1134,9 +1174,28 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     await toolCallStreamer.breakSession(sessionId, "thinking_started");
 
-    deliverThinkingMessage(sessionId, toolMessageBatcher, {
-      hideThinkingMessages: config.bot.hideThinkingMessages,
-    });
+    if (!config.bot.hideThinkingMessages) {
+      const thinkingTitle = t("bot.thinking");
+      const thinkingHtml = buildThinkingMessageHtml(thinkingTitle, "");
+      await thinkingMessageLifecycle.render(sessionId, thinkingHtml, {
+        sendText: async (text) => {
+          const result = await botApi.sendMessage(
+            target.chatId,
+            text,
+            { parse_mode: "HTML", ...withMessageThreadId(undefined, target.messageThreadId) },
+          );
+          return (result as { message_id?: number })?.message_id ?? 0;
+        },
+        editText: async (messageId, text) => {
+          await botApi.editMessageText(target.chatId, messageId, text, {
+            parse_mode: "HTML",
+          });
+        },
+        deleteText: async (messageId) => {
+          await botApi.deleteMessage(target.chatId, messageId).catch(() => {});
+        },
+      });
+    }
 
     if (pinnedMessageManager.isInitialized()) {
       await pinnedMessageManager.refresh();

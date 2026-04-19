@@ -231,19 +231,7 @@ function renderReasoningBlocks(blocks: ReasoningBlock[]): string {
     .join("\n\n");
 }
 
-function buildReasoningEnvelope(textPrefix: string, contentHtml: string): string {
-  const parts: string[] = [];
 
-  if (textPrefix) {
-    parts.push(escapeHtml(textPrefix));
-  }
-
-  if (contentHtml) {
-    parts.push(contentHtml);
-  }
-
-  return `<blockquote expandable>${parts.join("\n\n")}</blockquote>`;
-}
 
 export function formatReasoningBlock(text: string): string {
   const normalized = normalizeReasoning(text);

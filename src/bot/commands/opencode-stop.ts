@@ -42,14 +42,14 @@ export async function opencodeStopCommand(ctx: CommandContext<Context>) {
     }
 
     // Server is not managed by us, try to detect and stop external process
-    let healthData: any = null;
-    let healthError: any = null;
+    let healthData: HealthResponse | null = null;
+    let healthError: string | null = null;
     try {
       const result = await opencodeClient.global.health();
-      healthData = result.data;
-      healthError = result.error;
+      healthData = result.data ?? null;
+      healthError = result.error ?? null;
     } catch (err) {
-      healthError = err;
+      healthError = String(err);
     }
     if (healthError || !healthData?.healthy) {
       await ctx.reply(t("opencode_stop.not_running"));

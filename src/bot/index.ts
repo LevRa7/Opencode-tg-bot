@@ -56,8 +56,6 @@ import { keyboardManager } from "../keyboard/manager.js";
 import { subscribeToEvents } from "../opencode/events.js";
 import { summaryAggregator } from "../summary/aggregator.js";
 import {
-  formatSummary,
-  formatSummaryWithMode,
   formatToolInfo,
   getAssistantParseMode,
 } from "../summary/formatter.js";
@@ -99,7 +97,6 @@ import {
   type PreparedLocalFileFollowUp,
 } from "./utils/telegram-local-file-follow-up.js";
 import { getModelCapabilities, supportsInput } from "../model/capabilities.js";
-import { getStoredAgent } from "../agent/manager.js";
 import { getStoredModel } from "../model/manager.js";
 import type { FilePartInput } from "@opencode-ai/sdk/v2";
 import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
@@ -138,9 +135,7 @@ const RESPONSE_STREAM_TEXT_LIMIT = 3800;
 const SESSION_RETRY_PREFIX = "🔁";
 const SUBAGENT_STREAM_PREFIX = "🧩";
 
-function prepareStreamingPayload(messageText: string) {
-  return prepareAssistantStreamingPayload(messageText, RESPONSE_STREAM_TEXT_LIMIT);
-}
+
 
 function prepareFinalStreamingPayload(messageText: string) {
   return prepareAssistantFinalStreamingPayload(messageText, RESPONSE_STREAM_TEXT_LIMIT);
@@ -214,9 +209,7 @@ function getThreadTargetForSession(sessionId?: string) {
   return threadContextManager.getSessionTarget(sessionId);
 }
 
-function getMessageThreadIdForSession(sessionId?: string): number | undefined {
-  return getThreadTargetForSession(sessionId)?.messageThreadId;
-}
+
 
 function getSessionRoutingTarget(sessionId: string) {
   return getSessionRoutingContext(sessionId)?.target ?? getThreadTargetForSession(sessionId);
@@ -1746,6 +1739,11 @@ export function createBot(): Bot<Context> {
     const promptDeps = { bot, ensureEventSubscription };
     const handledCommandArgs = await handleCommandTextArguments(ctx, promptDeps);
     if (handledCommandArgs) {
+      return;
+    }
+
+    const handledSkillArgs = await handleSkillTextArguments(ctx, promptDeps);
+    if (handledSkillArgs) {
       return;
     }
 

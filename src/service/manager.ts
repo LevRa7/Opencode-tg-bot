@@ -5,7 +5,6 @@ import { exec, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { getRuntimePaths } from "../runtime/paths.js";
 import { buildServiceChildEnv } from "./runtime.js";
-import { t } from "../i18n/index.js";
 import type {
   BotServiceState,
   BotServiceStatus,

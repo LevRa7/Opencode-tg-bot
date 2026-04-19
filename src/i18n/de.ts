@@ -109,6 +109,7 @@ export const de: I18nDictionary = {
   "status.line.managed_no": "Vom Bot gestartet: Nein",
   "status.line.pid": "PID: {pid}",
   "status.line.uptime_sec": "Betriebszeit: {seconds} s",
+  "status.worktree_selected": "Worktree: {worktree}",
   "status.line.mode": "Modus: {mode}",
   "status.line.model": "Modell: {model}",
   "status.line.tts": "TTS-Antworten: {tts}",
@@ -206,6 +207,8 @@ export const de: I18nDictionary = {
     "⚠️ OpenCode-Server läuft bereits\n\nPID: {pid}\nBetriebszeit: {seconds} Sekunden",
   "opencode_start.already_running_external":
     "✅ OpenCode-Server läuft bereits als externer Prozess\n\nVersion: {version}\n\nDieser Server wurde nicht vom Bot gestartet, daher kann /opencode-stop ihn nicht stoppen.",
+  "opencode_start.remote_configured":
+    "⚠️ /opencode_start funktioniert nur mit einem lokalen OpenCode-Server.",
   "opencode_start.starting": "🔄 Starte OpenCode-Server...",
   "opencode_start.start_error":
     "🔴 OpenCode-Server konnte nicht gestartet werden\n\nFehler: {error}\n\nPrüfe, ob OpenCode CLI installiert und im PATH verfügbar ist:\nopencode --version\nnpm install -g @opencode-ai/cli",
@@ -217,7 +220,10 @@ export const de: I18nDictionary = {
     "🔴 Beim Starten des Servers ist ein Fehler aufgetreten.\n\nSiehe Anwendungslogs für Details.",
   "opencode_stop.external_running":
     "⚠️ OpenCode-Server läuft als externer Prozess\n\nDieser Server wurde nicht über /opencode-start gestartet.\nStoppe ihn manuell oder nutze /status, um den Zustand zu prüfen.",
+  "opencode_stop.remote_configured":
+    "⚠️ /opencode_stop funktioniert nur mit einem lokalen OpenCode-Server.",
   "opencode_stop.not_running": "⚠️ OpenCode-Server läuft nicht",
+  "opencode_stop.pid_not_found": "⚠️ OpenCode-Server läuft, aber seine Prozess-ID konnte nicht gefunden werden (Port {port}).",
   "opencode_stop.stopping": "🛑 Stoppe OpenCode-Server...\n\nPID: {pid}",
   "opencode_stop.stop_error": "🔴 OpenCode-Server konnte nicht gestoppt werden\n\nFehler: {error}",
   "opencode_stop.success": "✅ OpenCode-Server erfolgreich gestoppt",

@@ -109,6 +109,7 @@ export const es: I18nDictionary = {
   "status.line.managed_no": "Iniciado por el bot: No",
   "status.line.pid": "PID: {pid}",
   "status.line.uptime_sec": "Tiempo activo: {seconds} s",
+  "status.worktree_selected": "Worktree: {worktree}",
   "status.line.mode": "Modo: {mode}",
   "status.line.model": "Modelo: {model}",
   "status.line.tts": "Respuestas TTS: {tts}",
@@ -205,6 +206,8 @@ export const es: I18nDictionary = {
     "⚠️ OpenCode Server ya está en ejecución\n\nPID: {pid}\nTiempo activo: {seconds} segundos",
   "opencode_start.already_running_external":
     "✅ OpenCode Server ya está en ejecución como un proceso externo\n\nVersión: {version}\n\nEste servidor no fue iniciado por el bot, por lo que /opencode-stop no puede detenerlo.",
+  "opencode_start.remote_configured":
+    "⚠️ /opencode_start solo funciona con un OpenCode Server local.",
   "opencode_start.starting": "🔄 Iniciando OpenCode Server...",
   "opencode_start.start_error":
     "🔴 No se pudo iniciar OpenCode Server\n\nError: {error}\n\nRevisa que OpenCode CLI esté instalado y disponible en PATH:\nopencode --version\nnpm install -g @opencode-ai/cli",
@@ -216,7 +219,10 @@ export const es: I18nDictionary = {
     "🔴 Ocurrió un error al iniciar el servidor.\n\nRevisa los logs de la aplicación para más detalles.",
   "opencode_stop.external_running":
     "⚠️ OpenCode Server está en ejecución como un proceso externo\n\nEste servidor no fue iniciado con /opencode-start.\nDeténlo manualmente o usa /status para revisar el estado.",
+  "opencode_stop.remote_configured":
+    "⚠️ /opencode_stop solo funciona con un OpenCode Server local.",
   "opencode_stop.not_running": "⚠️ OpenCode Server no está en ejecución",
+  "opencode_stop.pid_not_found": "⚠️ OpenCode Server está en ejecución, pero no se pudo encontrar su ID de proceso (puerto {port}).",
   "opencode_stop.stopping": "🛑 Deteniendo OpenCode Server...\n\nPID: {pid}",
   "opencode_stop.stop_error": "🔴 No se pudo detener OpenCode Server\n\nError: {error}",
   "opencode_stop.success": "✅ OpenCode Server detenido correctamente",

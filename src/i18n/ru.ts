@@ -103,6 +103,7 @@ export const ru: I18nDictionary = {
   "status.line.managed_no": "Запущен ботом: Нет",
   "status.line.pid": "PID: {pid}",
   "status.line.uptime_sec": "Uptime: {seconds} сек",
+  "status.worktree_selected": "Worktree: {worktree}",
   "status.line.mode": "Режим: {mode}",
   "status.line.model": "Модель: {model}",
   "status.line.tts": "TTS-ответы: {tts}",
@@ -197,6 +198,7 @@ export const ru: I18nDictionary = {
     "⚠️ OpenCode Server уже запущен\n\nPID: {pid}\nUptime: {seconds} секунд",
   "opencode_start.already_running_external":
     "✅ OpenCode Server уже запущен внешним процессом\n\nВерсия: {version}\n\nЭтот сервер не был запущен через бота, поэтому команда /opencode-stop не сможет его остановить.",
+  "opencode_start.remote_configured": "⚠️ /opencode_start работает только с локальным OpenCode Server.",
   "opencode_start.starting": "🔄 Запускаю OpenCode Server...",
   "opencode_start.start_error":
     "🔴 Не удалось запустить OpenCode Server\n\nОшибка: {error}\n\nПроверьте, что OpenCode CLI установлен и доступен в PATH:\nopencode --version\nnpm install -g @opencode-ai/cli",
@@ -207,7 +209,9 @@ export const ru: I18nDictionary = {
     "🔴 Произошла ошибка при запуске сервера.\n\nПроверьте логи приложения для подробностей.",
   "opencode_stop.external_running":
     "⚠️ OpenCode Server запущен внешним процессом\n\nЭтот сервер не был запущен через /opencode-start.\nОстановите его вручную или используйте /status для проверки состояния.",
+  "opencode_stop.remote_configured": "⚠️ /opencode_stop работает только с локальным OpenCode Server.",
   "opencode_stop.not_running": "⚠️ OpenCode Server не запущен",
+  "opencode_stop.pid_not_found": "⚠️ OpenCode Server запущен, но идентификатор процесса не найден (порт {port}).",
   "opencode_stop.stopping": "🛑 Останавливаю OpenCode Server...\n\nPID: {pid}",
   "opencode_stop.stop_error": "🔴 Не удалось остановить OpenCode Server\n\nОшибка: {error}",
   "opencode_stop.success": "✅ OpenCode Server успешно остановлен",

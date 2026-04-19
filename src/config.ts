@@ -120,6 +120,18 @@ function getOptionalMessageFormatModeEnvVar(
   return defaultValue;
 }
 
+function getOptionalStringListEnvVar(key: string): string[] {
+  const value = getEnvVar(key, false);
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
 function parsePositiveInteger(value: string): number | null {
   const normalized = value.trim();
   if (!/^\d+$/.test(normalized)) {
@@ -208,7 +220,16 @@ export const config = {
     locale: getOptionalLocaleEnvVar("BOT_LOCALE", "en"),
     hideThinkingMessages: getOptionalBooleanEnvVar("HIDE_THINKING_MESSAGES", false),
     hideToolCallMessages: getOptionalBooleanEnvVar("HIDE_TOOL_CALL_MESSAGES", false),
+    hideToolFileMessages: getOptionalBooleanEnvVar("HIDE_TOOL_FILE_MESSAGES", false),
+    logRetention: getOptionalPositiveIntEnvVar("LOG_RETENTION", 10),
+    scheduledTaskExecutionTimeoutMinutes: getOptionalPositiveIntEnvVar(
+      "SCHEDULED_TASK_EXECUTION_TIMEOUT_MINUTES",
+      120,
+    ),
     messageFormatMode: getOptionalMessageFormatModeEnvVar("MESSAGE_FORMAT_MODE", "markdown"),
+  },
+  open: {
+    browserRoots: getOptionalStringListEnvVar("OPEN_BROWSER_ROOTS"),
   },
   files: {
     maxFileSizeKb: parseInt(getEnvVar("CODE_FILE_MAX_SIZE_KB", false) || "100", 10),
@@ -218,6 +239,7 @@ export const config = {
     apiKey: getEnvVar("STT_API_KEY", false),
     model: getEnvVar("STT_MODEL", false) || "whisper-large-v3-turbo",
     language: getEnvVar("STT_LANGUAGE", false),
+    notePrompt: getEnvVar("STT_NOTE_PROMPT", false),
   },
   tts: {
     apiUrl: getEnvVar("TTS_API_URL", false),

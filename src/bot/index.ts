@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { config } from "../config.js";
+import type { MessageFormatMode } from "../config.js";
 import { authMiddleware, handleAccessApprovalCallback } from "./middleware/auth.js";
 import { interactionGuardMiddleware } from "./middleware/interaction-guard.js";
 import { unknownCommandMiddleware } from "./middleware/unknown-command.js";
@@ -57,6 +58,12 @@ import {
   formatToolInfo,
   getAssistantParseMode,
 } from "../summary/formatter.js";
+import {
+  createPlainRenderedParts,
+  prepareAssistantFinalStreamingPayload,
+  prepareAssistantStreamingPayload,
+  renderAssistantFinalPartsSafe,
+} from "./utils/assistant-rendering.js";
 import { renderSubagentCards } from "../summary/subagent-formatter.js";
 import { ToolMessageBatcher } from "../summary/tool-message-batcher.js";
 import { ingestSessionInfoForCache } from "../session/cache-manager.js";
@@ -78,8 +85,9 @@ import { downloadTelegramFile, toDataUri } from "./utils/file-download.js";
 import { finalizeAssistantResponse } from "./utils/finalize-assistant-response.js";
 import { sendTtsResponseForSession } from "./utils/send-tts-response.js";
 import { MessageDraftStreamManager } from "./utils/message-draft-stream.js";
-import { ThinkingMessageLifecycleManager } from "./utils/thinking-message-lifecycle.js";
-import { buildThinkingMessageHtml } from "./utils/thinking-message.js";
+import { deliverThinkingMessage } from "./utils/thinking-message.js";
+import { assistantRunState } from "./assistant-run-state.js";
+import { formatAssistantRunFooter } from "./utils/assistant-run-footer.js";
 import { sendBotText } from "./utils/telegram-text.js";
 import {
   createLocalFileFollowUpTracker,
@@ -87,8 +95,8 @@ import {
   prepareLocalFileFollowUpsFromPaths,
   type PreparedLocalFileFollowUp,
 } from "./utils/telegram-local-file-follow-up.js";
-import { createPendingAssistantResponseStore } from "./utils/pending-assistant-response.js";
 import { getModelCapabilities, supportsInput } from "../model/capabilities.js";
+import { getStoredAgent } from "../agent/manager.js";
 import { getStoredModel } from "../model/manager.js";
 import type { FilePartInput } from "@opencode-ai/sdk/v2";
 import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
@@ -105,7 +113,6 @@ import {
   getApprovedTelegramUserIds,
   getReasoningMode,
   getTenantRuntimeInfo,
-  getThinkingClearMode,
   isMessageStreamingEnabled,
 } from "../settings/manager.js";
 import {
@@ -124,11 +131,22 @@ let activeBotInstance: Bot<Context> | null = null;
 
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
 const RESPONSE_STREAM_THROTTLE_MS = config.bot.responseStreamThrottleMs;
+const RESPONSE_STREAM_TEXT_LIMIT = 3800;
 const SESSION_RETRY_PREFIX = "🔁";
 const SUBAGENT_STREAM_PREFIX = "🧩";
+
+function prepareStreamingPayload(messageText: string) {
+  return prepareAssistantStreamingPayload(messageText, RESPONSE_STREAM_TEXT_LIMIT);
+}
+
+function prepareFinalStreamingPayload(messageText: string) {
+  return prepareAssistantFinalStreamingPayload(messageText, RESPONSE_STREAM_TEXT_LIMIT);
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const TEMP_DIR = path.join(__dirname, "..", ".tmp");
+const sessionCompletionTasks = new Map<string, Promise<void>>();
 
 interface SessionRoutingContext {
   bot: Bot<Context>;
@@ -227,6 +245,21 @@ async function runWithSessionRoutingScope<T>(
 
 async function getReplyKeyboardForSession(sessionId: string) {
   return await runWithSessionRoutingScope(sessionId, async () => getCurrentReplyKeyboard());
+}
+
+function enqueueSessionCompletionTask(sessionId: string, task: () => Promise<void>): Promise<void> {
+  const previousTask = sessionCompletionTasks.get(sessionId) ?? Promise.resolve();
+  const nextTask = previousTask
+    .catch(() => undefined)
+    .then(task)
+    .finally(() => {
+      if (sessionCompletionTasks.get(sessionId) === nextTask) {
+        sessionCompletionTasks.delete(sessionId);
+      }
+    });
+
+  sessionCompletionTasks.set(sessionId, nextTask);
+  return nextTask;
 }
 
 function getReasoningModeForSession(sessionId: string) {
@@ -475,7 +508,6 @@ const toolMessageBatcher = new ToolMessageBatcher({
     }
   },
 });
-const pendingAssistantResponses = createPendingAssistantResponseStore();
 const localFileFollowUpTracker = createLocalFileFollowUpTracker();
 
 const responseStreamer = new ResponseStreamer({
@@ -559,7 +591,6 @@ const responseStreamer = new ResponseStreamer({
 });
 
 const messageDraftStreamManager = new MessageDraftStreamManager(RESPONSE_STREAM_THROTTLE_MS);
-const thinkingMessageLifecycle = new ThinkingMessageLifecycleManager();
 
 const toolCallStreamer = new ToolCallStreamer({
   throttleMs: RESPONSE_STREAM_THROTTLE_MS,
@@ -689,13 +720,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     toolCallStreamer.clearAll("summary_aggregator_clear");
     responseStreamer.clearAll("summary_aggregator_clear");
     messageDraftStreamManager.clearAll();
-    thinkingMessageLifecycle.clearAll();
-    pendingAssistantResponses.clearAll();
     localFileFollowUpTracker.clearAll();
+    assistantRunState.clearAll("summary_aggregator_clear");
   });
 
   summaryAggregator.setOnPartial(
-    async (sessionId, _messageId, messageText, reasoningText, toolCalls) => {
+    async (sessionId, messageId, messageText, reasoningText, toolCalls) => {
       if (!isMessageStreamingEnabledForSession(sessionId)) {
         return;
       }
@@ -715,41 +745,20 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       const assistantFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
 
       messageDraftStreamManager.setSendEditApi(sessionId, botApi, botApi);
+      const streamingMessageId = `${messageId}:assistant`;
 
       if (mode > 0) {
         if (messageText.trim()) {
-          messageDraftStreamManager.enqueue(
-            sessionId,
-            botApi,
-            target,
-            messageText,
-            assistantFormat,
-          );
-        }
-
-        // Update the thinking message with accumulated reasoning content during streaming.
-        // This replaces the initial "Думаю..." marker with the full reasoning content
-        // as an expandable quote, so the user sees the thinking progress.
-        if (reasoningText?.trim()) {
-          const thinkingTitle = t("bot.thinking");
-          const thinkingHtml = buildThinkingMessageHtml(thinkingTitle, reasoningText);
-          await thinkingMessageLifecycle.render(sessionId, thinkingHtml, {
-            sendText: async (text) => {
-              const result = await botApi.sendMessage(
-                target.chatId,
-                text,
-                { parse_mode: "HTML", ...withMessageThreadId(undefined, target.messageThreadId) },
-              );
-              return (result as { message_id?: number })?.message_id ?? 0;
+          const payload = assistantFormat === "markdown_v2"
+            ? prepareAssistantStreamingPayload(messageText, RESPONSE_STREAM_TEXT_LIMIT)
+            : null;
+          responseStreamer.enqueue(sessionId, streamingMessageId, {
+            parts: payload?.parts ?? [messageText],
+            format: payload?.format ?? assistantFormat,
+            sendOptions: {
+              disable_notification: true,
             },
-            editText: async (messageId, text) => {
-              await botApi.editMessageText(target.chatId, messageId, text, {
-                parse_mode: "HTML",
-              });
-            },
-            deleteText: async (messageId) => {
-              await botApi.deleteMessage(target.chatId, messageId).catch(() => {});
-            },
+            editOptions: undefined,
           });
         }
       } else {
@@ -770,245 +779,214 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   );
 
   summaryAggregator.setOnComplete(
-    async (sessionId, _messageId, messageText, reasoningText, toolCalls) => {
-      if (!isSessionCurrent(sessionId)) {
-        pendingAssistantResponses.clear(sessionId);
-        localFileFollowUpTracker.clearSession(sessionId);
-        clearPromptResponseMode(sessionId);
-        clearSessionRoutingContext(sessionId);
-        messageDraftStreamManager.clearSession(sessionId);
-        toolCallStreamer.clearSession(sessionId, "session_mismatch");
-        foregroundSessionState.markIdle(sessionId);
-        await scheduledTaskRuntime.flushDeferredDeliveries();
-        return;
-      }
+    async (sessionId, messageId, messageText, reasoningText, toolCalls, completionInfo) => {
+      await enqueueSessionCompletionTask(sessionId, async () => {
+        if (!isSessionCurrent(sessionId)) {
+          localFileFollowUpTracker.clearSession(sessionId);
+          clearPromptResponseMode(sessionId);
+          clearSessionRoutingContext(sessionId);
+          messageDraftStreamManager.clearSession(sessionId);
+          responseStreamer.clearMessage(sessionId, `${messageId}:assistant`, "session_mismatch");
+          toolCallStreamer.clearSession(sessionId, "session_mismatch");
+          assistantRunState.clearRun(sessionId, "session_mismatch");
+          foregroundSessionState.markIdle(sessionId);
+          await scheduledTaskRuntime.flushDeferredDeliveries();
+          return;
+        }
 
-      pendingAssistantResponses.set(sessionId, {
-        messageText,
-        reasoningText,
-        toolCalls,
+        const botApi = getSessionRoutingApi(sessionId);
+        const target = getSessionRoutingTarget(sessionId);
+        if (!botApi || !target) {
+          logger.error("Bot or chat ID not available for sending message");
+          localFileFollowUpTracker.clearSession(sessionId);
+          clearPromptResponseMode(sessionId);
+          clearSessionRoutingContext(sessionId);
+          messageDraftStreamManager.clearSession(sessionId);
+          responseStreamer.clearMessage(sessionId, `${messageId}:assistant`, "bot_context_missing");
+          toolCallStreamer.clearSession(sessionId, "bot_context_missing");
+          assistantRunState.clearRun(sessionId, "bot_context_missing");
+          foregroundSessionState.markIdle(sessionId);
+          return;
+        }
+
+        const chatId = target.chatId;
+        assistantRunState.markResponseCompleted(sessionId, completionInfo);
+        const mode = await getReasoningModeForSession(sessionId);
+        const formattedTechnicals = (toolCalls || []).map((t) => ({
+          description: t.title || t.tool,
+          command:
+            t.input && typeof t.input === "object" && "command" in t.input && typeof t.input.command === "string"
+              ? t.input.command
+              : undefined,
+        }));
+
+        const finalFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
+        let finalText = messageText;
+        let finalParseMode: "html" | "raw" | "markdown_v2" = finalFormat;
+
+        if (mode > 0) {
+          const assistantText =
+            (finalFormat as string) === "html"
+              ? messageText
+              : markdownToHtml(messageText);
+
+          const technicalsOnly = formattedTechnicals.map((t) => ({
+            description: t.description,
+            command: t.command,
+          }));
+          const chunks = formatReasoningForTelegramHtml(
+            mode,
+            "",
+            technicalsOnly,
+            assistantText,
+          );
+          finalText = chunks[0] || assistantText;
+          finalParseMode = "html";
+        }
+
+        try {
+          await finalizeAssistantResponse({
+            sessionId,
+            messageId: `${messageId}:assistant`,
+            messageText: finalText,
+            responseStreamer,
+            flushPendingServiceMessages: () =>
+              Promise.all([
+                messageDraftStreamManager.flushSession(sessionId),
+                toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
+                toolCallStreamer.breakSession(sessionId, "assistant_message_completed"),
+              ]).then(() => undefined),
+            prepareStreamingPayload: () => {
+              if (finalParseMode === "markdown_v2") {
+                const payload = prepareFinalStreamingPayload(finalText);
+                if (payload) return payload;
+              }
+              return {
+                parts: [finalText],
+                format: finalParseMode === "markdown_v2" ? "markdown_v2" : "raw",
+              };
+            },
+            renderFinalParts: (text) => {
+              const summaryMode: MessageFormatMode = finalParseMode === "markdown_v2" ? "markdown" : finalParseMode === "html" ? "raw" : finalParseMode;
+              if (summaryMode === "markdown" && config.bot.messageFormatMode === "markdown") {
+                return renderAssistantFinalPartsSafe(text, RESPONSE_STREAM_TEXT_LIMIT);
+              }
+              return createPlainRenderedParts(text, RESPONSE_STREAM_TEXT_LIMIT);
+            },
+            getReplyKeyboard: async () => await getReplyKeyboardForSession(sessionId),
+            sendRenderedPart: async (part, options) => {
+              const draftMessageId = messageDraftStreamManager.consumeLastSentMessageId(sessionId);
+              if (draftMessageId) {
+                await botApi.deleteMessage(chatId, draftMessageId).catch(() => {});
+              }
+
+              const replyOptions =
+                routingBySessionId.get(sessionId)?.sourceMessageId && options?.reply_markup
+                  ? {
+                      ...options,
+                      reply_parameters: {
+                        message_id: routingBySessionId.get(sessionId)!.sourceMessageId,
+                        allow_sending_without_reply: true,
+                      },
+                    }
+                  : options;
+
+              await sendBotText({
+                api: botApi,
+                chatId,
+                text: part.text,
+                rawFallbackText: part.fallbackText,
+                options: replyOptions as Parameters<typeof sendBotText>[0]["options"],
+                format: finalParseMode,
+                messageThreadId: target.messageThreadId,
+                });
+            },
+          });
+
+          await sendTtsResponseForSession({
+            api: botApi,
+            sessionId,
+            chatId,
+            text: messageText,
+            messageThreadId: target.messageThreadId,
+          });
+
+
+        } catch (err) {
+          localFileFollowUpTracker.clearSession(sessionId);
+          clearPromptResponseMode(sessionId);
+          messageDraftStreamManager.clearSession(sessionId);
+          assistantRunState.clearRun(sessionId, "assistant_finalize_failed");
+          logger.error("Failed to send message to Telegram:", err);
+          logger.error("[Bot] CRITICAL: Stopping event processing due to error");
+          summaryAggregator.clear();
+        }
       });
     },
   );
 
   summaryAggregator.setOnSessionIdle(async (sessionId) => {
-      syncSessionRoutingContext(sessionId);
-      const pendingResponse = pendingAssistantResponses.consume(sessionId);
-      const botApi = getSessionRoutingApi(sessionId);
-      const target = getSessionRoutingTarget(sessionId);
-      if (!botApi || !target) {
-        logger.error("Bot or chat ID not available for sending message");
-        pendingAssistantResponses.clear(sessionId);
-        localFileFollowUpTracker.clearSession(sessionId);
-        clearPromptResponseMode(sessionId);
-        clearSessionRoutingContext(sessionId);
-        messageDraftStreamManager.clearSession(sessionId);
-        toolCallStreamer.clearSession(sessionId, "bot_context_missing");
-        foregroundSessionState.markIdle(sessionId);
-        return;
-      }
+    logger.debug("[Bot] setOnSessionIdle called", { sessionId });
+    const pendingCompletionTask = sessionCompletionTasks.get(sessionId);
+    if (pendingCompletionTask) {
+      // 2026-04-19: message.updated(completed) schedules final delivery work through
+      // the per-session completion queue. session.idle can arrive in the same tick,
+      // so wait for that queued finalization before clearing routing/prompt state.
+      await pendingCompletionTask.catch(() => undefined);
+    }
 
-      if (!isSessionCurrent(sessionId)) {
-        pendingAssistantResponses.clear(sessionId);
-        localFileFollowUpTracker.clearSession(sessionId);
-        clearPromptResponseMode(sessionId);
-        clearSessionRoutingContext(sessionId);
-        messageDraftStreamManager.clearSession(sessionId);
-        toolCallStreamer.clearSession(sessionId, "session_mismatch");
-        foregroundSessionState.markIdle(sessionId);
-        await scheduledTaskRuntime.flushDeferredDeliveries();
-        return;
-      }
+    const completedRun = assistantRunState.finishRun(sessionId, "session_idle");
+    clearPromptResponseMode(sessionId);
 
-      if (!pendingResponse) {
-        clearPromptResponseMode(sessionId);
-        localFileFollowUpTracker.clearSession(sessionId);
-        clearSessionRoutingContext(sessionId);
-        messageDraftStreamManager.clearSession(sessionId);
-        foregroundSessionState.markIdle(sessionId);
-        await scheduledTaskRuntime.flushDeferredDeliveries();
-        return;
-      }
+    syncSessionRoutingContext(sessionId);
 
-      const chatId = target.chatId;
-      const mode = await getReasoningModeForSession(sessionId);
-      const formattedTechnicals = (pendingResponse.toolCalls || []).map((t) => ({
-        description: t.title || t.tool,
-        command:
-          t.input && typeof t.input === "object" && "command" in t.input && typeof t.input.command === "string"
-            ? t.input.command
-            : undefined,
-      }));
+    const botApi = getSessionRoutingApi(sessionId);
+    const target = getSessionRoutingTarget(sessionId);
+    if (!botApi || !target) {
+      clearSessionRoutingContext(sessionId);
+      localFileFollowUpTracker.clearSession(sessionId);
+      messageDraftStreamManager.clearSession(sessionId);
+      foregroundSessionState.markIdle(sessionId);
+      return;
+    }
 
-      const finalFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
-      let finalText = pendingResponse.messageText;
-      let finalParseMode: "html" | "raw" | "markdown_v2" = finalFormat;
-      let finalChunks: string[] | undefined;
+    try {
+      await Promise.all([
+        toolMessageBatcher.flushSession(sessionId, "session_idle"),
+        toolCallStreamer.flushSession(sessionId, "session_idle"),
+      ]);
 
-      if (mode > 0) {
-        // Reasoning content is already displayed in the thinking message (updated during streaming
-        // via thinkingMessageLifecycle.render). The final response should only contain the
-        // assistant text, not the reasoning again.
-        const assistantText =
-          (finalFormat as string) === "html"
-            ? pendingResponse.messageText
-            : markdownToHtml(pendingResponse.messageText);
+       if (completedRun?.hasCompletedResponse) {
+        const agent = completedRun.actualAgent || completedRun.configuredAgent;
+        const providerID = completedRun.actualProviderID || completedRun.configuredProviderID;
+        const modelID = completedRun.actualModelID || completedRun.configuredModelID;
 
-        // Still include technical blocks (tool calls) as expandable spoilers
-        const technicalsOnly = formattedTechnicals.map((t) => ({
-          description: t.description,
-          command: t.command,
-        }));
-        const chunks = formatReasoningForTelegramHtml(
-          mode,
-          "",  // No reasoning - already in thinking message
-          technicalsOnly,
-          assistantText,
-        );
-        finalText = chunks[0] || assistantText;
-        finalChunks = chunks.length > 1 ? chunks : undefined;
-        finalParseMode = "html";
-      }
-
-      try {
-        const finalizeResult = await finalizeAssistantResponse({
-          sessionId,
-          messageText: finalText,
-          sourceText: pendingResponse.messageText,
-          chunks: finalChunks,
-          flushDraftStream: (draftSessionId) =>
-            messageDraftStreamManager.flushSession(draftSessionId),
-          flushPendingServiceMessages: () =>
-            Promise.all([
-              toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
-              toolCallStreamer.flushSession(sessionId, "assistant_message_completed"),
-            ]).then(() => undefined),
-          formatSummary,
-          formatRawSummary: (text) => formatSummaryWithMode(text, "raw"),
-          resolveFormat: () => finalParseMode,
-          getReplyKeyboard: () => getReplyKeyboardForSession(sessionId),
-          prepareLocalFileFollowUps: () =>
-            prepareLocalFileFollowUpsFromPaths(
-              extractLocalFilePaths(
-                buildFollowUpCandidateText(
-                  pendingResponse.messageText,
-                  pendingResponse.reasoningText,
-                ),
-              ),
-              getSessionLocalFilePathResolver(sessionId),
-            ),
-          sendText: async (text, rawFallbackText, options, format) => {
-            const draftMessageId = messageDraftStreamManager.consumeLastSentMessageId(sessionId);
-            if (draftMessageId) {
-              await botApi.deleteMessage(chatId, draftMessageId).catch(() => {});
-            }
-
-            const replyOptions =
-              routingBySessionId.get(sessionId)?.sourceMessageId && options?.reply_markup
-                ? {
-                    ...options,
-                    reply_parameters: {
-                      message_id: routingBySessionId.get(sessionId)!.sourceMessageId,
-                      allow_sending_without_reply: true,
-                    },
-                  }
-                : options;
-
-            await sendBotText({
-              api: botApi,
-              chatId,
-              text,
-              rawFallbackText,
-              options: replyOptions as Parameters<typeof sendBotText>[0]["options"],
-              format,
-              messageThreadId: target.messageThreadId,
-            });
-          },
-        });
-
-        if (finalizeResult.followUpFiles.length > 0) {
-          const reservedPaths = localFileFollowUpTracker.reserve(
-            sessionId,
-            finalizeResult.followUpFiles.map((followUp) => followUp.path),
+        if (agent && providerID && modelID) {
+          const keyboard = await getReplyKeyboardForSession(sessionId);
+          await botApi.sendMessage(
+            target.chatId,
+            formatAssistantRunFooter({
+              agent,
+              providerID,
+              modelID,
+              elapsedMs: Date.now() - completedRun.startedAt,
+            }),
+            {
+              ...(keyboard ? { reply_markup: keyboard } : {}),
+            },
           );
-          const reservedPathSet = new Set(reservedPaths);
-          const reservedFollowUps = finalizeResult.followUpFiles.filter((followUp) =>
-            reservedPathSet.has(followUp.path),
-          );
-
-          if (reservedFollowUps.length > 0) {
-            safeBackgroundTask({
-              taskName: `telegram.local-file-follow-up.${sessionId}`,
-              task: async () => {
-                const sentPaths: string[] = [];
-                try {
-                  for (const followUp of reservedFollowUps) {
-                    const currentTarget = getSessionRoutingTarget(sessionId);
-                    const currentApi = getSessionRoutingApi(sessionId);
-                    if (!currentTarget || !currentApi || !isSessionCurrent(sessionId)) {
-                      break;
-                    }
-
-                    await sendPreparedLocalFileFollowUp(currentApi, currentTarget, followUp);
-                    sentPaths.push(followUp.path);
-                  }
-                } finally {
-                  if (sentPaths.length > 0) {
-                    localFileFollowUpTracker.markSent(sessionId, sentPaths);
-                  }
-
-                  const unsentPaths = reservedFollowUps
-                    .map((followUp) => followUp.path)
-                    .filter((filePath) => !sentPaths.includes(filePath));
-                  if (unsentPaths.length > 0) {
-                    localFileFollowUpTracker.release(sessionId, unsentPaths);
-                  }
-                }
-              },
-            });
-          }
         }
-
-        await sendTtsResponseForSession({
-          api: botApi,
-          sessionId,
-          chatId,
-          text: pendingResponse.messageText,
-          messageThreadId: target.messageThreadId,
-        });
-      } catch (err) {
-        pendingAssistantResponses.clear(sessionId);
-        localFileFollowUpTracker.clearSession(sessionId);
-        clearPromptResponseMode(sessionId);
-        messageDraftStreamManager.clearSession(sessionId);
-        logger.error("Failed to send message to Telegram:", err);
-        logger.error("[Bot] CRITICAL: Stopping event processing due to error");
-        summaryAggregator.clear();
-      } finally {
-        // When reasoning content was present, keep the thinking message visible
-        // (it now contains the reasoning as an expandable quote).
-        // Only clear it if the user setting says so AND there was no reasoning.
-        const hadReasoning = mode > 0 && !!pendingResponse.reasoningText?.trim();
-        const shouldClearThinking = hadReasoning
-          ? false
-          : await runWithSessionRoutingScope(sessionId, async () =>
-              getThinkingClearMode(),
-            );
-        await thinkingMessageLifecycle.finalize(sessionId, shouldClearThinking, {
-          sendText: async () => 0,
-          editText: async () => undefined,
-          deleteText: async (messageId) => {
-            await botApi.deleteMessage(chatId, messageId).catch(() => {});
-          },
-        });
-        clearSessionRoutingContext(sessionId);
-        localFileFollowUpTracker.clearSession(sessionId);
-        messageDraftStreamManager.clearSession(sessionId);
-        foregroundSessionState.markIdle(sessionId);
-        await scheduledTaskRuntime.flushDeferredDeliveries();
       }
-    },
-  );
+    } catch (err) {
+      logger.error("[Bot] Failed to send session idle footer:", err);
+    } finally {
+      clearSessionRoutingContext(sessionId);
+      localFileFollowUpTracker.clearSession(sessionId);
+      messageDraftStreamManager.clearSession(sessionId);
+      foregroundSessionState.markIdle(sessionId);
+      await scheduledTaskRuntime.flushDeferredDeliveries();
+    }
+  });
 
   summaryAggregator.setOnTool(async (toolInfo) => {
     syncSessionRoutingContext(toolInfo.sessionId);
@@ -1164,9 +1142,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
   summaryAggregator.setOnThinking(async (sessionId) => {
     syncSessionRoutingContext(sessionId);
-    const botApi = getSessionRoutingApi(sessionId);
-    const target = getSessionRoutingTarget(sessionId);
-    if (!botApi || !target) {
+    if (!getSessionRoutingApi(sessionId) || !getSessionRoutingTarget(sessionId)) {
       return;
     }
 
@@ -1174,28 +1150,9 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     await toolCallStreamer.breakSession(sessionId, "thinking_started");
 
-    if (!config.bot.hideThinkingMessages) {
-      const thinkingTitle = t("bot.thinking");
-      const thinkingHtml = buildThinkingMessageHtml(thinkingTitle, "");
-      await thinkingMessageLifecycle.render(sessionId, thinkingHtml, {
-        sendText: async (text) => {
-          const result = await botApi.sendMessage(
-            target.chatId,
-            text,
-            { parse_mode: "HTML", ...withMessageThreadId(undefined, target.messageThreadId) },
-          );
-          return (result as { message_id?: number })?.message_id ?? 0;
-        },
-        editText: async (messageId, text) => {
-          await botApi.editMessageText(target.chatId, messageId, text, {
-            parse_mode: "HTML",
-          });
-        },
-        deleteText: async (messageId) => {
-          await botApi.deleteMessage(target.chatId, messageId).catch(() => {});
-        },
-      });
-    }
+    deliverThinkingMessage(sessionId, toolMessageBatcher, {
+      hideThinkingMessages: config.bot.hideThinkingMessages,
+    });
 
     if (pinnedMessageManager.isInitialized()) {
       await pinnedMessageManager.refresh();
@@ -1279,16 +1236,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     messageDraftStreamManager.clearSession(sessionId);
     localFileFollowUpTracker.clearSession(sessionId);
-    const shouldClearThinking = await runWithSessionRoutingScope(sessionId, async () =>
-      getThinkingClearMode(),
-    );
-    await thinkingMessageLifecycle.finalize(sessionId, shouldClearThinking, {
-      sendText: async () => 0,
-      editText: async () => undefined,
-      deleteText: async (messageId) => {
-        await routing.bot.api.deleteMessage(target.chatId, messageId).catch(() => {});
-      },
-    });
+    assistantRunState.clearRun(sessionId, "session_error");
     clearPromptResponseMode(sessionId);
     await Promise.all([
       toolMessageBatcher.flushSession(sessionId, "session_error"),

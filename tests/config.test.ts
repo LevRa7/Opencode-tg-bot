@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -11,10 +11,15 @@ async function loadConfig() {
 
 describe("config boolean env parsing", () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "test-telegram-token");
     vi.stubEnv("TELEGRAM_ADMIN_USER_ID", "123456789");
     vi.stubEnv("OPENCODE_MODEL_PROVIDER", "test-provider");
     vi.stubEnv("OPENCODE_MODEL_ID", "test-model");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("uses false defaults for hide service message flags", async () => {
@@ -256,5 +261,49 @@ describe("config boolean env parsing", () => {
     expect(config.tts.apiUrl).toBe("https://host-tts.local/v1");
     expect(config.opencode.model.provider).toBe("openai");
     expect(config.opencode.model.modelId).toBe("gpt-5.4-mini");
+  });
+
+  it("parses OPEN_BROWSER_ROOTS into a trimmed string array", async () => {
+    vi.stubEnv("OPEN_BROWSER_ROOTS", " /workspace, /tmp/project , /var/data ");
+
+    const config = await loadConfig();
+
+    expect(config.open.browserRoots).toEqual(["/workspace", "/tmp/project", "/var/data"]);
+  });
+
+  it("uses an empty OPEN_BROWSER_ROOTS list by default", async () => {
+    vi.stubEnv("OPEN_BROWSER_ROOTS", "");
+
+    const config = await loadConfig();
+
+    expect(config.open.browserRoots).toEqual([]);
+  });
+
+  it("parses new optional config values for bot, server, tasks, and stt", async () => {
+    vi.stubEnv("HIDE_TOOL_FILE_MESSAGES", "true");
+    vi.stubEnv("LOG_RETENTION", "30");
+    vi.stubEnv("SCHEDULED_TASK_EXECUTION_TIMEOUT_MINUTES", "45");
+    vi.stubEnv("STT_NOTE_PROMPT", "Summarize the note before sending.");
+
+    const config = await loadConfig();
+
+    expect(config.bot.hideToolFileMessages).toBe(true);
+    expect(config.bot.logRetention).toBe(30);
+    expect(config.bot.scheduledTaskExecutionTimeoutMinutes).toBe(45);
+    expect(config.stt.notePrompt).toBe("Summarize the note before sending.");
+  });
+
+  it("uses defaults for new optional config values when env vars are missing", async () => {
+    vi.stubEnv("HIDE_TOOL_FILE_MESSAGES", "");
+    vi.stubEnv("LOG_RETENTION", "");
+    vi.stubEnv("SCHEDULED_TASK_EXECUTION_TIMEOUT_MINUTES", "");
+    vi.stubEnv("STT_NOTE_PROMPT", "");
+
+    const config = await loadConfig();
+
+    expect(config.bot.hideToolFileMessages).toBe(false);
+    expect(config.bot.logRetention).toBe(10);
+    expect(config.bot.scheduledTaskExecutionTimeoutMinutes).toBe(120);
+    expect(config.stt.notePrompt).toBe("");
   });
 });

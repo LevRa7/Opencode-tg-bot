@@ -1,6 +1,6 @@
 {
   "name": "@grinev/opencode-telegram-bot",
-  "version": "0.14.1",
+  "version": "0.17.0",
   "description": "Telegram bot client for OpenCode to run and monitor coding tasks from chat.",
   "type": "module",
   "main": "./dist/index.js",
@@ -30,8 +30,8 @@
     "release:notes:preview": "node scripts/release-notes-preview.mjs",
     "lint": "eslint src --ext .ts --max-warnings=0",
     "format": "prettier --write \"src/**/*.ts\"",
-    "test": "node scripts/run-vitest.mjs run",
-    "test:coverage": "node scripts/run-vitest.mjs run --coverage"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "repository": {
     "type": "git",
@@ -58,9 +58,13 @@
     "dotenv": "^17.2.3",
     "grammy": "^1.39.2",
     "https-proxy-agent": "^7.0.6",
+    "mdast-util-to-string": "^4.0.0",
     "qrcode": "^1.5.4",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
     "socks-proxy-agent": "^8.0.5",
-    "telegram-markdown-v2": "^0.0.4"
+    "telegram-markdown-v2": "^0.0.4",
+    "unified": "^11.0.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

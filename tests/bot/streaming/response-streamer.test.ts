@@ -353,4 +353,48 @@ describe("bot/streaming/response-streamer", () => {
     expect(editText).not.toHaveBeenCalled();
     expect(deleteText).not.toHaveBeenCalled();
   });
+
+  it("keeps interleaved streamed sessions isolated by session and message ids", async () => {
+    vi.useFakeTimers();
+
+    let nextMessageId = 200;
+    const sendText = vi.fn(async () => nextMessageId++);
+    const editText = vi.fn().mockResolvedValue(undefined);
+    const deleteText = vi.fn().mockResolvedValue(undefined);
+    const streamer = new ResponseStreamer({
+      throttleMs: 0,
+      sendText,
+      editText,
+      deleteText,
+    });
+
+    streamer.enqueue("session-1", "message-1", { parts: ["first partial"], format: "raw" });
+    streamer.enqueue("session-2", "message-2", { parts: ["second partial"], format: "raw" });
+
+    await vi.waitFor(() => {
+      expect(sendText).toHaveBeenCalledTimes(2);
+    });
+
+    streamer.enqueue("session-1", "message-1", { parts: ["first final"], format: "raw" });
+    streamer.enqueue("session-2", "message-2", { parts: ["second final"], format: "raw" });
+
+    await vi.waitFor(() => {
+      expect(editText).toHaveBeenCalledTimes(2);
+    });
+
+    expect(editText).toHaveBeenNthCalledWith(1, "session-1", 200, "first final", "raw", undefined);
+    expect(editText).toHaveBeenNthCalledWith(2, "session-2", 201, "second final", "raw", undefined);
+
+    const firstResult = await streamer.complete("session-1", "message-1", {
+      parts: ["first final"],
+      format: "raw",
+    });
+    const secondResult = await streamer.complete("session-2", "message-2", {
+      parts: ["second final"],
+      format: "raw",
+    });
+
+    expect(firstResult).toEqual({ streamed: true, telegramMessageIds: [200] });
+    expect(secondResult).toEqual({ streamed: true, telegramMessageIds: [201] });
+  });
 });

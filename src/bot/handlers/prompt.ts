@@ -28,6 +28,7 @@ import { foregroundSessionState } from "../../scheduled-task/foreground-state.js
 import { threadContextManager } from "../../thread/manager.js";
 import { getDefaultProject } from "../../project/manager.js";
 import { processManager } from "../../process/manager.js";
+import { assistantRunState } from "../assistant-run-state.js";
 import {
   extractTelegramConversationScopeFromContext,
   runWithTelegramConversationScope,
@@ -393,6 +394,12 @@ export async function processUserPrompt(
     }
 
     foregroundSessionState.markBusy(currentSession.id);
+    assistantRunState.startRun(currentSession.id, {
+      startedAt: Date.now(),
+      configuredAgent: currentAgent,
+      configuredProviderID: storedModel.providerID,
+      configuredModelID: storedModel.modelID,
+    });
     setPromptResponseMode(currentSession.id, responseMode);
     const routingContext = {
       bot,
@@ -430,6 +437,7 @@ export async function processUserPrompt(
           }
 
           foregroundSessionState.markIdle(currentSession.id);
+          assistantRunState.clearRun(currentSession.id, "prompt_error_result");
           clearPromptResponseMode(currentSession.id);
           const details = formatErrorDetails(error, 6000);
           logger.error(
@@ -453,47 +461,49 @@ export async function processUserPrompt(
           logger.info("[Bot] session.prompt completed");
         }
       },
-      onError: async (error) => {
-        if (isNetworkError(error)) {
-          logger.warn(
-            `[Bot] session.prompt failed with network error, attempting tenant restart and retry: sessionId=${currentSession.id}`,
-          );
-          const retryResult = await retryPromptWithTenantRestart({
-            promptOptions,
-            sessionId: currentSession.id,
-            quiet: quietPrompt,
-            routingContext,
-            promptErrorLogContext,
-          });
-          if (!retryResult.error) {
-            return;
-          }
-          // Retry failed — fall through to error notification below
-        }
+       onError: async (error) => {
+         if (isNetworkError(error)) {
+           logger.warn(
+             `[Bot] session.prompt failed with network error, attempting tenant restart and retry: sessionId=${currentSession.id}`,
+           );
+           const retryResult = await retryPromptWithTenantRestart({
+             promptOptions,
+             sessionId: currentSession.id,
+             quiet: quietPrompt,
+             routingContext,
+             promptErrorLogContext,
+           });
+           if (!retryResult.error) {
+             return;
+           }
+           // Retry failed — fall through to error notification below
+         }
 
-        foregroundSessionState.markIdle(currentSession.id);
-        clearPromptResponseMode(currentSession.id);
-        const details = formatErrorDetails(error, 6000);
-        logger.error(
-          "[Bot] session.prompt error",
-          { ...promptErrorLogContext, details },
-        );
-        const routing = getPromptRoutingContext(currentSession.id) ?? routingContext;
-        if (routing) {
-          void runWithTelegramConversationScope(routing.scope, () => {
-            if (routing.quiet) {
-              return Promise.resolve();
-            }
-            return routing.bot.api.sendMessage(routing.target.chatId, t("bot.prompt_send_error"));
-          }).catch(() => {});
-        }
-      },
+         foregroundSessionState.markIdle(currentSession.id);
+         assistantRunState.clearRun(currentSession.id, "prompt_error_exception");
+         clearPromptResponseMode(currentSession.id);
+         const details = formatErrorDetails(error, 6000);
+         logger.error(
+           "[Bot] session.prompt error",
+           { ...promptErrorLogContext, details },
+         );
+         const routing = getPromptRoutingContext(currentSession.id) ?? routingContext;
+         if (routing) {
+           void runWithTelegramConversationScope(routing.scope, () => {
+             if (routing.quiet) {
+               return Promise.resolve();
+             }
+             return routing.bot.api.sendMessage(routing.target.chatId, t("bot.prompt_send_error"));
+           }).catch(() => {});
+         }
+       },
     });
 
     return true;
   } catch (err) {
     if (currentSession) {
       foregroundSessionState.markIdle(currentSession.id);
+      assistantRunState.clearRun(currentSession.id, "prompt_handler_exception");
     }
     logger.error("Error in prompt handler:", err);
     if (interactionManager.getSnapshot()) {

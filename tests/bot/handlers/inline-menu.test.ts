@@ -169,4 +169,27 @@ describe("bot/handlers/inline-menu", () => {
     expect(handled).toBe(true);
     expect(interactionManager.getSnapshot()).toBeNull();
   });
+
+  it("answers stale inline cancel callbacks exactly once with the inactive alert path", async () => {
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+      metadata: {
+        menuKind: "variant",
+        messageId: 777,
+      },
+    });
+
+    const ctx = createCallbackContext("inline:cancel:variant", 778);
+
+    const handled = await handleInlineMenuCancel(ctx);
+
+    expect(handled).toBe(true);
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: t("inline.inactive_callback"),
+      show_alert: true,
+    });
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+  });
 });

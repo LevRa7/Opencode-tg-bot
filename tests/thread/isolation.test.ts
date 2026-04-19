@@ -20,8 +20,12 @@ describe("Telegram Thread Isolation", () => {
       const key2 = buildTelegramConversationScopeKey(scope2);
 
       expect(key1).not.toBe(key2);
-      expect(key1).toContain("100");
-      expect(key2).toContain("200");
+
+      const parsed1 = ConversationContextKey.parse(key1);
+      const parsed2 = ConversationContextKey.parse(key2);
+
+      expect(parsed1?.toTarget()).toEqual({ chatId: 456, messageThreadId: 100 });
+      expect(parsed2?.toTarget()).toEqual({ chatId: 456, messageThreadId: 200 });
     });
 
     it("should generate same key for same topic", () => {
@@ -102,6 +106,26 @@ describe("Telegram Thread Isolation", () => {
       expect(topic100?.equals(topic200!)).toBe(false);
       expect(topic100?.toTarget()).toEqual({ chatId: 456, messageThreadId: 100 });
       expect(topic200?.toTarget()).toEqual({ chatId: 456, messageThreadId: 200 });
+    });
+
+    it("round-trips interleaved prompt thread keys without collapsing delivery targets", () => {
+      const firstPromptKey = ConversationContextKey.fromScope({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: 100,
+      }).toString();
+      const secondPromptKey = ConversationContextKey.fromScope({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: 200,
+      }).toString();
+
+      const firstPrompt = ConversationContextKey.parse(firstPromptKey);
+      const secondPrompt = ConversationContextKey.parse(secondPromptKey);
+
+      expect(firstPromptKey).not.toBe(secondPromptKey);
+      expect(firstPrompt?.toTarget()).toEqual({ chatId: 456, messageThreadId: 100 });
+      expect(secondPrompt?.toTarget()).toEqual({ chatId: 456, messageThreadId: 200 });
     });
   });
 });

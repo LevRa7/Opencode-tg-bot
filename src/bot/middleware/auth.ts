@@ -321,7 +321,7 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   logger.warn(`Unauthorized access attempt from user ID: ${userId}`);
 
   await hideCommandsForUnauthorizedPrivateChat(ctx);
-  const approvalRequestSent = await upsertPendingApprovalRequest(ctx);
+  const approvalRequestSent = isPrivateChat(ctx) ? await upsertPendingApprovalRequest(ctx) : false;
 
   if (ctx.callbackQuery) {
     await ctx.answerCallbackQuery({ text: t("auth.callback.pending_approval") }).catch(() => {});

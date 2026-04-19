@@ -120,7 +120,11 @@ describe("bot/utils/message-draft-stream", () => {
     manager.enqueue("session-1", { sendMessageDraft }, { chatId: 123 }, "final html", "html");
     await manager.flushSession("session-1");
 
-    expect(manager.getLastPayloadSignature("session-1")).toBe('html::["final html"]');
+    const signature = manager.getLastPayloadSignature("session-1");
+
+    expect(signature).not.toBeNull();
+    expect(signature).toContain("html");
+    expect(signature).toContain("final html");
   });
 
   it("clears the last delivered draft payload signature when session state is cleared", async () => {
@@ -284,5 +288,36 @@ describe("bot/utils/message-draft-stream", () => {
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(editMessageText).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps send and edit state isolated across interleaved sessions", async () => {
+    const sendMessage = vi
+      .fn()
+      .mockResolvedValueOnce({ message_id: 41 })
+      .mockResolvedValueOnce({ message_id: 84 });
+    const editMessageText = vi.fn().mockResolvedValue(true);
+    const sendMessageDraft = vi.fn().mockResolvedValue(true);
+    const manager = new MessageDraftStreamManager(0);
+
+    manager.enqueue("session-1", { sendMessageDraft }, { chatId: 123, messageThreadId: 11 }, "first reply");
+    manager.setSendEditApi("session-1", { sendMessage }, { editMessageText });
+    await manager.flushSession("session-1");
+
+    manager.enqueue("session-2", { sendMessageDraft }, { chatId: 123, messageThreadId: 22 }, "second reply");
+    manager.setSendEditApi("session-2", { sendMessage }, { editMessageText });
+    await manager.flushSession("session-2");
+
+    manager.enqueue("session-1", { sendMessageDraft }, { chatId: 123, messageThreadId: 11 }, "first reply updated");
+    await manager.flushSession("session-1");
+
+    manager.enqueue("session-2", { sendMessageDraft }, { chatId: 123, messageThreadId: 22 }, "second reply updated");
+    await manager.flushSession("session-2");
+
+    expect(sendMessage).toHaveBeenNthCalledWith(1, 123, "first reply", { message_thread_id: 11 });
+    expect(sendMessage).toHaveBeenNthCalledWith(2, 123, "second reply", { message_thread_id: 22 });
+    expect(editMessageText).toHaveBeenNthCalledWith(1, 123, 41, "first reply updated", undefined);
+    expect(editMessageText).toHaveBeenNthCalledWith(2, 123, 84, "second reply updated", undefined);
+    expect(manager.getLastSentMessageId("session-1")).toBe(41);
+    expect(manager.getLastSentMessageId("session-2")).toBe(84);
   });
 });

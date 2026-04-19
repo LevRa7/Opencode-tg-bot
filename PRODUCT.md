@@ -109,6 +109,9 @@ Current command set:
 - `/commands` - browse and run custom commands (plus built-ins like `init` and `review`)
 - `/opencode_start` - start local OpenCode server
 - `/opencode_stop` - stop local OpenCode server
+- `/skills` - browse and execute available skills
+- `/worktree` - switch between git worktrees
+- `/open` - browse project files and open them
 - `/help` - show command help
 
 Model, agent, variant, and context actions are available from the persistent bottom keyboard.
@@ -159,7 +162,9 @@ Model picker behavior:
 Open tasks for upcoming iterations:
 
 - [ ] `/messages` command: browse session messages with fork/revert actions
-- [ ] `/skills` command: browse skills and choose one for usage
+- [x] `/skills` command: browse skills and choose one for usage
+- [x] `/worktree` command: switch between git worktrees
+- [x] `/open` command: browse project files and open them
 - [ ] `/mcps` command: browse available MCP servers
 - [x] Dynamic subagent activity display during task execution
 - [ ] Git tree support
@@ -171,5 +176,5 @@ Open tasks for upcoming iterations:
 Optional or longer-term enhancements:
 
 - [ ] Create new OpenCode projects directly from Telegram
-- [ ] Add project file browsing helpers (for example, `ls` and `open` flows)
+- [x] Add project file browsing helpers (for example, `ls` and `open` flows)
 - [ ] Add a bot settings command with in-chat UI

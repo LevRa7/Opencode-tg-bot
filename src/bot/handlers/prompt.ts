@@ -54,7 +54,7 @@ async function retryPromptWithTenantRestart({
   promptOptions,
   sessionId,
   quiet,
-  routingContext,
+  routingContext: _routingContext,
   promptErrorLogContext,
 }: RetryPromptOptions): Promise<{ error: unknown | null }> {
   try {

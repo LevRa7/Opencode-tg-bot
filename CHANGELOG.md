@@ -24,9 +24,15 @@ Documentation rule:
 
 ### Changed
 
+- Upgraded branch to v0.17.0 semantic level, porting rendering pipeline, new commands (`/skills`, `/worktree`, `/open`), and runtime alignment while preserving local multi-user orchestration, threaded routing, and Docker customizations.
+  - Why: align with upstream v0.17.0 features while keeping local modifications that support multi-user, approval flows, forum threading, and container lifecycle.
+  - Affects: `src/telegram/render/`, `src/bot/utils/assistant-rendering.ts`, `src/bot/commands/skills.ts`, `src/bot/commands/worktree.ts`, `src/bot/commands/open.ts`, `src/opencode/process.ts`, `src/service/`, `src/bot/index.ts`, `src/i18n/*.ts`, `tests/`
 - Added a Docker-only bundled `local/gemma4` model entry to the generated tenant OpenCode config.
   - Why: Docker users need the local Gemma 4 endpoint to appear in the model picker without changing the non-Docker runtime configuration.
   - Affects: `docker/run-opencode-serve.sh`, `docker/tests/run-opencode-serve.test.sh`
+- Selectively aligned runtime management with upstream v0.17.0, preserving local multi-user orchestration and Docker stop/restart logic.
+  - Why: upgrade to v0.17.0 semantic level requires adopting upstream runtime helpers (`opencode/process`, `service/*`) while keeping local process manager for tenant isolation and container lifecycle.
+  - Affects: `src/opencode/process.ts`, `src/service/manager.ts`, `src/service/runtime.ts`, `src/service/types.ts`, `src/bot/commands/opencode-start.ts`, `src/bot/commands/opencode-stop.ts`, `src/bot/commands/status.ts`, `src/cli.ts`, `src/i18n/*.ts`, `tests/opencode/process.test.ts`, `tests/service/manager.test.ts`, `tests/bot/commands/opencode-start.test.ts`, `tests/bot/commands/opencode-stop.test.ts`, `tests/bot/commands/status.test.ts`
 - Replaced the old Telegram login QR follow-up path with automatic local-file follow-ups from assistant replies, sending supported images/audio/video in their native Telegram media format and other files as documents when the referenced local file exists and is 20 MB or smaller.
   - Why: QR-specific auth delivery should be removed, while assistant replies that point to local artifacts should deliver those files asynchronously without blocking the next response.
   - Affects: `src/bot/index.ts`, `src/bot/utils/finalize-assistant-response.ts`, `src/bot/utils/telegram-local-file-follow-up.ts`, `tests/bot/utils/finalize-assistant-response.test.ts`, `tests/bot/utils/telegram-local-file-follow-up.test.ts`

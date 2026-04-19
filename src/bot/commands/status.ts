@@ -9,6 +9,7 @@ import { fetchCurrentModel } from "../../model/manager.js";
 import { processManager } from "../../process/manager.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
+import { getGitWorktreeContext } from "../../git/worktree.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { sendBotText } from "../utils/telegram-text.js";
@@ -40,8 +41,6 @@ export async function statusCommand(ctx: CommandContext<Context>) {
       message += `${t("status.line.managed_yes")}\n`;
       message += `${t("status.line.pid", { pid: runtimeInfo.pid ?? "-" })}\n`;
       message += `${t("status.line.uptime_sec", { seconds: uptime })}\n`;
-    } else {
-      message += `${t("status.line.managed_no")}\n`;
     }
 
     if (runtimeInfo.kind === "tenant") {
@@ -66,8 +65,16 @@ export async function statusCommand(ctx: CommandContext<Context>) {
 
     const currentProject = getCurrentProject();
     if (currentProject) {
-      const projectName = currentProject.name || currentProject.worktree;
-      message += `\n${t("status.project_selected", { project: projectName })}\n`;
+      const gitContext = await getGitWorktreeContext(currentProject.worktree);
+      if (gitContext?.mainProjectPath && gitContext?.branch) {
+        message += `\n${t("status.project_selected", { project: `${gitContext.mainProjectPath}: ${gitContext.branch}` })}\n`;
+        if (gitContext.isLinkedWorktree && gitContext.activeWorktreePath) {
+          message += `${t("status.worktree_selected", { worktree: gitContext.activeWorktreePath })}\n`;
+        }
+      } else {
+        const projectName = currentProject.name || currentProject.worktree;
+        message += `\n${t("status.project_selected", { project: projectName })}\n`;
+      }
     } else {
       message += `\n${t("status.project_not_selected")}\n`;
       message += t("status.project_hint");

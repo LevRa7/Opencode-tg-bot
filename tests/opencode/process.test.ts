@@ -1,0 +1,26 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  findUnixListeningPidInSs,
+  findWindowsListeningPidInNetstat,
+} from "../../src/opencode/process.js";
+
+describe("opencode/process", () => {
+  it("matches the exact local port on Windows netstat output", async () => {
+    const stdout = [
+      "  TCP    127.0.0.1:40960      0.0.0.0:0      LISTENING       1111",
+      "  TCP    127.0.0.1:4096       0.0.0.0:0      LISTENING       2222",
+    ].join("\r\n");
+
+    expect(findWindowsListeningPidInNetstat(stdout, 4096)).toBe(2222);
+  });
+
+  it("matches the exact local port in ss fallback output", async () => {
+    const stdout = [
+      'LISTEN 0 128 127.0.0.1:40960 0.0.0.0:* users:(("node",pid=1111,fd=17))',
+      'LISTEN 0 128 127.0.0.1:4096 0.0.0.0:* users:(("opencode",pid=2222,fd=18))',
+    ].join("\n");
+
+    expect(findUnixListeningPidInSs(stdout, 4096)).toBe(2222);
+  });
+});

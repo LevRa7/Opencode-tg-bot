@@ -88,6 +88,25 @@ async function runCli(argv: string[]): Promise<number> {
     return runConfigCommand();
   }
 
+  if (parsedArgs.command === "status") {
+    const { serviceManager } = await import("./service/manager.js");
+    const status = await serviceManager.getServiceStatus();
+    writeStdout(status.message ?? "No message");
+    return EXIT_SUCCESS;
+  }
+
+  if (parsedArgs.command === "stop") {
+    const { serviceManager } = await import("./service/manager.js");
+    const result = await serviceManager.stopService();
+    if (result.success) {
+      writeStdout(result.message ?? "No message");
+    } else {
+      writeStderr(result.message ?? "No message");
+      return EXIT_RUNTIME_ERROR;
+    }
+    return EXIT_SUCCESS;
+  }
+
   return runPlaceholderCommand(parsedArgs.command);
 }
 

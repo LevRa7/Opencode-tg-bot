@@ -1,5 +1,7 @@
 import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
+import { config } from "../../config.js";
+import { resolveLocalOpencodeTarget } from "../../opencode/process.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { processManager } from "../../process/manager.js";
 import { logger } from "../../utils/logger.js";
@@ -31,6 +33,12 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
 
   try {
+    const localTarget = resolveLocalOpencodeTarget(config.opencode.apiUrl);
+    if (!localTarget) {
+      await ctx.reply(t("opencode_start.remote_configured"), withMessageThreadId(undefined, messageThreadId));
+      return;
+    }
+
     const runtimeInfo = processManager.getCurrentRuntimeInfo();
 
     if (runtimeInfo.managed) {

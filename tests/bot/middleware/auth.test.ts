@@ -145,6 +145,9 @@ describe("authMiddleware", () => {
     expect(next).not.toHaveBeenCalled();
     expect(ctx.api.setMyCommands).not.toHaveBeenCalled();
     expect(ctx.api.setChatMenuButton).not.toHaveBeenCalled();
+    expect(ctx.api.sendMessage).not.toHaveBeenCalled();
+    expect(setPendingAccessRequests).not.toHaveBeenCalled();
+    expect(ctx.reply).not.toHaveBeenCalled();
   });
 
   it("suppresses duplicate approval spam during cooldown", async () => {
@@ -178,11 +181,7 @@ describe("authMiddleware", () => {
     await authMiddleware(ctx, next);
 
     expect(next).not.toHaveBeenCalled();
-    expect(ctx.api.sendMessage).not.toHaveBeenCalledWith(
-      1,
-      expect.stringContaining(t("auth.request.user_id", { userId: 99 })),
-      expect.anything(),
-    );
+    expect(ctx.api.sendMessage).not.toHaveBeenCalled();
     expect(setPendingAccessRequests).not.toHaveBeenCalled();
     expect(ctx.reply).not.toHaveBeenCalled();
   });

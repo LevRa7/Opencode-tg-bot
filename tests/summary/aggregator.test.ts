@@ -415,6 +415,214 @@ describe("summary/aggregator", () => {
     ]);
   });
 
+  it("keeps unknown child session updates unbound when multiple pending subagents exist", () => {
+    const onSubagent = vi.fn();
+    summaryAggregator.setOnSubagent(onSubagent);
+    summaryAggregator.setSession("root-session");
+
+    for (const [id, description, agent] of [
+      ["subtask-1", "first task", "explore"],
+      ["subtask-2", "second task", "general"],
+    ] as const) {
+      summaryAggregator.processEvent({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id,
+            sessionID: "root-session",
+            messageID: "root-message",
+            type: "subtask",
+            prompt: description,
+            description,
+            agent,
+          },
+        },
+      } as unknown as Event);
+    }
+
+    onSubagent.mockClear();
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "step-ambiguous",
+          sessionID: "child-unknown",
+          messageID: "child-message-1",
+          type: "step-finish",
+          reason: "done",
+          cost: 0.12,
+          snapshot: "step snapshot",
+          tokens: {
+            input: 1000,
+            output: 50,
+            reasoning: 0,
+            cache: { read: 200, write: 0 },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    expect(onSubagent).not.toHaveBeenCalled();
+  });
+
+  it("keeps unknown child session updates unbound when multiple root sessions are active", () => {
+    const onSubagent = vi.fn();
+    summaryAggregator.setOnSubagent(onSubagent);
+    summaryAggregator.setSession("root-a");
+
+    // Regression: root-a has the only pending card, but root-b is also active.
+    // An early child event must stay unbound until session.created identifies its parent.
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "subtask-root-a",
+          sessionID: "root-a",
+          messageID: "root-message-a",
+          type: "subtask",
+          prompt: "task for root a",
+          description: "task for root a",
+          agent: "explore",
+        },
+      },
+    } as unknown as Event);
+
+    onSubagent.mockClear();
+    summaryAggregator.setSession("root-b");
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "step-child-b-early",
+          sessionID: "child-b-unknown",
+          messageID: "child-message-b",
+          type: "step-finish",
+          reason: "done",
+          cost: 0.07,
+          snapshot: "child b early snapshot",
+          tokens: {
+            input: 600,
+            output: 40,
+            reasoning: 0,
+            cache: { read: 100, write: 0 },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    expect(onSubagent).not.toHaveBeenCalled();
+  });
+
+  it("emits subagent updates under the parent root session instead of the latest current root", () => {
+    const onSubagent = vi.fn();
+    summaryAggregator.setOnSubagent(onSubagent);
+    summaryAggregator.setSession("root-a");
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "subtask-root-a",
+          sessionID: "root-a",
+          messageID: "root-message-a",
+          type: "subtask",
+          prompt: "task for root a",
+          description: "task for root a",
+          agent: "explore",
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "child-a",
+          parentID: "root-a",
+          title: "task for root a (@explore subagent)",
+          slug: "child-a",
+          directory: "D:/repo",
+          projectID: "p1",
+          version: "1",
+          time: { created: Date.now(), updated: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    onSubagent.mockClear();
+    summaryAggregator.setSession("root-b");
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "child-tool-a",
+          sessionID: "child-a",
+          messageID: "child-message-a",
+          type: "tool",
+          callID: "call-child-a",
+          tool: "read",
+          state: {
+            status: "running",
+            input: {
+              filePath: "src/example.ts",
+            },
+            title: "Reading file",
+            metadata: {},
+            time: { start: Date.now() },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    expect(onSubagent).toHaveBeenCalledTimes(1);
+    expect(onSubagent.mock.calls[0][0]).toBe("root-a");
+    expect(onSubagent.mock.calls[0][1]).toEqual([
+      expect.objectContaining({
+        parentSessionId: "root-a",
+        sessionId: "child-a",
+        currentTool: "read",
+      }),
+    ]);
+  });
+
+  it("keeps question.asked visible for an older still-tracked root session", async () => {
+    const onQuestion = vi.fn();
+    summaryAggregator.setOnQuestion(onQuestion);
+
+    summaryAggregator.setSession("root-a");
+    summaryAggregator.setSession("root-b");
+
+    summaryAggregator.processEvent({
+      type: "question.asked",
+      properties: {
+        id: "question-1",
+        sessionID: "root-a",
+        questions: [
+          {
+            question: "Proceed with action?",
+            header: "Confirm",
+            options: [{ label: "Yes", description: "Continue" }],
+            multiple: false,
+          },
+        ],
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onQuestion).toHaveBeenCalledTimes(1);
+    expect(onQuestion).toHaveBeenCalledWith(
+      "root-a",
+      expect.arrayContaining([
+        expect.objectContaining({ question: "Proceed with action?", header: "Confirm" }),
+      ]),
+      "question-1",
+    );
+  });
+
   it("tracks multiple parallel subagents independently", () => {
     const onSubagent = vi.fn();
     summaryAggregator.setOnSubagent(onSubagent);
@@ -759,6 +967,166 @@ describe("summary/aggregator", () => {
     expect(onThinking).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps thinking state when another tracked root session is still active", async () => {
+    const onThinking = vi.fn();
+    summaryAggregator.setOnThinking(onThinking);
+
+    summaryAggregator.setSession("session-1");
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-root-1",
+          sessionID: "session-1",
+          messageID: "message-root-1",
+          type: "reasoning",
+          text: "first root thinking",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.setSession("session-2");
+    summaryAggregator.processEvent({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-root-2",
+          sessionID: "session-2",
+          messageID: "message-root-2",
+          type: "reasoning",
+          text: "second root thinking",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onThinking).toHaveBeenCalledTimes(1);
+    expect(onThinking).toHaveBeenCalledWith("session-1");
+  });
+
+  it("keeps typing indicator running while another tracked root session stays active", () => {
+    vi.useFakeTimers();
+
+    try {
+      const sendChatAction = vi.fn().mockResolvedValue(true);
+      summaryAggregator.setBotAndChatId(
+        {
+          api: {
+            sendChatAction,
+          },
+        } as never,
+        123,
+      );
+
+      summaryAggregator.setSession("session-1");
+      summaryAggregator.processEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-typing-1",
+            sessionID: "session-1",
+            role: "assistant",
+            time: { created: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      summaryAggregator.setSession("session-2");
+      summaryAggregator.processEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-typing-2",
+            sessionID: "session-2",
+            role: "assistant",
+            time: { created: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      expect(sendChatAction).toHaveBeenCalledTimes(1);
+
+      summaryAggregator.processEvent({
+        type: "session.idle",
+        properties: {
+          sessionID: "session-1",
+        },
+      } as unknown as Event);
+
+      vi.advanceTimersByTime(4000);
+
+      expect(sendChatAction).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears tracked root bookkeeping after one root errors and another later goes idle", async () => {
+    const onThinking = vi.fn();
+    summaryAggregator.setOnThinking(onThinking);
+
+    summaryAggregator.setSession("session-1");
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-error-1",
+          sessionID: "session-1",
+          messageID: "message-error-1",
+          type: "reasoning",
+          text: "first root thinking",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.setSession("session-2");
+    summaryAggregator.processEvent({
+      type: "session.error",
+      properties: {
+        sessionID: "session-1",
+        error: { message: "boom" },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-2",
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-next-run",
+          sessionID: "session-2",
+          messageID: "message-next-run",
+          type: "reasoning",
+          text: "second root thinking after cleanup",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onThinking).toHaveBeenCalledTimes(2);
+    expect(onThinking).toHaveBeenNthCalledWith(1, "session-1");
+    expect(onThinking).toHaveBeenNthCalledWith(2, "session-2");
+  });
+
   it("streams partial text and passes messageId on completion", () => {
     const onPartial = vi.fn();
     const onComplete = vi.fn();
@@ -812,6 +1180,7 @@ describe("summary/aggregator", () => {
       "Partial answer",
       "",
       [],
+      { agent: undefined, providerID: undefined, modelID: undefined },
     );
   });
 
@@ -882,6 +1251,7 @@ describe("summary/aggregator", () => {
       "Hello world",
       "",
       [],
+      { agent: undefined, providerID: undefined, modelID: undefined },
     );
   });
 
@@ -1051,6 +1421,7 @@ describe("summary/aggregator", () => {
       "Final text",
       "",
       [],
+      { agent: undefined, providerID: undefined, modelID: undefined },
     );
   });
 
@@ -1593,7 +1964,7 @@ describe("summary/aggregator", () => {
     } as unknown as Event);
 
     expect(onComplete).toHaveBeenCalledTimes(1);
-    expect(onComplete).toHaveBeenCalledWith("session-1", "message-complete-once", "Only once", "", []);
+    expect(onComplete).toHaveBeenCalledWith("session-1", "message-complete-once", "Only once", "", [], { agent: undefined, providerID: undefined, modelID: undefined });
   });
 
   it("keeps first root session partial state after second root session starts", () => {

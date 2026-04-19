@@ -27,12 +27,19 @@ type AggregatedToolCall = {
   input?: { [key: string]: unknown };
 };
 
+export interface AssistantCompletionInfo {
+  agent?: string;
+  providerID?: string;
+  modelID?: string;
+}
+
 type MessageCompleteCallback = (
   sessionId: string,
   messageId: string,
   messageText: string,
   reasoningText?: string,
   toolCalls?: AggregatedToolCall[],
+  completionInfo?: AssistantCompletionInfo,
 ) => void;
 
 type MessagePartialCallback = (
@@ -206,6 +213,7 @@ class SummaryAggregator {
   private typingIndicatorEnabled = true;
   private partHashes: Map<string, Set<string>> = new Map();
   private trackedSessionParents: Map<string, string | null> = new Map();
+  private activeRootSessionIds: Set<string> = new Set();
   private subagentStates: Map<string, SubagentState> = new Map();
   private subagentOrder: string[] = [];
   private subagentCardIdBySessionId: Map<string, string> = new Map();
@@ -406,6 +414,8 @@ class SummaryAggregator {
       this.trackedSessionParents.set(sessionId, null);
     }
 
+    this.activeRootSessionIds.add(sessionId);
+
     if (this.currentSessionId !== sessionId) {
       this.currentSessionId = sessionId;
     }
@@ -423,6 +433,7 @@ class SummaryAggregator {
     this.thinkingFiredForMessages.clear();
     this.thinkingFiredForSessionRun = false;
     this.trackedSessionParents.clear();
+    this.activeRootSessionIds.clear();
     this.subagentStates.clear();
     this.subagentOrder = [];
     this.subagentCardIdBySessionId.clear();
@@ -448,6 +459,17 @@ class SummaryAggregator {
 
   private isTrackedRootSession(sessionId: string): boolean {
     return this.trackedSessionParents.has(sessionId) && this.trackedSessionParents.get(sessionId) === null;
+  }
+
+  private finishTrackedRootSession(sessionId: string): void {
+    this.activeRootSessionIds.delete(sessionId);
+
+    if (this.activeRootSessionIds.size > 0) {
+      return;
+    }
+
+    this.stopTypingIndicator();
+    this.thinkingFiredForSessionRun = false;
   }
 
   private getQueue(map: Map<string, string[]>, parentSessionId: string): string[] {
@@ -495,14 +517,15 @@ class SummaryAggregator {
     }
   }
 
-  private emitSubagentState(): void {
-    if (!this.currentSessionId || !this.onSubagentCallback || this.subagentOrder.length === 0) {
+  private emitSubagentState(parentSessionId: string): void {
+    if (!this.onSubagentCallback || this.subagentOrder.length === 0) {
       return;
     }
 
     const subagents = this.subagentOrder
       .map((cardId) => this.subagentStates.get(cardId))
       .filter((state): state is SubagentState => Boolean(state))
+      .filter((state) => state.parentSessionId === parentSessionId)
       .map((state) => ({
         cardId: state.cardId,
         sessionId: state.sessionId,
@@ -523,7 +546,11 @@ class SummaryAggregator {
         updatedAt: state.updatedAt,
       }));
 
-    this.onSubagentCallback(this.currentSessionId, subagents);
+    if (subagents.length === 0) {
+      return;
+    }
+
+    this.onSubagentCallback(parentSessionId, subagents);
   }
 
   private createSubagentState(
@@ -635,19 +662,32 @@ class SummaryAggregator {
     this.removeFromQueue(this.pendingSubagentCardIdsByParent, state.parentSessionId, cardId);
   }
 
-  private findPendingSubagentWithoutSession(): SubagentState | null {
+  private findOnlyPendingSubagentWithoutSession(): SubagentState | null {
+    let pendingState: SubagentState | null = null;
+
     for (const cardId of this.subagentOrder) {
       const state = this.subagentStates.get(cardId);
       if (state && !state.sessionId) {
-        return state;
+        if (pendingState) {
+          return null;
+        }
+
+        pendingState = state;
       }
     }
 
-    return null;
+    return pendingState;
   }
 
   private attachUnknownSessionToPendingSubagent(sessionId: string): boolean {
-    const pendingState = this.findPendingSubagentWithoutSession();
+    // 2026-04-19: unknown child events arrive before session.created in some flows,
+    // but attaching them is only safe when exactly one root session is active
+    // and exactly one pending subagent exists under that single root.
+    if (this.activeRootSessionIds.size !== 1) {
+      return false;
+    }
+
+    const pendingState = this.findOnlyPendingSubagentWithoutSession();
     if (!pendingState) {
       return false;
     }
@@ -659,7 +699,7 @@ class SummaryAggregator {
       pendingState.parentSessionId,
       sessionId,
     );
-    this.emitSubagentState();
+    this.emitSubagentState(pendingState.parentSessionId);
     return true;
   }
 
@@ -693,7 +733,7 @@ class SummaryAggregator {
     }
 
     this.enrichSubagentFromTaskTool(subagent, { agent, description, prompt, command });
-    this.emitSubagentState();
+    this.emitSubagentState(parentSessionId);
   }
 
   private getOrCreateSubagentForSession(sessionId: string): SubagentState {
@@ -723,7 +763,7 @@ class SummaryAggregator {
       const fallbackState = this.subagentStates.get(fallbackCardId);
       if (fallbackState) {
         this.enrichSubagentFromSubtask(fallbackState, { agent, description, prompt, command });
-        this.emitSubagentState();
+        this.emitSubagentState(fallbackState.parentSessionId);
         return;
       }
     }
@@ -745,7 +785,7 @@ class SummaryAggregator {
       this.getQueue(this.pendingSubagentCardIdsByParent, parentSessionId).push(state.cardId);
     }
 
-    this.emitSubagentState();
+    this.emitSubagentState(parentSessionId);
   }
 
   private trackChildSession(sessionId: string, parentSessionId: string): void {
@@ -754,7 +794,7 @@ class SummaryAggregator {
     const pendingCardId = this.dequeue(this.pendingSubagentCardIdsByParent, parentSessionId);
     if (pendingCardId) {
       this.attachSessionToSubagent(pendingCardId, sessionId);
-      this.emitSubagentState();
+      this.emitSubagentState(parentSessionId);
       return;
     }
 
@@ -789,7 +829,7 @@ class SummaryAggregator {
 
     const subagent = this.getOrCreateSubagentForSession(info.id);
     this.enrichSubagentFromSessionTitle(subagent, info.title);
-    this.emitSubagentState();
+    this.emitSubagentState(subagent.parentSessionId);
   }
 
   private updateSubagentFromAssistantMessage(info: {
@@ -828,7 +868,7 @@ class SummaryAggregator {
       subagent.cost = info.cost;
     }
     subagent.updatedAt = Date.now();
-    this.emitSubagentState();
+    this.emitSubagentState(subagent.parentSessionId);
   }
 
   private updateSubagentToolState(
@@ -855,7 +895,7 @@ class SummaryAggregator {
     subagent.currentToolInput = input ? { ...input } : undefined;
     subagent.currentToolTitle = title;
     subagent.updatedAt = Date.now();
-    this.emitSubagentState();
+    this.emitSubagentState(subagent.parentSessionId);
   }
 
   private updateSubagentStepStart(sessionId: string, snapshot?: string): void {
@@ -866,7 +906,7 @@ class SummaryAggregator {
     subagent.currentToolInput = undefined;
     subagent.currentToolTitle = snapshot?.trim() || subagent.currentToolTitle;
     subagent.updatedAt = Date.now();
-    this.emitSubagentState();
+    this.emitSubagentState(subagent.parentSessionId);
   }
 
   private updateSubagentStepFinish(
@@ -895,7 +935,7 @@ class SummaryAggregator {
       subagent.currentToolTitle = snapshot.trim();
     }
     subagent.updatedAt = Date.now();
-    this.emitSubagentState();
+    this.emitSubagentState(subagent.parentSessionId);
   }
 
   private setSubagentTerminalStatus(
@@ -919,7 +959,7 @@ class SummaryAggregator {
     subagent.currentToolTitle = undefined;
     subagent.terminalMessage = terminalMessage?.trim() || undefined;
     subagent.updatedAt = Date.now();
-    this.emitSubagentState();
+    this.emitSubagentState(subagent.parentSessionId);
   }
 
   private handleMessageUpdated(
@@ -989,6 +1029,11 @@ class SummaryAggregator {
           messageText,
           reasoningText,
           textState.toolCalls,
+          {
+            agent: (info as { agent?: string }).agent,
+            providerID: (info as { providerID?: string }).providerID,
+            modelID: (info as { modelID?: string }).modelID,
+          },
         );
       }
 
@@ -1672,7 +1717,7 @@ class SummaryAggregator {
       };
     };
 
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isTrackedRootSession(sessionID)) {
       return;
     }
 
@@ -1710,15 +1755,18 @@ class SummaryAggregator {
       return;
     }
 
-    if (sessionID !== this.currentSessionId) {
+    // 2026-04-19: root sessions can stay concurrently tracked across interleaved
+    // prompt threads, so idle delivery must follow tracked roots rather than only
+    // the latest currentSessionId.
+    if (!this.isTrackedRootSession(sessionID)) {
       return;
     }
 
     logger.info(`[Aggregator] Session became idle: ${sessionID}`);
 
-    // Stop typing indicator when session goes idle
-    this.stopTypingIndicator();
-    this.thinkingFiredForSessionRun = false;
+    // 2026-04-19: concurrent tracked roots share one chat-level typing/thinking state,
+    // so only clear those side effects when the last active tracked root finishes.
+    this.finishTrackedRootSession(sessionID);
 
     if (this.onSessionIdleCallback) {
       const callback = this.onSessionIdleCallback;
@@ -1745,7 +1793,7 @@ class SummaryAggregator {
     const properties = event.properties as { sessionID: string };
     const { sessionID } = properties;
 
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isTrackedRootSession(sessionID)) {
       return;
     }
 
@@ -1789,12 +1837,12 @@ class SummaryAggregator {
       return;
     }
 
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isTrackedRootSession(sessionID)) {
       return;
     }
 
     logger.warn(`[Aggregator] Session error: ${sessionID}: ${message}`);
-    this.stopTypingIndicator();
+    this.finishTrackedRootSession(sessionID);
 
     if (this.onSessionErrorCallback) {
       const callback = this.onSessionErrorCallback;
@@ -1811,7 +1859,7 @@ class SummaryAggregator {
   ): void {
     const { id, sessionID, questions } = event.properties;
 
-    if (sessionID !== this.currentSessionId) {
+    if (!this.isTrackedRootSession(sessionID)) {
       logger.debug(
         `[Aggregator] Ignoring question.asked for different session: ${sessionID} (current: ${this.currentSessionId})`,
       );
@@ -1838,7 +1886,7 @@ class SummaryAggregator {
       diff: Array<{ file: string; additions: number; deletions: number }>;
     };
 
-    if (properties.sessionID !== this.currentSessionId) {
+    if (!this.isTrackedRootSession(properties.sessionID)) {
       return;
     }
 
@@ -1865,7 +1913,7 @@ class SummaryAggregator {
   ): void {
     const request = event.properties;
 
-    if (request.sessionID !== this.currentSessionId) {
+    if (!this.isTrackedRootSession(request.sessionID)) {
       logger.debug(
         `[Aggregator] Ignoring permission.asked for different session: ${request.sessionID} (current: ${this.currentSessionId})`,
       );

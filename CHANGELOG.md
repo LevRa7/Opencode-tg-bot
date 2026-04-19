@@ -60,6 +60,9 @@ Documentation rule:
 - Added automatic media-model fallback to `google/gemini-3-flash-preview` for image, video, and PDF prompts when the currently selected model lacks the required multimodal input support.
   - Why: media attachments should keep working without forcing the user to manually switch away from a coding-focused text model before every photo, video, or PDF prompt.
   - Affects: `src/bot/index.ts`, `src/bot/handlers/document.ts`, `src/bot/handlers/video.ts`, `src/bot/handlers/prompt.ts`, `src/model/media-fallback.ts`, `src/i18n/*.ts`, `tests/model/media-fallback.test.ts`, `tests/bot/handlers/document.test.ts`, `tests/bot/handlers/video.test.ts`, `README.md`, `PRODUCT.md`, `docs/architecture.md`
+- Integrated v0.17.0 assistant renderer (`prepareAssistantStreamingPayload`, `prepareAssistantFinalStreamingPayload`, `renderAssistantFinalPartsSafe`) into local bot delivery paths while preserving all existing local routing semantics and invariants.
+  - Why: upgrade to v0.17.0 semantic level requires adopting the new assistant rendering pipeline for consistent markdown formatting and streaming payload preparation across both streaming and final delivery paths.
+  - Affects: `src/bot/index.ts`, `src/bot/utils/assistant-rendering.ts`, `tests/bot/index.local-file-follow-up.test.ts`
 
 ### Fixed
 
@@ -99,6 +102,9 @@ Documentation rule:
 - Improved assistant draft streaming so large text snapshots are revealed progressively instead of being pushed to Telegram as one full fragment per SSE update.
   - Why: upstream stream updates can be chunked coarsely, and sending each snapshot wholesale looked like pseudo-streaming rather than a live draft.
   - Affects: `src/bot/index.ts`, `src/bot/utils/message-draft-stream.ts`, `tests/bot/utils/message-draft-stream.test.ts`, `docs/architecture.md`
+- Fixed assistant final answer ordering in reasoning mode: final answer is now sent last after reasoning updates, ensuring the final response appears as the last message.
+  - Why: upstream bug caused final answer to be delivered before reasoning updates completed, making the final answer appear earlier in the chat history.
+  - Affects: `src/bot/index.ts`, `src/bot/handlers/prompt.ts`, `src/bot/utils/assistant-run-state.ts`, `src/bot/utils/finalize-assistant-response.ts`, `src/bot/utils/assistant-run-footer.ts`, `tests/bot/index.local-file-follow-up.test.ts`
 
 ### Documentation
 

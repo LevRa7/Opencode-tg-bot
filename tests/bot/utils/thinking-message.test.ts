@@ -91,4 +91,18 @@ describe("bot/utils/thinking-message", () => {
     expect(result.text).not.toContain("<script>");
     expect(result.text).toContain("&lt;script&gt;");
   });
+
+  it("keeps thinking delivery on the service-message path instead of the assistant response path", () => {
+    const batcher = {
+      enqueue: vi.fn(),
+      sendTextNow: vi.fn(),
+    };
+
+    deliverThinkingMessage("session-1", batcher, {
+      hideThinkingMessages: false,
+    });
+
+    expect(batcher.sendTextNow).toHaveBeenCalledTimes(1);
+    expect(batcher.enqueue).not.toHaveBeenCalled();
+  });
 });

@@ -13,7 +13,7 @@ const INLINE_MENU_CANCEL_PREFIX = "inline:cancel:";
 const LEGACY_CONTEXT_CANCEL_CALLBACK = "compact:cancel";
 const INLINE_MENU_TTL_MS = 5 * 60 * 1000;
 
-const INLINE_MENU_KINDS = ["project", "session", "model", "agent", "variant", "context", "ontology"] as const;
+const INLINE_MENU_KINDS = ["project", "session", "model", "agent", "variant", "context", "ontology", "open", "worktree"] as const;
 
 export type InlineMenuKind = (typeof INLINE_MENU_KINDS)[number];
 

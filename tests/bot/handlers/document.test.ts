@@ -5,6 +5,7 @@ import {
   type DocumentHandlerDeps,
 } from "../../../src/bot/handlers/document.js";
 import { t } from "../../../src/i18n/index.js";
+import { logger } from "../../../src/utils/logger.js";
 
 function createDocumentContext(overrides: Partial<Context["message"]> = {}): {
   ctx: Context;
@@ -295,10 +296,15 @@ describe("bot/handlers/document", () => {
       const { deps } = createDocumentDeps({
         downloadFile: vi.fn().mockRejectedValue(new Error("Network error")),
       });
+      const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
 
       await handleDocumentMessage(ctx, deps);
 
       expect(replyMock).toHaveBeenCalledWith(t("bot.file_download_error"));
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[Document] Error handling document message:",
+        expect.any(Error),
+      );
     });
   });
 

@@ -35,6 +35,9 @@ import {
 } from "./commands/commands.js";
 import { streamCommand } from "./commands/stream.js";
 import { ttsCommand } from "./commands/tts.js";
+import { worktreeCommand, handleWorktreeCallback } from "./commands/worktree.js";
+import { openCommand, handleOpenCallback, clearOpenPathIndex } from "./commands/open.js";
+import { skillsCommand, handleSkillsCallback, handleSkillTextArguments } from "./commands/skills.js";
 import {
   handleQuestionCallback,
   showCurrentQuestion,
@@ -1455,6 +1458,9 @@ export function createBot(): Bot<Context> {
   bot.command("tasklist", taskListCommand);
   bot.command("rename", renameCommand);
   bot.command("commands", commandsCommand);
+  bot.command("worktree", worktreeCommand);
+  bot.command("open", openCommand);
+  bot.command("skills", skillsCommand);
 
   bot.on("message:text", unknownCommandMiddleware);
 
@@ -1465,6 +1471,9 @@ export function createBot(): Bot<Context> {
 
     try {
       const handledInlineCancel = await handleInlineMenuCancel(ctx);
+      if (handledInlineCancel) {
+        clearOpenPathIndex();
+      }
       const handledSession = await handleSessionSelect(ctx);
       const handledProject = await handleProjectSelect(ctx);
       const handledQuestion = await handleQuestionCallback(ctx);
@@ -1478,9 +1487,12 @@ export function createBot(): Bot<Context> {
       const handledTaskList = await handleTaskListCallback(ctx);
       const handledRenameCancel = await handleRenameCancel(ctx);
       const handledCommands = await handleCommandsCallback(ctx, { bot, ensureEventSubscription });
+      const handledWorktree = await handleWorktreeCallback(ctx);
+      const handledOpen = await handleOpenCallback(ctx);
+      const handledSkills = await handleSkillsCallback(ctx, { bot, ensureEventSubscription });
 
       logger.debug(
-        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}`,
+        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, worktree=${handledWorktree}, open=${handledOpen}, skills=${handledSkills}`,
       );
 
       if (
@@ -1497,7 +1509,10 @@ export function createBot(): Bot<Context> {
         !handledTask &&
         !handledTaskList &&
         !handledRenameCancel &&
-        !handledCommands
+        !handledCommands &&
+        !handledWorktree &&
+        !handledOpen &&
+        !handledSkills
       ) {
         logger.debug("Unknown callback query:", ctx.callbackQuery?.data);
         await ctx.answerCallbackQuery({ text: t("callback.unknown_command") });

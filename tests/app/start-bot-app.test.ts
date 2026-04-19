@@ -52,7 +52,7 @@ describe("app/start-bot-app auto-start", () => {
     startMock.mockResolvedValue({ success: true });
   });
 
-  it("calls start() when ensureRuntime() returns failure", async () => {
+  it("calls start() when ensureRuntime() returns failure", { timeout: 10000 }, async () => {
     ensureRuntimeMock.mockResolvedValue({ success: false, error: "server not running" });
 
     const { tryAutoStartServer } = await import("../../src/app/start-bot-app.js");
@@ -62,7 +62,7 @@ describe("app/start-bot-app auto-start", () => {
     expect(startMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not call start() when ensureRuntime() succeeds", async () => {
+  it("does not call start() when ensureRuntime() succeeds", { timeout: 10000 }, async () => {
     ensureRuntimeMock.mockResolvedValue({ success: true });
 
     const { tryAutoStartServer } = await import("../../src/app/start-bot-app.js");

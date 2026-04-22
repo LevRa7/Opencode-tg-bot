@@ -1,7 +1,16 @@
 import { Context, InlineKeyboard } from "grammy";
-import { selectModel, fetchCurrentModel, getModelSelectionLists } from "../../model/manager.js";
-import { formatModelForDisplay } from "../../model/types.js";
-import type { FavoriteModel, ModelInfo, ModelSelectionLists } from "../../model/types.js";
+import {
+  fetchCurrentModel,
+  getRuntimeModelCatalog,
+  selectModel,
+} from "../../model/manager.js";
+import {
+  formatModelForButton,
+  formatModelForDisplay,
+  type ModelInfo,
+  type RuntimeModelCatalog,
+  type RuntimeModelCatalogProvider,
+} from "../../model/types.js";
 import { formatVariantForButton } from "../../variant/manager.js";
 import { logger } from "../../utils/logger.js";
 import { createMainKeyboard } from "../utils/keyboard.js";
@@ -9,6 +18,7 @@ import { getStoredAgent } from "../../agent/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import {
+  appendInlineMenuCancelButton,
   clearActiveInlineMenu,
   ensureActiveInlineMenu,
   replyWithInlineMenu,
@@ -17,31 +27,248 @@ import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 
-function buildModelSelectionMenuText(modelLists: ModelSelectionLists): string {
-  const lines = [t("model.menu.select"), t("model.menu.favorites_title")];
+const MODELS_PER_PAGE = 10;
+const MODEL_CALLBACK_PREFIX = "model:";
+const MODEL_PROVIDER_CALLBACK_PREFIX = "model_provider:";
+const MODEL_PROVIDER_PAGE_CALLBACK_PREFIX = "model_provider_page:";
+const MODEL_BACK_CALLBACK = "model_back";
 
-  if (modelLists.favorites.length === 0) {
-    lines.push(t("model.menu.favorites_empty"));
-  }
-
-  lines.push(t("model.menu.recent_title"));
-
-  if (modelLists.recent.length === 0) {
-    lines.push(t("model.menu.recent_empty"));
-  }
-
-  return lines.join("\n");
+function encodeCallbackToken(value: string): string {
+  return encodeURIComponent(value);
 }
 
-/**
- * Handle model selection callback
- * @param ctx grammY context
- * @returns true if handled, false otherwise
- */
+function decodeCallbackToken(value: string): string {
+  return decodeURIComponent(value);
+}
+
+function tryDecodeCallbackToken(value: string): string | null {
+  try {
+    return decodeCallbackToken(value);
+  } catch {
+    return null;
+  }
+}
+
+function isModelMenuCallback(data: string): boolean {
+  return (
+    data.startsWith(MODEL_CALLBACK_PREFIX) ||
+    data.startsWith(MODEL_PROVIDER_CALLBACK_PREFIX) ||
+    data.startsWith(MODEL_PROVIDER_PAGE_CALLBACK_PREFIX) ||
+    data === MODEL_BACK_CALLBACK
+  );
+}
+
+function getCurrentModelDisplay(currentModel: ModelInfo): string {
+  if (!currentModel.providerID || !currentModel.modelID) {
+    return t("common.unknown");
+  }
+
+  return formatModelForDisplay(currentModel.providerID, currentModel.modelID);
+}
+
+function buildProviderCallback(providerID: string): string {
+  return `${MODEL_PROVIDER_CALLBACK_PREFIX}${encodeCallbackToken(providerID)}`;
+}
+
+function buildProviderPageCallback(providerID: string, page: number): string {
+  return `${MODEL_PROVIDER_PAGE_CALLBACK_PREFIX}${encodeCallbackToken(providerID)}:${page}`;
+}
+
+function parseProviderPageCallback(data: string): { providerID: string; page: number } | null {
+  if (!data.startsWith(MODEL_PROVIDER_PAGE_CALLBACK_PREFIX)) {
+    return null;
+  }
+
+  const payload = data.slice(MODEL_PROVIDER_PAGE_CALLBACK_PREFIX.length);
+  const separatorIndex = payload.lastIndexOf(":");
+  if (separatorIndex <= 0) {
+    return null;
+  }
+
+  const encodedProviderID = payload.slice(0, separatorIndex);
+  const rawPage = payload.slice(separatorIndex + 1);
+  const page = Number(rawPage);
+
+  if (!encodedProviderID || !Number.isInteger(page) || page < 0) {
+    return null;
+  }
+
+  const providerID = tryDecodeCallbackToken(encodedProviderID);
+  if (!providerID) {
+    return null;
+  }
+
+  return { providerID, page };
+}
+
+function parseProviderCallback(data: string): string | null {
+  if (!data.startsWith(MODEL_PROVIDER_CALLBACK_PREFIX)) {
+    return null;
+  }
+
+  const encodedProviderID = data.slice(MODEL_PROVIDER_CALLBACK_PREFIX.length);
+  if (encodedProviderID.length === 0) {
+    return null;
+  }
+
+  return tryDecodeCallbackToken(encodedProviderID);
+}
+
+function parseModelCallback(data: string): { providerID: string; modelID: string } | null {
+  if (!data.startsWith(MODEL_CALLBACK_PREFIX)) {
+    return null;
+  }
+
+  const payload = data.slice(MODEL_CALLBACK_PREFIX.length);
+  const separatorIndex = payload.indexOf(":");
+  if (separatorIndex <= 0) {
+    return null;
+  }
+
+  const providerID = tryDecodeCallbackToken(payload.slice(0, separatorIndex));
+  const modelID = tryDecodeCallbackToken(payload.slice(separatorIndex + 1));
+
+  if (!providerID || !modelID) {
+    return null;
+  }
+
+  return { providerID, modelID };
+}
+
+function findProvider(
+  catalog: RuntimeModelCatalog,
+  providerID: string,
+): RuntimeModelCatalogProvider | null {
+  return catalog.providers.find((provider) => provider.providerID === providerID) ?? null;
+}
+
+function buildProviderSelectionKeyboard(
+  catalog: RuntimeModelCatalog,
+  currentModel: ModelInfo,
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  catalog.providers.forEach((provider) => {
+    const isActiveProvider = provider.providerID === currentModel.providerID;
+    const label = `${isActiveProvider ? "✅ " : ""}${provider.providerID} (${provider.models.length})`;
+    keyboard.text(label, buildProviderCallback(provider.providerID)).row();
+  });
+
+  return keyboard;
+}
+
+function buildProviderSelectionText(currentModel: ModelInfo): string {
+  return t("model.menu.providers_title", {
+    name: getCurrentModelDisplay(currentModel),
+  });
+}
+
+function normalizePage(requestedPage: number, itemCount: number): { page: number; totalPages: number } {
+  const totalPages = Math.max(1, Math.ceil(itemCount / MODELS_PER_PAGE));
+  return {
+    page: Math.min(requestedPage, totalPages - 1),
+    totalPages,
+  };
+}
+
+function buildProviderModelsKeyboard(
+  provider: RuntimeModelCatalogProvider,
+  currentModel: ModelInfo,
+  requestedPage: number,
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  if (provider.models.length === 0) {
+    keyboard.text(t("model.menu.button.back_providers"), MODEL_BACK_CALLBACK).row();
+    return appendInlineMenuCancelButton(keyboard, "model");
+  }
+
+  const { page, totalPages } = normalizePage(requestedPage, provider.models.length);
+  const pageStart = page * MODELS_PER_PAGE;
+  const pageModels = provider.models.slice(pageStart, pageStart + MODELS_PER_PAGE);
+
+  pageModels.forEach((model) => {
+    const isActive =
+      currentModel.providerID === model.providerID && currentModel.modelID === model.modelID;
+    const label = isActive
+      ? `✅ ${formatModelForButton(model.providerID, model.modelID)}`
+      : formatModelForButton(model.providerID, model.modelID);
+    keyboard
+      .text(
+        label,
+        `${MODEL_CALLBACK_PREFIX}${encodeCallbackToken(model.providerID)}:${encodeCallbackToken(model.modelID)}`,
+      )
+      .row();
+  });
+
+  if (page > 0) {
+    keyboard.text(t("model.menu.button.prev_page"), buildProviderPageCallback(provider.providerID, page - 1));
+  }
+
+  if (page < totalPages - 1) {
+    keyboard.text(t("model.menu.button.next_page"), buildProviderPageCallback(provider.providerID, page + 1));
+  }
+
+  if (page > 0 || page < totalPages - 1) {
+    keyboard.row();
+  }
+
+  keyboard.text(t("model.menu.button.back_providers"), MODEL_BACK_CALLBACK).row();
+
+  return appendInlineMenuCancelButton(keyboard, "model");
+}
+
+function buildProviderModelsText(
+  provider: RuntimeModelCatalogProvider,
+  currentModel: ModelInfo,
+  requestedPage: number,
+): string {
+  const currentModelName = getCurrentModelDisplay(currentModel);
+
+  if (provider.models.length === 0) {
+    return t("model.menu.provider_empty", {
+      name: currentModelName,
+      provider: provider.providerID,
+    });
+  }
+
+  const { page, totalPages } = normalizePage(requestedPage, provider.models.length);
+
+  return t("model.menu.provider_title", {
+    name: currentModelName,
+    provider: provider.providerID,
+    current: page + 1,
+    total: totalPages,
+  });
+}
+
+async function renderProviderSelection(
+  ctx: Context,
+  currentModel: ModelInfo,
+  catalog: RuntimeModelCatalog,
+): Promise<void> {
+  const keyboard = buildProviderSelectionKeyboard(catalog, currentModel);
+  appendInlineMenuCancelButton(keyboard, "model");
+  await ctx.editMessageText(buildProviderSelectionText(currentModel), {
+    reply_markup: keyboard,
+  });
+}
+
+async function renderProviderModels(
+  ctx: Context,
+  provider: RuntimeModelCatalogProvider,
+  currentModel: ModelInfo,
+  requestedPage: number,
+): Promise<void> {
+  await ctx.editMessageText(buildProviderModelsText(provider, currentModel, requestedPage), {
+    reply_markup: buildProviderModelsKeyboard(provider, currentModel, requestedPage),
+  });
+}
+
 export async function handleModelSelect(ctx: Context): Promise<boolean> {
   const callbackQuery = ctx.callbackQuery;
 
-  if (!callbackQuery?.data || !callbackQuery.data.startsWith("model:")) {
+  if (!callbackQuery?.data || !isModelMenuCallback(callbackQuery.data)) {
     return false;
   }
 
@@ -53,39 +280,74 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
   logger.debug(`[ModelHandler] Received callback: ${callbackQuery.data}`);
 
   try {
-    if (ctx.chat) {
-      keyboardManager.initialize(ctx.api, ctx.chat.id);
+    if (callbackQuery.data === MODEL_BACK_CALLBACK) {
+      const currentModel = fetchCurrentModel();
+      const catalog = await getRuntimeModelCatalog();
+      await renderProviderSelection(ctx, currentModel, catalog);
+      await ctx.answerCallbackQuery().catch(() => {});
+      return true;
     }
 
-    // Parse callback data: "model:providerID:modelID"
-    const parts = callbackQuery.data.split(":");
-    if (parts.length < 3) {
+    const providerPage = parseProviderPageCallback(callbackQuery.data);
+    const providerID = providerPage?.providerID ?? parseProviderCallback(callbackQuery.data);
+
+    if (providerID) {
+      const currentModel = fetchCurrentModel();
+      const catalog = await getRuntimeModelCatalog();
+      const provider = findProvider(catalog, providerID);
+
+      if (!provider) {
+        await ctx
+          .answerCallbackQuery({
+            text: t("model.menu.provider_stale_callback"),
+            show_alert: true,
+          })
+          .catch(() => {});
+        return true;
+      }
+
+      await renderProviderModels(ctx, provider, currentModel, providerPage?.page ?? 0);
+      await ctx.answerCallbackQuery().catch(() => {});
+      return true;
+    }
+
+    const parsedModel = parseModelCallback(callbackQuery.data);
+    if (!parsedModel) {
       logger.error(`[ModelHandler] Invalid callback data format: ${callbackQuery.data}`);
       clearActiveInlineMenu("model_select_invalid_callback");
       await ctx.answerCallbackQuery({ text: t("model.change_error_callback") }).catch(() => {});
       return true;
     }
 
-    const providerID = parts[1];
-    const modelID = parts.slice(2).join(":"); // Handle model IDs that may contain ":"
+    const catalog = await getRuntimeModelCatalog();
+    const provider = findProvider(catalog, parsedModel.providerID);
+    const modelExists = provider?.models.some((model) => model.modelID === parsedModel.modelID) ?? false;
+
+    if (!provider || !modelExists) {
+      await ctx
+        .answerCallbackQuery({
+          text: t("model.menu.model_stale_callback"),
+          show_alert: true,
+        })
+        .catch(() => {});
+      return true;
+    }
+
+    if (ctx.chat) {
+      keyboardManager.initialize(ctx.api, ctx.chat.id);
+    }
 
     const modelInfo: ModelInfo = {
-      providerID,
-      modelID,
-      variant: "default", // Reset to default when switching models
+      providerID: parsedModel.providerID,
+      modelID: parsedModel.modelID,
+      variant: "default",
     };
 
-    // Select model and persist
     selectModel(modelInfo);
     threadContextManager.bindModelToActiveContext(modelInfo);
-
-    // Update keyboard manager state (may not be initialized if no session selected)
     keyboardManager.updateModel(modelInfo);
-
-    // Refresh context limit for new model
     await pinnedMessageManager.refreshContextLimit();
 
-    // Update Reply Keyboard with new model and context
     const currentAgent = getStoredAgent();
     const contextInfo =
       pinnedMessageManager.getContextInfo() ??
@@ -108,14 +370,11 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
 
     clearActiveInlineMenu("model_selected");
 
-    // Send confirmation message with updated keyboard
     await ctx.answerCallbackQuery({ text: t("model.changed_callback", { name: displayName }) });
     await ctx.reply(
       t("model.changed_message", { name: displayName }),
       withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
     );
-
-    // Delete the inline menu message
     await ctx.deleteMessage().catch(() => {});
 
     return true;
@@ -127,64 +386,20 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
   }
 }
 
-/**
- * Build inline keyboard with favorite and recent models
- * @param currentModel Current model for highlighting
- * @returns InlineKeyboard with model selection buttons
- */
-export async function buildModelSelectionMenu(
-  currentModel?: ModelInfo,
-  modelLists?: ModelSelectionLists,
-): Promise<InlineKeyboard> {
-  const keyboard = new InlineKeyboard();
-  const lists = modelLists ?? (await getModelSelectionLists());
-  const favorites = lists.favorites;
-  const recent = lists.recent;
-
-  if (favorites.length === 0 && recent.length === 0) {
-    logger.warn("[ModelHandler] No model choices found in favorites/recent");
-    return keyboard;
-  }
-
-  const addButton = (model: FavoriteModel, prefix: string): void => {
-    const isActive =
-      currentModel &&
-      model.providerID === currentModel.providerID &&
-      model.modelID === currentModel.modelID;
-
-    // Inline buttons use full model ID without truncation
-    const label = `${prefix} ${model.providerID}/${model.modelID}`;
-    const labelWithCheck = isActive ? `✅ ${label}` : label;
-
-    keyboard.text(labelWithCheck, `model:${model.providerID}:${model.modelID}`).row();
-  };
-
-  favorites.forEach((model) => addButton(model, "⭐"));
-  recent.forEach((model) => addButton(model, "🕘"));
-
-  return keyboard;
-}
-
-/**
- * Show model selection menu
- * @param ctx grammY context
- */
 export async function showModelSelectionMenu(ctx: Context): Promise<void> {
   try {
     const currentModel = fetchCurrentModel();
-    const modelLists = await getModelSelectionLists();
-    const keyboard = await buildModelSelectionMenu(currentModel, modelLists);
+    const catalog = await getRuntimeModelCatalog();
+    const keyboard = buildProviderSelectionKeyboard(catalog, currentModel);
 
     if (keyboard.inline_keyboard.length === 0) {
       await ctx.reply(t("model.menu.empty"));
       return;
     }
 
-    const text = buildModelSelectionMenuText(modelLists);
-
     await replyWithInlineMenu(ctx, {
       menuKind: "model",
-      text,
+      text: buildProviderSelectionText(currentModel),
       keyboard,
     });
   } catch (err) {

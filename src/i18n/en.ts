@@ -238,6 +238,16 @@ export const en = {
   "model.menu.favorites_hint":
     "ℹ️ Add models to favorites in OpenCode CLI to keep them at the top.",
   "model.menu.error": "🔴 Failed to get models list",
+  "model.menu.providers_title": "Current model: {name}\n\nSelect provider:",
+  "model.menu.provider_title":
+    "Current model: {name}\n\nProvider: {provider}\nPage {current}/{total}\n\nSelect model:",
+  "model.menu.provider_empty":
+    "Current model: {name}\n\nProvider: {provider}\n\nNo models available.",
+  "model.menu.provider_stale_callback": "This provider is no longer available",
+  "model.menu.model_stale_callback": "This model is no longer available",
+  "model.menu.button.prev_page": "⬅️ Prev",
+  "model.menu.button.next_page": "Next ➡️",
+  "model.menu.button.back_providers": "⬅️ Back to providers",
 
   "variant.model_not_selected_callback": "Error: model is not selected",
   "variant.changed_callback": "Variant changed: {name}",

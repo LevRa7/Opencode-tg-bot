@@ -2,6 +2,8 @@ import path from "node:path";
 import { realpath } from "node:fs/promises";
 import os from "node:os";
 import { logger } from "../../utils/logger.js";
+import { getTenantRuntimeInfo } from "../../settings/manager.js";
+import { getCurrentTelegramConversationScope } from "../../telegram/scope.js";
 
 /**
  * Allowed root directories for the `/open` command.
@@ -153,6 +155,61 @@ export async function isWithinAllowedRootSafe(targetPath: string): Promise<boole
 export function isAllowedRoot(targetPath: string): boolean {
   const normalizedTarget = normalizePath(targetPath);
   return getBrowserRoots().some((root) => normalizePath(root) === normalizedTarget);
+}
+
+/**
+ * Return browser roots for the current tenant (if any), falling back to global roots.
+ */
+export function getTenantBrowserRoots(): string[] {
+  const scope = getCurrentTelegramConversationScope();
+  if (!scope) {
+    return getBrowserRoots();
+  }
+
+  const tenantRuntime = getTenantRuntimeInfo(scope.userId);
+  if (!tenantRuntime?.tenantId) {
+    return getBrowserRoots();
+  }
+
+  const workspacesRoot = process.env.WORKSPACES_ROOT || "/home/me/Workspaces";
+  const tenantWorkspace = path.join(workspacesRoot, tenantRuntime.tenantId, "workspace");
+  return [tenantWorkspace];
+}
+
+/**
+ * Check whether a target path is inside one of the allowed tenant roots.
+ */
+export function isWithinAllowedTenantRoot(targetPath: string): boolean {
+  const normalizedTarget = normalizePath(targetPath);
+  const roots = getTenantBrowserRoots();
+
+  for (const root of roots) {
+    const normalizedRoot = normalizePath(root);
+
+    if (normalizedTarget === normalizedRoot) {
+      return true;
+    }
+
+    // Check both separators — `path.sep` is always `/` on Unix but a
+    // lowercased Windows path may contain either `\` or `/`.
+    if (
+      normalizedTarget.startsWith(normalizedRoot + "/") ||
+      normalizedTarget.startsWith(normalizedRoot + "\\")
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Check whether a path is exactly one of the allowed tenant roots (not a descendant).
+ */
+export function isAllowedTenantRoot(targetPath: string): boolean {
+  const normalizedTarget = normalizePath(targetPath);
+  const roots = getTenantBrowserRoots();
+  return roots.some((root) => normalizePath(root) === normalizedTarget);
 }
 
 /** Reset state — for testing only. */

@@ -2,9 +2,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import os from "node:os";
 import path from "node:path";
 
+import { getTenantRuntimeInfo } from "../../../src/settings/manager.js";
+import { getCurrentTelegramConversationScope } from "../../../src/telegram/scope.js";
+
 vi.mock("../../../src/utils/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+
+vi.mock("../../../src/settings/manager.js");
+vi.mock("../../../src/telegram/scope.js");
 
 import {
   initBrowserRoots,
@@ -12,6 +18,9 @@ import {
   isWithinAllowedRoot,
   isAllowedRoot,
   __resetBrowserRootsForTests,
+  getTenantBrowserRoots,
+  isWithinAllowedTenantRoot,
+  isAllowedTenantRoot,
 } from "../../../src/bot/utils/browser-roots.js";
 
 describe("browser-roots", () => {
@@ -177,6 +186,179 @@ describe("browser-roots", () => {
     it("should return false for parent of root", () => {
       initBrowserRoots("/home/user/projects");
       expect(isAllowedRoot("/home/user")).toBe(false);
+    });
+  });
+
+  describe("getTenantBrowserRoots", () => {
+    beforeEach(() => {
+      vi.resetAllMocks();
+      __resetBrowserRootsForTests();
+      vi.stubEnv("WORKSPACES_ROOT", "/home/me/Workspaces");
+    });
+
+    it("should return tenant workspace path when tenant runtime exists", () => {
+      vi.mocked(getCurrentTelegramConversationScope).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: undefined,
+      });
+      vi.mocked(getTenantRuntimeInfo).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        port: 4096,
+        baseUrl: "http://localhost:4096",
+        tenantId: "tenant-abc",
+      });
+
+      const roots = getTenantBrowserRoots();
+      expect(roots).toEqual(["/home/me/Workspaces/tenant-abc/workspace"]);
+    });
+
+    it("should fall back to global roots when no tenant runtime", () => {
+      vi.mocked(getCurrentTelegramConversationScope).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: undefined,
+      });
+      vi.mocked(getTenantRuntimeInfo).mockReturnValue(undefined);
+      vi.stubEnv("OPEN_BROWSER_ROOTS", "/home/user/projects");
+
+      const roots = getTenantBrowserRoots();
+      expect(roots).toEqual(["/home/user/projects"]);
+    });
+
+    it("should fall back to global roots when tenantId missing", () => {
+      vi.mocked(getCurrentTelegramConversationScope).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: undefined,
+      });
+      vi.mocked(getTenantRuntimeInfo).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        port: 4096,
+        baseUrl: "http://localhost:4096",
+        tenantId: "",
+      });
+      vi.stubEnv("OPEN_BROWSER_ROOTS", "/home/user/projects");
+
+      const roots = getTenantBrowserRoots();
+      expect(roots).toEqual(["/home/user/projects"]);
+    });
+  });
+
+  describe("isWithinAllowedTenantRoot", () => {
+    beforeEach(() => {
+      vi.resetAllMocks();
+      __resetBrowserRootsForTests();
+      vi.stubEnv("WORKSPACES_ROOT", "/home/me/Workspaces");
+    });
+
+    it("should allow paths within tenant workspace", () => {
+      vi.mocked(getCurrentTelegramConversationScope).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: undefined,
+      });
+      vi.mocked(getTenantRuntimeInfo).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        port: 4096,
+        baseUrl: "http://localhost:4096",
+        tenantId: "tenant-abc",
+      });
+
+      expect(isWithinAllowedTenantRoot("/home/me/Workspaces/tenant-abc/workspace")).toBe(true);
+      expect(isWithinAllowedTenantRoot("/home/me/Workspaces/tenant-abc/workspace/project")).toBe(true);
+      expect(isWithinAllowedTenantRoot("/home/me/Workspaces/tenant-abc/workspace/deep/nested")).toBe(true);
+    });
+
+    it("should reject paths outside tenant workspace", () => {
+      vi.mocked(getCurrentTelegramConversationScope).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: undefined,
+      });
+      vi.mocked(getTenantRuntimeInfo).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        port: 4096,
+        baseUrl: "http://localhost:4096",
+        tenantId: "tenant-abc",
+      });
+
+      expect(isWithinAllowedTenantRoot("/home/me/Workspaces")).toBe(false);
+      expect(isWithinAllowedTenantRoot("/home/me/Workspaces/other-tenant/workspace")).toBe(false);
+      expect(isWithinAllowedTenantRoot("/tmp")).toBe(false);
+    });
+
+    it("should fall back to global root checks when no tenant runtime", () => {
+      vi.mocked(getCurrentTelegramConversationScope).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: undefined,
+      });
+      vi.mocked(getTenantRuntimeInfo).mockReturnValue(undefined);
+      vi.stubEnv("OPEN_BROWSER_ROOTS", "/home/user/projects");
+
+      expect(isWithinAllowedTenantRoot("/home/user/projects")).toBe(true);
+      expect(isWithinAllowedTenantRoot("/home/user/projects/subdir")).toBe(true);
+      expect(isWithinAllowedTenantRoot("/tmp")).toBe(false);
+    });
+  });
+
+  describe("isAllowedTenantRoot", () => {
+    beforeEach(() => {
+      vi.resetAllMocks();
+      __resetBrowserRootsForTests();
+      vi.stubEnv("WORKSPACES_ROOT", "/home/me/Workspaces");
+    });
+
+    it("should return true for exact tenant workspace path", () => {
+      vi.mocked(getCurrentTelegramConversationScope).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: undefined,
+      });
+      vi.mocked(getTenantRuntimeInfo).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        port: 4096,
+        baseUrl: "http://localhost:4096",
+        tenantId: "tenant-abc",
+      });
+
+      expect(isAllowedTenantRoot("/home/me/Workspaces/tenant-abc/workspace")).toBe(true);
+    });
+
+    it("should return false for subdirectories of tenant workspace", () => {
+      vi.mocked(getCurrentTelegramConversationScope).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: undefined,
+      });
+      vi.mocked(getTenantRuntimeInfo).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        port: 4096,
+        baseUrl: "http://localhost:4096",
+        tenantId: "tenant-abc",
+      });
+
+      expect(isAllowedTenantRoot("/home/me/Workspaces/tenant-abc/workspace/project")).toBe(false);
+    });
+
+    it("should fall back to global root check when no tenant runtime", () => {
+      vi.mocked(getCurrentTelegramConversationScope).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: undefined,
+      });
+      vi.mocked(getTenantRuntimeInfo).mockReturnValue(undefined);
+      vi.stubEnv("OPEN_BROWSER_ROOTS", "/home/user/projects");
+
+      expect(isAllowedTenantRoot("/home/user/projects")).toBe(true);
+      expect(isAllowedTenantRoot("/home/user/projects/subdir")).toBe(false);
     });
   });
 });

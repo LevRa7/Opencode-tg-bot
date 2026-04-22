@@ -1,0 +1,289 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+source "${SCRIPT_DIR}/bin/docker-env.sh"
+opencode_init_docker_env
+
+IMAGE="${OPENCODE_DOCKER_IMAGE:-opencode-tg:local}"
+HOST_PORT="${HOST_PORT:-49600}"
+CONTAINER_PORT="4096"
+WORKSPACES_ROOT="${WORKSPACES_ROOT:-/home/me/Workspaces}"
+TG_ID="${TG_ID:-}"
+TG_CHAT_ID="${TG_CHAT_ID:-$TG_ID}"
+TG_TENANT_ID="${TG_TENANT_ID:-}"
+CONFIG_DIR="${OPENCODE_TELEGRAM_ADMIN_HOME:-${HOME}/.config/opencode}"
+HOST_DATA_DIR="${HOME}/.local/share/opencode"
+HOST_AUTH_FILE="${HOST_DATA_DIR}/auth.json"
+TG_API_ID="${TG_API_ID:-29814416}"
+TG_API_HASH="${TG_API_HASH:-58768c18060fee87a1ce635fefd959ab}"
+CLIPROXYAPI_BASE_URL="${CLIPROXYAPI_BASE_URL:-http://192.168.2.166:8317/v1}"
+TG_EMBEDDING_BASE_URL="${TG_EMBEDDING_BASE_URL:-http://192.168.2.166:8000}"
+TG_EMBEDDING_MODEL_ID="${TG_EMBEDDING_MODEL_ID:-google/embeddinggemma-300m}"
+TG_EMBEDDING_DIMENSIONS="${TG_EMBEDDING_DIMENSIONS:-768}"
+SERVER_USERNAME="${OPENCODE_SERVER_USERNAME:-opencode}"
+SERVER_PASSWORD="${OPENCODE_SERVER_PASSWORD:-change-me}"
+
+if ! [[ "$HOST_PORT" =~ ^[0-9]+$ ]] || (( HOST_PORT < 49600 || HOST_PORT > 49999 )); then
+  echo "HOST_PORT must be in range 49600-49999" >&2
+  exit 1
+fi
+
+if [[ -z "$TG_ID" ]] || ! [[ "$TG_ID" =~ ^[0-9]+$ ]]; then
+  echo "TG_ID must be a positive integer" >&2
+  exit 1
+fi
+
+if [[ -z "$TG_CHAT_ID" ]] || ! [[ "$TG_CHAT_ID" =~ ^-?[0-9]+$ ]]; then
+  echo "TG_CHAT_ID must be an integer" >&2
+  exit 1
+fi
+
+if [[ -z "$TG_TENANT_ID" ]]; then
+  TG_TENANT_ID="tg-${TG_ID}"
+fi
+
+SAFE_TENANT_ID="$(printf '%s' "$TG_TENANT_ID" | tr -cs '[:alnum:]._-' '-')"
+TENANT_ROOT="${WORKSPACES_ROOT}/${SAFE_TENANT_ID}"
+WORKSPACE="${TENANT_ROOT}/workspace"
+STATE_DIR="${TENANT_ROOT}/state"
+TG_CLI_DIR="${STATE_DIR}/tg-cli"
+XDG_CONFIG_DIR="${STATE_DIR}/config"
+XDG_CACHE_DIR="${STATE_DIR}/cache"
+XDG_STATE_DIR="${STATE_DIR}/xdg-state"
+XDG_DATA_DIR="${STATE_DIR}/share"
+OPENCODE_DATA_DIR="${XDG_DATA_DIR}/opencode"
+STATE_SKILLS_DIR="${STATE_DIR}/skills"
+CONTAINER_NAME="opencode-serve-${SAFE_TENANT_ID}"
+
+port_is_occupied_by_opencode_container() {
+  local candidate_port="$1"
+  local container_name container_ports
+
+  while IFS=$'\t' read -r container_name container_ports; do
+    [[ -z "$container_name" ]] && continue
+    if [[ "$container_ports" == *":${candidate_port}->4096/tcp"* ]]; then
+      return 0
+    fi
+  done < <(docker ps --format '{{.Names}}\t{{.Ports}}' --filter 'name=^/opencode-serve-')
+
+  return 1
+}
+
+select_free_host_port() {
+  local candidate_port="$1"
+
+  while (( candidate_port <= 49999 )); do
+    if ! port_is_occupied_by_opencode_container "$candidate_port"; then
+      printf '%s\n' "$candidate_port"
+      return 0
+    fi
+    ((candidate_port++))
+  done
+
+  return 1
+}
+
+if [[ ! -d "$WORKSPACES_ROOT" ]]; then
+  echo "Workspaces root not found: $WORKSPACES_ROOT" >&2
+  exit 1
+fi
+
+mkdir -p "$TENANT_ROOT"
+mkdir -p "$WORKSPACE"
+
+if [[ ! -d "$HOST_DATA_DIR" ]]; then
+  echo "OpenCode data dir not found: $HOST_DATA_DIR" >&2
+  exit 1
+fi
+
+if [[ ! -f "$HOST_AUTH_FILE" ]]; then
+  echo "OpenCode auth file not found: $HOST_AUTH_FILE" >&2
+  exit 1
+fi
+
+mkdir -p "$TG_CLI_DIR"
+mkdir -p "$XDG_CONFIG_DIR"
+mkdir -p "$XDG_CACHE_DIR"
+mkdir -p "$XDG_STATE_DIR"
+mkdir -p "$OPENCODE_DATA_DIR"
+mkdir -p "$STATE_SKILLS_DIR/tg-cli"
+mkdir -p "$STATE_SKILLS_DIR/embedding-strategies"
+
+cp "$HOST_AUTH_FILE" "$OPENCODE_DATA_DIR/auth.json"
+
+HOST_OPENCODE_JSON="${CONFIG_DIR}/opencode.json"
+TENANT_OPENCODE_JSON="${XDG_CONFIG_DIR}/opencode.json"
+
+node -e '
+const fs = require("fs");
+const [src, dst, cliproxyApiBaseUrl] = process.argv.slice(1);
+let host = {};
+if (fs.existsSync(src)) {
+  host = JSON.parse(fs.readFileSync(src, "utf8"));
+}
+const hostProvider = host.provider?.cliproxyapi ?? {};
+const config = {
+  $schema: "https://opencode.ai/config.json",
+  skills: {
+    paths: ["/state/skills"],
+  },
+  provider: {
+    cliproxyapi: {
+      npm: hostProvider.npm ?? "@ai-sdk/openai-compatible",
+      name: hostProvider.name ?? "CliProxyApi",
+      ...(hostProvider.models ? { models: hostProvider.models } : {}),
+      options: {
+        ...(hostProvider.options ?? {}),
+        baseURL: cliproxyApiBaseUrl,
+      },
+    },
+  },
+};
+if (typeof host.model === "string" && host.model.startsWith("cliproxyapi/")) {
+  config.model = host.model;
+}
+fs.writeFileSync(dst, JSON.stringify(config, null, 2) + "\n", "utf8");
+' "$HOST_OPENCODE_JSON" "$TENANT_OPENCODE_JSON" "$CLIPROXYAPI_BASE_URL"
+
+cp "$SCRIPT_DIR/skills/tg-cli/SKILL.md" "$STATE_SKILLS_DIR/tg-cli/SKILL.md"
+cp "$SCRIPT_DIR/skills/embedding-strategies/SKILL.md" \
+  "$STATE_SKILLS_DIR/embedding-strategies/SKILL.md"
+
+cat > "$STATE_DIR/MAP.md" <<'EOF'
+# Tenant State Map
+
+This tenant has two sibling directories:
+
+- `/workspace` - the user's working project directory.
+- `/state` - personal runtime state and support files that are not part of the project itself.
+
+Directory map:
+
+- `/state/opencode` (materialized at `/state/share/opencode`) - persistent OpenCode data for this tenant.
+- `/state/tg-cli` - persistent Telegram CLI config and session data.
+- `/state/config` - XDG config home for tenant-specific tools.
+- `/state/cache` - persistent cache data for this tenant.
+- `/state/xdg-state` - persistent state files for tools that use XDG state.
+- `/state/skills` - tenant-visible skills and skill-related files kept outside the project tree.
+
+Model guidance:
+
+- Keep project files in `/workspace`.
+- Keep non-project runtime artifacts in `/state`.
+- When asked to install, inspect, or explain skills, check `/state/MAP.md` and `/state/skills` first.
+- Do not create tool caches, auth files, or skill files inside `/workspace` unless the user explicitly asks for that layout.
+EOF
+
+cat > "$WORKSPACE/AGENTS.md" <<'EOF'
+# AGENTS.md
+
+You are the user's personal Telegram assistant.
+
+## Mission
+- Help the user manage Telegram chats, messages, sessions, and local Telegram data.
+- Keep responses terse and actionable.
+- Do not narrate internal tool calls or transient recoverable issues unless the user needs them.
+- Read `/state/MAP.md` before deciding where to place runtime files, skills, caches, auth artifacts, or temporary support files.
+
+## Telegram capabilities
+Use `/usr/local/bin/opencode-tg-cli` for Telegram operations in this workspace.
+
+### Auth and session management
+- Check login with `status` or `whoami`.
+- Refresh local state with `refresh` before analysis commands when needed.
+- Use `session export` and `session import` only if the installed tg-cli build exposes them.
+
+### Chat and data operations
+- List chats with `chat list`.
+- Search messages with `message search`.
+- Send messages with `message send`.
+- Sync and inspect local state with `refresh`, `sync-all`, `listen`, and `listen --persist`.
+- Use the new background sync flow to keep the cache current without blocking the user.
+
+### Analysis and export
+- Treat each dialog like a long-running session with derived summaries, facts, evidence, and compaction.
+- Keep raw messages, edits, deletions, forwards, reads, reactions, and media provenance available for analysis.
+- Use media export filters, time ranges, and scope-based export when the user wants a slice of history instead of the whole archive.
+- Save downloaded media under the workspace `media/` directory next to the DB / JSON exports.
+- Use embeddings and retrieval helpers when they improve recall, but keep derived state rebuildable from raw history.
+
+### Media and live ingestion
+- Download incoming voice and video_note messages when they matter.
+- Transcribe voice/video_note through the configured local STT endpoint.
+- Deliver useful transcripts back to the user without flooding the chat with intermediate status.
+- Preserve transcript metadata so the source message and file path remain traceable.
+
+## Working style
+- Prefer the shortest viable path for auth/login.
+- Ask only for the next missing value when a flow requires user input.
+- Preserve raw Telegram data and keep derived analysis rebuildable.
+- You may browse the internet, install skills, and run programs when they help complete the user's request.
+
+## Filesystem layout
+- `/workspace` is the user-facing project directory.
+- `/state` stores personal runtime data outside the project tree.
+- `/state/skills` is the preferred place for tenant-visible installed skills and related support files.
+- If the user asks to install a skill, inspect `/state/MAP.md` first so you do not place it inside the project by mistake.
+EOF
+
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "Docker image not found: $IMAGE" >&2
+  echo "Build it first:" >&2
+  echo "  docker build -t $IMAGE \"$SCRIPT_DIR\"" >&2
+  exit 1
+fi
+
+docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+
+SELECTED_HOST_PORT="$(select_free_host_port "$HOST_PORT")" || {
+  echo "No free host port found in range 49600-49999" >&2
+  exit 1
+}
+
+if [[ "$SELECTED_HOST_PORT" != "$HOST_PORT" ]]; then
+  echo "Preferred HOST_PORT ${HOST_PORT} is busy; using ${SELECTED_HOST_PORT} instead"
+fi
+
+HOST_PORT="$SELECTED_HOST_PORT"
+
+echo "Starting opencode serve on 127.0.0.1:${HOST_PORT}"
+echo "Tenant root: ${TENANT_ROOT}"
+echo "Workspace: ${WORKSPACE}"
+echo "State dir: ${STATE_DIR}"
+echo "Tenant user: ${TG_ID}"
+echo "Tenant chat: ${TG_CHAT_ID}"
+echo "Tenant id: ${TG_TENANT_ID}"
+echo "Server username: ${SERVER_USERNAME}"
+echo "Telegram data dir: ${TG_CLI_DIR}"
+echo "Docker image: ${IMAGE}"
+echo "OpenCode config dir: ${CONFIG_DIR}"
+
+TTY_FLAGS=()
+if [[ -t 0 && -t 1 ]]; then
+  TTY_FLAGS=(-it)
+fi
+
+docker run --rm "${TTY_FLAGS[@]}" \
+  -p "127.0.0.1:${HOST_PORT}:${CONTAINER_PORT}" \
+  --add-host host.docker.internal:host-gateway \
+  -e HOME=/workspace \
+  -e XDG_CONFIG_HOME=/state/config \
+  -e XDG_CACHE_HOME=/state/cache \
+  -e XDG_STATE_HOME=/state/xdg-state \
+  -e XDG_DATA_HOME=/state/share \
+  -e OPENCODE_CONFIG_DIR=/bootstrap/opencode-config \
+  -e OPENCODE_DISABLE_EXTERNAL_SKILLS=true \
+  -e OPENCODE_SERVER_USERNAME="${SERVER_USERNAME}" \
+  -e OPENCODE_SERVER_PASSWORD="${SERVER_PASSWORD}" \
+  -e TG_API_ID="${TG_API_ID}" \
+  -e TG_API_HASH="${TG_API_HASH}" \
+  -e TG_CONFIG_DIR="/state/tg-cli" \
+  -v "${XDG_CONFIG_DIR}:/bootstrap/opencode-config:ro" \
+  -v "${HOST_AUTH_FILE}:/bootstrap/opencode-auth/auth.json:ro" \
+  -v "${WORKSPACE}:/workspace" \
+  -v "${STATE_DIR}:/state" \
+  -w /workspace \
+  --name "$CONTAINER_NAME" \
+  "$IMAGE" \
+  serve --hostname 0.0.0.0 --port 4096

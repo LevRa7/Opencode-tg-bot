@@ -1,0 +1,97 @@
+{
+  "createdAt": "2026-04-03T13:31:10.724Z",
+  "managedFiles": [
+    {
+      "path": "src/settings/manager.ts",
+      "existed": true
+    },
+    {
+      "path": "src/thread/manager.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/index.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/commands/definitions.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/commands/restart.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/commands/projects.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/commands/sessions.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/commands/new.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/commands/start.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/commands/commands.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/handlers/prompt.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/handlers/question.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/handlers/permission.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/handlers/video.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/utils/send-with-markdown-fallback.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/utils/telegram-text.ts",
+      "existed": true
+    },
+    {
+      "path": "src/bot/utils/send-tts-response.ts",
+      "existed": true
+    },
+    {
+      "path": "src/i18n/en.ts",
+      "existed": true
+    },
+    {
+      "path": "src/i18n/de.ts",
+      "existed": true
+    },
+    {
+      "path": "src/i18n/es.ts",
+      "existed": true
+    },
+    {
+      "path": "src/i18n/fr.ts",
+      "existed": true
+    },
+    {
+      "path": "src/i18n/ru.ts",
+      "existed": true
+    },
+    {
+      "path": "src/i18n/zh.ts",
+      "existed": true
+    }
+  ]
+}

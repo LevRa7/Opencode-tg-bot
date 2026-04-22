@@ -12,7 +12,7 @@ import {
   MAX_ENTRIES_PER_PAGE,
   type DirectoryEntry,
 } from "../utils/file-tree.js";
-import { getBrowserRoots, isWithinAllowedRoot, isAllowedRoot } from "../utils/browser-roots.js";
+import { getTenantBrowserRoots, isWithinAllowedTenantRoot, isAllowedTenantRoot } from "../utils/browser-roots.js";
 import { upsertSessionDirectory } from "../../session/cache-manager.js";
 import { getProjectByWorktree } from "../../project/manager.js";
 import { switchToProject } from "../utils/switch-project.js";
@@ -147,9 +147,9 @@ function buildBrowseKeyboard(
 
   // Navigation: Up + Back to roots
   // Suppress "Up" when at an allowed root (don't let user navigate above it)
-  const atRoot = isAllowedRoot(currentPath);
+  const atRoot = isAllowedTenantRoot(currentPath);
   const showUp = hasParent && !atRoot;
-  const roots = getBrowserRoots();
+  const roots = getTenantBrowserRoots();
   const showRoots = roots.length > 1;
 
   if (showUp || showRoots) {
@@ -202,7 +202,7 @@ async function renderBrowseView(dirPath: string, page: number = 0) {
 
 function buildRootsKeyboard(): InlineKeyboard {
   const keyboard = new InlineKeyboard();
-  const roots = getBrowserRoots();
+  const roots = getTenantBrowserRoots();
 
   for (const root of roots) {
     const label = truncateLabel(`📂 ${pathToDisplayPath(root)}`);
@@ -223,7 +223,7 @@ export async function openCommand(ctx: CommandContext<Context>) {
     // Reset path index for new interaction
     clearOpenPathIndex();
 
-    const roots = getBrowserRoots();
+  const roots = getTenantBrowserRoots();
 
     let text: string;
     let keyboard: InlineKeyboard;
@@ -285,7 +285,7 @@ export async function handleOpenCallback(ctx: Context): Promise<boolean> {
     // Navigate into a directory (including "up")
     const navPath = decodePathFromCallback(CALLBACK_NAV_PREFIX, data);
     if (navPath !== null) {
-      if (!isWithinAllowedRoot(navPath)) {
+      if (!isWithinAllowedTenantRoot(navPath)) {
         await ctx.answerCallbackQuery({ text: t("open.access_denied") });
         return true;
       }
@@ -296,7 +296,7 @@ export async function handleOpenCallback(ctx: Context): Promise<boolean> {
     // Pagination
     const pageInfo = decodePaginationCallback(data);
     if (pageInfo !== null) {
-      if (!isWithinAllowedRoot(pageInfo.path)) {
+      if (!isWithinAllowedTenantRoot(pageInfo.path)) {
         await ctx.answerCallbackQuery({ text: t("open.access_denied") });
         return true;
       }
@@ -307,7 +307,7 @@ export async function handleOpenCallback(ctx: Context): Promise<boolean> {
     // Select directory as project
     const selectPath = decodePathFromCallback(CALLBACK_SELECT_PREFIX, data);
     if (selectPath !== null) {
-      if (!isWithinAllowedRoot(selectPath)) {
+      if (!isWithinAllowedTenantRoot(selectPath)) {
         await ctx.answerCallbackQuery({ text: t("open.access_denied") });
         return true;
       }

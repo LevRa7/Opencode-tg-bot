@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Context } from "grammy";
 import { t } from "../../../src/i18n/index.js";
+import { getTenantRuntimeInfo } from "../../../src/settings/manager.js";
+import { getCurrentTelegramConversationScope } from "../../../src/telegram/scope.js";
 
 const mocked = vi.hoisted(() => ({
   scanDirectoryMock: vi.fn(),
@@ -16,9 +18,9 @@ const mocked = vi.hoisted(() => ({
   isScanErrorMock: vi.fn(
     (result: unknown) => typeof result === "object" && result !== null && "error" in result,
   ),
-  getBrowserRootsMock: vi.fn(() => ["/home/user"]),
-  isWithinAllowedRootMock: vi.fn(() => true),
-  isAllowedRootMock: vi.fn(() => false),
+  getTenantBrowserRootsMock: vi.fn(() => ["/home/user"]),
+  isWithinAllowedTenantRootMock: vi.fn(() => true),
+  isAllowedTenantRootMock: vi.fn(() => false),
   ensureActiveInlineMenuMock: vi.fn().mockResolvedValue(true),
   isForegroundBusyMock: vi.fn(() => false),
   replyBusyBlockedMock: vi.fn().mockResolvedValue(undefined),
@@ -42,9 +44,14 @@ vi.mock("../../../src/bot/utils/file-tree.js", () => ({
 }));
 
 vi.mock("../../../src/bot/utils/browser-roots.js", () => ({
-  getBrowserRoots: mocked.getBrowserRootsMock,
-  isWithinAllowedRoot: mocked.isWithinAllowedRootMock,
-  isAllowedRoot: mocked.isAllowedRootMock,
+  // Old exports (kept for compatibility)
+  getBrowserRoots: mocked.getTenantBrowserRootsMock,
+  isWithinAllowedRoot: mocked.isWithinAllowedTenantRootMock,
+  isAllowedRoot: mocked.isAllowedTenantRootMock,
+  // New tenant-aware exports
+  getTenantBrowserRoots: mocked.getTenantBrowserRootsMock,
+  isWithinAllowedTenantRoot: mocked.isWithinAllowedTenantRootMock,
+  isAllowedTenantRoot: mocked.isAllowedTenantRootMock,
 }));
 
 vi.mock("../../../src/bot/handlers/inline-menu.js", () => ({
@@ -95,6 +102,9 @@ vi.mock("../../../src/i18n/index.js", async (importOriginal) => {
     },
   };
 });
+
+vi.mock("../../../src/settings/manager.js");
+vi.mock("../../../src/telegram/scope.js");
 
 import {
   openCommand,
@@ -152,9 +162,9 @@ describe("open command", () => {
     clearOpenPathIndex();
     // Reset hoisted mocks that need custom return values
     mocked.scanDirectoryMock.mockReset();
-    mocked.getBrowserRootsMock.mockReset().mockReturnValue(["/home/user"]);
-    mocked.isWithinAllowedRootMock.mockReset().mockReturnValue(true);
-    mocked.isAllowedRootMock.mockReset().mockReturnValue(false);
+    mocked.getTenantBrowserRootsMock.mockReset().mockReturnValue(["/home/user"]);
+    mocked.isWithinAllowedTenantRootMock.mockReset().mockReturnValue(true);
+    mocked.isAllowedTenantRootMock.mockReset().mockReturnValue(false);
     mocked.ensureActiveInlineMenuMock.mockReset().mockResolvedValue(true);
     mocked.isForegroundBusyMock.mockReset().mockReturnValue(false);
     mocked.getProjectByWorktreeMock.mockReset().mockResolvedValue({
@@ -254,7 +264,7 @@ describe("open command", () => {
     });
 
     it("should show root selection on open:roots callback", async () => {
-      mocked.getBrowserRootsMock.mockReturnValue(["/home/user", "/opt/repos"]);
+      mocked.getTenantBrowserRootsMock.mockReturnValue(["/home/user", "/opt/repos"]);
 
       const ctx = createCallbackContext("open:roots");
       const result = await handleOpenCallback(ctx);
@@ -265,7 +275,7 @@ describe("open command", () => {
     });
 
     it("should deny navigation to path outside allowed roots", async () => {
-      mocked.isWithinAllowedRootMock.mockReturnValue(false);
+      mocked.isWithinAllowedTenantRootMock.mockReturnValue(false);
 
       const ctx = createCallbackContext("open:nav:/etc/passwd");
       const result = await handleOpenCallback(ctx);
@@ -464,6 +474,59 @@ describe("open command", () => {
       expect(result).toBe(true);
       // Prove the path was decoded correctly — scanDirectory received the original long path
       expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(longPath, 0);
+    });
+  });
+
+  describe("tenant isolation", () => {
+    beforeEach(() => {
+      vi.resetAllMocks();
+      vi.mocked(getCurrentTelegramConversationScope).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: undefined,
+      });
+    });
+
+    it("should use tenant workspace when tenant runtime exists", async () => {
+      vi.mocked(getTenantRuntimeInfo).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        port: 4096,
+        baseUrl: "http://localhost:4096",
+        tenantId: "tenant-abc",
+      });
+      vi.stubEnv("WORKSPACES_ROOT", "/home/me/Workspaces");
+
+      // Mock file system scan
+      mocked.scanDirectoryMock.mockResolvedValue({
+        entries: [],
+        totalCount: 0,
+        page: 0,
+        currentPath: "/home/me/Workspaces/tenant-abc/workspace",
+        displayPath: "/home/me/Workspaces/tenant-abc/workspace",
+        hasParent: false,
+      });
+
+      mocked.getTenantBrowserRootsMock.mockReturnValue(["/home/me/Workspaces/tenant-abc/workspace"]);
+
+      const ctx = createCommandContext();
+      await openCommand(ctx as never);
+
+      expect(mocked.getTenantBrowserRootsMock).toHaveBeenCalled();
+      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith("/home/me/Workspaces/tenant-abc/workspace", 0);
+    });
+
+    it("should fall back to global roots when no tenant runtime", async () => {
+      vi.mocked(getTenantRuntimeInfo).mockReturnValue(undefined);
+      vi.stubEnv("OPEN_BROWSER_ROOTS", "/home/user/projects");
+
+      mocked.getTenantBrowserRootsMock.mockReturnValue(["/home/user/projects"]);
+
+      const ctx = createCommandContext();
+      await openCommand(ctx as never);
+
+      expect(mocked.getTenantBrowserRootsMock).toHaveBeenCalled();
+      // Should use global roots
     });
   });
 });

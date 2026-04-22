@@ -62,25 +62,75 @@ function delay(ms: number): Promise<void> {
   });
 }
 
+function splitLeadingBlockquote(text: string, limit: number, openTag: string): string[] | null {
+  if (!text.startsWith(openTag)) {
+    return null;
+  }
+
+  const closeTag = "</blockquote>";
+  const closeTagIndex = text.indexOf(closeTag, openTag.length);
+  if (closeTagIndex < 0) {
+    return null;
+  }
+
+  const innerContent = text.slice(openTag.length, closeTagIndex);
+  const suffix = text.slice(closeTagIndex + closeTag.length).replace(/^\n+/, "");
+  const innerLimit = limit - openTag.length - closeTag.length;
+
+  if (innerContent.length <= innerLimit) {
+    const wrappedText = `${openTag}${innerContent}${closeTag}`;
+    if (!suffix) {
+      return [wrappedText];
+    }
+
+    return [wrappedText, ...splitLongText(suffix, limit)];
+  }
+
+  const innerChunks = splitLongText(innerContent, innerLimit);
+  const wrappedChunks = innerChunks.map((chunk) => `${openTag}${chunk}${closeTag}`);
+  if (!suffix) {
+    return wrappedChunks;
+  }
+
+  return [...wrappedChunks, ...splitLongText(suffix, limit)];
+}
+
+function splitBeforeBlockquote(text: string, limit: number, openTag: string): string[] | null {
+  const marker = `\n\n${openTag}`;
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex < 0) {
+    return null;
+  }
+
+  const prefix = text.slice(0, markerIndex);
+  const suffix = text.slice(markerIndex + 2);
+  return [...splitLongText(prefix, limit), ...splitLongText(suffix, limit)];
+}
+
 function splitLongText(text: string, limit: number): string[] {
   if (text.length <= limit) {
     return [text];
   }
 
-  // Handle <blockquote expandable> wrapper: each chunk must be valid HTML
-  const blockquoteMatch = text.match(/^(<blockquote expandable>)([\s\S]*?)(<\/blockquote>)$/);
-  if (blockquoteMatch) {
-    const openTag = blockquoteMatch[1];
-    const innerContent = blockquoteMatch[2];
-    const closeTag = blockquoteMatch[3];
+  // Keep exact Telegram blockquote wrappers intact, even when later text entries are appended.
+  const expandableBlockquoteChunks = splitLeadingBlockquote(text, limit, "<blockquote expandable>");
+  if (expandableBlockquoteChunks) {
+    return expandableBlockquoteChunks;
+  }
 
-    if (innerContent.length <= limit - openTag.length - closeTag.length) {
-      return [text];
-    }
+  const blockquoteChunks = splitLeadingBlockquote(text, limit, "<blockquote>");
+  if (blockquoteChunks) {
+    return blockquoteChunks;
+  }
 
-    const innerLimit = limit - openTag.length - closeTag.length;
-    const innerChunks = splitLongText(innerContent, innerLimit);
-    return innerChunks.map((chunk) => `${openTag}${chunk}${closeTag}`);
+  const expandablePrefixedChunks = splitBeforeBlockquote(text, limit, "<blockquote expandable>");
+  if (expandablePrefixedChunks) {
+    return expandablePrefixedChunks;
+  }
+
+  const blockquotePrefixedChunks = splitBeforeBlockquote(text, limit, "<blockquote>");
+  if (blockquotePrefixedChunks) {
+    return blockquotePrefixedChunks;
   }
 
   const chunks: string[] = [];

@@ -5,7 +5,7 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import {
   extractCallbackMessageIdFromContext,
-  extractMessageThreadIdFromContext,
+  extractThreadTargetFromContext,
   withMessageThreadId,
 } from "../utils/message-thread.js";
 
@@ -97,7 +97,8 @@ export async function replyWithInlineMenu(
     replyOptions.parse_mode = options.parseMode;
   }
 
-  const messageThreadId = options.messageThreadId ?? extractMessageThreadIdFromContext(ctx);
+  const threadTarget = extractThreadTargetFromContext(ctx);
+  const messageThreadId = options.messageThreadId ?? threadTarget?.messageThreadId;
   logger.info(
     `[InlineMenu] Sending menu: kind=${options.menuKind}, chatId=${ctx.chat?.id ?? "unknown"}, threadId=${messageThreadId ?? "none"}, parseMode=${options.parseMode ?? "raw"}, textLength=${options.text.length}`,
   );

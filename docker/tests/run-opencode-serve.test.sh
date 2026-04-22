@@ -71,6 +71,7 @@ cat > "${FAKE_HOME}/.config/opencode/opencode.json" <<'EOF'
   }
 }
 EOF
+printf 'test-cliproxy-key\n' > "${FAKE_HOME}/.config/opencode/cliproxyapi.key"
 
 python3 -c 'import socket, sys, time; sock = socket.socket(socket.AF_UNIX); sock.bind(sys.argv[1]); sock.listen(1); time.sleep(300)' \
   "${SOCKET_PATH}" &
@@ -176,6 +177,7 @@ grep -Fx -- "${FAKE_HOME}/.local/share/opencode/auth.json:/bootstrap/opencode-au
 grep -Fx -- "${FAKE_HOME}/.config/opencode/AGENTS.md:/etc/opencode/AGENTS.md:ro" "${DOCKER_ARGS_FILE}"
 grep -Fx -- "${WORKSPACE_DIR}:/workspace" "${DOCKER_ARGS_FILE}"
 grep -Fq '"baseURL": "http://192.168.2.166:8317/v1"' "${STATE_DIR}/config/opencode.json"
+grep -Fq '"apiKey": "{file:/workspace/.config/opencode/cliproxyapi.key}"' "${STATE_DIR}/config/opencode.json"
 grep -Fq '"model": "cliproxyapi/gpt-5.4-mini"' "${STATE_DIR}/config/opencode.json"
 grep -Fq '"gpt-5.4-mini"' "${STATE_DIR}/config/opencode.json"
 grep -Fq '"gpt-5.4"' "${STATE_DIR}/config/opencode.json"
@@ -211,5 +213,6 @@ if grep -Fq 'cliproxyapi' "${DOCKER_ARGS_FILE}"; then
   echo "launcher should not hardcode cliproxyapi config" >&2
   exit 1
 fi
+test -f "${WORKSPACE_DIR}/.config/opencode/cliproxyapi.key"
 
 printf 'ok\n'

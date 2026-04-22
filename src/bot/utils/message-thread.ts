@@ -45,7 +45,7 @@ function extractChatIdFromContext(ctx: Context): number | undefined {
   return normalizeChatId(ctx.chat?.id);
 }
 
-function isForumChat(ctx: Context): boolean {
+export function isForumChat(ctx: Context): boolean {
   const messageForum = (ctx.message as WithForumFlag | undefined)?.chat?.is_forum;
   if (messageForum === true) {
     return true;
@@ -97,7 +97,7 @@ export function extractThreadTargetFromContext(ctx: Context): TelegramThreadTarg
 
   return {
     chatId,
-    messageThreadId: undefined,
+    messageThreadId: 0,
   };
 }
 
@@ -105,7 +105,7 @@ export function withMessageThreadId<T extends object>(
   options: T | undefined,
   messageThreadId: number | undefined,
 ): T & WithMessageThreadId {
-  if (messageThreadId === undefined) {
+  if (messageThreadId === undefined || messageThreadId <= 0) {
     return (options ?? {}) as T & WithMessageThreadId;
   }
 

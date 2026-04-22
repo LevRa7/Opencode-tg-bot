@@ -46,7 +46,7 @@ describe("bot/utils/message-thread", () => {
     expect(extractMessageThreadIdFromContext(ctx)).toBeUndefined();
     expect(extractThreadTargetFromContext(ctx)).toEqual({
       chatId: -100123,
-      messageThreadId: undefined,
+      messageThreadId: 0,
     });
   });
 
@@ -57,5 +57,11 @@ describe("bot/utils/message-thread", () => {
     });
 
     expect(withMessageThreadId(undefined, undefined)).toEqual({});
+    expect(withMessageThreadId({ disable_notification: true }, 0)).toEqual({
+      disable_notification: true,
+    });
+    expect(withMessageThreadId({ disable_notification: true }, -3)).toEqual({
+      disable_notification: true,
+    });
   });
 });

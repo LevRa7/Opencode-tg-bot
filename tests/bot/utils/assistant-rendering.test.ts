@@ -130,7 +130,7 @@ describe("bot/utils/assistant-rendering", () => {
       await loadAssistantRendering("raw");
 
     expect(module.prepareAssistantStreamingPayload("partial **text", 40)).toEqual({
-      parts: ["partial **text"],
+      parts: [{ text: "partial **text", entities: undefined }],
       format: "raw",
     });
 
@@ -185,7 +185,10 @@ describe("bot/utils/assistant-rendering", () => {
     );
 
     expect(module.prepareAssistantStreamingPayload("done\n\nunfinished", 60)).toEqual({
-      parts: ["rich:done\n\n", "unfinished"],
+      parts: [
+        { text: "rich:done\n\n", entities: [{ type: "bold", offset: 0, length: 4 }] },
+        { text: "unfinished", entities: undefined },
+      ],
       format: "markdown_v2",
     });
 

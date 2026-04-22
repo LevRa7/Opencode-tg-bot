@@ -1,6 +1,8 @@
 import { sanitizeHtmlForTelegram } from "./html-sanitize.js";
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
+const EXPANDABLE_BLOCKQUOTE_OPEN = "<blockquote expandable>";
+const BLOCKQUOTE_CLOSE = "</blockquote>";
 
 /**
  * Maximum extra characters the sanitizer can add (closing tags for all allowed nestable tags).
@@ -9,32 +11,98 @@ const TELEGRAM_MESSAGE_LIMIT = 4096;
  */
 const SANITIZER_HEADROOM = 64;
 
+function takeTextChunk(text: string, maxLength: number): { chunk: string; remaining: string } {
+  if (text.length <= maxLength) {
+    return {
+      chunk: sanitizeHtmlForTelegram(text),
+      remaining: "",
+    };
+  }
+
+  // Leave headroom for closing tags the sanitizer may append
+  const splitLimit = maxLength - SANITIZER_HEADROOM;
+
+  let splitIndex = text.lastIndexOf("\n", splitLimit - 100);
+  if (splitIndex <= splitLimit / 2) {
+    splitIndex = text.lastIndexOf(" ", splitLimit - 100);
+  }
+  if (splitIndex <= splitLimit / 4) {
+    splitIndex = splitLimit;
+  }
+
+  return {
+    chunk: sanitizeHtmlForTelegram(text.slice(0, splitIndex)),
+    remaining: text.slice(splitIndex).trimStart(),
+  };
+}
+
+function wrapExpandableBlockquote(content: string): string {
+  return `${EXPANDABLE_BLOCKQUOTE_OPEN}${content}${BLOCKQUOTE_CLOSE}`;
+}
+
+function splitExpandableBlockquoteChunks(
+  content: string,
+  maxLength: number,
+  textPrefix: string,
+): string[] {
+  const chunks: string[] = [];
+  let remaining = content;
+  const wrapperLength = EXPANDABLE_BLOCKQUOTE_OPEN.length + BLOCKQUOTE_CLOSE.length;
+  const prefixChunk = textPrefix ? sanitizeHtmlForTelegram(textPrefix) : "";
+
+  if (prefixChunk && prefixChunk.length + 2 + wrapperLength >= maxLength) {
+    chunks.push(prefixChunk);
+  }
+
+  while (remaining) {
+    const prefix = chunks.length === 0 && prefixChunk ? `${prefixChunk}\n\n` : "";
+    const contentMaxLength = maxLength - wrapperLength - prefix.length;
+
+    if (prefix && contentMaxLength <= SANITIZER_HEADROOM) {
+      chunks.push(prefixChunk);
+      continue;
+    }
+
+    const { chunk, remaining: nextRemaining } = takeTextChunk(remaining, contentMaxLength);
+
+    chunks.push(`${prefix}${wrapExpandableBlockquote(chunk)}`);
+    remaining = nextRemaining;
+  }
+
+  return chunks;
+}
+
 function splitTextIntoChunks(text: string, maxLength: number): string[] {
+  const expandableSpoilerPrefix = `\n\n${EXPANDABLE_BLOCKQUOTE_OPEN}`;
+  const spoilerStartsAt = text.indexOf(expandableSpoilerPrefix);
+
+  if (text.startsWith(EXPANDABLE_BLOCKQUOTE_OPEN) && text.endsWith(BLOCKQUOTE_CLOSE)) {
+    const content = text.slice(EXPANDABLE_BLOCKQUOTE_OPEN.length, -BLOCKQUOTE_CLOSE.length);
+    return splitExpandableBlockquoteChunks(content, maxLength, "");
+  }
+
+  if (spoilerStartsAt !== -1 && text.endsWith(BLOCKQUOTE_CLOSE)) {
+    const textPrefix = text.slice(0, spoilerStartsAt);
+    const content = text.slice(
+      spoilerStartsAt + expandableSpoilerPrefix.length,
+      -BLOCKQUOTE_CLOSE.length,
+    );
+    return splitExpandableBlockquoteChunks(content, maxLength, textPrefix);
+  }
+
   if (text.length <= maxLength) {
     return [sanitizeHtmlForTelegram(text)];
   }
 
   const chunks: string[] = [];
   let remaining = text;
-  // Leave headroom for closing tags the sanitizer may append
-  const splitLimit = maxLength - SANITIZER_HEADROOM;
-
-  while (remaining.length > maxLength) {
-    let splitIndex = remaining.lastIndexOf("\n", splitLimit - 100);
-    if (splitIndex <= splitLimit / 2) {
-      splitIndex = remaining.lastIndexOf(" ", splitLimit - 100);
-    }
-    if (splitIndex <= splitLimit / 4) {
-      splitIndex = splitLimit;
-    }
-
-    // Sanitize each chunk to close any tags severed by the split
-    chunks.push(sanitizeHtmlForTelegram(remaining.slice(0, splitIndex)));
-    remaining = remaining.slice(splitIndex).trimStart();
-  }
 
   if (remaining) {
-    chunks.push(sanitizeHtmlForTelegram(remaining));
+    while (remaining) {
+      const chunkResult = takeTextChunk(remaining, maxLength);
+      chunks.push(chunkResult.chunk);
+      remaining = chunkResult.remaining;
+    }
   }
 
   return chunks;
@@ -286,7 +354,7 @@ export function formatReasoningForTelegramHtml(
     return [textPrefix];
   }
 
-  const spoilerHtml = `<blockquote expandable>${spoilerContentHtml}</blockquote>`;
+  const spoilerHtml = wrapExpandableBlockquote(spoilerContentHtml);
 
   if (textPrefix) {
     const fullText = `${textPrefix}\n\n${spoilerHtml}`;

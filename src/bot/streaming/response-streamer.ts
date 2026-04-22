@@ -1,4 +1,5 @@
 import type { Api, RawApi } from "grammy";
+import type { MessageEntity } from "grammy/types";
 import { logger } from "../../utils/logger.js";
 
 type SendMessageApi = Pick<Api<RawApi>, "sendMessage">;
@@ -7,10 +8,15 @@ type EditMessageApi = Pick<Api<RawApi>, "editMessageText">;
 type TelegramSendMessageOptions = Parameters<SendMessageApi["sendMessage"]>[2];
 type TelegramEditMessageOptions = Parameters<EditMessageApi["editMessageText"]>[3];
 
-export type StreamingMessageFormat = "raw" | "markdown_v2";
+export type StreamingMessageFormat = "raw" | "markdown_v2" | "html";
+
+export interface StreamingMessagePayloadPart {
+  text: string;
+  entities?: MessageEntity[];
+}
 
 export interface StreamingMessagePayload {
-  parts: string[];
+  parts: (string | StreamingMessagePayloadPart)[];
   format: StreamingMessageFormat;
   sendOptions?: TelegramSendMessageOptions;
   editOptions?: TelegramEditMessageOptions;
@@ -63,9 +69,17 @@ function buildStateKey(sessionId: string, messageId: string): string {
 }
 
 function normalizePayload(payload: StreamingMessagePayload): StreamingMessagePayload | null {
-  const normalizedParts = payload.parts
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
+   const normalizedParts = payload.parts
+     .map((part) => {
+       if (typeof part === "string") {
+         return { text: part.trim() };
+       }
+       return {
+         text: part.text.trim(),
+         entities: part.entities,
+       };
+     })
+     .filter((part) => part.text.length > 0);
   if (normalizedParts.length === 0) {
     return null;
   }
@@ -105,8 +119,26 @@ function getRetryAfterMs(error: unknown): number | null {
   return seconds * 1000;
 }
 
-function createSignature(text: string, format: StreamingMessageFormat): string {
-  return `${format}\n${text}`;
+function createSignature(part: string | StreamingMessagePayloadPart, format: StreamingMessageFormat): string {
+  const text = typeof part === "string" ? part : part.text;
+  const entities = typeof part === "string" ? undefined : part.entities;
+  const entitiesKey = entities ? JSON.stringify(entities) : 'null';
+  return `${format}\n${text}\n${entitiesKey}`;
+}
+
+function resolvePartFormat(
+  part: string | StreamingMessagePayloadPart,
+  payloadFormat: StreamingMessageFormat,
+): StreamingMessageFormat {
+  if (payloadFormat !== "markdown_v2") {
+    return payloadFormat;
+  }
+
+  if (typeof part === "string") {
+    return "raw";
+  }
+
+  return part.entities?.length ? "markdown_v2" : "raw";
 }
 
 function delay(ms: number): Promise<void> {
@@ -409,21 +441,32 @@ export class ResponseStreamer {
     targetSignatures: string[],
   ): Promise<void> {
     for (let index = 0; index < payload.parts.length; index++) {
-      const text = payload.parts[index];
+      const part = payload.parts[index];
       const nextSignature = targetSignatures[index];
       const currentMessageId = state.telegramMessageIds[index];
+
+      const text = typeof part === "string" ? part : part.text;
+      const entities = typeof part === "string" ? undefined : part.entities;
+      const partFormat = resolvePartFormat(part, payload.format);
+
+      const sendOptions = entities
+        ? { ...(payload.sendOptions || {}), entities }
+        : payload.sendOptions;
+      const editOptions = entities
+        ? { ...(payload.editOptions || {}), entities }
+        : payload.editOptions;
 
       if (currentMessageId) {
         if (state.lastSentSignatures[index] === nextSignature) {
           continue;
         }
 
-        await this.editText(state.sessionId, currentMessageId, text, payload.format, payload.editOptions);
+        await this.editText(state.sessionId, currentMessageId, text, partFormat, editOptions);
         state.lastSentSignatures[index] = nextSignature;
         continue;
       }
 
-      const messageId = await this.sendText(state.sessionId, text, payload.format, payload.sendOptions);
+      const messageId = await this.sendText(state.sessionId, text, partFormat, sendOptions);
       state.telegramMessageIds[index] = messageId;
       state.lastSentSignatures[index] = nextSignature;
     }

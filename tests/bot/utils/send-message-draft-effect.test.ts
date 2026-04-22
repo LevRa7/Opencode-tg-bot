@@ -54,6 +54,70 @@ describe("bot/utils/send-message-draft-effect", () => {
     );
   });
 
+  it("keeps bare expandable blockquotes free of injected leading blank lines", async () => {
+    const sendMessageDraft = vi.fn().mockResolvedValue(true);
+    const manager = new SendMessageDraftEffectManager();
+
+    await manager.play(
+      { sendMessageDraft },
+      {
+        chat_id: 123,
+        text: "<blockquote expandable><b>Title</b>\n\n<i>Body text</i></blockquote>",
+        parse_mode: "HTML",
+      },
+    );
+
+    expect(sendMessageDraft).toHaveBeenCalledTimes(2);
+    expect(sendMessageDraft.mock.calls[0][2]).toBe(
+      "<blockquote expandable><b>Title</b></blockquote>",
+    );
+    expect(sendMessageDraft.mock.calls[1][2]).toBe(
+      "<blockquote expandable><b>Title</b>\n\n<i>Body text</i></blockquote>",
+    );
+  });
+
+  it("does not opt plain blockquotes into progressive html framing", async () => {
+    const sendMessageDraft = vi.fn().mockResolvedValue(true);
+    const manager = new SendMessageDraftEffectManager();
+    const text = "💭 Thinking...\n\n<blockquote><b>Title</b>\n\n<i>Body text</i></blockquote>";
+
+    await manager.play(
+      { sendMessageDraft },
+      {
+        chat_id: 123,
+        text,
+        parse_mode: "HTML",
+      },
+    );
+
+    expect(sendMessageDraft).toHaveBeenCalledTimes(1);
+    expect(sendMessageDraft.mock.calls[0][2]).toBe(text);
+  });
+
+  it("keeps truncated html draft frames wrapper-balanced for oversized reasoning messages", async () => {
+    const sendMessageDraft = vi.fn().mockResolvedValue(true);
+    const manager = new SendMessageDraftEffectManager();
+    const oversizedBody = `<i>${"Body section ".repeat(900)}</i>`;
+
+    await manager.play(
+      { sendMessageDraft },
+      {
+        chat_id: 123,
+        text: `💭 Thinking...\n\n<blockquote expandable>${oversizedBody}</blockquote>`,
+        parse_mode: "HTML",
+      },
+    );
+
+    expect(sendMessageDraft).toHaveBeenCalledTimes(1);
+
+    const truncatedFrame = sendMessageDraft.mock.calls[0][2] as string;
+    expect(truncatedFrame.length).toBeLessThanOrEqual(4096);
+    expect(truncatedFrame).toContain("<blockquote expandable>");
+    expect(truncatedFrame).toContain("</blockquote>");
+    expect(truncatedFrame.endsWith("</blockquote>")).toBe(true);
+    expect(truncatedFrame).toContain("</i>");
+  });
+
   it("skips invalid payloads", async () => {
     const sendMessageDraft = vi.fn().mockResolvedValue(true);
     const manager = new SendMessageDraftEffectManager();

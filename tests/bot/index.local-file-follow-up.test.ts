@@ -1401,7 +1401,7 @@ describe("bot/index local file follow-up orchestration", () => {
         123,
         102,
         "Сначала проверю замечания review по коду и решу, что реально стоит чинить сейчас.",
-        undefined,
+        {},
       ),
     );
     expect(sendMessageMock).toHaveBeenCalledTimes(2);
@@ -1444,7 +1444,7 @@ describe("bot/index local file follow-up orchestration", () => {
       123,
       102,
       "Сначала проверю замечания review по коду и решу, что реально стоит чинить сейчас.",
-      undefined,
+      {},
     );
     const latestEditCall = editMessageTextMock.mock.calls[editMessageTextMock.mock.calls.length - 1];
     const latestEditedText = String(latestEditCall?.[2] ?? "");

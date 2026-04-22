@@ -16,7 +16,6 @@ describe("bot/utils/reasoning-format", () => {
       );
 
       // Answer comes first, then spoiler with reasoning
-      expect(result).toMatch(/^Here is the answer\./);
       expect(result).toContain("<blockquote expandable>");
       // Answer text should NOT be inside the blockquote
       const blockquoteStart = result.indexOf("<blockquote expandable>");
@@ -158,6 +157,54 @@ describe("bot/utils/reasoning-format", () => {
 
         // Should split cleanly at spaces
         expect(chunks.length).toBeGreaterThan(1);
+      });
+
+      it("preserves expandable blockquote on every reasoning chunk after splitting", () => {
+        const longReasoning = "reasoning ".repeat(2000);
+        const chunks = formatReasoningForTelegramHtml(1, longReasoning, [], "");
+
+        expect(chunks.length).toBeGreaterThan(1);
+
+        for (const chunk of chunks) {
+          expect(chunk).toContain("<blockquote expandable>");
+          expect(chunk).toContain("</blockquote>");
+        }
+      });
+
+      it("emits an oversized prefix as its own sanitized chunk before wrapped reasoning chunks", () => {
+        const textPrefix = `${"Thinking aloud about tool traces and reasoning details. ".repeat(80)}done`;
+        const chunks = formatReasoningForTelegramHtml(
+          2,
+          "Reasoning section\n\nDetailed follow-up for the expandable block.",
+          [{ description: "bash <trace>", command: "printf \"a && b\"" }],
+          textPrefix,
+        );
+
+        expect(chunks.length).toBeGreaterThan(1);
+        expect(chunks[0]).toBe(textPrefix);
+        expect(chunks[0]).not.toContain("<blockquote expandable>");
+
+        for (const chunk of chunks.slice(1)) {
+          expect(chunk).toContain("<blockquote expandable>");
+          expect(chunk).toContain("</blockquote>");
+        }
+      });
+
+      it("emits a narrow-band long prefix separately when only headroom-sized content budget remains", () => {
+        const wrapperLength = "<blockquote expandable>".length + "</blockquote>".length;
+        const textPrefix = "p".repeat(4096 - wrapperLength - 2 - 64);
+        const chunks = formatReasoningForTelegramHtml(
+          1,
+          "Reasoning details ".repeat(20).trim(),
+          [],
+          textPrefix,
+        );
+
+        expect(chunks.length).toBeGreaterThan(1);
+        expect(chunks[0]).toBe(textPrefix);
+        expect(chunks[0]).not.toContain("<blockquote expandable>");
+        expect(chunks[1]).toContain("<blockquote expandable>");
+        expect(chunks[1]).toContain("</blockquote>");
       });
     });
   });

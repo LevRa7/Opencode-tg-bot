@@ -29,6 +29,7 @@ interface SendMessageDraftWithMarkdownFallbackParams {
   rawFallbackText?: string;
   options?: TelegramSendMessageDraftOptions;
   parseMode?: TelegramParseMode;
+  messageThreadId?: number;
 }
 
 interface EditMessageWithMarkdownFallbackParams {
@@ -39,6 +40,7 @@ interface EditMessageWithMarkdownFallbackParams {
   rawFallbackText?: string;
   options?: TelegramEditMessageOptions;
   parseMode?: TelegramParseMode;
+  messageThreadId?: number;
 }
 
 const TELEGRAM_PARSE_ERROR_MARKERS = [
@@ -193,19 +195,28 @@ export async function sendMessageWithMarkdownFallback({
   parseMode,
   messageThreadId,
 }: SendMessageWithMarkdownFallbackParams): Promise<Awaited<ReturnType<SendMessageApi["sendMessage"]>>> {
-  if (!parseMode) {
-    return api.sendMessage(chatId, text, withMessageThreadId(options, messageThreadId));
-  }
+  const hasEntities = options?.entities && options.entities.length > 0;
+  const hasParseMode = !!parseMode;
+  const hasFormatting = hasParseMode || hasEntities; // parseMode or entities trigger fallback handling
 
   // Sanitize HTML before sending to prevent Telegram parse errors from mismatched tags
-  const sanitizedText = parseMode === "HTML" ? sanitizeHtmlForTelegram(text) : text;
+  const sanitizedText = parseMode === "HTML" && !hasEntities ? sanitizeHtmlForTelegram(text) : text;
 
   const telegramOptions: TelegramSendMessageOptions = {
     ...withMessageThreadId(options, messageThreadId),
-    parse_mode: parseMode,
   };
+  
+  // Only add parse_mode if we have a parseMode and no entities (entities take precedence)
+  if (parseMode && !hasEntities) {
+    telegramOptions.parse_mode = parseMode;
+  }
 
   const fallbackText = rawFallbackText ?? (parseMode === "MarkdownV2" ? unescapeTelegramMarkdownV2(text) : text);
+
+  // If no formatting at all, just send directly (no fallback handling)
+  if (!hasFormatting) {
+    return api.sendMessage(chatId, sanitizedText, withMessageThreadId(options, messageThreadId));
+  }
 
   try {
     return await api.sendMessage(chatId, sanitizedText, telegramOptions);
@@ -214,7 +225,8 @@ export async function sendMessageWithMarkdownFallback({
       throw error;
     }
 
-    if (parseMode === "MarkdownV2") {
+    // If we have parseMode MarkdownV2 and no entities, try escaping
+    if (parseMode === "MarkdownV2" && !hasEntities) {
       const escapedText = escapeTelegramMarkdownV2(text);
       if (escapedText !== text) {
         logger.warn(
@@ -242,8 +254,9 @@ export async function sendMessageWithMarkdownFallback({
       }
     }
 
+    const formatName = parseMode ? (parseMode === "HTML" ? "HTML" : "Markdown") : "entities";
     logger.warn(
-      `[Bot] ${parseMode === "HTML" ? "HTML" : "Markdown"} parse failed, retrying assistant message in raw mode`,
+      `[Bot] ${formatName} parse failed, retrying assistant message in raw mode`,
       error,
     );
     return api.sendMessage(
@@ -262,20 +275,30 @@ export async function sendMessageDraftWithMarkdownFallback({
   rawFallbackText,
   options,
   parseMode,
+  messageThreadId,
 }: SendMessageDraftWithMarkdownFallbackParams): Promise<Awaited<ReturnType<SendMessageDraftApi["sendMessageDraft"]>>> {
-  if (!parseMode) {
-    return api.sendMessageDraft(chatId, draftId, text, options);
-  }
+  const hasEntities = options?.entities && options.entities.length > 0;
+  const hasParseMode = !!parseMode;
+  const hasFormatting = hasParseMode || hasEntities; // parseMode or entities trigger fallback handling
 
   // Sanitize HTML before sending to prevent Telegram parse errors from mismatched tags
-  const sanitizedText = parseMode === "HTML" ? sanitizeHtmlForTelegram(text) : text;
+  const sanitizedText = parseMode === "HTML" && !hasEntities ? sanitizeHtmlForTelegram(text) : text;
 
   const draftOptions: TelegramSendMessageDraftOptions = {
-    ...(options || {}),
-    parse_mode: parseMode,
+    ...withMessageThreadId(options, messageThreadId),
   };
+  
+  // Only add parse_mode if we have a parseMode and no entities (entities take precedence)
+  if (parseMode && !hasEntities) {
+    draftOptions.parse_mode = parseMode;
+  }
 
   const fallbackText = rawFallbackText ?? (parseMode === "MarkdownV2" ? unescapeTelegramMarkdownV2(text) : text);
+
+  // If no formatting at all, just send directly (no fallback handling)
+  if (!hasFormatting) {
+    return api.sendMessageDraft(chatId, draftId, sanitizedText, withMessageThreadId(options, messageThreadId));
+  }
 
   try {
     return await api.sendMessageDraft(chatId, draftId, sanitizedText, draftOptions);
@@ -284,7 +307,8 @@ export async function sendMessageDraftWithMarkdownFallback({
       throw error;
     }
 
-    if (parseMode === "MarkdownV2") {
+    // If we have parseMode MarkdownV2 and no entities, try escaping
+    if (parseMode === "MarkdownV2" && !hasEntities) {
       const escapedText = escapeTelegramMarkdownV2(text);
       if (escapedText !== text) {
         logger.warn(
@@ -307,21 +331,22 @@ export async function sendMessageDraftWithMarkdownFallback({
             chatId,
             draftId,
             fallbackText,
-            stripTelegramFormattingOptions(options),
+            stripTelegramFormattingOptions(withMessageThreadId(options, messageThreadId)),
           );
         }
       }
     }
 
+    const formatName = parseMode ? (parseMode === "HTML" ? "HTML" : "Markdown") : "entities";
     logger.warn(
-      `[Bot] ${parseMode === "HTML" ? "HTML" : "Markdown"} parse failed, retrying assistant draft in raw mode`,
+      `[Bot] ${formatName} parse failed, retrying assistant draft in raw mode`,
       error,
     );
     return api.sendMessageDraft(
       chatId,
       draftId,
       fallbackText,
-      stripTelegramFormattingOptions(options),
+      stripTelegramFormattingOptions(withMessageThreadId(options, messageThreadId)),
     );
   }
 }
@@ -334,20 +359,30 @@ export async function editMessageWithMarkdownFallback({
   rawFallbackText,
   options,
   parseMode,
+  messageThreadId,
 }: EditMessageWithMarkdownFallbackParams): Promise<Awaited<ReturnType<EditMessageApi["editMessageText"]>>> {
-  if (!parseMode) {
-    return api.editMessageText(chatId, messageId, text, options);
-  }
+  const hasEntities = options?.entities && options.entities.length > 0;
+  const hasParseMode = !!parseMode;
+  const hasFormatting = hasParseMode || hasEntities; // parseMode or entities trigger fallback handling
 
   // Sanitize HTML before sending to prevent Telegram parse errors from mismatched tags
-  const sanitizedText = parseMode === "HTML" ? sanitizeHtmlForTelegram(text) : text;
+  const sanitizedText = parseMode === "HTML" && !hasEntities ? sanitizeHtmlForTelegram(text) : text;
 
   const telegramOptions: TelegramEditMessageOptions = {
-    ...(options || {}),
-    parse_mode: parseMode,
+    ...withMessageThreadId(options, messageThreadId),
   };
+  
+  // Only add parse_mode if we have a parseMode and no entities (entities take precedence)
+  if (parseMode && !hasEntities) {
+    telegramOptions.parse_mode = parseMode;
+  }
 
   const fallbackText = rawFallbackText ?? (parseMode === "MarkdownV2" ? unescapeTelegramMarkdownV2(text) : text);
+
+  // If no formatting at all, just send directly (no fallback handling)
+  if (!hasFormatting) {
+    return api.editMessageText(chatId, messageId, sanitizedText, withMessageThreadId(options, messageThreadId));
+  }
 
   try {
     return await api.editMessageText(chatId, messageId, sanitizedText, telegramOptions);
@@ -356,7 +391,8 @@ export async function editMessageWithMarkdownFallback({
       throw error;
     }
 
-    if (parseMode === "MarkdownV2") {
+    // If we have parseMode MarkdownV2 and no entities, try escaping
+    if (parseMode === "MarkdownV2" && !hasEntities) {
       const escapedText = escapeTelegramMarkdownV2(text);
       if (escapedText !== text) {
         logger.warn(
@@ -379,21 +415,22 @@ export async function editMessageWithMarkdownFallback({
             chatId,
             messageId,
             fallbackText,
-            stripTelegramFormattingOptions(options),
+            stripTelegramFormattingOptions(withMessageThreadId(options, messageThreadId)),
           );
         }
       }
     }
 
+    const formatName = parseMode ? (parseMode === "HTML" ? "HTML" : "Markdown") : "entities";
     logger.warn(
-      `[Bot] ${parseMode === "HTML" ? "HTML" : "Markdown"} parse failed, retrying edited message in raw mode`,
+      `[Bot] ${formatName} parse failed, retrying edited message in raw mode`,
       error,
     );
     return api.editMessageText(
       chatId,
       messageId,
       fallbackText,
-      stripTelegramFormattingOptions(options),
+      stripTelegramFormattingOptions(withMessageThreadId(options, messageThreadId)),
     );
   }
 }

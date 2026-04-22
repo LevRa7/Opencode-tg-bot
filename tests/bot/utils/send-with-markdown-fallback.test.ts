@@ -219,7 +219,7 @@ describe("bot/utils/send-with-markdown-fallback", () => {
     expect(sendMessageDraft).toHaveBeenNthCalledWith(1, 556, 9, "<blockquote expandable><b>Done</b></blockquote>", {
       parse_mode: "HTML",
     });
-    expect(sendMessageDraft).toHaveBeenNthCalledWith(2, 556, 9, "Done", undefined);
+    expect(sendMessageDraft).toHaveBeenNthCalledWith(2, 556, 9, "Done", {});
   });
 
   it("does not swallow non-markup Telegram errors", async () => {
@@ -374,7 +374,7 @@ describe("bot/utils/send-with-markdown-fallback", () => {
     });
 
     expect(editMessageText).toHaveBeenCalledTimes(3);
-    expect(editMessageText).toHaveBeenNthCalledWith(3, 111, 222, "Done.", undefined);
+    expect(editMessageText).toHaveBeenNthCalledWith(3, 111, 222, "Done.", {});
   });
 
   it("unescapes MarkdownV2 text for raw edit fallback when explicit fallback is not provided", async () => {
@@ -395,6 +395,6 @@ describe("bot/utils/send-with-markdown-fallback", () => {
     });
 
     expect(editMessageText).toHaveBeenCalledTimes(3);
-    expect(editMessageText).toHaveBeenNthCalledWith(3, 112, 223, "Done.", undefined);
+    expect(editMessageText).toHaveBeenNthCalledWith(3, 112, 223, "Done.", {});
   });
 });

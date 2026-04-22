@@ -1,4 +1,5 @@
 import { Bot, Context, InputFile, NextFunction } from "grammy";
+import type { Api, RawApi } from "grammy";
 import { promises as fs } from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
@@ -6,6 +7,7 @@ import { SocksProxyAgent } from "socks-proxy-agent";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { config } from "../config.js";
 import type { MessageFormatMode } from "../config.js";
+import type { TelegramRenderedPart } from "../telegram/render/types.js";
 import { authMiddleware, handleAccessApprovalCallback } from "./middleware/auth.js";
 import { interactionGuardMiddleware } from "./middleware/interaction-guard.js";
 import { unknownCommandMiddleware } from "./middleware/unknown-command.js";
@@ -157,6 +159,7 @@ interface SessionRoutingContext {
 }
 
 const routingBySessionId = new Map<string, SessionRoutingContext>();
+export { routingBySessionId };
 
 function setSessionRoutingContext(sessionId: string, routing: SessionRoutingContext): void {
   routingBySessionId.set(sessionId, routing);
@@ -509,13 +512,14 @@ const localFileFollowUpTracker = createLocalFileFollowUpTracker();
 const responseStreamer = new ResponseStreamer({
   throttleMs: RESPONSE_STREAM_THROTTLE_MS,
   sendText: async (sessionId, text, format, options) => {
+    // Ensure format and entities are propagated
     const botApi = getSessionRoutingApi(sessionId);
     const target = getSessionRoutingTarget(sessionId);
     if (!botApi || !target || target.chatId <= 0) {
       throw new Error("Bot context missing for streamed send");
     }
 
-    const parseMode = format === "markdown_v2" ? "MarkdownV2" : undefined;
+    const parseMode = format === "html" ? "HTML" : format === "markdown_v2" ? "MarkdownV2" : undefined;
     const sentMessage = await sendMessageWithMarkdownFallback({
       api: botApi,
       chatId: target.chatId,
@@ -528,13 +532,14 @@ const responseStreamer = new ResponseStreamer({
     return sentMessage.message_id;
   },
   editText: async (sessionId, messageId, text, format, options) => {
+    // Ensure format and entities are propagated
     const botApi = getSessionRoutingApi(sessionId);
     const target = getSessionRoutingTarget(sessionId);
     if (!botApi || !target || target.chatId <= 0) {
       throw new Error("Bot context missing for streamed edit");
     }
 
-    const parseMode = format === "markdown_v2" ? "MarkdownV2" : undefined;
+    const parseMode = format === "html" ? "HTML" : format === "markdown_v2" ? "MarkdownV2" : undefined;
 
     try {
       await editMessageWithMarkdownFallback({
@@ -587,6 +592,7 @@ const responseStreamer = new ResponseStreamer({
 });
 
 const messageDraftStreamManager = new MessageDraftStreamManager(RESPONSE_STREAM_THROTTLE_MS);
+export { messageDraftStreamManager };
 
 const toolCallStreamer = new ToolCallStreamer({
   throttleMs: RESPONSE_STREAM_THROTTLE_MS,
@@ -701,6 +707,57 @@ async function ensureCommandsInitialized(ctx: Context, next: NextFunction): Prom
   await next();
 }
 
+export function createSendRenderedPart({
+  botApi,
+  chatId,
+  sessionId,
+  finalParseMode,
+  messageThreadId,
+}: {
+  botApi: Api<RawApi>;
+  chatId: number;
+  sessionId: string;
+  finalParseMode: "html" | "raw" | "markdown_v2";
+  messageThreadId?: number;
+}) {
+  return async (part: TelegramRenderedPart, options?: {
+    reply_markup?: unknown;
+    disable_notification?: boolean;
+  }) => {
+    const draftMessageId = messageDraftStreamManager.consumeLastSentMessageId(sessionId);
+    if (draftMessageId) {
+      await botApi.deleteMessage(chatId, draftMessageId).catch(() => {});
+    }
+
+    const replyOptions =
+      routingBySessionId.get(sessionId)?.sourceMessageId && options?.reply_markup
+        ? {
+            ...options,
+            reply_parameters: {
+              message_id: routingBySessionId.get(sessionId)!.sourceMessageId,
+              allow_sending_without_reply: true,
+            },
+          }
+        : options;
+
+    const baseOptions = replyOptions ?? {};
+    const sendOptions = {
+      ...baseOptions,
+      ...(part.entities?.length ? { entities: part.entities } : {}),
+    };
+
+    await sendBotText({
+      api: botApi,
+      chatId,
+      text: part.text,
+      rawFallbackText: part.fallbackText,
+      options: sendOptions as Parameters<typeof sendBotText>[0]["options"],
+      format: finalParseMode,
+      messageThreadId,
+    });
+  };
+}
+
 async function ensureEventSubscription(directory: string): Promise<void> {
   if (!directory) {
     logger.error("No directory found for event subscription");
@@ -749,7 +806,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             ? prepareAssistantStreamingPayload(messageText, RESPONSE_STREAM_TEXT_LIMIT)
             : null;
           responseStreamer.enqueue(sessionId, streamingMessageId, {
-            parts: payload?.parts ?? [messageText],
+            parts: payload?.parts ?? [{ text: messageText }],
             format: payload?.format ?? assistantFormat,
             sendOptions: {
               disable_notification: true,
@@ -857,8 +914,14 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                 const payload = prepareFinalStreamingPayload(finalText);
                 if (payload) return payload;
               }
+              if (finalParseMode === "html") {
+                return {
+                  parts: [{ text: finalText }],
+                  format: "html" as const,
+                };
+              }
               return {
-                parts: [finalText],
+                parts: [{ text: finalText }],
                 format: finalParseMode === "markdown_v2" ? "markdown_v2" : "raw",
               };
             },
@@ -870,33 +933,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               return createPlainRenderedParts(text, RESPONSE_STREAM_TEXT_LIMIT);
             },
             getReplyKeyboard: async () => await getReplyKeyboardForSession(sessionId),
-            sendRenderedPart: async (part, options) => {
-              const draftMessageId = messageDraftStreamManager.consumeLastSentMessageId(sessionId);
-              if (draftMessageId) {
-                await botApi.deleteMessage(chatId, draftMessageId).catch(() => {});
-              }
-
-              const replyOptions =
-                routingBySessionId.get(sessionId)?.sourceMessageId && options?.reply_markup
-                  ? {
-                      ...options,
-                      reply_parameters: {
-                        message_id: routingBySessionId.get(sessionId)!.sourceMessageId,
-                        allow_sending_without_reply: true,
-                      },
-                    }
-                  : options;
-
-              await sendBotText({
-                api: botApi,
-                chatId,
-                text: part.text,
-                rawFallbackText: part.fallbackText,
-                options: replyOptions as Parameters<typeof sendBotText>[0]["options"],
-                format: finalParseMode,
-                messageThreadId: target.messageThreadId,
-                });
-            },
+            sendRenderedPart: createSendRenderedPart({ botApi, chatId, sessionId, finalParseMode, messageThreadId: target.messageThreadId }),
           });
 
           await sendTtsResponseForSession({

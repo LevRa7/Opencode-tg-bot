@@ -8,19 +8,30 @@ export interface ModelInfo {
   variant?: string;
 }
 
+export interface ModelReference {
+  providerID: string;
+  modelID: string;
+}
+
+export interface RuntimeModelCatalogProvider {
+  providerID: string;
+  models: ModelReference[];
+}
+
+export interface RuntimeModelCatalog {
+  providers: RuntimeModelCatalogProvider[];
+}
+
 export interface VariantInfo {
   id: string;
   disabled?: boolean;
 }
 
-export interface FavoriteModel {
-  providerID: string;
-  modelID: string;
-}
+export type FavoriteModel = ModelReference;
 
 export interface ModelSelectionLists {
-  favorites: FavoriteModel[];
-  recent: FavoriteModel[];
+  favorites: ModelReference[];
+  recent: ModelReference[];
 }
 
 /**

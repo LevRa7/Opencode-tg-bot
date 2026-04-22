@@ -24,6 +24,9 @@ Documentation rule:
 
 ### Changed
 
+- Changed `/models` to render the active runtime's provider-first catalog instead of querying providers directly, while keeping the existing empty and error replies for unavailable catalogs and safely splitting oversized catalogs across multiple Telegram replies.
+  - Why: the command output should match the new runtime-aware model picker so Telegram users see the same provider/model set as the current OpenCode runtime without hitting Telegram's 4096-character message limit.
+  - Affects: `src/bot/commands/models.ts`, `tests/bot/commands/models.test.ts`, `PRODUCT.md`
 - Upgraded branch to v0.17.0 semantic level, porting rendering pipeline, new commands (`/skills`, `/worktree`, `/open`), and runtime alignment while preserving local multi-user orchestration, threaded routing, and Docker customizations.
   - Why: align with upstream v0.17.0 features while keeping local modifications that support multi-user, approval flows, forum threading, and container lifecycle.
   - Affects: `src/telegram/render/`, `src/bot/utils/assistant-rendering.ts`, `src/bot/commands/skills.ts`, `src/bot/commands/worktree.ts`, `src/bot/commands/open.ts`, `src/opencode/process.ts`, `src/service/`, `src/bot/index.ts`, `src/i18n/*.ts`, `tests/`

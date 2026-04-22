@@ -239,6 +239,16 @@ export const ru: I18nDictionary = {
   "model.menu.favorites_hint":
     "ℹ️ Добавляйте модели в избранное через OpenCode CLI, чтобы они были вверху списка.",
   "model.menu.error": "🔴 Не удалось получить список моделей",
+  "model.menu.providers_title": "Текущая модель: {name}\n\nВыберите провайдера:",
+  "model.menu.provider_title":
+    "Текущая модель: {name}\n\nПровайдер: {provider}\nСтраница {current}/{total}\n\nВыберите модель:",
+  "model.menu.provider_empty":
+    "Текущая модель: {name}\n\nПровайдер: {provider}\n\nНет доступных моделей.",
+  "model.menu.provider_stale_callback": "Этот провайдер больше недоступен",
+  "model.menu.model_stale_callback": "Эта модель больше недоступна",
+  "model.menu.button.prev_page": "⬅️ Назад",
+  "model.menu.button.next_page": "Вперёд ➡️",
+  "model.menu.button.back_providers": "⬅️ К провайдерам",
 
   "variant.model_not_selected_callback": "Ошибка: модель не выбрана",
   "variant.changed_callback": "Вариант изменен: {name}",

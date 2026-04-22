@@ -250,6 +250,16 @@ export const fr: I18nDictionary = {
   "model.menu.favorites_hint":
     "ℹ️ Ajoutez des modèles aux favoris dans l'interface OpenCode pour les garder en tête de liste.",
   "model.menu.error": "🔴 Impossible de récupérer la liste des modèles",
+  "model.menu.providers_title": "Modèle actuel : {name}\n\nSélectionnez un fournisseur :",
+  "model.menu.provider_title":
+    "Modèle actuel : {name}\n\nFournisseur : {provider}\nPage {current}/{total}\n\nSélectionnez un modèle :",
+  "model.menu.provider_empty":
+    "Modèle actuel : {name}\n\nFournisseur : {provider}\n\nAucun modèle disponible.",
+  "model.menu.provider_stale_callback": "Ce fournisseur n'est plus disponible",
+  "model.menu.model_stale_callback": "Ce modèle n'est plus disponible",
+  "model.menu.button.prev_page": "⬅️ Préc.",
+  "model.menu.button.next_page": "Suiv. ➡️",
+  "model.menu.button.back_providers": "⬅️ Retour aux fournisseurs",
 
   "variant.model_not_selected_callback": "Erreur : aucun modèle sélectionné",
   "variant.changed_callback": "Variante modifiée : {name}",

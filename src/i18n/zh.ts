@@ -214,6 +214,16 @@ export const zh: I18nDictionary = {
   "model.menu.recent_empty": "— 列表为空。",
   "model.menu.favorites_hint": "ℹ️ 可在 OpenCode CLI 中将模型加入收藏，使其显示在列表顶部。",
   "model.menu.error": "🔴 获取模型列表失败",
+  "model.menu.providers_title": "当前模型：{name}\n\n请选择提供方：",
+  "model.menu.provider_title":
+    "当前模型：{name}\n\n提供方：{provider}\n第 {current}/{total} 页\n\n请选择模型：",
+  "model.menu.provider_empty":
+    "当前模型：{name}\n\n提供方：{provider}\n\n没有可用模型。",
+  "model.menu.provider_stale_callback": "该提供方已不可用",
+  "model.menu.model_stale_callback": "该模型已不可用",
+  "model.menu.button.prev_page": "⬅️ 上一页",
+  "model.menu.button.next_page": "下一页 ➡️",
+  "model.menu.button.back_providers": "⬅️ 返回提供方列表",
 
   "variant.model_not_selected_callback": "错误：未选择模型",
   "variant.changed_callback": "变体已更改：{name}",

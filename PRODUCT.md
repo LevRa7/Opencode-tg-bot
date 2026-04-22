@@ -102,6 +102,7 @@ Current command set:
 - `/abort` - stop the current task
 - `/sessions` - show and switch recent sessions
 - `/projects` - show and switch projects
+- `/models` - list available runtime-aware providers and models
 - `/tts` - toggle global audio replies
 - `/task` - create a scheduled task
 - `/tasklist` - browse and delete scheduled tasks
@@ -128,10 +129,11 @@ Interaction routing rules:
 
 Model picker behavior:
 
-- Uses OpenCode local model state (`favorite` + `recent`)
-- Favorites are shown first, recent models are shown after favorites
-- Models already present in favorites are not duplicated in recent
-- Default configured model (`OPENCODE_MODEL_PROVIDER` + `OPENCODE_MODEL_ID`) is treated as favorite
+- Uses a runtime-aware catalog loaded for the currently active OpenCode runtime
+- Starts with a provider-first menu, then opens the selected provider's model list
+- Paginates provider model lists at 10 models per page
+- Includes back navigation from provider model pages to the provider list
+- Keeps the configured default model (`OPENCODE_MODEL_PROVIDER` + `OPENCODE_MODEL_ID`) in the picker favorites flow
 
 ### Main features already implemented
 

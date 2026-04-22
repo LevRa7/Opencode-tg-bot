@@ -204,6 +204,20 @@ export function isWithinAllowedTenantRoot(targetPath: string): boolean {
 }
 
 /**
+ * Like `isWithinAllowedTenantRoot` but resolves symlinks first using `realpath`.
+ * Falls back to the plain path if `realpath` fails (e.g. ENOENT).
+ */
+export async function isWithinAllowedTenantRootSafe(targetPath: string): Promise<boolean> {
+  let resolved = targetPath;
+  try {
+    resolved = await realpath(targetPath);
+  } catch {
+    // Path doesn't exist yet or can't be resolved — use as-is
+  }
+  return isWithinAllowedTenantRoot(resolved);
+}
+
+/**
  * Check whether a path is exactly one of the allowed tenant roots (not a descendant).
  */
 export function isAllowedTenantRoot(targetPath: string): boolean {

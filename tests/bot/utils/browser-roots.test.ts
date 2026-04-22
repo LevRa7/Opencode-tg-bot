@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import os from "node:os";
 import path from "node:path";
+import { realpath } from "node:fs/promises";
 
 import { getTenantRuntimeInfo } from "../../../src/settings/manager.js";
 import { getCurrentTelegramConversationScope } from "../../../src/telegram/scope.js";
@@ -11,6 +12,7 @@ vi.mock("../../../src/utils/logger.js", () => ({
 
 vi.mock("../../../src/settings/manager.js");
 vi.mock("../../../src/telegram/scope.js");
+vi.mock("node:fs/promises");
 
 import {
   initBrowserRoots,
@@ -20,6 +22,7 @@ import {
   __resetBrowserRootsForTests,
   getTenantBrowserRoots,
   isWithinAllowedTenantRoot,
+  isWithinAllowedTenantRootSafe,
   isAllowedTenantRoot,
 } from "../../../src/bot/utils/browser-roots.js";
 
@@ -359,6 +362,44 @@ describe("browser-roots", () => {
 
       expect(isAllowedTenantRoot("/home/user/projects")).toBe(true);
       expect(isAllowedTenantRoot("/home/user/projects/subdir")).toBe(false);
+    });
+  });
+
+  describe("isWithinAllowedTenantRootSafe", () => {
+    beforeEach(() => {
+      vi.resetAllMocks();
+      __resetBrowserRootsForTests();
+      vi.stubEnv("WORKSPACES_ROOT", "/home/me/Workspaces");
+      vi.mocked(getCurrentTelegramConversationScope).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        messageThreadId: undefined,
+      });
+      vi.mocked(getTenantRuntimeInfo).mockReturnValue({
+        userId: 123,
+        chatId: 456,
+        port: 4096,
+        baseUrl: "http://localhost:4096",
+        tenantId: "tenant-abc",
+      });
+    });
+
+    it("should allow symlinks within tenant workspace", async () => {
+      vi.mocked(realpath).mockResolvedValue("/home/me/Workspaces/tenant-abc/workspace/project");
+      const result = await isWithinAllowedTenantRootSafe("/symlink/path");
+      expect(result).toBe(true);
+    });
+
+    it("should reject symlinks outside tenant workspace", async () => {
+      vi.mocked(realpath).mockResolvedValue("/tmp/outside");
+      const result = await isWithinAllowedTenantRootSafe("/symlink/path");
+      expect(result).toBe(false);
+    });
+
+    it("should fall back to path when realpath fails", async () => {
+      vi.mocked(realpath).mockRejectedValue(new Error("ENOENT"));
+      const result = await isWithinAllowedTenantRootSafe("/home/me/Workspaces/tenant-abc/workspace/project");
+      expect(result).toBe(true);
     });
   });
 });

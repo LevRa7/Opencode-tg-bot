@@ -133,4 +133,36 @@ describe("bot/utils/finalize-assistant-response", () => {
       reply_markup: { keyboard: [[{ text: "A" }]] },
     });
   });
+
+  it("preserves html streaming payloads for final in-place completion", async () => {
+    const responseStreamer = {
+      complete: vi.fn().mockResolvedValue({ streamed: true, telegramMessageIds: [99] }),
+    };
+
+    await finalizeAssistantResponse({
+      sessionId: "s1",
+      messageId: "m1",
+      messageText: "<code>tg-cli</code>",
+      responseStreamer,
+      flushPendingServiceMessages: vi.fn().mockResolvedValue(undefined),
+      prepareStreamingPayload: vi.fn(() => ({
+        parts: [{ text: "<code>tg-cli</code>" }],
+        format: "html",
+      })),
+      renderFinalParts: vi.fn(() => [createRenderedPart("tg-cli")]),
+      getReplyKeyboard: vi.fn(() => undefined),
+      sendRenderedPart: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(responseStreamer.complete).toHaveBeenCalledWith(
+      "s1",
+      "m1",
+      {
+        parts: [{ text: "<code>tg-cli</code>" }],
+        format: "html",
+        sendOptions: { disable_notification: true },
+        editOptions: undefined,
+      },
+    );
+  });
 });

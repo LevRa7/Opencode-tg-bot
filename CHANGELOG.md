@@ -72,6 +72,9 @@ Documentation rule:
 
 ### Fixed
 
+- Restored Telegram `<blockquote expandable>` formatting for reasoning and thinking traces, and kept long reasoning/draft/stream splits wrapped in valid expandable blockquotes across multi-message delivery.
+  - Why: recent local changes downgraded collapsible reasoning quotes to plain blockquotes, and long-message paths could drop or break the expandable wrapper while chunking HTML for Telegram.
+  - Affects: `src/bot/utils/reasoning-format.ts`, `src/bot/utils/send-message-draft-effect.ts`, `src/bot/streaming/tool-call-streamer.ts`, `tests/bot/utils/reasoning-format.test.ts`, `tests/bot/utils/send-message-draft-effect.test.ts`, `tests/bot/streaming/tool-call-streamer.test.ts`, `CHANGELOG.md`
 - Synced Telegram forum topic names with the selected OpenCode session title when switching sessions via `/sessions`, and kept long-running forum threads aligned with the active session context.
   - Why: in forum workflows the thread title could drift away from the bound OpenCode session, which made session switching harder to follow from Telegram alone.
   - Affects: `src/bot/commands/sessions.ts`, `tests/bot/commands/sessions.test.ts`

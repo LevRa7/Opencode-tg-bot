@@ -79,7 +79,7 @@ describe("bot/utils/telegram-text", () => {
     });
 
     expect(editMessageText).toHaveBeenCalledTimes(1);
-    expect(editMessageText).toHaveBeenCalledWith(100, 200, "updated", undefined);
+    expect(editMessageText).toHaveBeenCalledWith(100, 200, "updated", {});
   });
 
   it("falls back for markdown draft parse errors", async () => {

@@ -22,6 +22,7 @@ interface SendBotTextParams {
   chatId: Parameters<SendMessageApi["sendMessage"]>[0];
   text: string;
   rawFallbackText?: string;
+  /** Telegram sendMessage options, including entities */
   options?: TelegramSendMessageOptions;
   format?: TelegramTextFormat;
   messageThreadId?: number;
@@ -33,6 +34,7 @@ interface EditBotTextParams {
   messageId: Parameters<EditMessageApi["editMessageText"]>[1];
   text: string;
   rawFallbackText?: string;
+  /** Telegram editMessageText options, including entities */
   options?: TelegramEditMessageOptions;
   format?: TelegramTextFormat;
 }
@@ -42,6 +44,7 @@ interface SendBotTextDraftParams {
   chatId: Parameters<SendMessageDraftApi["sendMessageDraft"]>[0];
   draftId: Parameters<SendMessageDraftApi["sendMessageDraft"]>[1];
   text: string;
+  /** Telegram sendMessageDraft options, including entities */
   options?: TelegramSendMessageDraftOptions;
   format?: TelegramTextFormat;
 }

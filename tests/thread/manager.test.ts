@@ -156,11 +156,11 @@ describe("thread/manager", () => {
 
     expect(target).toEqual({
       chatId: -100100,
-      messageThreadId: undefined,
+      messageThreadId: 0,
     });
     expect(threadContextManager.getActiveTarget()).toEqual({
       chatId: -100100,
-      messageThreadId: undefined,
+      messageThreadId: 0,
     });
 
     threadContextManager.bindProjectToActiveContext({ id: "project-main", worktree: "/repo" });
@@ -172,7 +172,7 @@ describe("thread/manager", () => {
 
     expect(threadContextManager.getSessionTarget("session-main")).toEqual({
       chatId: -100100,
-      messageThreadId: undefined,
+      messageThreadId: 0,
     });
   });
 

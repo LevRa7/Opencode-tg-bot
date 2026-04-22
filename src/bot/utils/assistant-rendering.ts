@@ -102,6 +102,15 @@ export function prepareAssistantStreamingPayload(
   maxPartLength: number,
 ): StreamingMessagePayload | null {
   if (!messageText) {
+    const formatMode = useAssistantEntitiesFormat() ? "entities" : "raw";
+    const format = useAssistantEntitiesFormat() ? "markdown_v2" : "raw";
+    logger.debug("[AssistantRender] cannot create streaming payload", {
+      partsCount: 0,
+      format,
+      formatMode,
+      textLength: 0,
+      reason: "empty message text",
+    });
     return null;
   }
 
@@ -110,12 +119,22 @@ export function prepareAssistantStreamingPayload(
 
   if (!useAssistantEntitiesFormat()) {
     const parts = createPlainRenderedParts(messageText, maxPartLength);
+    if (parts.length === 0) {
+      logger.debug("[AssistantRender] cannot create streaming payload", {
+        partsCount: 0,
+        format,
+        formatMode,
+        textLength: messageText.length,
+        reason: "no parts after chunking in raw mode",
+      });
+      return null;
+    }
     logger.debug("[AssistantRender] Built streaming assistant payload in raw mode", {
       formatMode,
       textLength: messageText.length,
       partCount: parts.length,
     });
-    return parts.length > 0 ? { parts: parts.map(p => p.text), format } : null;
+    return { parts: parts.map(p => ({ text: p.text, entities: p.entities })), format };
   }
 
   const stableBoundary = getStableStreamingBoundary(messageText);
@@ -131,6 +150,19 @@ export function prepareAssistantStreamingPayload(
   }
 
   const parts = chunkTelegramRenderedBlocks(blocks, { maxPartLength });
+  if (parts.length === 0) {
+    logger.debug("[AssistantRender] cannot create streaming payload", {
+      partsCount: 0,
+      format,
+      formatMode,
+      textLength: messageText.length,
+      stableBoundary,
+      tailLength: unstableTail.length,
+      blockCount: blocks.length,
+      reason: "no parts after chunking in entities mode",
+    });
+    return null;
+  }
   logger.debug("[AssistantRender] Built streaming assistant payload in entities mode", {
     formatMode,
     textLength: messageText.length,
@@ -141,8 +173,7 @@ export function prepareAssistantStreamingPayload(
     richParts: parts.filter((part) => part.source === "entities").length,
     plainParts: parts.filter((part) => part.source === "plain").length,
   });
-
-  return parts.length > 0 ? { parts: parts.map(p => p.text), format } : null;
+  return { parts: parts.map(p => ({ text: p.text, entities: p.entities })), format };
 }
 
 
@@ -153,5 +184,5 @@ export function prepareAssistantFinalStreamingPayload(
 ): StreamingMessagePayload | null {
   const parts = renderAssistantFinalPartsSafe(messageText, maxPartLength);
   const format = useAssistantEntitiesFormat() ? "markdown_v2" : "raw";
-  return parts.length > 0 ? { parts: parts.map(p => p.text), format } : null;
+  return parts.length > 0 ? { parts: parts.map(p => ({ text: p.text, entities: p.entities })), format } : null;
 }

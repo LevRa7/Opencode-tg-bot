@@ -179,7 +179,7 @@ describe("bot/utils/message-draft-stream", () => {
     // Should edit because it's a continuation
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(editMessageText).toHaveBeenCalledTimes(1);
-    expect(editMessageText).toHaveBeenCalledWith(123, 42, "hello world extended", undefined);
+    expect(editMessageText).toHaveBeenCalledWith(123, 42, "hello world extended", {});
   });
 
   it("keeps editing the same message for raw updates inside one ongoing streamed answer", async () => {
@@ -315,8 +315,8 @@ describe("bot/utils/message-draft-stream", () => {
 
     expect(sendMessage).toHaveBeenNthCalledWith(1, 123, "first reply", { message_thread_id: 11 });
     expect(sendMessage).toHaveBeenNthCalledWith(2, 123, "second reply", { message_thread_id: 22 });
-    expect(editMessageText).toHaveBeenNthCalledWith(1, 123, 41, "first reply updated", undefined);
-    expect(editMessageText).toHaveBeenNthCalledWith(2, 123, 84, "second reply updated", undefined);
+    expect(editMessageText).toHaveBeenNthCalledWith(1, 123, 41, "first reply updated", { message_thread_id: 11 });
+    expect(editMessageText).toHaveBeenNthCalledWith(2, 123, 84, "second reply updated", { message_thread_id: 22 });
     expect(manager.getLastSentMessageId("session-1")).toBe(41);
     expect(manager.getLastSentMessageId("session-2")).toBe(84);
   });

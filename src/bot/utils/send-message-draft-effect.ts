@@ -1,5 +1,6 @@
 import type { Api, RawApi } from "grammy";
 import { logger } from "../../utils/logger.js";
+import { sanitizeHtmlForTelegram } from "./html-sanitize.js";
 import {
   SequentialMessageDraftIdAllocator,
   type MessageDraftIdAllocator,
@@ -23,6 +24,7 @@ interface AbortSignalLike {
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 const DRAFT_EFFECT_STEP_DELAY_MS = 45;
+const HTML_SANITIZER_HEADROOM = 64;
 
 function delay(ms: number, signal?: AbortSignalLike): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -85,6 +87,14 @@ function buildDraftFrames(text: string): string[] {
   );
 }
 
+function clampHtmlFrame(frame: string): string {
+  if (frame.length <= TELEGRAM_MESSAGE_LIMIT) {
+    return frame;
+  }
+
+  return sanitizeHtmlForTelegram(frame.slice(0, TELEGRAM_MESSAGE_LIMIT - HTML_SANITIZER_HEADROOM));
+}
+
 function buildHtmlDraftFrames(text: string): string[] {
   const normalized = text.trim();
   if (!normalized) {
@@ -92,15 +102,11 @@ function buildHtmlDraftFrames(text: string): string[] {
   }
 
   const blockquoteMatch = normalized.match(
-    /^(?<prefix>[\s\S]*?)<blockquote expandable>(?<body>[\s\S]*)<\/blockquote>$/,
+    /^(?<prefix>[\s\S]*?)<blockquote\s+expandable>(?<body>[\s\S]*)<\/blockquote>$/,
   );
 
   if (!blockquoteMatch?.groups) {
-    return [
-      normalized.length > TELEGRAM_MESSAGE_LIMIT
-        ? normalized.slice(0, TELEGRAM_MESSAGE_LIMIT)
-        : normalized,
-    ];
+    return [clampHtmlFrame(normalized)];
   }
 
   const prefix = blockquoteMatch.groups.prefix.trimEnd();
@@ -117,10 +123,9 @@ function buildHtmlDraftFrames(text: string): string[] {
   const frames: string[] = [];
   for (let index = 0; index < bodySections.length; index += 1) {
     const renderedBody = bodySections.slice(0, index + 1).join("\n\n");
-    const frame = `${prefix}\n\n<blockquote expandable>${renderedBody}</blockquote>`;
-    frames.push(
-      frame.length > TELEGRAM_MESSAGE_LIMIT ? frame.slice(0, TELEGRAM_MESSAGE_LIMIT) : frame,
-    );
+    const renderedBlockquote = `<blockquote expandable>${renderedBody}</blockquote>`;
+    const frame = prefix ? `${prefix}\n\n${renderedBlockquote}` : renderedBlockquote;
+    frames.push(clampHtmlFrame(frame));
   }
 
   return Array.from(new Set(frames));

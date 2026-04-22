@@ -88,6 +88,141 @@ describe("bot/streaming/tool-call-streamer", () => {
     }
   });
 
+  it("preserves expandable blockquote wrappers in every streamed chunk", async () => {
+    vi.useFakeTimers();
+
+    let nextMessageId = 200;
+    const sendText = vi.fn(async () => nextMessageId++);
+    const editText = vi.fn().mockResolvedValue(undefined);
+    const deleteText = vi.fn().mockResolvedValue(undefined);
+    const streamer = new ToolCallStreamer({
+      throttleMs: 0,
+      sendText,
+      editText,
+      deleteText,
+    });
+
+    const longExpandableBlockquote = `<blockquote expandable>${Array.from(
+      { length: 350 },
+      (_, index) => `line ${index}: ${"x".repeat(20)}`,
+    ).join("\n")}</blockquote>`;
+
+    streamer.append("s1", longExpandableBlockquote);
+
+    await vi.waitFor(() => {
+      expect(sendText.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    for (const call of sendText.mock.calls) {
+      const [, text] = call as unknown as [string, string];
+      expect(text.startsWith("<blockquote expandable>")).toBe(true);
+      expect(text.endsWith("</blockquote>")).toBe(true);
+      expect(text.length).toBeLessThanOrEqual(4000);
+    }
+  });
+
+  it("keeps expandable blockquote chunks wrapped when adjacent text is streamed", async () => {
+    vi.useFakeTimers();
+
+    let nextMessageId = 300;
+    const messageTexts = new Map<number, string>();
+    const sendText = vi.fn(async (_sessionId: string, text: string) => {
+      const messageId = nextMessageId++;
+      messageTexts.set(messageId, text);
+      return messageId;
+    });
+    const editText = vi.fn(async (_sessionId: string, messageId: number, text: string) => {
+      messageTexts.set(messageId, text);
+    });
+    const deleteText = vi.fn().mockResolvedValue(undefined);
+    const streamer = new ToolCallStreamer({
+      throttleMs: 0,
+      sendText,
+      editText,
+      deleteText,
+    });
+
+    const longExpandableBlockquote = `<blockquote expandable>${Array.from(
+      { length: 350 },
+      (_, index) => `blockquote line ${index}: ${"x".repeat(20)}`,
+    ).join("\n")}</blockquote>`;
+
+    streamer.append("s1", longExpandableBlockquote);
+    await vi.waitFor(() => {
+      expect(sendText.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    streamer.append("s1", "after blockquote");
+    await vi.waitFor(() => {
+      expect(Array.from(messageTexts.values()).some((text) => text.includes("after blockquote"))).toBe(
+        true,
+      );
+    });
+
+    const currentTexts = Array.from(messageTexts.values());
+    expect(currentTexts.some((text) => text.includes("after blockquote"))).toBe(true);
+
+    for (const text of currentTexts) {
+      if (!text.includes("blockquote line")) {
+        continue;
+      }
+
+      expect(text.startsWith("<blockquote expandable>")).toBe(true);
+      expect(text.endsWith("</blockquote>")).toBe(true);
+      expect(text.length).toBeLessThanOrEqual(4000);
+    }
+  });
+
+  it("keeps expandable blockquote chunks wrapped when preceding text is streamed", async () => {
+    vi.useFakeTimers();
+
+    let nextMessageId = 400;
+    const messageTexts = new Map<number, string>();
+    const sendText = vi.fn(async (_sessionId: string, text: string) => {
+      const messageId = nextMessageId++;
+      messageTexts.set(messageId, text);
+      return messageId;
+    });
+    const editText = vi.fn(async (_sessionId: string, messageId: number, text: string) => {
+      messageTexts.set(messageId, text);
+    });
+    const deleteText = vi.fn().mockResolvedValue(undefined);
+    const streamer = new ToolCallStreamer({
+      throttleMs: 0,
+      sendText,
+      editText,
+      deleteText,
+    });
+
+    const longExpandableBlockquote = `<blockquote expandable>${Array.from(
+      { length: 350 },
+      (_, index) => `preceded blockquote line ${index}: ${"x".repeat(20)}`,
+    ).join("\n")}</blockquote>`;
+
+    streamer.append("s1", "before blockquote");
+    await vi.waitFor(() => {
+      expect(sendText).toHaveBeenCalledTimes(1);
+    });
+
+    streamer.append("s1", longExpandableBlockquote);
+    await vi.waitFor(() => {
+      expect(messageTexts.size).toBeGreaterThan(1);
+    });
+
+    const currentTexts = Array.from(messageTexts.values());
+    expect(currentTexts.some((text) => text.includes("before blockquote"))).toBe(true);
+
+    for (const text of currentTexts) {
+      if (!text.includes("preceded blockquote line")) {
+        continue;
+      }
+
+      expect(text.startsWith("<blockquote expandable>")).toBe(true);
+      expect(text.endsWith("</blockquote>")).toBe(true);
+      expect(text.length).toBeLessThanOrEqual(4000);
+    }
+  });
+
   it("replaces retry text by prefix inside the active stream", async () => {
     vi.useFakeTimers();
 

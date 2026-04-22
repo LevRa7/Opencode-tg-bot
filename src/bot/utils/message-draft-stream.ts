@@ -10,16 +10,21 @@ import {
 type DraftApi = Pick<Api<RawApi>, "sendMessageDraft">;
 type SendApi = Pick<Api<RawApi>, "sendMessage">;
 type EditApi = Pick<Api<RawApi>, "editMessageText">;
+type TelegramSendMessageDraftOptions = Parameters<DraftApi["sendMessageDraft"]>[3];
+type TelegramSendMessageOptions = Parameters<SendApi["sendMessage"]>[2];
+type TelegramEditMessageOptions = Parameters<EditApi["editMessageText"]>[3];
 
 interface DraftStreamState {
   draftId: number;
   lastSentAt: number;
   lastSentText: string;
   lastSentFormat: TelegramTextFormat;
+  lastSentOptions: TelegramSendMessageDraftOptions | null;
   lastSentMessageId: number | null;
   lastPayloadSignature: string | null;
   pendingText: string | null;
   pendingFormat: TelegramTextFormat;
+  pendingOptions: TelegramSendMessageDraftOptions | null;
   timer: ReturnType<typeof setTimeout> | null;
   target: TelegramThreadTarget | null;
   api: DraftApi | null;
@@ -126,6 +131,7 @@ export class MessageDraftStreamManager {
     target: TelegramThreadTarget,
     text: string,
     format: TelegramTextFormat = "raw",
+    options?: TelegramSendMessageDraftOptions,
   ): void {
     const preparedText = prepareDraftText(text, format);
     if (!preparedText) {
@@ -148,6 +154,7 @@ export class MessageDraftStreamManager {
     state.target = target;
     state.pendingText = preparedText;
     state.pendingFormat = format;
+    state.pendingOptions = options ?? null;
 
     if (state.timer) {
       return;
@@ -181,10 +188,11 @@ export class MessageDraftStreamManager {
 
     const text = state.pendingText;
     const format = state.pendingFormat;
+    const options = state.pendingOptions;
 
     state.inFlight = true;
     try {
-      await this.sendDraftText(sessionId, state, text, format);
+      await this.sendDraftText(sessionId, state, text, format, options);
     } finally {
       state.inFlight = false;
     }
@@ -192,6 +200,7 @@ export class MessageDraftStreamManager {
     if (!state.disabled && state.pendingText === text && state.pendingFormat === format) {
       state.pendingText = null;
       state.pendingFormat = state.lastSentFormat;
+      state.pendingOptions = null;
     }
   }
 
@@ -220,10 +229,12 @@ export class MessageDraftStreamManager {
       lastSentAt: 0,
       lastSentText: "",
       lastSentFormat: "raw",
+      lastSentOptions: null,
       lastSentMessageId: null,
       lastPayloadSignature: null,
       pendingText: null,
       pendingFormat: "raw",
+      pendingOptions: null,
       timer: null,
       target: null,
       api: null,
@@ -259,11 +270,12 @@ export class MessageDraftStreamManager {
 
     const pendingText = state.pendingText;
     const pendingFormat = state.pendingFormat;
+    const pendingOptions = state.pendingOptions;
     const nextText = resolveNextProgressiveText(state.lastSentText, pendingText, pendingFormat);
 
     state.inFlight = true;
     try {
-      await this.sendDraftText(sessionId, state, nextText, pendingFormat);
+      await this.sendDraftText(sessionId, state, nextText, pendingFormat, pendingOptions);
     } finally {
       state.inFlight = false;
     }
@@ -275,6 +287,7 @@ export class MessageDraftStreamManager {
     if (state.pendingText === nextText && state.pendingFormat === pendingFormat) {
       if (nextText === pendingText) {
         state.pendingText = null;
+        state.pendingOptions = null;
       }
     }
 
@@ -284,6 +297,7 @@ export class MessageDraftStreamManager {
     }
 
     state.pendingText = null;
+    state.pendingOptions = null;
   }
 
   private async sendDraftText(
@@ -291,10 +305,14 @@ export class MessageDraftStreamManager {
     state: DraftStreamState,
     text: string,
     format: TelegramTextFormat,
+    options?: TelegramSendMessageDraftOptions | null,
   ): Promise<void> {
     try {
       const targetMessageId = state.lastSentMessageId;
       const canEdit = targetMessageId !== null && state.editApi !== null;
+      const finalOptions = (options
+        ? withMessageThreadId(options, state.target!.messageThreadId)
+        : withMessageThreadId(undefined, state.target!.messageThreadId)) as TelegramSendMessageDraftOptions;
 
       if (canEdit) {
         await editBotText({
@@ -302,7 +320,7 @@ export class MessageDraftStreamManager {
           chatId: state.target!.chatId,
           messageId: targetMessageId,
           text,
-          options: undefined,
+          options: finalOptions as TelegramEditMessageOptions,
           format,
         });
       } else if (state.sendApi) {
@@ -310,7 +328,7 @@ export class MessageDraftStreamManager {
           api: state.sendApi,
           chatId: state.target!.chatId,
           text,
-          options: withMessageThreadId(undefined, state.target!.messageThreadId),
+          options: finalOptions as TelegramSendMessageOptions,
           format,
           messageThreadId: state.target!.messageThreadId,
         });
@@ -324,13 +342,14 @@ export class MessageDraftStreamManager {
           draftId: state.draftId,
           text,
           format,
-          options: withMessageThreadId(undefined, state.target!.messageThreadId),
+          options: finalOptions,
         });
       }
       state.lastSentAt = Date.now();
       state.lastSentText = text;
       state.lastSentFormat = format;
-      state.lastPayloadSignature = `${format}::${JSON.stringify([text])}`;
+      state.lastSentOptions = options ?? null;
+      state.lastPayloadSignature = `${format}::${JSON.stringify([text])}::${JSON.stringify(options ?? null)}`;
     } catch (error) {
       state.disabled = true;
       state.pendingText = null;

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Context } from "grammy";
-import { extractMessageThreadIdFromContext } from "../bot/utils/message-thread.js";
+import { extractMessageThreadIdFromContext, isForumChat } from "../bot/utils/message-thread.js";
 import { ConversationContextKey } from "../thread/conversation-context-key.js";
 
 export interface TelegramConversationScope {
@@ -35,10 +35,15 @@ export function extractTelegramConversationScopeFromContext(
     return null;
   }
 
+  let messageThreadId = extractMessageThreadIdFromContext(ctx);
+  if (messageThreadId === undefined && isForumChat(ctx)) {
+    messageThreadId = 0;
+  }
+
   return {
     userId,
     chatId,
-    messageThreadId: extractMessageThreadIdFromContext(ctx),
+    messageThreadId,
   };
 }
 

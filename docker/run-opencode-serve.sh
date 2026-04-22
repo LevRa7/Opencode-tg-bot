@@ -150,60 +150,110 @@ mkdir -p "$STATE_SKILLS_DIR/openai-media-transcriber"
 
 cp "$HOST_AUTH_FILE" "$OPENCODE_DATA_DIR/auth.json"
 
+# Copy cliproxyapi.key to workspace if it exists
+HOST_CLIPROXYAPI_KEY="${CONFIG_DIR}/cliproxyapi.key"
+if [[ -f "$HOST_CLIPROXYAPI_KEY" ]]; then
+  mkdir -p "$WORKSPACE/.config/opencode"
+  # Remove existing file if it belongs to a different user (e.g., from previous container)
+  if [[ -f "$WORKSPACE/.config/opencode/cliproxyapi.key" ]] && [[ ! -O "$WORKSPACE/.config/opencode/cliproxyapi.key" ]]; then
+    rm -f "$WORKSPACE/.config/opencode/cliproxyapi.key"
+  fi
+  cp -f "$HOST_CLIPROXYAPI_KEY" "$WORKSPACE/.config/opencode/cliproxyapi.key"
+  chown 1000:1000 "$WORKSPACE/.config/opencode/cliproxyapi.key"
+  chmod 644 "$WORKSPACE/.config/opencode/cliproxyapi.key"
+  echo "Copied cliproxyapi.key to workspace"
+fi
+
 HOST_OPENCODE_JSON="${CONFIG_DIR}/opencode.json"
 TENANT_OPENCODE_JSON="${XDG_CONFIG_DIR}/opencode.json"
+TENANT_CLIPROXYAPI_KEY_REF=""
+
+if [[ -f "$HOST_CLIPROXYAPI_KEY" ]]; then
+  TENANT_CLIPROXYAPI_KEY_REF="{file:/workspace/.config/opencode/cliproxyapi.key}"
+fi
 
 node -e '
 const fs = require("fs");
-const [src, dst, cliproxyApiBaseUrl] = process.argv.slice(1);
+const [src, dst, cliproxyApiBaseUrl, cliproxyApiKeyRef] = process.argv.slice(1);
 let host = {};
 if (fs.existsSync(src)) {
   host = JSON.parse(fs.readFileSync(src, "utf8"));
 }
-const hostProvider = host.provider?.cliproxyapi ?? {};
-const config = {
-  $schema: "https://opencode.ai/config.json",
-  skills: {
-    paths: ["/state/skills"],
-  },
-  provider: {
-    cliproxyapi: {
-      npm: hostProvider.npm ?? "@ai-sdk/openai-compatible",
-      name: hostProvider.name ?? "CliProxyApi",
-      ...(hostProvider.models ? { models: hostProvider.models } : {}),
-      options: {
-        ...(hostProvider.options ?? {}),
-        baseURL: cliproxyApiBaseUrl,
-      },
+
+// Start with only the host fields the tenant config is allowed to keep.
+const config = {};
+
+if (typeof host.model === "string") {
+  config.model = host.model;
+}
+
+if (host.provider && typeof host.provider === "object") {
+  config.provider = { ...host.provider };
+}
+
+// Ensure skills object exists and set paths for container
+if (!config.skills) config.skills = {};
+config.skills.paths = ["/state/skills"];
+
+// Ensure provider object exists
+if (!config.provider) config.provider = {};
+
+// Update cliproxyapi provider options
+if (!config.provider.cliproxyapi) {
+  config.provider.cliproxyapi = {
+    npm: "@ai-sdk/openai-compatible",
+    name: "CliProxyApi",
+    options: {},
+  };
+}
+
+const cliproxy = config.provider.cliproxyapi;
+if (!cliproxy.options) cliproxy.options = {};
+
+// Fix apiKey path for container environment
+if (typeof cliproxy.options.apiKey === "string") {
+  // Replace ~/.config/opencode/ with /workspace/.config/opencode/
+  cliproxy.options.apiKey = cliproxy.options.apiKey.replace(
+    /^\{file:~\/\.config\/opencode\/(.+)\}$/,
+    "{file:/workspace/.config/opencode/$1}"
+  );
+} else if (cliproxyApiKeyRef) {
+  cliproxy.options.apiKey = cliproxyApiKeyRef;
+}
+
+// Ensure baseURL is set
+cliproxy.options.baseURL = cliproxyApiBaseUrl;
+
+// Ensure local provider exists (for fallback)
+if (!config.provider.local) {
+  config.provider.local = {
+    npm: "@ai-sdk/openai-compatible",
+    name: "Local Gemma4",
+    options: {
+      baseURL: "http://192.168.2.166:18080/v1",
     },
-    local: {
-      npm: "@ai-sdk/openai-compatible",
-      name: "Local Gemma4",
-      options: {
-        baseURL: "http://192.168.2.166:18080/v1",
-      },
-      models: {
-        gemma4: {
-          name: "Gemma 4 26b",
-          attachment: true,
-          limit: {
-            context: 128000,
-            output: 32000,
-          },
-          modalities: {
-            input: ["text", "image"],
-            output: ["text"],
-          },
+    models: {
+      gemma4: {
+        name: "Gemma 4 26b",
+        attachment: true,
+        limit: {
+          context: 128000,
+          output: 32000,
+        },
+        modalities: {
+          input: ["text", "image"],
+          output: ["text"],
         },
       },
     },
-  },
-};
-if (typeof host.model === "string" && host.model.startsWith("cliproxyapi/")) {
-  config.model = host.model;
+  };
 }
+
+// Preserve model if it starts with cliproxyapi/ (already in host config)
+// No need to change model field.
+
 fs.writeFileSync(dst, JSON.stringify(config, null, 2) + "\n", "utf8");
-' "$HOST_OPENCODE_JSON" "$TENANT_OPENCODE_JSON" "$CLIPROXYAPI_BASE_URL"
+ ' "$HOST_OPENCODE_JSON" "$TENANT_OPENCODE_JSON" "$CLIPROXYAPI_BASE_URL" "$TENANT_CLIPROXYAPI_KEY_REF"
 
 cp "$SCRIPT_DIR/skills/tg-cli/SKILL.md" "$STATE_SKILLS_DIR/tg-cli/SKILL.md"
 cp "$SCRIPT_DIR/skills/embedding-strategies/SKILL.md" \

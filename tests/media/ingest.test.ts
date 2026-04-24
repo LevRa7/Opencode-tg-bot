@@ -82,7 +82,7 @@ describe("media/ingest", () => {
       mode: "text",
       recognizedText: "remote transcript",
       promptText:
-        "User attached a local media file.\n\nSaved file path: /state/media/123/2026/04/24/audio.ogg\nMedia analysis/transcript:\nremote transcript",
+        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/audio.ogg\nProcessed media result:\nremote transcript",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
         runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
@@ -126,7 +126,7 @@ describe("media/ingest", () => {
       mode: "text",
       recognizedText: "default transcript",
       promptText:
-        "User attached a local media file.\n\nSaved file path: /state/media/123/2026/04/24/audio.ogg\nMedia analysis/transcript:\ndefault transcript",
+        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/audio.ogg\nProcessed media result:\ndefault transcript",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
         runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
@@ -177,7 +177,7 @@ describe("media/ingest", () => {
       mode: "text",
       recognizedText: "fallback transcript",
       promptText:
-        "User attached a local media file.\n\nSaved file path: /state/media/123/2026/04/24/audio.ogg\nMedia analysis/transcript:\nfallback transcript",
+        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/audio.ogg\nProcessed media result:\nfallback transcript",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
         runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
@@ -226,7 +226,7 @@ describe("media/ingest", () => {
       mode: "text",
       recognizedText: "local transcript",
       promptText:
-        "User attached a local media file.\n\nSaved file path: /state/media/123/2026/04/24/audio.ogg\nMedia analysis/transcript:\nlocal transcript",
+        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/audio.ogg\nProcessed media result:\nlocal transcript",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
         runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
@@ -279,7 +279,7 @@ describe("media/ingest", () => {
       mode: "text",
       recognizedText: "local transcript",
       promptText:
-        "User attached a local media file.\n\nSaved file path: /state/media/123/2026/04/24/audio.ogg\nMedia analysis/transcript:\nlocal transcript",
+        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/audio.ogg\nProcessed media result:\nlocal transcript",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
         runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
@@ -317,7 +317,7 @@ describe("media/ingest", () => {
     });
 
     expect(prompt).toBe(
-      "User attached a local media file.\n\nSaved file path: /state/media/123/2026/04/24/image.png\nMedia analysis/transcript:\nvisual summary",
+      "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/image.png\nProcessed media result:\nvisual summary",
     );
   });
 
@@ -361,7 +361,7 @@ describe("media/ingest", () => {
     expect(preparedPrompt).toEqual({
       mode: "text",
       promptText:
-        "User attached a local media file.\n\nSaved file path: /state/media/123/2026/04/24/notes.txt\nMedia analysis/transcript:\nalpha\nbeta\n\nUser caption/instruction:\nSummarize this",
+        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/notes.txt\nProcessed media result:\nalpha\nbeta\n\nUser caption/instruction:\nSummarize this",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/notes.txt",
         runtimeVisiblePath: "/state/media/123/2026/04/24/notes.txt",
@@ -478,7 +478,7 @@ describe("media/ingest", () => {
     expect(preparedPrompt).toEqual({
       mode: "text",
       promptText:
-        "User attached a local media file.\n\nSaved file path: /state/media/123/2026/04/24/photo.png\nMedia analysis/transcript:\nimage transcript\n\nUser caption/instruction:\nDescribe this",
+        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/photo.png\nProcessed media result:\nimage transcript\n\nUser caption/instruction:\nDescribe this",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/photo.png",
         runtimeVisiblePath: "/state/media/123/2026/04/24/photo.png",
@@ -533,7 +533,7 @@ describe("media/ingest", () => {
     expect(preparedPrompt).toEqual({
       mode: "text",
       promptText:
-        "User attached a local media file.\n\nSaved file path: /state/media/123/2026/04/24/photo.png\nMedia analysis/transcript:\nimage transcript\n\nUser caption/instruction:\nDescribe this",
+        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/photo.png\nProcessed media result:\nimage transcript\n\nUser caption/instruction:\nDescribe this",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/photo.png",
         runtimeVisiblePath: "/state/media/123/2026/04/24/photo.png",

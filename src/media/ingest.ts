@@ -109,8 +109,9 @@ export function buildStoredMediaPrompt(params: {
   caption: string;
 }): string {
   const sections = [
-    "User attached a local media file.",
-    `Saved file path: ${params.runtimeVisiblePath}\nMedia analysis/transcript:\n${params.extractedText}`,
+    "A Telegram media file was already processed locally by the bridge.",
+    "The file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.",
+    `Reference file path: ${params.runtimeVisiblePath}\nProcessed media result:\n${params.extractedText}`,
   ];
 
   if (params.caption.trim().length > 0) {

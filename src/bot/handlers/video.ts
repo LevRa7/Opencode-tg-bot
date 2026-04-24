@@ -1,8 +1,9 @@
 import path from "node:path";
 import type { Context } from "grammy";
 import type { FilePartInput } from "@opencode-ai/sdk/v2";
+import { prepareAttachmentMediaPrompt } from "../../media/ingest.js";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
-import { downloadTelegramFile, toDataUri } from "../utils/file-download.js";
+import { downloadTelegramFile } from "../utils/file-download.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 
@@ -21,6 +22,7 @@ export interface VideoHandlerDeps extends ProcessPromptDeps {
     api: Context["api"],
     fileId: string,
   ) => Promise<{ buffer: Buffer; filePath: string }>;
+  prepareMediaPrompt?: typeof prepareAttachmentMediaPrompt;
   processPrompt?: (
     ctx: Context,
     text: string,
@@ -68,6 +70,7 @@ function normalizeVideoFilename(filename: string, filePath: string): string {
 
 export async function handleVideoMessage(ctx: Context, deps: VideoHandlerDeps): Promise<void> {
   const downloadFile = deps.downloadFile ?? downloadTelegramFile;
+  const prepareMediaPrompt = deps.prepareMediaPrompt ?? prepareAttachmentMediaPrompt;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
 
   const videoInfo = getVideoMessageInfo(ctx);
@@ -84,24 +87,46 @@ export async function handleVideoMessage(ctx: Context, deps: VideoHandlerDeps): 
 
   const caption = ctx.message?.caption || "";
 
+  let downloadedFile: Awaited<ReturnType<typeof downloadTelegramFile>>;
+
   try {
     await ctx.reply(t("bot.video_downloading"));
-    const downloadedFile = await downloadFile(ctx.api, videoInfo.fileId);
+    downloadedFile = await downloadFile(ctx.api, videoInfo.fileId);
+  } catch (error) {
+    logger.error("[Video] Error handling video message:", error);
+    await ctx.reply(t("bot.video_download_error"));
+    return;
+  }
+
+  try {
+    const filename = normalizeVideoFilename(videoInfo.filename, downloadedFile.filePath);
     const mimeType = videoInfo.mimeType.startsWith("video/") ? videoInfo.mimeType : "video/mp4";
-    const filePart: FilePartInput = {
-      type: "file",
-      mime: mimeType,
-      filename: normalizeVideoFilename(videoInfo.filename, downloadedFile.filePath),
-      url: toDataUri(downloadedFile.buffer, mimeType),
-    };
+    const prepared = await prepareMediaPrompt({
+      ctx,
+      telegramFileId: videoInfo.fileId,
+      mediaType: "video",
+      mimeType,
+      originalFileName: filename,
+      fallbackFileName: filename,
+      caption,
+      buffer: downloadedFile.buffer,
+      onFallbackStart: async () => {
+        await ctx.reply(t("bot.video_processing"));
+      },
+    });
 
     logger.info(
-      `[Video] Sending ${videoInfo.kind} (${downloadedFile.buffer.length} bytes, duration=${videoInfo.durationSec}s) with prompt`,
+      `[Video] Sending ${videoInfo.kind} (${downloadedFile.buffer.length} bytes, duration=${videoInfo.durationSec}s) via shared media prompt`,
     );
 
-    await processPrompt(ctx, caption, deps, [filePart]);
-  } catch (err) {
-    logger.error("[Video] Error handling video message:", err);
-    await ctx.reply(t("bot.video_download_error"));
+    if (prepared.mode === "attachment") {
+      await processPrompt(ctx, prepared.promptText, deps, prepared.fileParts);
+      return;
+    }
+
+    await processPrompt(ctx, prepared.promptText, deps);
+  } catch (error) {
+    logger.error("[Video] Error processing video message:", error);
+    await ctx.reply(t("bot.video_process_error"));
   }
 }

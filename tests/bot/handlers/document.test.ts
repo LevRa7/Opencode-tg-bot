@@ -4,6 +4,7 @@ import {
   handleDocumentMessage,
   type DocumentHandlerDeps,
 } from "../../../src/bot/handlers/document.js";
+import type { PreparedMediaPrompt } from "../../../src/media/types.js";
 import { t } from "../../../src/i18n/index.js";
 import { logger } from "../../../src/utils/logger.js";
 
@@ -42,33 +43,42 @@ function createDocumentDeps(overrides: Partial<DocumentHandlerDeps> = {}): {
   deps: DocumentHandlerDeps;
   processPromptMock: ReturnType<typeof vi.fn>;
   downloadMock: ReturnType<typeof vi.fn>;
-  getCapabilitiesMock: ReturnType<typeof vi.fn>;
-  getStoredModelMock: ReturnType<typeof vi.fn>;
+  prepareMediaPromptMock: ReturnType<typeof vi.fn>;
 } {
   const processPromptMock = vi.fn().mockResolvedValue(true);
   const downloadMock = vi.fn().mockResolvedValue({
     buffer: Buffer.from("file content here"),
     filePath: "documents/test.txt",
   });
-  const getCapabilitiesMock = vi.fn().mockResolvedValue({
-    input: { pdf: true, image: true },
-  });
-  const getStoredModelMock = vi.fn().mockReturnValue({
-    providerID: "test-provider",
-    modelID: "test-model",
+  const prepareMediaPromptMock = vi.fn().mockResolvedValue({
+    mode: "text",
+    promptText: "prepared prompt",
+    sourceFile: {
+      hostAbsolutePath: "/tmp/test.txt",
+      runtimeVisiblePath: ".opencode/media/test.txt",
+      fileName: "test.txt",
+      mimeType: "text/plain",
+      sizeBytes: 17,
+      mediaType: "text_document",
+    },
+    transcriberKind: "document",
   });
 
   const deps: DocumentHandlerDeps = {
     bot: {} as DocumentHandlerDeps["bot"],
     ensureEventSubscription: vi.fn().mockResolvedValue(undefined),
     downloadFile: downloadMock,
-    getModelCapabilities: getCapabilitiesMock,
-    getStoredModel: getStoredModelMock,
+    prepareMediaPrompt: prepareMediaPromptMock,
     processPrompt: processPromptMock,
     ...overrides,
   };
 
-  return { deps, processPromptMock, downloadMock, getCapabilitiesMock, getStoredModelMock };
+  return {
+    deps,
+    processPromptMock,
+    downloadMock,
+    prepareMediaPromptMock: deps.prepareMediaPrompt as ReturnType<typeof vi.fn>,
+  };
 }
 
 describe("bot/handlers/document", () => {
@@ -77,32 +87,39 @@ describe("bot/handlers/document", () => {
   });
 
   describe("text files", () => {
-    it("downloads and sends text file content as prompt", async () => {
+    it("routes text files through shared media preparation", async () => {
       const { ctx, replyMock } = createDocumentContext();
-      const { deps, processPromptMock, downloadMock } = createDocumentDeps();
+      const { deps, processPromptMock, downloadMock, prepareMediaPromptMock } =
+        createDocumentDeps();
 
       await handleDocumentMessage(ctx, deps);
 
       expect(replyMock).toHaveBeenCalledWith(t("bot.file_downloading"));
       expect(downloadMock).toHaveBeenCalled();
-      expect(processPromptMock).toHaveBeenCalledWith(
+      expect(prepareMediaPromptMock).toHaveBeenCalledWith({
         ctx,
-        "--- Content of test.txt ---\nfile content here\n--- End of file ---\n\n",
-        deps,
-      );
+        telegramFileId: "doc-file-id",
+        mediaType: "text_document",
+        mimeType: "text/plain",
+        originalFileName: "test.txt",
+        fallbackFileName: "test.txt",
+        caption: "",
+        buffer: Buffer.from("file content here"),
+        textContent: "file content here",
+      });
+      expect(processPromptMock).toHaveBeenCalledWith(ctx, "prepared prompt", deps);
     });
 
-    it("includes caption in prompt after file content", async () => {
+    it("passes caption into shared text document preparation", async () => {
       const { ctx } = createDocumentContext({ caption: "Please review this file" });
-      const { deps, processPromptMock } = createDocumentDeps();
+      const { deps, prepareMediaPromptMock, processPromptMock } = createDocumentDeps();
 
       await handleDocumentMessage(ctx, deps);
 
-      expect(processPromptMock).toHaveBeenCalledWith(
-        ctx,
-        expect.stringContaining("Please review this file"),
-        deps,
+      expect(prepareMediaPromptMock).toHaveBeenCalledWith(
+        expect.objectContaining({ caption: "Please review this file" }),
       );
+      expect(processPromptMock).toHaveBeenCalledWith(ctx, "prepared prompt", deps);
     });
 
     it("rejects text file larger than limit", async () => {
@@ -180,7 +197,7 @@ describe("bot/handlers/document", () => {
   });
 
   describe("PDF files", () => {
-    it("downloads and sends PDF when model supports it", async () => {
+    it("downloads and sends PDF attachments when shared media layer returns attachment mode", async () => {
       const { ctx, replyMock } = createDocumentContext({
         document: {
           file_id: "pdf-file-id",
@@ -190,23 +207,58 @@ describe("bot/handlers/document", () => {
           file_size: 5000,
         },
       });
-      const { deps, processPromptMock, downloadMock } = createDocumentDeps();
+      const fileParts = [
+        {
+          type: "file" as const,
+          mime: "application/pdf",
+          filename: "document.pdf",
+          url: "data:application/pdf;base64,ZmFrZQ==",
+        },
+      ] as PreparedMediaPrompt extends { mode: "attachment"; fileParts: infer T }
+        ? T
+        : never;
+      const { deps, processPromptMock, downloadMock, prepareMediaPromptMock } =
+        createDocumentDeps({
+          prepareMediaPrompt: vi.fn().mockResolvedValue({
+            mode: "attachment",
+            promptText: "Summarize this document",
+            fileParts,
+            sourceFile: {
+              hostAbsolutePath: "/tmp/document.pdf",
+              runtimeVisiblePath: ".opencode/media/document.pdf",
+              fileName: "document.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 5000,
+              mediaType: "pdf",
+            },
+            transcriberKind: "document",
+          } satisfies PreparedMediaPrompt),
+        });
 
       await handleDocumentMessage(ctx, deps);
 
       expect(replyMock).toHaveBeenCalledWith(t("bot.file_downloading"));
       expect(downloadMock).toHaveBeenCalled();
+      expect(prepareMediaPromptMock).toHaveBeenCalledWith({
+        ctx,
+        telegramFileId: "pdf-file-id",
+        mediaType: "pdf",
+        mimeType: "application/pdf",
+        originalFileName: "document.pdf",
+        fallbackFileName: "document.pdf",
+        caption: "",
+        buffer: Buffer.from("file content here"),
+        onFallbackStart: expect.any(Function),
+      });
       expect(processPromptMock).toHaveBeenCalledWith(
         ctx,
-        "",
+        "Summarize this document",
         deps,
-        expect.arrayContaining([
-          expect.objectContaining({ type: "file", mime: "application/pdf" }),
-        ]),
+        fileParts,
       );
     });
 
-    it("shows error when model does not support PDF", async () => {
+    it("uses shared media fallback text flow for unsupported PDF input and reports processing status", async () => {
       const { ctx, replyMock } = createDocumentContext({
         document: {
           file_id: "pdf-file-id",
@@ -216,19 +268,32 @@ describe("bot/handlers/document", () => {
           file_size: 5000,
         },
       });
-      const { deps, processPromptMock } = createDocumentDeps({
-        getModelCapabilities: vi.fn().mockResolvedValue({
-          input: { pdf: false },
-        }),
+      const prepareMediaPromptMock = vi.fn().mockImplementation(async (params) => {
+        await params.onFallbackStart?.();
+        return {
+          mode: "text",
+          promptText: "prepared pdf fallback text",
+          sourceFile: {
+            hostAbsolutePath: "/tmp/document.pdf",
+            runtimeVisiblePath: ".opencode/media/document.pdf",
+            fileName: "document.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 5000,
+            mediaType: "pdf",
+          },
+          transcriberKind: "document",
+        } satisfies PreparedMediaPrompt;
       });
+      const { deps, processPromptMock } = createDocumentDeps({ prepareMediaPrompt: prepareMediaPromptMock });
 
       await handleDocumentMessage(ctx, deps);
 
-      expect(replyMock).toHaveBeenCalledWith(t("bot.model_no_pdf"));
-      expect(processPromptMock).not.toHaveBeenCalled();
+      expect(replyMock).toHaveBeenNthCalledWith(1, t("bot.file_downloading"));
+      expect(replyMock).toHaveBeenNthCalledWith(2, t("bot.file_processing"));
+      expect(processPromptMock).toHaveBeenCalledWith(ctx, "prepared pdf fallback text", deps);
     });
 
-    it("sends caption-only when model does not support PDF but caption exists", async () => {
+    it("does not keep the old caption-only PDF fallback behavior", async () => {
       const { ctx } = createDocumentContext({
         document: {
           file_id: "pdf-file-id",
@@ -240,14 +305,29 @@ describe("bot/handlers/document", () => {
         caption: "Summarize this document",
       });
       const { deps, processPromptMock } = createDocumentDeps({
-        getModelCapabilities: vi.fn().mockResolvedValue({
-          input: { pdf: false },
-        }),
+        prepareMediaPrompt: vi.fn().mockResolvedValue({
+          mode: "text",
+          promptText: "prepared pdf fallback text with caption context",
+          sourceFile: {
+            hostAbsolutePath: "/tmp/document.pdf",
+            runtimeVisiblePath: ".opencode/media/document.pdf",
+            fileName: "document.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 5000,
+            mediaType: "pdf",
+          },
+          transcriberKind: "document",
+        } satisfies PreparedMediaPrompt),
       });
 
       await handleDocumentMessage(ctx, deps);
 
-      expect(processPromptMock).toHaveBeenCalledWith(ctx, "Summarize this document", deps);
+      expect(processPromptMock).toHaveBeenCalledWith(
+        ctx,
+        "prepared pdf fallback text with caption context",
+        deps,
+      );
+      expect(processPromptMock).not.toHaveBeenCalledWith(ctx, "Summarize this document", deps);
     });
   });
 
@@ -303,6 +383,23 @@ describe("bot/handlers/document", () => {
       expect(replyMock).toHaveBeenCalledWith(t("bot.file_download_error"));
       expect(errorSpy).toHaveBeenCalledWith(
         "[Document] Error handling document message:",
+        expect.any(Error),
+      );
+    });
+
+    it("shows process error when media preparation fails after download", async () => {
+      const { ctx, replyMock } = createDocumentContext();
+      const { deps } = createDocumentDeps({
+        prepareMediaPrompt: vi.fn().mockRejectedValue(new Error("Failed to extract text")),
+      });
+      const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+
+      await handleDocumentMessage(ctx, deps);
+
+      expect(replyMock).toHaveBeenNthCalledWith(1, t("bot.file_downloading"));
+      expect(replyMock).toHaveBeenNthCalledWith(2, t("bot.file_process_error"));
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[Document] Error processing document message:",
         expect.any(Error),
       );
     });

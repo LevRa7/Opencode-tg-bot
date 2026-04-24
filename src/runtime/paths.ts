@@ -14,6 +14,7 @@ export interface RuntimePaths {
 }
 
 const APP_DIR_NAME = "opencode-telegram-bot";
+const DEFAULT_WORKSPACES_ROOT = "/home/me/Workspaces";
 
 function getInstalledAppHome(): string {
   if (process.platform === "win32") {
@@ -40,6 +41,15 @@ function resolveAppHome(mode: RuntimeMode): string {
   }
 
   return getInstalledAppHome();
+}
+
+export function getWorkspacesRoot(): string {
+  const workspacesRootOverride = process.env.WORKSPACES_ROOT;
+  if (workspacesRootOverride && workspacesRootOverride.trim().length > 0) {
+    return path.resolve(workspacesRootOverride);
+  }
+
+  return DEFAULT_WORKSPACES_ROOT;
 }
 
 export function getRuntimePaths(): RuntimePaths {

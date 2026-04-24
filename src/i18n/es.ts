@@ -89,14 +89,22 @@ export const es: I18nDictionary = {
   "bot.photo_model_no_image":
     "⚠️ El modelo actual no admite entrada de imagen. Enviaré solo texto.",
   "bot.photo_download_error": "🔴 No se pudo descargar la foto",
+  "bot.photo_processing": "⏳ Analizando foto...",
+  "bot.photo_process_error": "🔴 No se pudo procesar la foto",
   "bot.photo_no_caption":
     "💡 Consejo: agrega un pie de foto para describir que quieres hacer con esta foto.",
   "bot.file_downloading": "⏳ Descargando archivo...",
   "bot.file_too_large": "⚠️ El archivo es demasiado grande (max {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 No se pudo descargar el archivo",
+  "bot.file_processing": "⏳ Extrayendo texto del documento...",
+  "bot.file_process_error": "🔴 No se pudo procesar el documento",
   "bot.video_too_long": "⚠️ El video es demasiado largo (máx. {maxDurationSec} s)",
   "bot.video_downloading": "⏳ Descargando video...",
   "bot.video_download_error": "🔴 No se pudo descargar el video",
+  "bot.video_processing": "⏳ Analizando video...",
+  "bot.video_process_error": "🔴 No se pudo procesar el video",
+  "bot.audio_processing": "⏳ Transcribiendo audio...",
+  "bot.audio_process_error": "🔴 No se pudo procesar el audio",
   "bot.model_no_pdf": "⚠️ El modelo actual no admite entrada PDF. Enviaré solo texto.",
   "bot.text_file_too_large": "⚠️ El archivo de texto es demasiado grande (max {maxSizeKb}KB)",
 

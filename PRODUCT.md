@@ -153,11 +153,12 @@ Model picker behavior:
 - [x] UI localization support via i18n files
 - [x] Service message visibility controls (thinking/tool updates)
 - [x] Sending code blocks as text files when needed
-- [x] Image attachments support (send photos/screenshots from Telegram to OpenCode)
-- [x] PDF attachments support (send documents from Telegram to OpenCode)
-- [x] Text file attachments support (send code/config/log files from Telegram to OpenCode)
-- [x] Voice/audio transcription via Whisper-compatible APIs (OpenAI/Groq/Together and compatible providers)
+- [x] Image attachments support (persist original photo files and fall back to local text extraction when the selected model lacks image input)
+- [x] PDF attachments support (persist original PDF files and fall back to local text extraction when the selected model lacks PDF input)
+- [x] Text file attachments support (include the saved local file path in the generated prompt for code/config/log files)
+- [x] Voice/audio transcription via Whisper-compatible APIs with automatic local media fallback when STT is unavailable or fails
 - [x] Optional global audio replies with `/tts` via OpenAI-compatible APIs
+- [x] Short Telegram video and video-note attachments support (persist saved copies and use automatic local analysis fallback when the selected model lacks video input)
 
 ## Current Task List
 

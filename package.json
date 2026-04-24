@@ -15,7 +15,8 @@
     "dist",
     "README.md",
     "LICENSE",
-    ".env.example"
+    ".env.example",
+    "skills/openai-media-transcriber"
   ],
   "engines": {
     "node": ">=20"
@@ -28,7 +29,7 @@
     "release:prepare": "node scripts/release-prepare.mjs",
     "release:rc": "node scripts/release-prepare.mjs rc",
     "release:notes:preview": "node scripts/release-notes-preview.mjs",
-    "lint": "eslint src --ext .ts --max-warnings=0",
+    "lint": "eslint src --ext .ts --max-warnings=0 --resolve-plugins-relative-to .",
     "format": "prettier --write \"src/**/*.ts\"",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"

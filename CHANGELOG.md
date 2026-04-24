@@ -24,6 +24,9 @@ Documentation rule:
 
 ### Changed
 
+- Persisted all incoming Telegram media under runtime-aware per-user storage and switched unsupported photo/PDF/video inputs plus unavailable audio STT flows to the local `openai-media-transcriber` scripts, forwarding extracted text together with the runtime-visible saved file path into OpenCode.
+  - Why: Telegram attachments should survive beyond the immediate request, tenant containers need paths that are valid both on the host bind mount and inside `/state`, and coding-oriented text models should still be able to work from media context without manual model switching or a hard STT dependency.
+  - Affects: `src/media/*`, `src/bot/handlers/photo.ts`, `src/bot/handlers/document.ts`, `src/bot/handlers/video.ts`, `src/bot/handlers/voice.ts`, `src/bot/index.ts`, `src/i18n/*.ts`, `tests/media/*.test.ts`, `tests/bot/handlers/*.test.ts`, `PRODUCT.md`, `package.json`
 - Changed `/models` to render the active runtime's provider-first catalog instead of querying providers directly, while keeping the existing empty and error replies for unavailable catalogs and safely splitting oversized catalogs across multiple Telegram replies.
   - Why: the command output should match the new runtime-aware model picker so Telegram users see the same provider/model set as the current OpenCode runtime without hitting Telegram's 4096-character message limit.
   - Affects: `src/bot/commands/models.ts`, `tests/bot/commands/models.test.ts`, `PRODUCT.md`

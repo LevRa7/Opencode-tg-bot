@@ -89,14 +89,22 @@ export const fr: I18nDictionary = {
   "bot.photo_model_no_image":
     "⚠️ Le modèle actuel ne prend pas en charge les images. Envoi du texte uniquement.",
   "bot.photo_download_error": "🔴 Impossible de télécharger la photo",
+  "bot.photo_processing": "⏳ Analyse de la photo...",
+  "bot.photo_process_error": "🔴 Impossible de traiter la photo",
   "bot.photo_no_caption":
     "💡 Conseil : ajoutez une légende pour décrire ce que vous voulez faire avec cette photo.",
   "bot.file_downloading": "⏳ Téléchargement du fichier...",
   "bot.file_too_large": "⚠️ Le fichier est trop volumineux (max {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 Impossible de télécharger le fichier",
+  "bot.file_processing": "⏳ Extraction du texte du document...",
+  "bot.file_process_error": "🔴 Impossible de traiter le document",
   "bot.video_too_long": "⚠️ La vidéo est trop longue (max {maxDurationSec} s)",
   "bot.video_downloading": "⏳ Téléchargement de la vidéo...",
   "bot.video_download_error": "🔴 Impossible de télécharger la vidéo",
+  "bot.video_processing": "⏳ Analyse de la vidéo...",
+  "bot.video_process_error": "🔴 Impossible de traiter la vidéo",
+  "bot.audio_processing": "⏳ Transcription audio en cours...",
+  "bot.audio_process_error": "🔴 Impossible de traiter l'audio",
   "bot.model_no_pdf":
     "⚠️ Le modèle actuel ne prend pas en charge les PDF. Envoi du texte uniquement.",
   "bot.text_file_too_large": "⚠️ Le fichier texte est trop volumineux (max {maxSizeKb}KB)",

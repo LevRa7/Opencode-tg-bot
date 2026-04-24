@@ -6,6 +6,7 @@ import type { FilePartInput } from "@opencode-ai/sdk/v2";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { config } from "../../config.js";
+import { prepareAudioPrompt } from "../../media/ingest.js";
 import { isSttConfigured, transcribeAudio, type SttResult } from "../../stt/client.js";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
 import { logger } from "../../utils/logger.js";
@@ -97,6 +98,7 @@ export interface VoiceMessageDeps extends ProcessPromptDeps {
     fileId: string,
   ) => Promise<{ buffer: Buffer; filename: string } | null>;
   transcribeAudio?: (audioBuffer: Buffer, filename: string) => Promise<SttResult>;
+  prepareAudioPrompt?: typeof prepareAudioPrompt;
   processPrompt?: (
     ctx: Context,
     text: string,
@@ -158,17 +160,17 @@ export function createVoiceHandler(deps: VoiceMessageDeps) {
 
 /**
  * Handles incoming voice and audio messages:
- * 1. Checks if STT is configured
- * 2. Downloads the audio file from Telegram
+ * 1. Downloads the audio file from Telegram
+ * 2. Prepares a shared audio prompt using STT or stored-media fallback
  * 3. Sends "recognizing..." status message
- * 4. Calls STT API
- * 5. Shows recognized text
- * 6. Passes text to processUserPrompt
+ * 4. Shows recognized text when available
+ * 5. Passes prepared prompt text to processUserPrompt
  */
 export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): Promise<void> {
   const sttConfigured = deps.isSttConfigured ?? isSttConfigured;
   const downloadFile = deps.downloadTelegramFile ?? downloadTelegramFile;
   const transcribe = deps.transcribeAudio ?? transcribeAudio;
+  const preparePrompt = deps.prepareAudioPrompt ?? prepareAudioPrompt;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
 
   // Determine file_id from voice or audio message
@@ -181,33 +183,38 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
     return;
   }
 
-  // Check if STT is configured
-  if (!sttConfigured()) {
-    await ctx.reply(t("stt.not_configured"));
-    return;
-  }
-
   // Send "recognizing..." status message (will be edited later)
   const statusMessage = await ctx.reply(t("stt.recognizing"));
+  const chatId = ctx.chat!.id;
 
   try {
     // Download the audio file from Telegram
     const fileData = await downloadFile(ctx, fileId);
     if (!fileData) {
-      await ctx.api.editMessageText(
-        ctx.chat!.id,
-        statusMessage.message_id,
-        t("stt.error", { error: "download failed" }),
-      );
-      return;
+      throw new Error("download failed");
     }
 
-    // Transcribe the audio
-    const result = await transcribe(fileData.buffer, fileData.filename);
+    const prepared = await preparePrompt({
+      ctx,
+      telegramFileId: fileId,
+      mimeType: audio?.mime_type || "audio/ogg",
+      originalFileName: fileData.filename,
+      fallbackFileName: fileData.filename,
+      buffer: fileData.buffer,
+      isSttConfigured: sttConfigured,
+      transcribeAudio: transcribe,
+      onFallbackStart: async () => {
+        try {
+          await ctx.api.editMessageText(chatId, statusMessage.message_id, t("bot.audio_processing"));
+        } catch (editError) {
+          logger.warn("[Voice] Failed to update status message for audio fallback start:", editError);
+        }
+      },
+    });
 
-    const recognizedText = result.text.trim();
+    const recognizedText = prepared.recognizedText?.trim() ?? "";
     if (!recognizedText) {
-      await ctx.api.editMessageText(ctx.chat!.id, statusMessage.message_id, t("stt.empty_result"));
+      await ctx.api.editMessageText(chatId, statusMessage.message_id, t("stt.empty_result"));
       return;
     }
 
@@ -216,7 +223,7 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
     // we still send the recognized text to OpenCode as a prompt.
     try {
       await ctx.api.editMessageText(
-        ctx.chat!.id,
+        chatId,
         statusMessage.message_id,
         t("stt.recognized", { text: recognizedText }),
       );
@@ -227,20 +234,14 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
     logger.info(`[Voice] Transcribed audio: ${recognizedText.length} chars`);
 
     // Process the recognized text as a prompt
-    await processPrompt(ctx, recognizedText, deps);
+    await processPrompt(ctx, prepared.promptText, deps);
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : "unknown error";
     logger.error("[Voice] Error processing voice message:", err);
 
     try {
-      await ctx.api.editMessageText(
-        ctx.chat!.id,
-        statusMessage.message_id,
-        t("stt.error", { error: errorMessage }),
-      );
+      await ctx.api.editMessageText(chatId, statusMessage.message_id, t("bot.audio_process_error"));
     } catch {
-      // If we can't edit the status message, try sending a new one
-      await ctx.reply(t("stt.error", { error: errorMessage })).catch(() => {});
+      await ctx.reply(t("bot.audio_process_error")).catch(() => {});
     }
   }
 }

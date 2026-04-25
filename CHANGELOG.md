@@ -24,6 +24,9 @@ Documentation rule:
 
 ### Changed
 
+- Added local `ffmpeg`-based preprocessing for oversized Telegram videos and video notes up to 61 seconds, compressing them to a derivative under 19.5MB before the existing video attachment/transcription flow continues.
+  - Why: Telegram videos can exceed the downloader ceiling well before they exceed the duration ceiling, so the bot needs a deterministic way to accept longer high-bitrate clips without breaking the downstream 20MB media path.
+  - Affects: `src/media/video-preprocess.ts`, `src/bot/handlers/video.ts`, `src/bot/utils/file-download.ts`, `src/i18n/*.ts`, `tests/media/video-preprocess.test.ts`, `tests/bot/handlers/video.test.ts`, `PRODUCT.md`
 - Persisted all incoming Telegram media under runtime-aware per-user storage and switched unsupported photo/PDF/video inputs plus unavailable audio STT flows to the local `openai-media-transcriber` scripts, forwarding extracted text together with the runtime-visible saved file path into OpenCode.
   - Why: Telegram attachments should survive beyond the immediate request, tenant containers need paths that are valid both on the host bind mount and inside `/state`, and coding-oriented text models should still be able to work from media context without manual model switching or a hard STT dependency.
   - Affects: `src/media/*`, `src/bot/handlers/photo.ts`, `src/bot/handlers/document.ts`, `src/bot/handlers/video.ts`, `src/bot/handlers/voice.ts`, `src/bot/index.ts`, `src/i18n/*.ts`, `tests/media/*.test.ts`, `tests/bot/handlers/*.test.ts`, `PRODUCT.md`, `package.json`

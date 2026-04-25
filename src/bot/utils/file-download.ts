@@ -4,6 +4,7 @@ import { logger } from "../../utils/logger.js";
 
 const TELEGRAM_FILE_URL_BASE = "https://api.telegram.org/file/bot";
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB Telegram limit
+const MAX_VIDEO_COMPRESSION_DOWNLOAD_BYTES = 64 * 1024 * 1024; // 64MB hard ceiling for oversize video preprocessing
 
 export interface DownloadedFile {
   buffer: Buffer;
@@ -11,13 +12,24 @@ export interface DownloadedFile {
   mimeType?: string;
 }
 
-/**
- * Download a photo from Telegram servers
- * @param api Grammy API instance
- * @param fileId Telegram file_id
- * @returns Downloaded photo buffer and path
- */
-export async function downloadTelegramFile(api: Api, fileId: string): Promise<DownloadedFile> {
+type FetchLike = typeof fetch;
+
+interface DownloadTelegramFileOptions {
+  maxFileSizeBytes?: number;
+  fetchImpl?: FetchLike;
+}
+
+function formatMaxFileSizeMb(maxFileSizeBytes: number): string {
+  return (maxFileSizeBytes / (1024 * 1024)).toFixed(0);
+}
+
+async function downloadTelegramFileInternal(
+  api: Api,
+  fileId: string,
+  options: DownloadTelegramFileOptions = {},
+): Promise<DownloadedFile> {
+  const { maxFileSizeBytes = MAX_FILE_SIZE_BYTES, fetchImpl = fetch } = options;
+
   logger.debug(`[FileDownload] Getting file info for fileId=${fileId}`);
 
   const file = await api.getFile(fileId);
@@ -26,9 +38,10 @@ export async function downloadTelegramFile(api: Api, fileId: string): Promise<Do
     throw new Error("File path not available from Telegram");
   }
 
-  if (file.file_size && file.file_size > MAX_FILE_SIZE_BYTES) {
+  if (file.file_size && file.file_size > maxFileSizeBytes) {
     const sizeMb = (file.file_size / (1024 * 1024)).toFixed(2);
-    throw new Error(`File too large: ${sizeMb}MB (max 20MB)`);
+    const maxSizeMb = formatMaxFileSizeMb(maxFileSizeBytes);
+    throw new Error(`File too large: ${sizeMb}MB (max ${maxSizeMb}MB)`);
   }
 
   const fileUrl = `${TELEGRAM_FILE_URL_BASE}${config.telegram.token}/${file.file_path}`;
@@ -42,7 +55,7 @@ export async function downloadTelegramFile(api: Api, fileId: string): Promise<Do
     fetchOptions.agent = new HttpsProxyAgent(config.telegram.proxyUrl);
   }
 
-  const response = await fetch(fileUrl, fetchOptions);
+  const response = await fetchImpl(fileUrl, fetchOptions);
 
   if (!response.ok) {
     throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
@@ -57,6 +70,27 @@ export async function downloadTelegramFile(api: Api, fileId: string): Promise<Do
     buffer,
     filePath: file.file_path,
   };
+}
+
+/**
+ * Download a photo from Telegram servers
+ * @param api Grammy API instance
+ * @param fileId Telegram file_id
+ * @returns Downloaded photo buffer and path
+ */
+export async function downloadTelegramFile(api: Api, fileId: string): Promise<DownloadedFile> {
+  return downloadTelegramFileInternal(api, fileId);
+}
+
+export async function downloadTelegramVideoForCompression(
+  api: Api,
+  fileId: string,
+  fetchImpl?: FetchLike,
+): Promise<DownloadedFile> {
+  return downloadTelegramFileInternal(api, fileId, {
+    maxFileSizeBytes: MAX_VIDEO_COMPRESSION_DOWNLOAD_BYTES,
+    fetchImpl,
+  });
 }
 
 /**

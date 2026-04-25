@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 import { handleVideoMessage, type VideoHandlerDeps } from "../../../src/bot/handlers/video.js";
 import { t } from "../../../src/i18n/index.js";
+import {
+  MissingVideoCompressionDependencyError,
+  OversizedVideoCompressionError,
+} from "../../../src/media/video-preprocess.js";
 import { logger } from "../../../src/utils/logger.js";
 
 function createVideoContext(overrides: Partial<Context["message"]> = {}): {
@@ -18,6 +22,8 @@ function createVideoContext(overrides: Partial<Context["message"]> = {}): {
         file_id: "video-file-id",
         file_unique_id: "video-unique-id",
         duration: 42,
+        width: 640,
+        height: 360,
         mime_type: "video/mp4",
         file_name: "clip.mp4",
         file_size: 2048,
@@ -196,12 +202,12 @@ describe("bot/handlers/video", () => {
     expect(processPromptMock).toHaveBeenCalledWith(ctx, "prepared video fallback text", deps);
   });
 
-  it("rejects videos longer than 60 seconds", async () => {
+  it("rejects videos longer than 61 seconds", async () => {
     const { ctx, replyMock } = createVideoContext({
       video: {
         file_id: "video-file-id",
         file_unique_id: "video-unique-id",
-        duration: 61,
+        duration: 62,
         width: 640,
         height: 360,
         mime_type: "video/mp4",
@@ -213,8 +219,338 @@ describe("bot/handlers/video", () => {
 
     await handleVideoMessage(ctx, deps);
 
-    expect(replyMock).toHaveBeenCalledWith(t("bot.video_too_long", { maxDurationSec: "60" }));
+    expect(replyMock).toHaveBeenCalledWith(t("bot.video_too_long", { maxDurationSec: "61" }));
     expect(downloadMock).not.toHaveBeenCalled();
+    expect(processPromptMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts videos up to 61 seconds", async () => {
+    const { ctx, replyMock } = createVideoContext({
+      video: {
+        file_id: "video-file-id",
+        file_unique_id: "video-unique-id",
+        duration: 61,
+        width: 640,
+        height: 360,
+        mime_type: "video/mp4",
+        file_name: "allowed.mp4",
+        file_size: 2048,
+      },
+    });
+    const { deps, downloadMock, processPromptMock } = createVideoDeps();
+
+    await handleVideoMessage(ctx, deps);
+
+    expect(replyMock).toHaveBeenCalledWith(t("bot.video_downloading"));
+    expect(downloadMock).toHaveBeenCalledWith(ctx.api, "video-file-id");
+    expect(processPromptMock).toHaveBeenCalled();
+  });
+
+  it("downloads oversized videos for compression, shows compression status, and sends the derivative", async () => {
+    const { ctx, replyMock } = createVideoContext({
+      video: {
+        file_id: "oversized-video-id",
+        file_unique_id: "oversized-video-unique-id",
+        duration: 61,
+        width: 1920,
+        height: 1080,
+        mime_type: "video/mp4",
+        file_name: "oversized.mp4",
+        file_size: 25 * 1024 * 1024,
+      },
+    });
+
+    const oversizedDownloadMock = vi.fn().mockResolvedValue({
+      buffer: Buffer.from("oversized-video-binary"),
+      filePath: "videos/oversized.mp4",
+    });
+    const compressVideoMock = vi.fn().mockResolvedValue({
+      outputPath: "/tmp/oversized-compressed.mp4",
+      sizeBytes: 1024,
+      preset: { maxSide: 960, fps: 15 },
+    });
+    const compressedBuffer = Buffer.from("compressed-video-binary");
+    const readFileMock = vi.fn().mockResolvedValue(compressedBuffer);
+    const mkdtempMock = vi.fn().mockResolvedValue("/tmp/video-handler-123");
+    const writeFileMock = vi.fn().mockResolvedValue(undefined);
+    const rmMock = vi.fn().mockResolvedValue(undefined);
+    const { deps, downloadMock, prepareMediaPromptMock, processPromptMock } = createVideoDeps({
+      downloadOversizedVideo: oversizedDownloadMock,
+      compressVideo: compressVideoMock,
+      readFile: readFileMock,
+      mkdtemp: mkdtempMock,
+      writeFile: writeFileMock,
+      rm: rmMock,
+    });
+
+    await handleVideoMessage(ctx, deps);
+
+    expect(downloadMock).not.toHaveBeenCalled();
+    expect(oversizedDownloadMock).toHaveBeenCalledWith(ctx.api, "oversized-video-id");
+    expect(replyMock).toHaveBeenNthCalledWith(1, t("bot.video_downloading"));
+    expect(replyMock).toHaveBeenNthCalledWith(2, t("bot.video_compressing"));
+    expect(mkdtempMock).toHaveBeenCalled();
+    expect(writeFileMock).toHaveBeenCalledWith(
+      expect.stringContaining("oversized-video-id.mp4"),
+      Buffer.from("oversized-video-binary"),
+    );
+    expect(compressVideoMock).toHaveBeenCalledWith({
+      inputPath: expect.stringContaining("oversized-video-id.mp4"),
+      outputDirectoryPath: "/tmp/video-handler-123",
+    });
+    expect(readFileMock).toHaveBeenCalledWith("/tmp/oversized-compressed.mp4");
+    expect(prepareMediaPromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        telegramFileId: "oversized-video-id",
+        mimeType: "video/mp4",
+        originalFileName: "oversized-compressed.mp4",
+        fallbackFileName: "oversized-compressed.mp4",
+        buffer: compressedBuffer,
+      }),
+    );
+    expect(processPromptMock).toHaveBeenCalled();
+    expect(rmMock).toHaveBeenCalledWith("/tmp/video-handler-123", { force: true, recursive: true });
+  });
+
+  it("uses compressed mp4 metadata for prompt preparation after compressing oversized mov input", async () => {
+    const { ctx } = createVideoContext({
+      video: {
+        file_id: "oversized-mov-id",
+        file_unique_id: "oversized-mov-unique-id",
+        duration: 45,
+        width: 1920,
+        height: 1080,
+        mime_type: "video/quicktime",
+        file_name: "oversized.mov",
+        file_size: 25 * 1024 * 1024,
+      },
+    });
+
+    const compressedBuffer = Buffer.from("compressed-mov-video-binary");
+    const { deps, prepareMediaPromptMock } = createVideoDeps({
+      downloadOversizedVideo: vi.fn().mockResolvedValue({
+        buffer: Buffer.from("oversized-mov-binary"),
+        filePath: "videos/oversized.mov",
+      }),
+      compressVideo: vi.fn().mockResolvedValue({
+        outputPath: "/tmp/oversized-compressed-960x15.mp4",
+        sizeBytes: 1024,
+        preset: { maxSide: 960, fps: 15 },
+      }),
+      readFile: vi.fn().mockResolvedValue(compressedBuffer),
+      mkdtemp: vi.fn().mockResolvedValue("/tmp/video-handler-mov"),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      rm: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await handleVideoMessage(ctx, deps);
+
+    expect(prepareMediaPromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mimeType: "video/mp4",
+        originalFileName: "oversized-compressed-960x15.mp4",
+        fallbackFileName: "oversized-compressed-960x15.mp4",
+        buffer: compressedBuffer,
+      }),
+    );
+  });
+
+  it("does not use untrusted Telegram filename when creating the temporary input path", async () => {
+    const { ctx } = createVideoContext({
+      video: {
+        file_id: "oversized-weird-name-id",
+        file_unique_id: "oversized-weird-name-unique-id",
+        duration: 45,
+        width: 1920,
+        height: 1080,
+        mime_type: "video/quicktime",
+        file_name: "../../../../escape.mov",
+        file_size: 25 * 1024 * 1024,
+      },
+    });
+
+    const writeFileMock = vi.fn().mockResolvedValue(undefined);
+    const { deps } = createVideoDeps({
+      downloadOversizedVideo: vi.fn().mockResolvedValue({
+        buffer: Buffer.from("oversized-video-binary"),
+        filePath: "videos/original.mov",
+      }),
+      compressVideo: vi.fn().mockResolvedValue({
+        outputPath: "/tmp/compressed-safe-name.mp4",
+        sizeBytes: 1024,
+        preset: { maxSide: 960, fps: 15 },
+      }),
+      readFile: vi.fn().mockResolvedValue(Buffer.from("compressed-video-binary")),
+      mkdtemp: vi.fn().mockResolvedValue("/tmp/video-handler-safe-name"),
+      writeFile: writeFileMock,
+      rm: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await handleVideoMessage(ctx, deps);
+
+    expect(writeFileMock).toHaveBeenCalledWith(
+      expect.stringContaining("oversized-weird-name-id"),
+      Buffer.from("oversized-video-binary"),
+    );
+    expect(writeFileMock.mock.calls[0]?.[0]).not.toContain("escape.mov");
+    expect(writeFileMock.mock.calls[0]?.[0]).not.toContain("..");
+  });
+
+  it("uses the compression-capable path when telegram message metadata omits file size", async () => {
+    const { ctx } = createVideoContext({
+      video: {
+        file_id: "missing-size-video-id",
+        file_unique_id: "missing-size-video-unique-id",
+        duration: 45,
+        width: 1920,
+        height: 1080,
+        mime_type: "video/mp4",
+        file_name: "missing-size.mp4",
+        file_size: undefined,
+      },
+    });
+
+    const regularDownloadMock = vi.fn().mockRejectedValue(new Error("should not use default downloader"));
+    const oversizedDownloadMock = vi.fn().mockResolvedValue({
+      buffer: Buffer.from("oversized-video-binary"),
+      filePath: "videos/missing-size.mp4",
+    });
+    const apiGetFileMock = vi.fn().mockResolvedValue({
+      file_path: "videos/missing-size.mp4",
+      file_size: 25 * 1024 * 1024,
+    });
+    ctx.api.getFile = apiGetFileMock;
+
+    const { deps } = createVideoDeps({
+      downloadFile: regularDownloadMock,
+      downloadOversizedVideo: oversizedDownloadMock,
+      compressVideo: vi.fn().mockResolvedValue({
+        outputPath: "/tmp/missing-size-compressed.mp4",
+        sizeBytes: 1024,
+        preset: { maxSide: 960, fps: 15 },
+      }),
+      readFile: vi.fn().mockResolvedValue(Buffer.from("compressed-video-binary")),
+      mkdtemp: vi.fn().mockResolvedValue("/tmp/video-handler-missing-size"),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      rm: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await handleVideoMessage(ctx, deps);
+
+    expect(apiGetFileMock).toHaveBeenCalledWith("missing-size-video-id");
+    expect(regularDownloadMock).not.toHaveBeenCalled();
+    expect(oversizedDownloadMock).toHaveBeenCalledWith(ctx.api, "missing-size-video-id");
+  });
+
+  it("cleans up temp directory when compressed artifact readback fails", async () => {
+    const { ctx, replyMock } = createVideoContext({
+      video: {
+        file_id: "oversized-video-id",
+        file_unique_id: "oversized-video-unique-id",
+        duration: 30,
+        width: 1920,
+        height: 1080,
+        mime_type: "video/mp4",
+        file_name: "oversized.mp4",
+        file_size: 25 * 1024 * 1024,
+      },
+    });
+
+    const rmMock = vi.fn().mockResolvedValue(undefined);
+    const { deps, processPromptMock, prepareMediaPromptMock } = createVideoDeps({
+      downloadOversizedVideo: vi.fn().mockResolvedValue({
+        buffer: Buffer.from("oversized-video-binary"),
+        filePath: "videos/oversized.mp4",
+      }),
+      compressVideo: vi.fn().mockResolvedValue({
+        outputPath: "/tmp/oversized-compressed.mp4",
+        sizeBytes: 1024,
+        preset: { maxSide: 960, fps: 15 },
+      }),
+      readFile: vi.fn().mockRejectedValue(new Error("readback failed")),
+      mkdtemp: vi.fn().mockResolvedValue("/tmp/video-handler-readback-error"),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      rm: rmMock,
+    });
+
+    await handleVideoMessage(ctx, deps);
+
+    expect(replyMock).toHaveBeenNthCalledWith(3, t("bot.video_compression_failed"));
+    expect(prepareMediaPromptMock).not.toHaveBeenCalled();
+    expect(processPromptMock).not.toHaveBeenCalled();
+    expect(rmMock).toHaveBeenCalledWith("/tmp/video-handler-readback-error", {
+      force: true,
+      recursive: true,
+    });
+  });
+
+  it("shows dedicated ffmpeg dependency error when compression prerequisites are missing", async () => {
+    const { ctx, replyMock } = createVideoContext({
+      video: {
+        file_id: "oversized-video-id",
+        file_unique_id: "oversized-video-unique-id",
+        duration: 30,
+        width: 1920,
+        height: 1080,
+        mime_type: "video/mp4",
+        file_name: "oversized.mp4",
+        file_size: 25 * 1024 * 1024,
+      },
+    });
+
+    const { deps, processPromptMock, prepareMediaPromptMock } = createVideoDeps({
+      downloadOversizedVideo: vi.fn().mockResolvedValue({
+        buffer: Buffer.from("oversized-video-binary"),
+        filePath: "videos/oversized.mp4",
+      }),
+      compressVideo: vi
+        .fn()
+        .mockRejectedValue(new MissingVideoCompressionDependencyError("ffmpeg")),
+      mkdtemp: vi.fn().mockResolvedValue("/tmp/video-handler-ffmpeg"),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      rm: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await handleVideoMessage(ctx, deps);
+
+    expect(replyMock).toHaveBeenNthCalledWith(1, t("bot.video_downloading"));
+    expect(replyMock).toHaveBeenNthCalledWith(2, t("bot.video_compressing"));
+    expect(replyMock).toHaveBeenNthCalledWith(3, t("bot.video_compression_requires_ffmpeg"));
+    expect(prepareMediaPromptMock).not.toHaveBeenCalled();
+    expect(processPromptMock).not.toHaveBeenCalled();
+  });
+
+  it("shows dedicated compression failure when compressed output still exceeds the budget", async () => {
+    const { ctx, replyMock } = createVideoContext({
+      video: {
+        file_id: "oversized-video-id",
+        file_unique_id: "oversized-video-unique-id",
+        duration: 30,
+        width: 1920,
+        height: 1080,
+        mime_type: "video/mp4",
+        file_name: "oversized.mp4",
+        file_size: 25 * 1024 * 1024,
+      },
+    });
+
+    const { deps, processPromptMock, prepareMediaPromptMock } = createVideoDeps({
+      downloadOversizedVideo: vi.fn().mockResolvedValue({
+        buffer: Buffer.from("oversized-video-binary"),
+        filePath: "videos/oversized.mp4",
+      }),
+      compressVideo: vi.fn().mockRejectedValue(new OversizedVideoCompressionError(1024)),
+      mkdtemp: vi.fn().mockResolvedValue("/tmp/video-handler-too-large"),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      rm: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await handleVideoMessage(ctx, deps);
+
+    expect(replyMock).toHaveBeenNthCalledWith(1, t("bot.video_downloading"));
+    expect(replyMock).toHaveBeenNthCalledWith(2, t("bot.video_compressing"));
+    expect(replyMock).toHaveBeenNthCalledWith(3, t("bot.video_compression_failed"));
+    expect(prepareMediaPromptMock).not.toHaveBeenCalled();
     expect(processPromptMock).not.toHaveBeenCalled();
   });
 

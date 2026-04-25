@@ -1,5 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocked = vi.hoisted(() => ({
+  config: {
+    telegram: {
+      token: "test-telegram-token",
+      proxyUrl: "",
+    },
+    server: {
+      logLevel: "error",
+    },
+  },
+  httpsProxyAgentMock: vi.fn(),
+}));
+
+vi.mock("../../../src/config.js", () => ({
+  config: mocked.config,
+}));
+
+vi.mock("https-proxy-agent", () => ({
+  HttpsProxyAgent: mocked.httpsProxyAgentMock,
+}));
+
 import {
+  downloadTelegramFile,
+  downloadTelegramVideoForCompression,
   toDataUri,
   formatFileSize,
   isFileSizeAllowed,
@@ -7,6 +31,94 @@ import {
 } from "../../../src/bot/utils/file-download.js";
 
 describe("bot/utils/file-download", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    mocked.config.telegram.proxyUrl = "";
+    mocked.httpsProxyAgentMock.mockReset();
+  });
+
+  describe("downloadTelegramFile", () => {
+    it("rejects files larger than 20MB for generic downloads", async () => {
+      const getFile = vi.fn().mockResolvedValue({
+        file_path: "videos/oversized.mp4",
+        file_size: 21 * 1024 * 1024,
+      });
+      const api = {
+        getFile,
+      } as never;
+
+      await expect(downloadTelegramFile(api, "oversized-file-id")).rejects.toThrow(
+        "File too large: 21.00MB (max 20MB)",
+      );
+      expect(getFile).toHaveBeenCalledWith("oversized-file-id");
+    });
+  });
+
+  describe("downloadTelegramVideoForCompression", () => {
+    it("downloads oversized video files through the explicit compression path", async () => {
+      const getFile = vi.fn().mockResolvedValue({
+        file_path: "videos/oversized.mp4",
+        file_size: 25 * 1024 * 1024,
+      });
+      const api = {
+        getFile,
+      } as never;
+      const fetchImpl = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => Uint8Array.from([1, 2, 3, 4]).buffer,
+      });
+
+      const result = await downloadTelegramVideoForCompression(api, "oversized-video-id", fetchImpl);
+
+      expect(getFile).toHaveBeenCalledWith("oversized-video-id");
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "https://api.telegram.org/file/bottest-telegram-token/videos/oversized.mp4",
+        {},
+      );
+      expect(result).toEqual({
+        buffer: Buffer.from([1, 2, 3, 4]),
+        filePath: "videos/oversized.mp4",
+      });
+    });
+
+    it("passes a proxy agent to fetch when the explicit compression path uses a proxy", async () => {
+      mocked.config.telegram.proxyUrl = "http://proxy.internal:8080";
+
+      const proxyAgent = { kind: "https-proxy-agent" };
+      mocked.httpsProxyAgentMock.mockReturnValue(proxyAgent);
+
+      const getFile = vi.fn().mockResolvedValue({
+        file_path: "videos/proxied-oversized.mp4",
+        file_size: 30 * 1024 * 1024,
+      });
+      const api = { getFile } as never;
+      const fetchImpl = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => Uint8Array.from([9, 8, 7]).buffer,
+      });
+
+      await downloadTelegramVideoForCompression(api, "proxied-video-id", fetchImpl);
+
+      expect(mocked.httpsProxyAgentMock).toHaveBeenCalledWith("http://proxy.internal:8080");
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "https://api.telegram.org/file/bottest-telegram-token/videos/proxied-oversized.mp4",
+        { agent: proxyAgent },
+      );
+    });
+
+    it("still rejects oversized compression downloads above the dedicated hard cap", async () => {
+      const getFile = vi.fn().mockResolvedValue({
+        file_path: "videos/too-large.mp4",
+        file_size: 80 * 1024 * 1024,
+      });
+      const api = { getFile } as never;
+
+      await expect(downloadTelegramVideoForCompression(api, "too-large-video-id")).rejects.toThrow(
+        /max .*MB/,
+      );
+    });
+  });
+
   describe("toDataUri", () => {
     it("converts buffer to base64 data URI with correct MIME type", () => {
       const buffer = Buffer.from("Hello, World!");

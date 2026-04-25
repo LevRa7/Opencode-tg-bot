@@ -158,7 +158,7 @@ Model picker behavior:
 - [x] Text file attachments support (include the saved local file path in the generated prompt for code/config/log files)
 - [x] Voice/audio transcription via Whisper-compatible APIs with automatic local media fallback when STT is unavailable or fails
 - [x] Optional global audio replies with `/tts` via OpenAI-compatible APIs
-- [x] Short Telegram video and video-note attachments support (persist saved copies and use automatic local analysis fallback when the selected model lacks video input)
+- [x] Short Telegram video and video-note attachments support (persist saved copies, use automatic local analysis fallback when the selected model lacks video input, and locally compress oversized videos up to 61 seconds before analysis)
 
 ## Current Task List
 

@@ -30,7 +30,7 @@ import { getDefaultProject } from "../../project/manager.js";
 import { processManager } from "../../process/manager.js";
 import { assistantRunState } from "../assistant-run-state.js";
 import { IncomingMediaBatch } from "../incoming-media-batch.js";
-import type { ResolvedDeferredItem } from "../../media/batch-types.js";
+import { extractMessageMetadata, type ResolvedDeferredItem } from "../../media/batch-types.js";
 import {
   buildTelegramConversationScopeKey,
   extractTelegramConversationScopeFromContext,
@@ -302,6 +302,7 @@ export async function processUserPrompt(
         previewText: text,
         contextText: isForwarded ? `[Forwarded message]\n${text}` : text,
         ctx: ctx as any,
+        metadata: extractMessageMetadata(ctx),
       },
     });
     if (isDeferred) {
@@ -310,6 +311,7 @@ export async function processUserPrompt(
 
     // NEW: If it's a forwarded message, start a batching window immediately
     if (isForwarded) {
+      const metadata = extractMessageMetadata(ctx);
       await deferredBatch.deferItem({
         scopeKey,
         deferredItem: {
@@ -319,6 +321,7 @@ export async function processUserPrompt(
           previewText: text,
           contextText: `[Forwarded message]\n${text}`,
           ctx: ctx as any,
+          metadata,
         },
       });
       return true;
@@ -435,6 +438,42 @@ export async function processUserPrompt(
 
   const sessionIsBusy = await isSessionBusy(currentSession.id, currentSession.directory);
   if (sessionIsBusy) {
+    // Retroactive batch: if forwarded messages arrive while busy, silently abort
+    // and collect them into a deferred window instead of showing "session_busy"
+    if (isForwarded && deferredBatch) {
+      logger.info(
+        `[Bot] Forwarded messages arriving while session ${currentSession.id} is busy — retroactive batch`,
+      );
+
+      await opencodeClient.session
+        .abort({
+          sessionID: currentSession.id,
+          directory: currentSession.directory,
+        })
+        .catch(() => {});
+
+      foregroundSessionState.markIdle(currentSession.id);
+      assistantRunState.clearRun(currentSession.id, "retroactive_batch");
+
+      const metadata = extractMessageMetadata(ctx);
+      const batchScopeKey = buildTelegramConversationScopeKey(
+        extractTelegramConversationScopeFromContext(ctx),
+      );
+      await deferredBatch.deferItem({
+        scopeKey: batchScopeKey,
+        deferredItem: {
+          correlationId: `prompt:${ctx.message?.message_id ?? Date.now()}`,
+          kind: "text",
+          directText: text,
+          previewText: text,
+          contextText: `[Forwarded message]\n${text}`,
+          ctx: ctx as any,
+          metadata,
+        },
+      });
+      return true;
+    }
+
     logger.info(`[Bot] Ignoring new prompt: session ${currentSession.id} is busy`);
     await ctx.reply(t("bot.session_busy"));
     return false;

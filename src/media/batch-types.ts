@@ -14,6 +14,18 @@ export interface ForwardedSourceInfo {
   isFromAnotherUser?: boolean;
 }
 
+export interface MessageMetadata {
+  senderFirstName?: string;
+  senderLastName?: string;
+  senderUsername?: string;
+  senderId?: number;
+  messageId?: number;
+  timestamp?: number;
+  forwardFromName?: string;
+  forwardFromId?: number;
+  forwardFromUsername?: string;
+}
+
 export interface CorrelatedIncomingItem {
   correlationId: string;
   kind: DeferredItemKind;
@@ -34,6 +46,7 @@ export interface ResolvedDeferredItem {
   forwardedSource?: ForwardedSourceInfo;
   forwardedTag?: string;
   ctx?: any;
+  metadata?: MessageMetadata;
 }
 
 export interface ComposedPromptResult {
@@ -63,4 +76,74 @@ export function createForwardedSourceTag(
   }
 
   return t("deferred.forwarded.generic");
+}
+
+export function formatMetadataLine(m: MessageMetadata | undefined, label: string): string {
+  if (!m) return label;
+
+  const parts: string[] = [];
+
+  if (m.senderFirstName || m.senderLastName) {
+    const name = [m.senderFirstName, m.senderLastName].filter(Boolean).join(" ");
+    parts.push(`👤 ${name}`);
+  } else if (m.senderUsername) {
+    parts.push(`👤 @${m.senderUsername}`);
+  }
+
+  if (m.senderId) {
+    parts.push(`🆔 ${m.senderId}`);
+  }
+
+  if (m.messageId) {
+    parts.push(`#msg${m.messageId}`);
+  }
+
+  if (m.timestamp) {
+    const d = new Date(m.timestamp * 1000);
+    const time = d.toLocaleString("ru-RU", {
+      day: "numeric", month: "short",
+      hour: "2-digit", minute: "2-digit",
+    });
+    parts.push(`🕐 ${time}`);
+  }
+
+  const metaStr = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+  return `${label}${metaStr}`;
+}
+
+export function extractMessageMetadata(ctx: any): MessageMetadata | undefined {
+  const msg = ctx?.message;
+  if (!msg) return undefined;
+
+  const from = msg.from;
+  const fo = msg.forward_origin;
+
+  let forwardFromName: string | undefined;
+  let forwardFromId: number | undefined;
+  let forwardFromUsername: string | undefined;
+
+  if (fo) {
+    if (fo.type === "user" && fo.sender_user) {
+      forwardFromName = [fo.sender_user.first_name, fo.sender_user.last_name].filter(Boolean).join(" ");
+      forwardFromId = fo.sender_user.id;
+      forwardFromUsername = fo.sender_user.username;
+    } else if (fo.type === "chat" && fo.sender_chat) {
+      forwardFromName = fo.sender_chat.title;
+      forwardFromUsername = fo.sender_chat.username;
+    } else if (fo.type === "hidden_user" && fo.sender_user_name) {
+      forwardFromName = fo.sender_user_name;
+    }
+  }
+
+  return {
+    senderFirstName: from?.first_name,
+    senderLastName: from?.last_name,
+    senderUsername: from?.username,
+    senderId: from?.id,
+    messageId: msg.message_id,
+    timestamp: msg.date,
+    forwardFromName,
+    forwardFromId,
+    forwardFromUsername,
+  };
 }

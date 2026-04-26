@@ -1,5 +1,6 @@
 import {
   createForwardedSourceTag,
+  formatMetadataLine,
   type ComposedPromptResult,
   type CorrelatedIncomingItem,
   type DeferredItemKind,
@@ -72,6 +73,12 @@ function getKindLabel(kind: DeferredItemKind, t: TranslateFn): string {
   }
 }
 
+function buildMetadataPrefix(item: DeferredPromptItem): string {
+  const meta = "metadata" in item ? item.metadata : undefined;
+  if (!meta) return "";
+  return formatMetadataLine(meta, "");
+}
+
 function buildPreviewLine(item: DeferredPromptItem, t: TranslateFn): string | undefined {
   const preview =
     normalizeText(item.previewText) ??
@@ -83,13 +90,14 @@ function buildPreviewLine(item: DeferredPromptItem, t: TranslateFn): string | un
     return undefined;
   }
 
+  const metadataPrefix = buildMetadataPrefix(item);
   const forwardedTag = resolveForwardedTag(item, t);
   if (forwardedTag) {
     if (item.kind !== "text") {
-      return `${forwardedTag} ${getKindLabel(item.kind, t)}: ${preview}`;
+      return `${forwardedTag}${metadataPrefix} ${getKindLabel(item.kind, t)}: ${preview}`;
     }
 
-    return `${forwardedTag} ${preview}`;
+    return `${forwardedTag}${metadataPrefix} ${preview}`;
   }
 
   return preview;
@@ -106,13 +114,14 @@ function buildContextBlock(item: DeferredPromptItem, t: TranslateFn): string | u
     return undefined;
   }
 
+  const metadataPrefix = buildMetadataPrefix(item);
   const forwardedTag = resolveForwardedTag(item, t);
   if (forwardedTag) {
     if (item.kind !== "text") {
-      return `${forwardedTag}\n[${getKindLabel(item.kind, t)}]\n${body}`;
+      return `${forwardedTag}${metadataPrefix}\n[${getKindLabel(item.kind, t)}]\n${body}`;
     }
 
-    return `${forwardedTag}\n${body}`;
+    return `${forwardedTag}${metadataPrefix}\n${body}`;
   }
 
   return `[${getKindLabel(item.kind, t)}]\n${body}`;

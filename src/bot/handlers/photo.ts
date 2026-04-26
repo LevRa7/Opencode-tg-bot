@@ -1,6 +1,7 @@
 import type { Context } from "grammy";
 import type { FilePartInput } from "@opencode-ai/sdk/v2";
 import { prepareAttachmentMediaPrompt } from "../../media/ingest.js";
+import type { ResolvedDeferredItem } from "../../media/batch-types.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { downloadTelegramFile } from "../utils/file-download.js";
@@ -18,6 +19,7 @@ export interface PhotoHandlerDeps extends ProcessPromptDeps {
     deps: ProcessPromptDeps,
     fileParts?: FilePartInput[],
   ) => Promise<boolean>;
+  enqueueCorrelatedItem?: (item: ResolvedDeferredItem) => boolean;
 }
 
 export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): Promise<void> {
@@ -29,6 +31,7 @@ export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): 
   const downloadFile = deps.downloadFile ?? downloadTelegramFile;
   const prepareMediaPrompt = deps.prepareMediaPrompt ?? prepareAttachmentMediaPrompt;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
+  const enqueueCorrelatedItem = deps.enqueueCorrelatedItem;
   const largestPhoto = photos[photos.length - 1];
   const caption = ctx.message?.caption || "";
 
@@ -57,6 +60,18 @@ export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): 
         await ctx.reply(t("bot.photo_processing"));
       },
     });
+
+    if (
+      enqueueCorrelatedItem?.({
+        correlationId: `photo:${ctx.message?.message_id ?? largestPhoto.file_id}`,
+        kind: "photo",
+        caption,
+        previewText: caption.trim() || prepared.sourceFile.fileName,
+        contextText: prepared.promptText,
+      })
+    ) {
+      return;
+    }
 
     if (prepared.mode === "attachment") {
       await processPrompt(ctx, prepared.promptText, deps, prepared.fileParts);

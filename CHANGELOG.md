@@ -81,6 +81,18 @@ Documentation rule:
 
 ### Fixed
 
+- Fixed video attachment mode to transcribe audio before sending the video to OpenCode, so the user's spoken question is included in the prompt when the selected model supports video input and attachments.
+  - Why: when the model supports video input, the bot previously sent the video file without transcribing its audio track, losing the user's spoken content.
+  - Affects: `src/media/ingest.ts`, `tests/media/ingest.test.ts`
+- Fixed rootless Docker tenant startup after recreating a user's workspace/state directory by changing the container entrypoint to keep bind-mounted `/workspace` and `/state` writable, while dropping runtime capabilities and moving the Gemini media proxy onto its own unreadable service uid.
+  - Why: after deleting a tenant directory and letting the bot bootstrap it again, `opencode serve` could fail on first start with `EACCES` under `/state/cache/opencode` because rootless Docker mapped host-owned bind mounts in a way that broke writes from the previous unprivileged uid/gid 1000 runtime, and the initial runtime fix still needed a stronger process boundary around the proxy secret.
+  - Affects: `docker/Dockerfile`, `docker/bin/docker-entrypoint.sh`, `docker/tests/tenant-entrypoint-permissions.test.sh`, `docker/tests/gemini-media-image.test.sh`
+- Restored the blue Telegram slash-command button for already approved non-admin users after bot restarts by re-syncing their private-chat command scopes on startup and immediately after admin approval.
+  - Why: the bot clears global command scopes on startup, but approved users only got chat-scoped commands back after sending a new update, so the `/status`-style command button disappeared until they wrote to the bot again.
+  - Affects: `src/bot/index.ts`, `src/bot/middleware/auth.ts`, `tests/bot/index.callback-routing.test.ts`, `tests/bot/middleware/auth.test.ts`
+- Reworked Telegram reasoning delivery so the active thinking block lives in a draft lifecycle, each completed reasoning block is published as its own normal chat message, and route-loss cleanup now deletes stale drafts only through the route that originally owned them.
+  - Why: reasoning should stream as one active draft per block without overwriting completed blocks, and route switches during cleanup must not delete unrelated messages in another chat or thread.
+  - Affects: `src/bot/index.ts`, `src/bot/utils/thinking-block-stream.ts`, `src/bot/utils/thinking-draft-lifecycle.ts`, `tests/bot/utils/thinking-block-stream.test.ts`, `tests/bot/utils/thinking-draft-lifecycle.test.ts`, `tests/bot/index.local-file-follow-up.test.ts`
 - Restored Telegram `<blockquote expandable>` formatting for reasoning and thinking traces, and kept long reasoning/draft/stream splits wrapped in valid expandable blockquotes across multi-message delivery.
   - Why: recent local changes downgraded collapsible reasoning quotes to plain blockquotes, and long-message paths could drop or break the expandable wrapper while chunking HTML for Telegram.
   - Affects: `src/bot/utils/reasoning-format.ts`, `src/bot/utils/send-message-draft-effect.ts`, `src/bot/streaming/tool-call-streamer.ts`, `tests/bot/utils/reasoning-format.test.ts`, `tests/bot/utils/send-message-draft-effect.test.ts`, `tests/bot/streaming/tool-call-streamer.test.ts`, `CHANGELOG.md`

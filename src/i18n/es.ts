@@ -233,7 +233,8 @@ export const es: I18nDictionary = {
   "opencode_stop.remote_configured":
     "⚠️ /opencode_stop solo funciona con un OpenCode Server local.",
   "opencode_stop.not_running": "⚠️ OpenCode Server no está en ejecución",
-  "opencode_stop.pid_not_found": "⚠️ OpenCode Server está en ejecución, pero no se pudo encontrar su ID de proceso (puerto {port}).",
+  "opencode_stop.pid_not_found":
+    "⚠️ OpenCode Server está en ejecución, pero no se pudo encontrar su ID de proceso (puerto {port}).",
   "opencode_stop.stopping": "🛑 Deteniendo OpenCode Server...\n\nPID: {pid}",
   "opencode_stop.stop_error": "🔴 No se pudo detener OpenCode Server\n\nError: {error}",
   "opencode_stop.success": "✅ OpenCode Server detenido correctamente",
@@ -530,7 +531,8 @@ export const es: I18nDictionary = {
   "auth.request.chat_id": "ID de chat: {chatId}",
   "auth.request.chat_type": "Tipo de chat: {chatType}",
   "auth.request.language": "Idioma: {language}",
-  "auth.requester.sent": "La solicitud de acceso se ha enviado al administrador. Tras la aprobación podrás usar el bot.",
+  "auth.requester.sent":
+    "La solicitud de acceso se ha enviado al administrador. Tras la aprobación podrás usar el bot.",
   "auth.error.admin_only": "Solo el administrador puede gestionar el acceso",
   "auth.error.request_not_pending": "La solicitud de acceso ya no está pendiente",
   "auth.callback.pending_approval": "Acceso pendiente de aprobación del administrador",
@@ -582,7 +584,8 @@ export const es: I18nDictionary = {
   "reasoning.title": "🧠 Reasoning settings",
   "reasoning.mode_0": "0 - Final answer only",
   "reasoning.mode_1": "1 - Thoughts and files",
-  "reasoning.mode_2": "2 - Nivel 1 + comandos + mensajes separados de herramientas (predeterminado)",
+  "reasoning.mode_2":
+    "2 - Nivel 1 + comandos + mensajes separados de herramientas (predeterminado)",
   "reasoning.current": "Current mode: {mode}",
   "reasoning.updated": "✅ Reasoning mode changed to: {mode}",
 
@@ -618,6 +621,18 @@ export const es: I18nDictionary = {
   "skills.page_load_error_callback": "",
   "skills.select": "",
   "skills.select_page": "",
+
+  "deferred.preview.header": "Reconocido de {count} {label}:\n",
+  "deferred.preview.label_one": "mensaje",
+  "deferred.preview.label_other": "mensajes",
+  "deferred.kind.photo": "Foto",
+  "deferred.kind.document": "Documento",
+  "deferred.kind.audio": "Audio",
+  "deferred.kind.video": "Video",
+  "deferred.kind.text": "Texto",
+  "deferred.forwarded.from_display": "[Reenviado de: {displayName}]",
+  "deferred.forwarded.from_another_user": "[Reenviado de otro usuario]",
+  "deferred.forwarded.generic": "[Mensaje reenviado]",
 
   "worktree.already_selected_callback": "",
   "worktree.empty": "",

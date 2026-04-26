@@ -6,6 +6,9 @@ USER root
 RUN groupadd -g 1000 opencode || true \
   && useradd -m -u 1000 -g 1000 -s /bin/sh opencode || true
 
+RUN groupadd -g 2000 opencode-proxy || true \
+  && useradd -M -u 2000 -g 2000 -s /usr/sbin/nologin opencode-proxy || true
+
 COPY vendor/python-tg-cli/src/tg_cli /opt/tg-cli/src/tg_cli
 RUN cat > /usr/local/bin/tg <<'EOF'
 #!/usr/bin/env sh

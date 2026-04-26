@@ -59,7 +59,7 @@ No public inbound ports are required for normal usage.
 ### Result delivery
 
 - Send each completed assistant response after completion signal from SSE
-- Keep thinking output in a dedicated `Думаю...` message and stream the expandable reasoning trace there instead of repeating it in the final answer
+- Keep thinking output in a dedicated `Думаю...` message and stream the expandable reasoning trace there instead of repeating it in the final answer; each reasoning block is rendered as a Telegram draft while active, then published as a normal chat message when the block completes, and the next reasoning block starts a fresh draft lifecycle
 - Split long responses into multiple Telegram messages
 - Split long HTML assistant replies into multiple Telegram messages without overwriting already delivered chunks
 - Send code updates as files (size-limited)

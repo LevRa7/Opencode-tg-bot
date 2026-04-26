@@ -221,7 +221,8 @@ export const en = {
     "⚠️ OpenCode Server is running as an external process\n\nThis server was not started via /opencode-start.\nStop it manually or use /status to check state.",
   "opencode_stop.remote_configured": "⚠️ /opencode_stop works only with a local OpenCode Server.",
   "opencode_stop.not_running": "⚠️ OpenCode Server is not running",
-  "opencode_stop.pid_not_found": "⚠️ OpenCode Server is running but its process ID could not be found (port {port}).",
+  "opencode_stop.pid_not_found":
+    "⚠️ OpenCode Server is running but its process ID could not be found (port {port}).",
   "opencode_stop.stopping": "🛑 Stopping OpenCode Server...\n\nPID: {pid}",
   "opencode_stop.stop_error": "🔴 Failed to stop OpenCode Server\n\nError: {error}",
   "opencode_stop.success": "✅ OpenCode Server stopped successfully",
@@ -512,7 +513,8 @@ export const en = {
   "auth.request.chat_id": "Chat ID: {chatId}",
   "auth.request.chat_type": "Chat type: {chatType}",
   "auth.request.language": "Language: {language}",
-  "auth.requester.sent": "Access request has been sent to the admin. After approval you can use the bot.",
+  "auth.requester.sent":
+    "Access request has been sent to the admin. After approval you can use the bot.",
   "auth.error.admin_only": "Only the admin can manage access",
   "auth.error.request_not_pending": "Access request is no longer pending",
   "auth.callback.pending_approval": "Access pending admin approval",
@@ -590,7 +592,8 @@ export const en = {
   "skills.button.next_page": "Next ➡️",
   "skills.button.prev_page": "⬅️ Prev",
   "skills.cancelled_callback": "Cancelled",
-  "skills.confirm": "Confirm execution of skill {skill}. To run it with arguments, send the arguments as a message.",
+  "skills.confirm":
+    "Confirm execution of skill {skill}. To run it with arguments, send the arguments as a message.",
   "skills.empty": "📭 No OpenCode skills are available for this project.",
   "skills.execute_callback": "Using skill...",
   "skills.executing_prefix": "⚡ Using skill:",
@@ -602,16 +605,31 @@ export const en = {
   "skills.select": "Choose an OpenCode skill:",
   "skills.select_page": "Choose an OpenCode skill (page {page}):",
 
+  "deferred.preview.header": "Recognized from {count} {label}:\n",
+  "deferred.preview.label_one": "message",
+  "deferred.preview.label_other": "messages",
+  "deferred.kind.photo": "Photo",
+  "deferred.kind.document": "Document",
+  "deferred.kind.audio": "Audio",
+  "deferred.kind.video": "Video",
+  "deferred.kind.text": "Text",
+  "deferred.forwarded.from_display": "[Forwarded from: {displayName}]",
+  "deferred.forwarded.from_another_user": "[Forwarded from another user]",
+  "deferred.forwarded.generic": "[Forwarded message]",
+
   "worktree.already_selected_callback": "This worktree is already selected",
   "worktree.empty": "📭 No git worktrees found for the current repository.",
   "worktree.fetch_error": "🔴 Failed to load git worktrees.",
-  "worktree.not_git_repo": "🌿 Git worktrees are unavailable for the current project. Select a git repository first.",
+  "worktree.not_git_repo":
+    "🌿 Git worktrees are unavailable for the current project. Select a git repository first.",
   "worktree.not_git_repo_callback": "Current project is not a git repository",
   "worktree.page_empty_callback": "No worktrees on this page",
-  "worktree.project_not_selected": "🏗 Project is not selected.\n\nFirst select a project with /projects.",
+  "worktree.project_not_selected":
+    "🏗 Project is not selected.\n\nFirst select a project with /projects.",
   "worktree.select_error": "🔴 Failed to select worktree.",
   "worktree.select_with_current": "Select a worktree:",
-  "worktree.selected": "✅ Worktree selected: {worktree}\n\n📋 Session was reset. Use /sessions or /new to continue.",
+  "worktree.selected":
+    "✅ Worktree selected: {worktree}\n\n📋 Session was reset. Use /sessions or /new to continue.",
   "worktree.selection_missing_callback": "Selected worktree is no longer available",
 } as const;
 

@@ -9,6 +9,7 @@ import {
 } from "../../settings/manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { syncAuthorizedChatCommands } from "../utils/command-sync.js";
 
 const ACCESS_REQUEST_COOLDOWN_MS = 60 * 60 * 1000;
 
@@ -76,7 +77,9 @@ function buildAccessRequestText(ctx: Context): string {
     t("auth.request.user_id", { userId: ctx.from?.id ?? "-" }),
     t("auth.request.chat_id", { chatId: ctx.chat?.id ?? "-" }),
     t("auth.request.chat_type", { chatType: ctx.chat?.type ?? "-" }),
-    ctx.from?.language_code ? t("auth.request.language", { language: ctx.from.language_code }) : null,
+    ctx.from?.language_code
+      ? t("auth.request.language", { language: ctx.from.language_code })
+      : null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -121,7 +124,8 @@ async function upsertPendingApprovalRequest(ctx: Context): Promise<boolean> {
 
   const pendingRequests = getPendingAccessRequests();
   const existingRequestIndex = pendingRequests.findIndex((request) => request.userId === userId);
-  const existingRequest = existingRequestIndex >= 0 ? pendingRequests[existingRequestIndex] : undefined;
+  const existingRequest =
+    existingRequestIndex >= 0 ? pendingRequests[existingRequestIndex] : undefined;
 
   if (existingRequest && isApprovalRequestCooldownActive(existingRequest)) {
     logger.debug(`[Auth] Approval request cooldown active for userId=${userId}`);
@@ -148,9 +152,14 @@ async function upsertPendingApprovalRequest(ctx: Context): Promise<boolean> {
 
   if (typeof existingRequest?.adminMessageId === "number") {
     try {
-      await ctx.api.editMessageText(config.telegram.adminUserId, existingRequest.adminMessageId, text, {
-        reply_markup: keyboard,
-      });
+      await ctx.api.editMessageText(
+        config.telegram.adminUserId,
+        existingRequest.adminMessageId,
+        text,
+        {
+          reply_markup: keyboard,
+        },
+      );
       pendingRequests[existingRequestIndex] = nextRequest;
       await setPendingAccessRequests(pendingRequests);
       return true;
@@ -208,7 +217,10 @@ async function approveTelegramUser(userId: number): Promise<void> {
 }
 
 function formatApprovedUserLabel(request: AccessApprovalRequest): string {
-  const fullName = [request.firstName?.trim(), request.lastName?.trim()].filter(Boolean).join(" ").trim();
+  const fullName = [request.firstName?.trim(), request.lastName?.trim()]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
   const username = request.username?.trim();
 
   if (fullName && username) {
@@ -231,7 +243,8 @@ function buildAccessDecisionText(
   request: AccessApprovalRequest,
   adminUserId: number | undefined,
 ): string {
-  const actionLabel = action === "approve" ? t("auth.decision.approved") : t("auth.decision.denied");
+  const actionLabel =
+    action === "approve" ? t("auth.decision.approved") : t("auth.decision.denied");
   const decidedByLabel =
     typeof adminUserId === "number"
       ? t("auth.decision.decided_by", { adminUserId })
@@ -292,10 +305,18 @@ export async function handleAccessApprovalCallback(ctx: Context): Promise<boolea
   });
 
   if (request.chatId) {
+    if (action === "approve" && request.chatType === "private") {
+      await syncAuthorizedChatCommands(ctx.api, request.chatId, request.chatType, false).catch(
+        (error) => {
+          logger.warn(
+            `[Auth] Failed to restore commands for approved user ${request.userId}: ${error}`,
+          );
+        },
+      );
+    }
+
     const requesterMessage =
-      action === "approve"
-        ? t("auth.requester.approved")
-        : t("auth.requester.denied");
+      action === "approve" ? t("auth.requester.approved") : t("auth.requester.denied");
 
     await ctx.api.sendMessage(request.chatId, requesterMessage).catch((error) => {
       logger.warn(`[Auth] Failed to notify requester about access ${action}: ${error}`);

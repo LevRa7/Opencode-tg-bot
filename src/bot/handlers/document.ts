@@ -1,6 +1,7 @@
 import type { Context } from "grammy";
 import { config } from "../../config.js";
 import { prepareAttachmentMediaPrompt } from "../../media/ingest.js";
+import type { ResolvedDeferredItem } from "../../media/batch-types.js";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
 import {
   downloadTelegramFile,
@@ -23,6 +24,7 @@ export interface DocumentHandlerDeps extends ProcessPromptDeps {
     deps: ProcessPromptDeps,
     fileParts?: FilePartInput[],
   ) => Promise<boolean>;
+  enqueueCorrelatedItem?: (item: ResolvedDeferredItem) => boolean;
 }
 
 export async function handleDocumentMessage(
@@ -32,6 +34,7 @@ export async function handleDocumentMessage(
   const downloadFile = deps.downloadFile ?? downloadTelegramFile;
   const prepareMediaPrompt = deps.prepareMediaPrompt ?? prepareAttachmentMediaPrompt;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
+  const enqueueCorrelatedItem = deps.enqueueCorrelatedItem;
 
   const doc = ctx.message?.document;
   if (!doc) {
@@ -83,6 +86,18 @@ export async function handleDocumentMessage(
         `[Document] Sending text file (${downloadedFile.buffer.length} bytes, ${filename}) via shared media prompt`,
       );
 
+      if (
+        enqueueCorrelatedItem?.({
+          correlationId: `document:${ctx.message?.message_id ?? doc.file_id}`,
+          kind: "document",
+          caption,
+          previewText: caption.trim() || filename,
+          contextText: prepared.promptText,
+        })
+      ) {
+        return;
+      }
+
       await processPrompt(ctx, prepared.promptText, deps);
       return;
     } catch (error) {
@@ -123,6 +138,18 @@ export async function handleDocumentMessage(
       logger.info(
         `[Document] Sending PDF (${downloadedFile.buffer.length} bytes, ${filename}) via shared media prompt`,
       );
+
+      if (
+        enqueueCorrelatedItem?.({
+          correlationId: `document:${ctx.message?.message_id ?? doc.file_id}`,
+          kind: "document",
+          caption,
+          previewText: caption.trim() || filename,
+          contextText: prepared.promptText,
+        })
+      ) {
+        return;
+      }
 
       if (prepared.mode === "attachment") {
         await processPrompt(ctx, prepared.promptText, deps, prepared.fileParts);

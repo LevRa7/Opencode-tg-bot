@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { t } from "../../../src/i18n/index.js";
 import type { Context, NextFunction } from "grammy";
 
+const syncAuthorizedChatCommandsMock = vi.hoisted(() => vi.fn(async () => undefined));
+
 const settingsState = {
   approvedTelegramUserIds: [] as number[],
   pendingAccessRequests: [] as Array<Record<string, unknown>>,
@@ -26,13 +28,19 @@ vi.mock("../../../src/config.js", () => ({
 
 vi.mock("../../../src/settings/manager.js", () => ({
   getApprovedTelegramUserIds: vi.fn(() => [...settingsState.approvedTelegramUserIds]),
-  getPendingAccessRequests: vi.fn(() => settingsState.pendingAccessRequests.map((request) => ({ ...request }))),
+  getPendingAccessRequests: vi.fn(() =>
+    settingsState.pendingAccessRequests.map((request) => ({ ...request })),
+  ),
   setApprovedTelegramUserIds: vi.fn(async (userIds: number[]) => {
     settingsState.approvedTelegramUserIds = [...userIds];
   }),
   setPendingAccessRequests: vi.fn(async (requests: Array<Record<string, unknown>>) => {
     settingsState.pendingAccessRequests = requests.map((request) => ({ ...request }));
   }),
+}));
+
+vi.mock("../../../src/bot/utils/command-sync.js", () => ({
+  syncAuthorizedChatCommands: syncAuthorizedChatCommandsMock,
 }));
 
 import { authMiddleware, handleAccessApprovalCallback } from "../../../src/bot/middleware/auth.js";
@@ -71,7 +79,9 @@ function createContext(options: {
       ? ({
           data: options.callbackData,
           message: options.callbackMessageId
-            ? ({ message_id: options.callbackMessageId } as NonNullable<Context["callbackQuery"]>["message"])
+            ? ({ message_id: options.callbackMessageId } as NonNullable<
+                Context["callbackQuery"]
+              >["message"])
             : undefined,
         } as Context["callbackQuery"])
       : undefined,
@@ -93,6 +103,7 @@ describe("authMiddleware", () => {
     settingsState.approvedTelegramUserIds = [];
     settingsState.pendingAccessRequests = [];
     vi.clearAllMocks();
+    syncAuthorizedChatCommandsMock.mockClear();
   });
 
   it("allows configured users", async () => {
@@ -228,6 +239,7 @@ describe("handleAccessApprovalCallback", () => {
       expect.stringContaining(t("auth.decision.approved")),
       { reply_markup: undefined },
     );
+    expect(syncAuthorizedChatCommandsMock).toHaveBeenCalledWith(ctx.api, 99, "private", false);
     expect(ctx.api.sendMessage).toHaveBeenCalledWith(99, t("auth.requester.approved"));
   });
 

@@ -17,6 +17,8 @@ const handleTaskCallbackMock = vi.hoisted(() => vi.fn(async () => false));
 const handleTaskListCallbackMock = vi.hoisted(() => vi.fn(async () => false));
 const handleRenameCancelMock = vi.hoisted(() => vi.fn(async () => false));
 const handleCommandsCallbackMock = vi.hoisted(() => vi.fn(async () => false));
+const syncAuthorizedChatCommandsMock = vi.hoisted(() => vi.fn(async () => undefined));
+const getApprovedTelegramUserIdsMock = vi.hoisted(() => vi.fn(() => [1]));
 
 vi.mock("grammy", () => {
   class FakeBot {
@@ -192,7 +194,7 @@ vi.mock("../../src/bot/middleware/unknown-command.js", () => ({
 }));
 
 vi.mock("../../src/bot/utils/command-sync.js", () => ({
-  syncAuthorizedChatCommands: vi.fn(async () => undefined),
+  syncAuthorizedChatCommands: syncAuthorizedChatCommandsMock,
 }));
 
 vi.mock("../../src/question/manager.js", () => ({
@@ -334,9 +336,15 @@ vi.mock("../../src/bot/handlers/prompt.js", () => ({
   processUserPrompt: vi.fn(async () => true),
 }));
 
-vi.mock("../../src/bot/handlers/voice.js", () => ({ handleVoiceMessage: vi.fn(async () => false) }));
-vi.mock("../../src/bot/handlers/document.js", () => ({ handleDocumentMessage: vi.fn(async () => false) }));
-vi.mock("../../src/bot/handlers/video.js", () => ({ handleVideoMessage: vi.fn(async () => false) }));
+vi.mock("../../src/bot/handlers/voice.js", () => ({
+  handleVoiceMessage: vi.fn(async () => false),
+}));
+vi.mock("../../src/bot/handlers/document.js", () => ({
+  handleDocumentMessage: vi.fn(async () => false),
+}));
+vi.mock("../../src/bot/handlers/video.js", () => ({
+  handleVideoMessage: vi.fn(async () => false),
+}));
 vi.mock("../../src/bot/utils/file-download.js", () => ({
   downloadTelegramFile: vi.fn(async () => undefined),
   toDataUri: vi.fn(() => ""),
@@ -446,7 +454,7 @@ vi.mock("../../src/bot/utils/message-thread.js", () => ({
   withMessageThreadId: vi.fn((options) => options),
 }));
 vi.mock("../../src/settings/manager.js", () => ({
-  getApprovedTelegramUserIds: vi.fn(() => [1]),
+  getApprovedTelegramUserIds: getApprovedTelegramUserIdsMock,
   getReasoningMode: vi.fn(() => 0),
   getTenantRuntimeInfo: vi.fn(() => undefined),
   getThinkingClearMode: vi.fn(() => false),
@@ -461,7 +469,9 @@ vi.mock("../../src/telegram/scope.js", () => ({
   buildTelegramConversationScopeKey: vi.fn(() => "scope"),
   extractTelegramConversationScopeFromContext: vi.fn(() => null),
   resolveTelegramConversationScopeKey: vi.fn(() => "scope"),
-  runWithTelegramConversationScope: vi.fn(async (_scope: unknown, fn: () => Promise<unknown> | unknown) => await fn()),
+  runWithTelegramConversationScope: vi.fn(
+    async (_scope: unknown, fn: () => Promise<unknown> | unknown) => await fn(),
+  ),
 }));
 
 import { createBot } from "../../src/bot/index.js";
@@ -497,19 +507,24 @@ describe("bot/index callback routing", () => {
     handleTaskListCallbackMock.mockReset().mockResolvedValue(false);
     handleRenameCancelMock.mockReset().mockResolvedValue(false);
     handleCommandsCallbackMock.mockReset().mockResolvedValue(false);
+    syncAuthorizedChatCommandsMock.mockReset().mockResolvedValue(undefined);
+    getApprovedTelegramUserIdsMock.mockReset().mockReturnValue([1]);
   });
 
   it("registers a single callback_query:data dispatcher", () => {
     const bot = createBot() as unknown as { onHandlers: typeof onHandlers };
 
-    const callbackHandlers = bot.onHandlers.filter((entry) => entry.event === "callback_query:data");
+    const callbackHandlers = bot.onHandlers.filter(
+      (entry) => entry.event === "callback_query:data",
+    );
 
     expect(callbackHandlers).toHaveLength(1);
   });
 
   it("preserves the current grammY middleware registration order", async () => {
     const { authMiddleware } = await import("../../src/bot/middleware/auth.js");
-    const { interactionGuardMiddleware } = await import("../../src/bot/middleware/interaction-guard.js");
+    const { interactionGuardMiddleware } =
+      await import("../../src/bot/middleware/interaction-guard.js");
 
     createBot();
 
@@ -519,9 +534,34 @@ describe("bot/index callback routing", () => {
     );
   });
 
+  it("restores per-chat commands for already authorized private users on startup", async () => {
+    getApprovedTelegramUserIdsMock.mockReturnValue([55, 55]);
+
+    createBot();
+
+    await vi.waitFor(() => {
+      expect(syncAuthorizedChatCommandsMock).toHaveBeenCalledWith(
+        expect.anything(),
+        1,
+        "private",
+        true,
+      );
+      expect(syncAuthorizedChatCommandsMock).toHaveBeenCalledWith(
+        expect.anything(),
+        55,
+        "private",
+        false,
+      );
+    });
+
+    expect(syncAuthorizedChatCommandsMock).toHaveBeenCalledTimes(2);
+  });
+
   it("routes open-related callbacks through the callback dispatcher without falling through to unknown callback", async () => {
     const bot = createBot() as unknown as { onHandlers: typeof onHandlers };
-    const callbackHandler = bot.onHandlers.find((entry) => entry.event === "callback_query:data")?.handler;
+    const callbackHandler = bot.onHandlers.find(
+      (entry) => entry.event === "callback_query:data",
+    )?.handler;
     const ctx = createCallbackContext("tasklist:open:task-1");
 
     handleTaskListCallbackMock.mockResolvedValue(true);

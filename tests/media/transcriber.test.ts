@@ -98,17 +98,40 @@ describe("media/transcriber", () => {
   });
 
   it("treats empty stdout as a transcriber failure", async () => {
-    execFileMock.mockImplementationOnce(
-      (
-        _command: string,
-        _args: ReadonlyArray<string>,
-        _options: ExecFileOptions,
-        callback: (error: Error | null, stdout: string, stderr: string) => void,
-      ) => {
-        callback(null, "  \n", "  no text generated  ");
-        return undefined;
-      },
-    );
+    execFileMock
+      .mockImplementationOnce(
+        (
+          _command: string,
+          _args: ReadonlyArray<string>,
+          _options: ExecFileOptions,
+          callback: (error: Error | null, stdout: string, stderr: string) => void,
+        ) => {
+          callback(null, "  \n", "  no text generated  ");
+          return undefined;
+        },
+      )
+      .mockImplementationOnce(
+        (
+          _command: string,
+          _args: ReadonlyArray<string>,
+          _options: ExecFileOptions,
+          callback: (error: Error | null, stdout: string, stderr: string) => void,
+        ) => {
+          callback(null, "  \n", "  no text generated  ");
+          return undefined;
+        },
+      )
+      .mockImplementationOnce(
+        (
+          _command: string,
+          _args: ReadonlyArray<string>,
+          _options: ExecFileOptions,
+          callback: (error: Error | null, stdout: string, stderr: string) => void,
+        ) => {
+          callback(null, "  \n", "  no text generated  ");
+          return undefined;
+        },
+      );
 
     await expect(
       transcribeStoredMedia({
@@ -124,5 +147,65 @@ describe("media/transcriber", () => {
         exitCode: null,
       }),
     );
+  });
+
+  it("retries when the transcriber returns empty stdout before succeeding", async () => {
+    execFileMock
+      .mockImplementationOnce(
+        (
+          _command: string,
+          _args: ReadonlyArray<string>,
+          _options: ExecFileOptions,
+          callback: (error: Error | null, stdout: string, stderr: string) => void,
+        ) => {
+          callback(null, "\n", "");
+          return undefined;
+        },
+      )
+      .mockImplementationOnce(
+        (
+          _command: string,
+          _args: ReadonlyArray<string>,
+          _options: ExecFileOptions,
+          callback: (error: Error | null, stdout: string, stderr: string) => void,
+        ) => {
+          callback(null, "usable transcript", "");
+          return undefined;
+        },
+      );
+
+    await expect(
+      transcribeStoredMedia({
+        kind: "video",
+        hostAbsolutePath: "/host/media/video.mp4",
+      }),
+    ).resolves.toBe("usable transcript");
+
+    expect(execFileMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("strips leaked skill-activation meta lines from transcriber output", async () => {
+    execFileMock.mockImplementationOnce(
+      (
+        _command: string,
+        _args: ReadonlyArray<string>,
+        _options: ExecFileOptions,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(
+          null,
+          '`activate_skill("openai-media-transcriber")`\n\nThe video shows a person speaking.\n\nTranscript: hello.',
+          "",
+        );
+        return undefined;
+      },
+    );
+
+    await expect(
+      transcribeStoredMedia({
+        kind: "video",
+        hostAbsolutePath: "/host/media/video.mp4",
+      }),
+    ).resolves.toBe("The video shows a person speaking.\n\nTranscript: hello.");
   });
 });

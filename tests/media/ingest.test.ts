@@ -82,7 +82,7 @@ describe("media/ingest", () => {
       mode: "text",
       recognizedText: "remote transcript",
       promptText:
-        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/audio.ogg\nProcessed media result:\nremote transcript",
+        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nremote transcript",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
         runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
@@ -126,7 +126,7 @@ describe("media/ingest", () => {
       mode: "text",
       recognizedText: "default transcript",
       promptText:
-        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/audio.ogg\nProcessed media result:\ndefault transcript",
+        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\ndefault transcript",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
         runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
@@ -177,7 +177,7 @@ describe("media/ingest", () => {
       mode: "text",
       recognizedText: "fallback transcript",
       promptText:
-        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/audio.ogg\nProcessed media result:\nfallback transcript",
+        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nfallback transcript",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
         runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
@@ -226,7 +226,7 @@ describe("media/ingest", () => {
       mode: "text",
       recognizedText: "local transcript",
       promptText:
-        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/audio.ogg\nProcessed media result:\nlocal transcript",
+        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nlocal transcript",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
         runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
@@ -279,7 +279,7 @@ describe("media/ingest", () => {
       mode: "text",
       recognizedText: "local transcript",
       promptText:
-        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/audio.ogg\nProcessed media result:\nlocal transcript",
+        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nlocal transcript",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
         runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
@@ -317,7 +317,7 @@ describe("media/ingest", () => {
     });
 
     expect(prompt).toBe(
-      "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/image.png\nProcessed media result:\nvisual summary",
+      "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nvisual summary",
     );
   });
 
@@ -361,7 +361,7 @@ describe("media/ingest", () => {
     expect(preparedPrompt).toEqual({
       mode: "text",
       promptText:
-        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/notes.txt\nProcessed media result:\nalpha\nbeta\n\nUser caption/instruction:\nSummarize this",
+        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nalpha\nbeta\n\nUser caption/instruction:\nSummarize this",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/notes.txt",
         runtimeVisiblePath: "/state/media/123/2026/04/24/notes.txt",
@@ -478,7 +478,7 @@ describe("media/ingest", () => {
     expect(preparedPrompt).toEqual({
       mode: "text",
       promptText:
-        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/photo.png\nProcessed media result:\nimage transcript\n\nUser caption/instruction:\nDescribe this",
+        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nimage transcript\n\nUser caption/instruction:\nDescribe this",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/photo.png",
         runtimeVisiblePath: "/state/media/123/2026/04/24/photo.png",
@@ -533,7 +533,7 @@ describe("media/ingest", () => {
     expect(preparedPrompt).toEqual({
       mode: "text",
       promptText:
-        "A Telegram media file was already processed locally by the bridge.\n\nThe file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.\n\nReference file path: /state/media/123/2026/04/24/photo.png\nProcessed media result:\nimage transcript\n\nUser caption/instruction:\nDescribe this",
+        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nimage transcript\n\nUser caption/instruction:\nDescribe this",
       sourceFile: {
         hostAbsolutePath: "/host/media/123/2026/04/24/photo.png",
         runtimeVisiblePath: "/state/media/123/2026/04/24/photo.png",
@@ -543,6 +543,244 @@ describe("media/ingest", () => {
         mediaType: "image",
       },
       transcriberKind: "photo",
+    });
+  });
+
+  it("transcribes audio and returns attachment mode when the model supports video input and attachment", async () => {
+    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
+      hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
+      runtimeVisiblePath: "/state/media/123/2026/04/24/video.mp4",
+      fileName: "video.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: 999,
+      mediaType: "video",
+    });
+    const getStoredModel = vi.fn().mockReturnValue({
+      providerID: "openai",
+      modelID: "gpt-4.1",
+      variant: "default",
+    });
+    const getModelCapabilities = vi.fn().mockResolvedValue({
+      input: { image: true, pdf: false, audio: false, video: true },
+      attachment: true,
+    });
+    const transcribeStoredMedia = vi.fn().mockResolvedValue("what's in this cup?");
+    const onFallbackStart = vi.fn();
+
+    const preparedPrompt = await prepareAttachmentMediaPrompt({
+      ctx: { from: { id: 123 } } as Context,
+      telegramFileId: "telegram-video-attach",
+      mediaType: "video",
+      mimeType: "video/mp4",
+      fallbackFileName: "video.mp4",
+      caption: "",
+      buffer: Buffer.from("mp4!"),
+      onFallbackStart,
+      saveIncomingMediaFile,
+      getStoredModel,
+      getModelCapabilities,
+      transcribeStoredMedia,
+    });
+
+    expect(onFallbackStart).toHaveBeenCalledTimes(1);
+    expect(transcribeStoredMedia).toHaveBeenCalledWith({
+      kind: "video",
+      hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
+    });
+    expect(preparedPrompt).toEqual({
+      mode: "attachment",
+      promptText: "what's in this cup?",
+      fileParts: [
+        {
+          type: "file",
+          mime: "video/mp4",
+          filename: "video.mp4",
+          url: "data:video/mp4;base64,bXA0IQ==",
+        },
+      ],
+      sourceFile: {
+        hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
+        runtimeVisiblePath: "/state/media/123/2026/04/24/video.mp4",
+        fileName: "video.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 999,
+        mediaType: "video",
+      },
+      transcriberKind: "video",
+    });
+  });
+
+  it("merges caption with video transcription in attachment mode when both are present", async () => {
+    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
+      hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
+      runtimeVisiblePath: "/state/media/123/2026/04/24/video.mp4",
+      fileName: "video.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: 999,
+      mediaType: "video",
+    });
+    const getStoredModel = vi.fn().mockReturnValue({
+      providerID: "openai",
+      modelID: "gpt-4.1",
+      variant: "default",
+    });
+    const getModelCapabilities = vi.fn().mockResolvedValue({
+      input: { image: true, pdf: false, audio: false, video: true },
+      attachment: true,
+    });
+    const transcribeStoredMedia = vi.fn().mockResolvedValue("how does this work?");
+
+    const preparedPrompt = await prepareAttachmentMediaPrompt({
+      ctx: { from: { id: 123 } } as Context,
+      telegramFileId: "telegram-video-cap",
+      mediaType: "video",
+      mimeType: "video/mp4",
+      fallbackFileName: "video.mp4",
+      caption: "Explain this",
+      buffer: Buffer.from("mp4!"),
+      saveIncomingMediaFile,
+      getStoredModel,
+      getModelCapabilities,
+      transcribeStoredMedia,
+    });
+
+    expect(transcribeStoredMedia).toHaveBeenCalledTimes(1);
+    expect(preparedPrompt).toEqual({
+      mode: "attachment",
+      promptText: "Explain this\n\nTranscribed video audio:\nhow does this work?",
+      fileParts: [
+        {
+          type: "file",
+          mime: "video/mp4",
+          filename: "video.mp4",
+          url: "data:video/mp4;base64,bXA0IQ==",
+        },
+      ],
+      sourceFile: {
+        hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
+        runtimeVisiblePath: "/state/media/123/2026/04/24/video.mp4",
+        fileName: "video.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 999,
+        mediaType: "video",
+      },
+      transcriberKind: "video",
+    });
+  });
+
+  it("falls back to caption when video transcription in attachment mode fails", async () => {
+    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
+      hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
+      runtimeVisiblePath: "/state/media/123/2026/04/24/video.mp4",
+      fileName: "video.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: 999,
+      mediaType: "video",
+    });
+    const getStoredModel = vi.fn().mockReturnValue({
+      providerID: "openai",
+      modelID: "gpt-4.1",
+      variant: "default",
+    });
+    const getModelCapabilities = vi.fn().mockResolvedValue({
+      input: { image: true, pdf: false, audio: false, video: true },
+      attachment: true,
+    });
+    const transcribeStoredMedia = vi.fn().mockRejectedValue(new Error("transcriber unavailable"));
+
+    const preparedPrompt = await prepareAttachmentMediaPrompt({
+      ctx: { from: { id: 123 } } as Context,
+      telegramFileId: "telegram-video-fail",
+      mediaType: "video",
+      mimeType: "video/mp4",
+      fallbackFileName: "video.mp4",
+      caption: "What's going on?",
+      buffer: Buffer.from("mp4!"),
+      saveIncomingMediaFile,
+      getStoredModel,
+      getModelCapabilities,
+      transcribeStoredMedia,
+    });
+
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      "[Media] Video transcription in attachment mode failed, using caption only",
+      expect.any(Error),
+    );
+    expect(preparedPrompt).toEqual({
+      mode: "attachment",
+      promptText: "What's going on?",
+      fileParts: [
+        {
+          type: "file",
+          mime: "video/mp4",
+          filename: "video.mp4",
+          url: "data:video/mp4;base64,bXA0IQ==",
+        },
+      ],
+      sourceFile: {
+        hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
+        runtimeVisiblePath: "/state/media/123/2026/04/24/video.mp4",
+        fileName: "video.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 999,
+        mediaType: "video",
+      },
+      transcriberKind: "video",
+    });
+  });
+
+  it("uses a processed-result-only prompt for unsupported video fallback so OpenCode does not try to reopen the file", async () => {
+    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
+      hostAbsolutePath: "/host/media/123/2026/04/24/video-note.mp4",
+      runtimeVisiblePath: "/state/media/123/2026/04/24/video-note.mp4",
+      fileName: "video-note.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: 4,
+      mediaType: "video",
+    });
+    const getStoredModel = vi.fn().mockReturnValue({
+      providerID: "cliproxyapi",
+      modelID: "gpt-5.4",
+      variant: "default",
+    });
+    const getModelCapabilities = vi.fn().mockResolvedValue({
+      input: { image: true, pdf: false, audio: false, video: false },
+      attachment: true,
+    });
+    const transcribeStoredMedia = vi.fn().mockResolvedValue("video transcript and visual summary");
+
+    const preparedPrompt = await prepareAttachmentMediaPrompt({
+      ctx: { from: { id: 123 } } as Context,
+      telegramFileId: "telegram-video-1",
+      mediaType: "video",
+      mimeType: "video/mp4",
+      originalFileName: "video-note.mp4",
+      fallbackFileName: "video-note.mp4",
+      caption: "What is happening here?",
+      buffer: Buffer.from("mp4!"),
+      saveIncomingMediaFile,
+      getStoredModel,
+      getModelCapabilities,
+      transcribeStoredMedia,
+    });
+
+    expect(transcribeStoredMedia).toHaveBeenCalledWith({
+      kind: "video",
+      hostAbsolutePath: "/host/media/123/2026/04/24/video-note.mp4",
+    });
+    expect(preparedPrompt).toEqual({
+      mode: "text",
+      promptText:
+        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nvideo transcript and visual summary\n\nUser caption/instruction:\nWhat is happening here?",
+      sourceFile: {
+        hostAbsolutePath: "/host/media/123/2026/04/24/video-note.mp4",
+        runtimeVisiblePath: "/state/media/123/2026/04/24/video-note.mp4",
+        fileName: "video-note.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 4,
+        mediaType: "video",
+      },
+      transcriberKind: "video",
     });
   });
 });

@@ -4,11 +4,7 @@ import { toDataUri } from "../bot/utils/file-download.js";
 import { getCurrentOpencodeRoute } from "../opencode/client.js";
 import { isSttConfigured, transcribeAudio, type SttResult } from "../stt/client.js";
 import { logger } from "../utils/logger.js";
-import {
-  getModelCapabilities,
-  supportsAttachment,
-  supportsInput,
-} from "../model/capabilities.js";
+import { getModelCapabilities, supportsAttachment, supportsInput } from "../model/capabilities.js";
 import { getStoredModel } from "../model/manager.js";
 import { saveIncomingMediaFile } from "./storage.js";
 import { transcribeStoredMedia } from "./transcriber.js";
@@ -19,7 +15,10 @@ import type {
   StoredMediaType,
 } from "./types.js";
 
-type AttachmentPromptMediaType = Extract<StoredMediaType, "image" | "pdf" | "video" | "text_document">;
+type AttachmentPromptMediaType = Extract<
+  StoredMediaType,
+  "image" | "pdf" | "video" | "text_document"
+>;
 type AttachmentSupportedInput = Extract<StoredMediaType, "image" | "pdf" | "video">;
 type PreparedAudioPrompt = Extract<PreparedMediaPrompt, { mode: "text" }> & {
   recognizedText: string;
@@ -109,9 +108,9 @@ export function buildStoredMediaPrompt(params: {
   caption: string;
 }): string {
   const sections = [
-    "A Telegram media file was already processed locally by the bridge.",
-    "The file itself is not attached to this prompt. Do not try to open, locate, or transcribe it again.",
-    `Reference file path: ${params.runtimeVisiblePath}\nProcessed media result:\n${params.extractedText}`,
+    "Telegram media was already processed locally.",
+    "Use only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.",
+    `Processed media result:\n${params.extractedText}`,
   ];
 
   if (params.caption.trim().length > 0) {
@@ -159,9 +158,31 @@ export async function prepareAttachmentMediaPrompt(
   const inputType = getAttachmentInputType(params.mediaType);
 
   if (supportsInput(capabilities, inputType) && supportsAttachment(capabilities)) {
+    let promptText = params.caption;
+
+    if (inputType === "video") {
+      try {
+        await params.onFallbackStart?.();
+        const extractedText = await transcribeMedia({
+          kind: transcriberKind,
+          hostAbsolutePath: sourceFile.hostAbsolutePath,
+        });
+        if (extractedText.trim().length > 0) {
+          promptText = params.caption.trim()
+            ? `${params.caption}\n\nTranscribed video audio:\n${extractedText}`
+            : extractedText;
+        }
+      } catch (error) {
+        logger.warn(
+          "[Media] Video transcription in attachment mode failed, using caption only",
+          error,
+        );
+      }
+    }
+
     return {
       mode: "attachment",
-      promptText: params.caption,
+      promptText,
       fileParts: [
         {
           type: "file",

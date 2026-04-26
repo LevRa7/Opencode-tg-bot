@@ -153,7 +153,15 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
       return createBusyBlockDecision(inputType, state, "command_not_allowed", command);
     }
 
-    if (state && allowsBusyInteraction(state.kind)) {
+    // When no interaction state is active and the session is busy, allow all
+    // input types through. The handlers themselves check foregroundSessionState
+    // and defer media/text to the batch mechanism, rather than being blocked here
+    // with a confusing "finish current interaction" message.
+    if (!state) {
+      return createAllowDecision(inputType, null, command, true);
+    }
+
+    if (allowsBusyInteraction(state.kind)) {
       if (state.expectedInput === "mixed") {
         if (inputType === "callback" || inputType === "text") {
           return createAllowDecision(inputType, state, command, true);

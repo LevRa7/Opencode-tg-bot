@@ -228,8 +228,7 @@ export const zh: I18nDictionary = {
   "model.menu.providers_title": "当前模型：{name}\n\n请选择提供方：",
   "model.menu.provider_title":
     "当前模型：{name}\n\n提供方：{provider}\n第 {current}/{total} 页\n\n请选择模型：",
-  "model.menu.provider_empty":
-    "当前模型：{name}\n\n提供方：{provider}\n\n没有可用模型。",
+  "model.menu.provider_empty": "当前模型：{name}\n\n提供方：{provider}\n\n没有可用模型。",
   "model.menu.provider_stale_callback": "该提供方已不可用",
   "model.menu.model_stale_callback": "该模型已不可用",
   "model.menu.button.prev_page": "⬅️ 上一页",
@@ -562,6 +561,18 @@ export const zh: I18nDictionary = {
   "skills.page_load_error_callback": "",
   "skills.select": "",
   "skills.select_page": "",
+
+  "deferred.preview.header": "从 {count} 条{label}中识别：\n",
+  "deferred.preview.label_one": "消息",
+  "deferred.preview.label_other": "消息",
+  "deferred.kind.photo": "照片",
+  "deferred.kind.document": "文档",
+  "deferred.kind.audio": "音频",
+  "deferred.kind.video": "视频",
+  "deferred.kind.text": "文本",
+  "deferred.forwarded.from_display": "[转发自：{displayName}]",
+  "deferred.forwarded.from_another_user": "[转发自其他用户]",
+  "deferred.forwarded.generic": "[转发消息]",
 
   "worktree.already_selected_callback": "",
   "worktree.empty": "",

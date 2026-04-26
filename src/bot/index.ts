@@ -80,7 +80,15 @@ import {
   clearPromptRouting,
   getPromptRoutingContext,
   processUserPrompt,
+  type ProcessPromptDeps,
 } from "./handlers/prompt.js";
+import { IncomingMediaBatch } from "./incoming-media-batch.js";
+import type { ResolvedDeferredItem } from "../media/batch-types.js";
+import { composeDeferredMediaPrompt } from "../media/prompt-composer.js";
+import { opencodeClient } from "../opencode/client.js";
+import { getCurrentSession } from "../session/manager.js";
+import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
+import { assistantRunState } from "./assistant-run-state.js";
 import { handleVoiceMessage } from "./handlers/voice.js";
 import { handleDocumentMessage } from "./handlers/document.js";
 import { handleVideoMessage } from "./handlers/video.js";
@@ -89,7 +97,6 @@ import { finalizeAssistantResponse } from "./utils/finalize-assistant-response.j
 import { sendTtsResponseForSession } from "./utils/send-tts-response.js";
 import { MessageDraftStreamManager } from "./utils/message-draft-stream.js";
 import { deliverThinkingMessage } from "./utils/thinking-message.js";
-import { assistantRunState } from "./assistant-run-state.js";
 import { formatAssistantRunFooter } from "./utils/assistant-run-footer.js";
 import { sendBotText } from "./utils/telegram-text.js";
 import {
@@ -98,7 +105,6 @@ import {
   prepareLocalFileFollowUpsFromPaths,
   type PreparedLocalFileFollowUp,
 } from "./utils/telegram-local-file-follow-up.js";
-import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
 import { scheduledTaskRuntime } from "../scheduled-task/runtime.js";
 import { ResponseStreamer } from "./streaming/response-streamer.js";
 import { ToolCallStreamer } from "./streaming/tool-call-streamer.js";
@@ -126,6 +132,7 @@ import {
   type TelegramConversationScope,
 } from "../telegram/scope.js";
 
+let deferredBatch: IncomingMediaBatch<ResolvedDeferredItem, ResolvedDeferredItem, string>;
 let activeBotInstance: Bot<Context> | null = null;
 
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
@@ -1007,6 +1014,9 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           );
         }
       }
+
+      const idleScopeKey = getSessionRoutingScopeKey(sessionId);
+      await deferredBatch.flushExpiredWindowsForScope(idleScopeKey);
     } catch (err) {
       logger.error("[Bot] Failed to send session idle footer:", err);
     } finally {
@@ -1655,8 +1665,29 @@ export function createBot(): Bot<Context> {
     },
   });
 
+  // Deferred media batch for correlating follow-up messages into a single prompt
+  deferredBatch = new IncomingMediaBatch<ResolvedDeferredItem, ResolvedDeferredItem, string>({
+    sendDirectPrompt: async () => {},
+    resolveDeferredItems: async ({ deferredItems }) => {
+      const result = composeDeferredMediaPrompt(deferredItems, t as (key: string) => string);
+      const parts: string[] = [];
+      if (result.directText) parts.push(result.directText);
+      if (result.contextText) parts.push(result.contextText);
+      return parts.join("\n\n");
+    },
+    sendDeferredFollowUp: async ({ resolvedDeferredItems }) => {
+      const session = getCurrentSession();
+      if (!session) return;
+      await opencodeClient.session.prompt({
+        sessionID: session.id,
+        directory: session.directory,
+        parts: [{ type: "text", text: resolvedDeferredItems }],
+      });
+    },
+  });
+
   // Voice and audio message handlers (STT transcription -> prompt)
-  const voicePromptDeps = { bot, ensureEventSubscription };
+  const voicePromptDeps = { bot, ensureEventSubscription, deferredBatch };
 
   bot.on("message:voice", async (ctx) => {
     logger.debug(`[Bot] Received voice message, chatId=${ctx.chat.id}`);
@@ -1672,19 +1703,39 @@ export function createBot(): Bot<Context> {
   bot.on("message:photo", async (ctx) => {
     logger.debug(`[Bot] Received photo message, chatId=${ctx.chat.id}`);
 
-    await handlePhotoMessage(ctx, { bot, ensureEventSubscription });
+    await handlePhotoMessage(ctx, {
+      bot,
+      ensureEventSubscription,
+      deferredBatch,
+      enqueueCorrelatedItem: (item) => deferredBatch.enqueueDeferredItem({
+        scopeKey: buildTelegramConversationScopeKey(
+          extractTelegramConversationScopeFromContext(ctx),
+        ),
+        deferredItem: item,
+      }),
+    });
   });
 
   // Document message handler (PDF and text files)
   bot.on("message:document", async (ctx) => {
     logger.debug(`[Bot] Received document message, chatId=${ctx.chat.id}`);
-    const deps = { bot, ensureEventSubscription };
+    const deps = {
+      bot,
+      ensureEventSubscription,
+      deferredBatch,
+      enqueueCorrelatedItem: (item: ResolvedDeferredItem) => deferredBatch.enqueueDeferredItem({
+        scopeKey: buildTelegramConversationScopeKey(
+          extractTelegramConversationScopeFromContext(ctx),
+        ),
+        deferredItem: item,
+      }),
+    };
     await handleDocumentMessage(ctx, deps);
   });
 
   bot.on(["message:video", "message:video_note"], async (ctx) => {
     logger.debug(`[Bot] Received video message, chatId=${ctx.chat.id}`);
-    const deps = { bot, ensureEventSubscription };
+    const deps = { bot, ensureEventSubscription, deferredBatch };
     await handleVideoMessage(ctx, deps);
   });
 
@@ -1718,7 +1769,7 @@ export function createBot(): Bot<Context> {
       return;
     }
 
-    const promptDeps = { bot, ensureEventSubscription };
+    const promptDeps = { bot, ensureEventSubscription, deferredBatch };
     const handledCommandArgs = await handleCommandTextArguments(ctx, promptDeps);
     if (handledCommandArgs) {
       return;

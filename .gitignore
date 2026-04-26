@@ -48,5 +48,12 @@ docs/qwen3-emb-api.md
 docs/tg-cli-clean-architecture-plan.md
 docs/tg-cli-iteration-1-plan.md
 
+# Downloaded Telegram media
+media/
+
+# Temporary files
+.part
+.tmp-*
+
 # Packaging artifacts
 *.tgz

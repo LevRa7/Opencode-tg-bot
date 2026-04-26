@@ -17,6 +17,7 @@ const sendChatActionMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const editMessageTextMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const keyboardGetKeyboardMock = vi.hoisted(() => vi.fn(() => undefined));
 const keyboardIsInitializedMock = vi.hoisted(() => vi.fn(() => false));
+const getSessionTargetMock = vi.hoisted(() => vi.fn(() => null));
 const runWithTelegramConversationScopeMock = vi.hoisted(() =>
   vi.fn(async (_scope: unknown, fn: () => Promise<unknown> | unknown) => await fn()),
 );
@@ -29,6 +30,12 @@ const subscribeToEventsMock = vi.hoisted(() =>
 );
 const sessionPromptMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ error: undefined })));
 const sessionStatusMock = vi.hoisted(() => vi.fn().mockResolvedValue({ data: {}, error: undefined }));
+const sessionCreateMock = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({
+    data: { id: "session-created-1", title: "Created Session", directory: "/repo" },
+    error: undefined,
+  }),
+);
 const getCurrentSessionMock = vi.hoisted(() =>
   vi.fn(() => ({ id: "session-1", title: "Session 1", directory: "/repo" })),
 );
@@ -141,6 +148,7 @@ vi.mock("../../src/config.js", () => ({
 vi.mock("../../src/opencode/client.js", () => ({
   opencodeClient: {
     session: {
+      create: sessionCreateMock,
       prompt: sessionPromptMock,
       status: sessionStatusMock,
     },
@@ -194,6 +202,7 @@ vi.mock("../../src/pinned/manager.js", () => ({
     initialize: vi.fn(),
     refresh: vi.fn(),
     getState: vi.fn(() => ({ messageId: null })),
+    getContextInfo: vi.fn(() => null),
     getContextLimit: vi.fn(() => 0),
     updateTokensSilent: vi.fn(),
     setOnKeyboardUpdate: vi.fn(),
@@ -212,7 +221,7 @@ vi.mock("../../src/thread/manager.js", () => ({
     bindProjectToActiveContext: vi.fn(),
     bindSessionToActiveContext: vi.fn(),
     clearSessionForActiveContext: vi.fn(),
-    getSessionTarget: vi.fn(() => null),
+    getSessionTarget: getSessionTargetMock,
     getSessionScope: vi.fn(() => null),
     getSessionDirectory: vi.fn(() => "/repo"),
   },
@@ -354,8 +363,14 @@ vi.mock("../../src/bot/handlers/question.js", () => ({
 }));
 
 import { config } from "../../src/config.js";
-import { getReasoningMode, getTenantRuntimeInfo, isMessageStreamingEnabled } from "../../src/settings/manager.js";
-import { createBot } from "../../src/bot/index.js";
+import {
+  getReasoningMode,
+  getTenantRuntimeInfo,
+  getThinkingClearMode,
+  isMessageStreamingEnabled,
+} from "../../src/settings/manager.js";
+import { createBot, routingBySessionId } from "../../src/bot/index.js";
+import { scheduledTaskRuntime } from "../../src/scheduled-task/runtime.js";
 
 describe("bot/index local file follow-up orchestration", () => {
   beforeEach(() => {
@@ -374,6 +389,8 @@ describe("bot/index local file follow-up orchestration", () => {
     keyboardGetKeyboardMock.mockReturnValue(undefined);
     keyboardIsInitializedMock.mockReset();
     keyboardIsInitializedMock.mockReturnValue(false);
+    getSessionTargetMock.mockReset();
+    getSessionTargetMock.mockReturnValue({ chatId: 123, messageThreadId: 1 });
     runWithTelegramConversationScopeMock.mockClear();
     subscribeToEventsMock.mockClear();
     sessionPromptMock.mockClear();
@@ -890,6 +907,37 @@ describe("bot/index local file follow-up orchestration", () => {
     );
   });
 
+  it("accepts a private chat prompt without a message_thread_id", async () => {
+    getCurrentSessionMock.mockReset().mockReturnValue(null);
+    sessionCreateMock.mockClear().mockResolvedValue({
+      data: { id: "session-created-1", title: "Created Session", directory: "/repo" },
+      error: undefined,
+    });
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const replyMock = vi.fn().mockResolvedValue({ message_id: 99 });
+    await promptHandler({
+      message: {
+        text: "private chat without thread id",
+        chat: { id: 123 },
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: replyMock,
+    });
+
+    expect(replyMock).not.toHaveBeenCalledWith("error.generic");
+    expect(replyMock).toHaveBeenCalledWith("bot.creating_session");
+    expect(sessionCreateMock).toHaveBeenCalledWith({ directory: "/repo" });
+    expect(sessionPromptMock).toHaveBeenCalled();
+  });
+
   it("keeps sending a long final response after a partial follow-up file starts sending", async () => {
     const deferredDocument = createDeferred<{ message_id: number }>();
     sendDocumentMock.mockImplementationOnce(() => deferredDocument.promise);
@@ -1345,8 +1393,18 @@ describe("bot/index local file follow-up orchestration", () => {
       },
     } as unknown as Event);
 
-    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
-    expect(String(sendMessageMock.mock.calls[0]?.[1] ?? "")).toContain("bot.thinking");
+    await vi.waitFor(() => expect(sendMessageDraftMock).toHaveBeenCalledTimes(1));
+    expect(sendMessageDraftMock).toHaveBeenCalledWith(
+      123,
+      expect.any(Number),
+      expect.stringContaining("bot.thinking"),
+      expect.objectContaining({
+        parse_mode: "HTML",
+        disable_notification: true,
+        message_thread_id: 1,
+      }),
+    );
+    expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).toContain("Planning the response carefully.");
 
     emit({
       type: "message.part.updated",
@@ -1362,8 +1420,7 @@ describe("bot/index local file follow-up orchestration", () => {
       },
     } as unknown as Event);
 
-    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(2));
-    expect(sendMessageDraftMock).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
 
     emit({
       type: "message.part.updated",
@@ -1380,7 +1437,7 @@ describe("bot/index local file follow-up orchestration", () => {
     } as unknown as Event);
 
     await vi.waitFor(() => expect(editMessageTextMock.mock.calls.length).toBeGreaterThan(0));
-    expect(String(sendMessageMock.mock.calls[1]?.[1] ?? "")).toContain("С");
+    expect(String(sendMessageMock.mock.calls[0]?.[1] ?? "")).toContain("С");
 
     emit({
       type: "message.part.updated",
@@ -1399,12 +1456,12 @@ describe("bot/index local file follow-up orchestration", () => {
     await vi.waitFor(() =>
       expect(editMessageTextMock).toHaveBeenCalledWith(
         123,
-        102,
+        101,
         "Сначала проверю замечания review по коду и решу, что реально стоит чинить сейчас.",
         {},
       ),
     );
-    expect(sendMessageMock).toHaveBeenCalledTimes(2);
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
 
     emit({
       type: "message.updated",
@@ -1438,20 +1495,1930 @@ describe("bot/index local file follow-up orchestration", () => {
     });
     const assistantMessages = sendMessageMock.mock.calls.map((call) => String(call[1] ?? ""));
     expect(assistantMessages).toHaveLength(3);
-    expect(assistantMessages[1]).toContain("С");
+    expect(assistantMessages[0]).toContain("С");
+    expect(assistantMessages[1]).toContain("bot.thinking");
+    expect(assistantMessages[1]).toContain("Planning the response carefully.");
     expect(assistantMessages[2]).toContain("📋 Plan Mode · 🤖 openai/gpt-5.4 · 🕒 ");
+    expect(sendMessageMock).toHaveBeenLastCalledWith(
+      123,
+      expect.stringContaining("📋 Plan Mode · 🤖 openai/gpt-5.4 · 🕒 "),
+      expect.objectContaining({ message_thread_id: 1 }),
+    );
     expect(editMessageTextMock).toHaveBeenCalledWith(
       123,
-      102,
+      101,
       "Сначала проверю замечания review по коду и решу, что реально стоит чинить сейчас.",
       {},
     );
     const latestEditCall = editMessageTextMock.mock.calls[editMessageTextMock.mock.calls.length - 1];
     const latestEditedText = String(latestEditCall?.[2] ?? "");
     expect(latestEditedText).not.toContain("<blockquote expandable>");
+    expect(deleteMessageMock).not.toHaveBeenCalled();
 
     config.bot.hideThinkingMessages = originalHideThinkingMessages;
     vi.mocked(getReasoningMode).mockReturnValue(0);
+  });
+
+  it("deletes the active unfinished thinking block on session error", async () => {
+    let nextMessageId = 100;
+    sendMessageMock.mockImplementation(async () => ({ message_id: ++nextMessageId }));
+
+    const originalHideThinkingMessages = config.bot.hideThinkingMessages;
+    config.bot.hideThinkingMessages = false;
+    vi.mocked(getReasoningMode).mockReturnValue(1);
+    vi.mocked(getThinkingClearMode).mockReturnValue(true);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "reasoning cleanup on error",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-reasoning-error-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-error-part-1",
+          sessionID: "session-1",
+          messageID: "message-reasoning-error-1",
+          type: "reasoning",
+          text: "Still thinking through the failure path.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageDraftMock).toHaveBeenCalledTimes(1));
+    expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).toContain(
+      "Still thinking through the failure path.",
+    );
+
+    emit({
+      type: "session.error",
+      properties: {
+        sessionID: "session-1",
+        error: {
+          message: "agent failed",
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(deleteMessageMock).toHaveBeenCalledWith(
+        123,
+        Number(sendMessageDraftMock.mock.calls[0]?.[1]),
+      ),
+    );
+
+    config.bot.hideThinkingMessages = originalHideThinkingMessages;
+    vi.mocked(getReasoningMode).mockReturnValue(0);
+    vi.mocked(getThinkingClearMode).mockReturnValue(false);
+  });
+
+  it("passes the declared sendApi contract into streamThinkingBlocks for active reasoning updates", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    const streamThinkingBlocksSpy = vi.fn(async () => undefined);
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 0,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 1),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    vi.doMock("../../src/bot/utils/thinking-block-stream.js", async () => {
+      const actual = await vi.importActual<typeof import("../../src/bot/utils/thinking-block-stream.js")>(
+        "../../src/bot/utils/thinking-block-stream.js",
+      );
+
+      return {
+        ...actual,
+        streamThinkingBlocks: streamThinkingBlocksSpy,
+      };
+    });
+
+    const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+    const bot = createIsolatedBot() as any;
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "active reasoning should use draft and send apis",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-reasoning-draft-api-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-draft-api-part-1",
+          sessionID: "session-1",
+          messageID: "message-reasoning-draft-api-1",
+          type: "reasoning",
+          text: "Reasoning should stream through the draft-first thinking block path.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(streamThinkingBlocksSpy).toHaveBeenCalledTimes(1));
+
+    const thinkingCall = streamThinkingBlocksSpy.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(thinkingCall).toBeDefined();
+    expect(thinkingCall?.sendApi).toBe(bot.api);
+    expect(thinkingCall?.target).toEqual({ chatId: 123, messageThreadId: 1 });
+
+    vi.doUnmock("../../src/bot/utils/thinking-block-stream.js");
+  });
+
+  it("keeps the active thinking block visible on session error when thinkingClearMode is disabled", async () => {
+    let nextMessageId = 100;
+    sendMessageMock.mockImplementation(async () => ({ message_id: ++nextMessageId }));
+
+    const originalHideThinkingMessages = config.bot.hideThinkingMessages;
+    config.bot.hideThinkingMessages = false;
+    vi.mocked(getReasoningMode).mockReturnValue(1);
+    vi.mocked(getThinkingClearMode).mockReturnValue(false);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "reasoning cleanup off on error",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-reasoning-error-2",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-error-part-2",
+          sessionID: "session-1",
+          messageID: "message-reasoning-error-2",
+          type: "reasoning",
+          text: "Keep this reasoning block visible.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageDraftMock).toHaveBeenCalledTimes(1));
+
+    emit({
+      type: "session.error",
+      properties: {
+        sessionID: "session-1",
+        error: {
+          message: "agent failed",
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("bot.session_error"))).toBe(true),
+    );
+    expect(deleteMessageMock).not.toHaveBeenCalled();
+
+    config.bot.hideThinkingMessages = originalHideThinkingMessages;
+    vi.mocked(getReasoningMode).mockReturnValue(0);
+    vi.mocked(getThinkingClearMode).mockReturnValue(false);
+  });
+
+  it("sends the visible placeholder thinking message when reasoning mode is off", async () => {
+    const originalHideThinkingMessages = config.bot.hideThinkingMessages;
+    config.bot.hideThinkingMessages = false;
+    vi.mocked(getReasoningMode).mockReturnValue(0);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "placeholder thinking",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-placeholder-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-placeholder-part-1",
+          sessionID: "session-1",
+          messageID: "message-placeholder-1",
+          type: "reasoning",
+          text: "Reasoning text should not replace the placeholder in mode 0.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    const placeholderMessage = String(sendMessageMock.mock.calls[0]?.[1] ?? "");
+    expect(placeholderMessage).toContain("bot.thinking");
+    expect(placeholderMessage).not.toContain("Reasoning text should not replace the placeholder in mode 0.");
+
+    config.bot.hideThinkingMessages = originalHideThinkingMessages;
+  });
+
+  it("drops queued reasoning-mode assistant text when session error fires before the stream flush", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 50,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 1),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => true),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+    const bot = createIsolatedBot() as any;
+    sendMessageMock.mockResolvedValue({ message_id: 42 });
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "stale stream after error",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-stream-error-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-stream-error-part-1",
+          sessionID: "session-1",
+          messageID: "message-stream-error-1",
+          type: "text",
+          text: "Queued assistant text after error.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "session.error",
+      properties: {
+        sessionID: "session-1",
+        error: {
+          message: "agent failed",
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("bot.session_error"))).toBe(true),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    expect(
+      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("Queued assistant text after error.")),
+    ).toBe(false);
+  });
+
+  it("drops queued reasoning-mode assistant text when session error loses routing before cleanup", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 50,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    let currentTarget: { chatId: number; messageThreadId: number } | undefined = {
+      chatId: 123,
+      messageThreadId: 1,
+    };
+
+    vi.doMock("../../src/thread/manager.js", () => ({
+      threadContextManager: {
+        activateFromContext: vi.fn(),
+        bindProjectToActiveContext: vi.fn(),
+        bindSessionToActiveContext: vi.fn(),
+        clearSessionForActiveContext: vi.fn(),
+        getSessionTarget: vi.fn(() => currentTarget),
+        getSessionScope: vi.fn(() => null),
+        getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 1),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => true),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
+    const { summaryAggregator: isolatedSummaryAggregator } = await import("../../src/summary/aggregator.js");
+    const bot = createIsolatedBot() as any;
+    sendMessageMock.mockResolvedValue({ message_id: 42 });
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "stale stream without routing on error",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-stream-error-missing-routing-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-stream-error-missing-routing-part-1",
+          sessionID: "session-1",
+          messageID: "message-stream-error-missing-routing-1",
+          type: "text",
+          text: "Queued assistant text after missing-routing error.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "session.status",
+      properties: {
+        sessionID: "session-1",
+        status: {
+          type: "retry",
+          attempt: 2,
+          message: "retry after missing routing",
+        },
+      },
+    } as unknown as Event);
+
+    currentTarget = undefined;
+    clearPromptRouting("session-1");
+    routingBySessionId.delete("session-1");
+
+    emit({
+      type: "session.error",
+      properties: {
+        sessionID: "session-1",
+        error: {
+          message: "agent failed",
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    expect(
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("Queued assistant text after missing-routing error."),
+      ),
+    ).toBe(false);
+    expect(sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("bot.session_error"))).toBe(false);
+
+    currentTarget = { chatId: 123, messageThreadId: 1 };
+    isolatedSummaryAggregator.setSession("session-1");
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(
+      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("📋 ")),
+    ).toBe(false);
+    expect(
+      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("retry after missing routing")),
+    ).toBe(false);
+  });
+
+  it("clears queued tool retry state and flushes deferred deliveries when onComplete loses bot context", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 500,
+          serviceMessagesIntervalSec: 1,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    let currentTarget: { chatId: number; messageThreadId: number } | undefined = {
+      chatId: 123,
+      messageThreadId: 1,
+    };
+
+    vi.doMock("../../src/thread/manager.js", () => ({
+      threadContextManager: {
+        activateFromContext: vi.fn(),
+        bindProjectToActiveContext: vi.fn(),
+        bindSessionToActiveContext: vi.fn(),
+        clearSessionForActiveContext: vi.fn(),
+        getSessionTarget: vi.fn(() => currentTarget),
+        getSessionScope: vi.fn(() => null),
+        getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 0),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
+    const { summaryAggregator: isolatedSummaryAggregator } = await import("../../src/summary/aggregator.js");
+    const bot = createIsolatedBot() as any;
+    sendMessageMock.mockResolvedValue({ message_id: 42 });
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "missing bot context on complete cleanup",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-complete-missing-context-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-complete-missing-context-part-1",
+          sessionID: "session-1",
+          messageID: "message-complete-missing-context-1",
+          type: "text",
+          text: "Final answer that should be dropped after routing disappears.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "session.status",
+      properties: {
+        sessionID: "session-1",
+        status: {
+          type: "retry",
+          attempt: 2,
+          message: "retry queued before missing bot context completion",
+        },
+      },
+    } as unknown as Event);
+
+    currentTarget = undefined;
+    clearPromptRouting("session-1");
+    routingBySessionId.delete("session-1");
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-complete-missing-context-1",
+          sessionID: "session-1",
+          role: "assistant",
+          agent: "plan",
+          modelID: "gpt-5.4",
+          providerID: "openai",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1));
+
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    currentTarget = { chatId: 123, messageThreadId: 1 };
+    isolatedSummaryAggregator.setSession("session-1");
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("Final answer that should be dropped after routing disappears."),
+      ),
+    ).toBe(false);
+    expect(
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("retry queued before missing bot context completion"),
+      ),
+    ).toBe(false);
+  });
+
+  it("clears missing-routing terminal state so retry streams and idle footers do not leak later", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 500,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    let currentTarget: { chatId: number; messageThreadId: number } | undefined = {
+      chatId: 123,
+      messageThreadId: 1,
+    };
+
+    vi.doMock("../../src/thread/manager.js", () => ({
+      threadContextManager: {
+        activateFromContext: vi.fn(),
+        bindProjectToActiveContext: vi.fn(),
+        bindSessionToActiveContext: vi.fn(),
+        clearSessionForActiveContext: vi.fn(),
+        getSessionTarget: vi.fn(() => currentTarget),
+        getSessionScope: vi.fn(() => null),
+        getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 0),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
+    const { summaryAggregator: isolatedSummaryAggregator } = await import("../../src/summary/aggregator.js");
+    const bot = createIsolatedBot() as any;
+    sendMessageMock.mockResolvedValue({ message_id: 42 });
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "missing-routing terminal cleanup",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-missing-routing-terminal-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-missing-routing-terminal-part-1",
+          sessionID: "session-1",
+          messageID: "message-missing-routing-terminal-1",
+          type: "text",
+          text: "Final answer before missing-routing error.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-missing-routing-terminal-1",
+          sessionID: "session-1",
+          role: "assistant",
+          agent: "plan",
+          modelID: "gpt-5.4",
+          providerID: "openai",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(
+        sendMessageMock.mock.calls.some((call) =>
+          String(call[1] ?? "").includes("Final answer before missing-routing error."),
+        ),
+      ).toBe(true),
+    );
+
+    emit({
+      type: "session.status",
+      properties: {
+        sessionID: "session-1",
+        status: {
+          type: "retry",
+          attempt: 2,
+          message: "retry after missing-routing terminal error",
+        },
+      },
+    } as unknown as Event);
+
+    currentTarget = undefined;
+    clearPromptRouting("session-1");
+    routingBySessionId.delete("session-1");
+
+    emit({
+      type: "session.error",
+      properties: {
+        sessionID: "session-1",
+        error: {
+          message: "agent failed",
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    currentTarget = { chatId: 123, messageThreadId: 1 };
+    isolatedSummaryAggregator.setSession("session-1");
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("retry after missing-routing terminal error"),
+      ),
+    ).toBe(false);
+    expect(
+      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("📋 Plan Mode · 🤖 openai/gpt-5.4 · 🕒 ")),
+    ).toBe(false);
+  });
+
+  it("deletes the active unfinished thinking draft when session error loses routing and thinkingClearMode is enabled", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 0,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    let currentTarget: { chatId: number; messageThreadId: number } | undefined = {
+      chatId: 123,
+      messageThreadId: 1,
+    };
+
+    vi.doMock("../../src/thread/manager.js", () => ({
+      threadContextManager: {
+        activateFromContext: vi.fn(),
+        bindProjectToActiveContext: vi.fn(),
+        bindSessionToActiveContext: vi.fn(),
+        clearSessionForActiveContext: vi.fn(),
+        getSessionTarget: vi.fn(() => currentTarget),
+        getSessionScope: vi.fn(() => null),
+        getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 1),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => true),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
+    const bot = createIsolatedBot() as any;
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "missing-routing error should clear active reasoning draft",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-thinking-missing-routing-error-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-missing-routing-error-part-1",
+          sessionID: "session-1",
+          messageID: "message-thinking-missing-routing-error-1",
+          type: "reasoning",
+          text: "Draft reasoning that must be deleted on missing-routing error cleanup.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageDraftMock).toHaveBeenCalledTimes(1));
+    const activeDraftId = Number(sendMessageDraftMock.mock.calls[0]?.[1]);
+
+    currentTarget = undefined;
+    clearPromptRouting("session-1");
+    routingBySessionId.delete("session-1");
+
+    emit({
+      type: "session.error",
+      properties: {
+        sessionID: "session-1",
+        error: {
+          message: "agent failed",
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(deleteMessageMock).toHaveBeenCalledWith(123, activeDraftId));
+  });
+
+  it("waits for missing-routing idle thinking cleanup before flushing deferred deliveries and starting the next run", async () => {
+    try {
+      vi.resetModules();
+      capturedEventCallbacksByDirectory.clear();
+      sendMessageMock.mockClear();
+      sendMessageDraftMock.mockClear();
+      deleteMessageMock.mockClear();
+      editMessageTextMock.mockClear();
+      vi.mocked(scheduledTaskRuntime.flushDeferredDeliveries).mockClear();
+
+      const cleanupDeferred = createDeferred<void>();
+      let activeThinkingDraft = false;
+      let reusedStaleThinkingDraft = false;
+
+      vi.doMock("../../src/config.js", () => ({
+        config: {
+          telegram: {
+            token: "test-token",
+            adminUserId: 777,
+            allowedUserIds: [777, 888],
+            proxyUrl: "",
+          },
+          bot: {
+            responseStreamThrottleMs: 0,
+            serviceMessagesIntervalSec: 0,
+            hideToolCallMessages: false,
+            hideThinkingMessages: false,
+            bashToolDisplayMaxLength: 120,
+            messageFormatMode: "raw",
+          },
+          files: {
+            maxFileSizeKb: 1024,
+            maxFileLines: 400,
+          },
+        },
+      }));
+
+      let currentTarget: { chatId: number; messageThreadId: number } | undefined = {
+        chatId: 123,
+        messageThreadId: 1,
+      };
+
+      vi.doMock("../../src/thread/manager.js", () => ({
+        threadContextManager: {
+          activateFromContext: vi.fn(),
+          bindProjectToActiveContext: vi.fn(),
+          bindSessionToActiveContext: vi.fn(),
+          clearSessionForActiveContext: vi.fn(),
+          getSessionTarget: vi.fn(() => currentTarget),
+          getSessionScope: vi.fn(() => null),
+          getSessionDirectory: vi.fn(() => "/repo"),
+        },
+      }));
+
+      vi.doMock("../../src/settings/manager.js", () => ({
+        getCurrentProject: getCurrentProjectMock,
+        setCurrentProject: vi.fn(),
+        getReasoningMode: vi.fn(() => 1),
+        getTenantRuntimeInfo: vi.fn(() => undefined),
+        getThinkingClearMode: vi.fn(() => false),
+        isMessageStreamingEnabled: vi.fn(() => true),
+      }));
+
+      vi.doMock("../../src/bot/utils/thinking-block-stream.js", async () => {
+        const actual = await vi.importActual<typeof import("../../src/bot/utils/thinking-block-stream.js")>(
+          "../../src/bot/utils/thinking-block-stream.js",
+        );
+
+        return {
+          ...actual,
+          configureThinkingBlockDraftIdAllocator: vi.fn(),
+          clearAllThinkingBlockStreams: vi.fn(() => {
+            activeThinkingDraft = false;
+          }),
+          streamThinkingBlocks: vi.fn(async () => {
+            if (activeThinkingDraft) {
+              reusedStaleThinkingDraft = true;
+            }
+            activeThinkingDraft = true;
+          }),
+          finalizeThinkingBlockStream: vi.fn(async () => {
+            activeThinkingDraft = false;
+          }),
+          clearThinkingBlockStream: vi.fn(async () => {
+            await cleanupDeferred.promise;
+            activeThinkingDraft = false;
+          }),
+        };
+      });
+
+      const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+      const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
+      const bot = createIsolatedBot() as any;
+
+      const getLatestPromptHandler = () => {
+        const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+        return textHandlers[textHandlers.length - 1]?.handler;
+      };
+      const getLatestEmit = () => {
+        const callbacks = capturedEventCallbacksByDirectory.get("/repo") ?? [];
+        return (event: Event) => callbacks[callbacks.length - 1]?.(event);
+      };
+
+      const promptHandler = getLatestPromptHandler();
+      expect(promptHandler).toBeTypeOf("function");
+
+      const ctx = {
+        message: {
+          text: "missing-routing idle cleanup must finish before next run",
+          chat: { id: 123 },
+          message_thread_id: 1,
+        },
+        chat: { id: 123, type: "private" },
+        from: { id: 777 },
+        api: bot.api,
+        reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+      };
+
+      await promptHandler(ctx);
+
+      const emitFirstRun = getLatestEmit();
+
+      emitFirstRun({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-idle-cleanup-await-1",
+            sessionID: "session-1",
+            role: "assistant",
+            time: { created: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      emitFirstRun({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "reasoning-idle-cleanup-await-part-1",
+            sessionID: "session-1",
+            messageID: "message-idle-cleanup-await-1",
+            type: "reasoning",
+            text: "First run reasoning draft that must be cleared before the next run.",
+            time: { start: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      await vi.waitFor(() => expect(activeThinkingDraft).toBe(true));
+
+      currentTarget = undefined;
+      clearPromptRouting("session-1");
+      routingBySessionId.delete("session-1");
+
+      emitFirstRun({
+        type: "session.idle",
+        properties: {
+          sessionID: "session-1",
+        },
+      } as unknown as Event);
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(scheduledTaskRuntime.flushDeferredDeliveries).not.toHaveBeenCalled();
+
+      cleanupDeferred.resolve();
+      await vi.waitFor(() => expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1));
+
+      currentTarget = { chatId: 123, messageThreadId: 1 };
+
+      const secondPromptHandler = getLatestPromptHandler();
+      expect(secondPromptHandler).toBeTypeOf("function");
+      await secondPromptHandler(ctx);
+
+      const emitSecondRun = getLatestEmit();
+      emitSecondRun({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-idle-cleanup-await-2",
+            sessionID: "session-1",
+            role: "assistant",
+            time: { created: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      emitSecondRun({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "reasoning-idle-cleanup-await-part-2",
+            sessionID: "session-1",
+            messageID: "message-idle-cleanup-await-2",
+            type: "reasoning",
+            text: "Second run should start with a clean thinking draft state.",
+            time: { start: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      await vi.waitFor(() => expect(activeThinkingDraft).toBe(true));
+      expect(reusedStaleThinkingDraft).toBe(false);
+    } finally {
+      vi.doUnmock("../../src/bot/utils/thinking-block-stream.js");
+    }
+  });
+
+  it("clears queued tool and retry state when session becomes idle after routing disappears", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 500,
+          serviceMessagesIntervalSec: 1,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    let currentTarget: { chatId: number; messageThreadId: number } | undefined = {
+      chatId: 123,
+      messageThreadId: 1,
+    };
+
+    vi.doMock("../../src/thread/manager.js", () => ({
+      threadContextManager: {
+        activateFromContext: vi.fn(),
+        bindProjectToActiveContext: vi.fn(),
+        bindSessionToActiveContext: vi.fn(),
+        clearSessionForActiveContext: vi.fn(),
+        getSessionTarget: vi.fn(() => currentTarget),
+        getSessionScope: vi.fn(() => null),
+        getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 0),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
+    const bot = createIsolatedBot() as any;
+    sendMessageMock.mockResolvedValue({ message_id: 42 });
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "missing-routing idle cleanup",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-idle-missing-routing-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-idle-missing-routing-part-1",
+          sessionID: "session-1",
+          messageID: "message-idle-missing-routing-1",
+          type: "reasoning",
+          text: "Queued placeholder before missing-routing idle.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "session.status",
+      properties: {
+        sessionID: "session-1",
+        status: {
+          type: "retry",
+          attempt: 2,
+          message: "retry after missing-routing idle",
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    currentTarget = undefined;
+    clearPromptRouting("session-1");
+    routingBySessionId.delete("session-1");
+
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1));
+
+    currentTarget = { chatId: 123, messageThreadId: 1 };
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    expect(
+      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("bot.thinking")),
+    ).toBe(false);
+    expect(
+      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("retry after missing-routing idle")),
+    ).toBe(false);
+  });
+
+  it("drops queued assistant stream when session becomes idle after routing disappears", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 50,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    let currentTarget: { chatId: number; messageThreadId: number } | undefined = {
+      chatId: 123,
+      messageThreadId: 1,
+    };
+
+    vi.doMock("../../src/thread/manager.js", () => ({
+      threadContextManager: {
+        activateFromContext: vi.fn(),
+        bindProjectToActiveContext: vi.fn(),
+        bindSessionToActiveContext: vi.fn(),
+        clearSessionForActiveContext: vi.fn(),
+        getSessionTarget: vi.fn(() => currentTarget),
+        getSessionScope: vi.fn(() => null),
+        getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 1),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
+    const bot = createIsolatedBot() as any;
+    sendMessageMock.mockResolvedValue({ message_id: 42 });
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "missing-routing idle response stream cleanup",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-idle-missing-routing-stream-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-idle-missing-routing-stream-part-1",
+          sessionID: "session-1",
+          messageID: "message-idle-missing-routing-stream-1",
+          type: "text",
+          text: "Queued assistant text after missing-routing idle.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    currentTarget = undefined;
+    clearPromptRouting("session-1");
+    routingBySessionId.delete("session-1");
+
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1));
+
+    currentTarget = { chatId: 123, messageThreadId: 1 };
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    expect(
+      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("Queued assistant text after missing-routing idle.")),
+    ).toBe(false);
+  });
+
+  it("starts the next visible thinking block as a new message after onComplete loses routing", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 0,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    let currentTarget: { chatId: number; messageThreadId: number } | null = {
+      chatId: 123,
+      messageThreadId: 1,
+    };
+    let nextMessageId = 100;
+
+    vi.doMock("../../src/thread/manager.js", () => ({
+      threadContextManager: {
+        activateFromContext: vi.fn(),
+        bindProjectToActiveContext: vi.fn(),
+        bindSessionToActiveContext: vi.fn(),
+        clearSessionForActiveContext: vi.fn(),
+        getSessionTarget: vi.fn(() => currentTarget),
+        getSessionScope: vi.fn(() => null),
+        getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 1),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
+    const bot = createIsolatedBot() as any;
+    sendMessageMock.mockImplementation(async () => ({ message_id: ++nextMessageId }));
+
+    const getLatestPromptHandler = () => {
+      const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+      return textHandlers[textHandlers.length - 1]?.handler;
+    };
+    const getLatestEmit = () => {
+      const callbacks = capturedEventCallbacksByDirectory.get("/repo") ?? [];
+      return (event: Event) => callbacks[callbacks.length - 1]?.(event);
+    };
+
+    const firstPromptHandler = getLatestPromptHandler();
+    expect(firstPromptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "stale thinking cleanup after completion routing loss",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await firstPromptHandler(ctx);
+
+    const emitFirstRun = getLatestEmit();
+
+    emitFirstRun({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-complete-routing-loss-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emitFirstRun({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-complete-routing-loss-part-1",
+          sessionID: "session-1",
+          messageID: "message-complete-routing-loss-1",
+          type: "reasoning",
+          text: "Thinking before completion loses routing.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageDraftMock).toHaveBeenCalledTimes(1));
+    const firstThinkingDraftId = Number(sendMessageDraftMock.mock.calls[0]?.[1]);
+
+    currentTarget = null;
+    clearPromptRouting("session-1");
+    routingBySessionId.delete("session-1");
+
+    emitFirstRun({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-complete-routing-loss-1",
+          sessionID: "session-1",
+          role: "assistant",
+          agent: "plan",
+          modelID: "gpt-5.4",
+          providerID: "openai",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(deleteMessageMock).toHaveBeenCalledWith(123, firstThinkingDraftId));
+    await vi.waitFor(() => expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalled());
+
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    currentTarget = {
+      chatId: 123,
+      messageThreadId: 1,
+    };
+
+    const secondPromptHandler = getLatestPromptHandler();
+    expect(secondPromptHandler).toBeTypeOf("function");
+    await secondPromptHandler(ctx);
+
+    const emitSecondRun = getLatestEmit();
+
+    emitSecondRun({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-complete-routing-loss-2",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emitSecondRun({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-complete-routing-loss-part-2",
+          sessionID: "session-1",
+          messageID: "message-complete-routing-loss-2",
+          type: "reasoning",
+          text: "Fresh thinking block after completion routing loss.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageDraftMock).toHaveBeenCalledTimes(1));
+    expect(editMessageTextMock).not.toHaveBeenCalled();
+    expect(deleteMessageMock).toHaveBeenCalledWith(123, firstThinkingDraftId);
+    expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).toContain(
+      "Fresh thinking block after completion routing loss.",
+    );
+  });
+
+  it("does not queue stale tool output when the routing target becomes null before the flush", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 50,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    let currentTarget: { chatId: number; messageThreadId: number } | null = {
+      chatId: 123,
+      messageThreadId: 1,
+    };
+
+    vi.doMock("../../src/thread/manager.js", () => ({
+      threadContextManager: {
+        activateFromContext: vi.fn(),
+        bindProjectToActiveContext: vi.fn(),
+        bindSessionToActiveContext: vi.fn(),
+        clearSessionForActiveContext: vi.fn(),
+        getSessionTarget: vi.fn(() => currentTarget),
+        getSessionScope: vi.fn(() => null),
+        getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 0),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
+    const bot = createIsolatedBot() as any;
+    sendMessageMock.mockResolvedValue({ message_id: 42 });
+
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "null target should drop stale tool output",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    currentTarget = null;
+    clearPromptRouting("session-1");
+    routingBySessionId.delete("session-1");
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-null-target-part-1",
+          sessionID: "session-1",
+          messageID: "message-null-target-1",
+          type: "tool",
+          callID: "call-bash-null-target-1",
+          tool: "bash",
+          state: {
+            status: "completed",
+            title: "Created /tmp/stale-tool-output.txt",
+            input: {
+              command: "touch /tmp/stale-tool-output.txt",
+              description: "Saved stale tool output",
+            },
+            metadata: {},
+            time: { start: Date.now(), end: Date.now() },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    currentTarget = { chatId: 123, messageThreadId: 1 };
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
   it("detects a local file path from the final-only response when streaming is disabled", async () => {
@@ -1528,6 +3495,99 @@ describe("bot/index local file follow-up orchestration", () => {
 
     await vi.waitFor(() =>
       expect(sendMessageMock.mock.calls.some((call) => String(call[1]).includes("Completed final answer."))).toBe(true),
+    );
+    await vi.waitFor(() => expect(sendDocumentMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("aborts queued local-file follow-ups when the session target changes before send time", async () => {
+    const deferredFirstDocument = createDeferred<{ message_id: number }>();
+    sendDocumentMock.mockImplementationOnce(() => deferredFirstDocument.promise);
+    statMock.mockImplementation(async (filePath: string) => {
+      if (filePath === "/tmp/report.txt" || filePath === "/tmp/second.txt") {
+        return { isFile: () => true, size: 128 };
+      }
+
+      throw new Error(`Unexpected file path: ${filePath}`);
+    });
+
+    let currentTarget: { chatId: number; messageThreadId?: number } | null = {
+      chatId: 123,
+      messageThreadId: 1,
+    };
+    getSessionTargetMock.mockImplementation(() => currentTarget);
+    const bot = createBot() as any;
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "show artifact before switching routes",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-follow-up-route-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-follow-up-route-1",
+          sessionID: "session-1",
+          messageID: "message-follow-up-route-1",
+          type: "text",
+          text: "Artifacts stay here: /tmp/report.txt and /tmp/second.txt",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendDocumentMock).toHaveBeenCalledTimes(1));
+
+    currentTarget = {
+      chatId: 987,
+      messageThreadId: 99,
+    };
+    routingBySessionId.set("session-1", {
+      bot,
+      target: currentTarget,
+      scope: null,
+    });
+
+    deferredFirstDocument.resolve({ message_id: 41 });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sendDocumentMock).toHaveBeenNthCalledWith(
+      1,
+      123,
+      expect.objectContaining({ path: "/tmp/report.txt" }),
+      expect.objectContaining({
+        caption: "<code>/tmp/report.txt</code>",
+        disable_notification: true,
+        message_thread_id: 1,
+      }),
     );
     await vi.waitFor(() => expect(sendDocumentMock).toHaveBeenCalledTimes(1));
   });
@@ -1892,5 +3952,112 @@ describe("bot/index local file follow-up orchestration", () => {
     config.bot.messageFormatMode = originalMessageFormatMode;
     vi.mocked(getReasoningMode).mockImplementation(originalGetReasoningMode);
     prepareAssistantStreamingPayloadSpy.mockRestore();
+  });
+
+  it("does not send session error messages through stale cached routing after live binding disappears", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 50,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    let currentTarget: { chatId: number; messageThreadId: number } | undefined = {
+      chatId: 123,
+      messageThreadId: 1,
+    };
+
+    vi.doMock("../../src/thread/manager.js", () => ({
+      threadContextManager: {
+        activateFromContext: vi.fn(),
+        bindProjectToActiveContext: vi.fn(),
+        bindSessionToActiveContext: vi.fn(),
+        clearSessionForActiveContext: vi.fn(),
+        getSessionTarget: vi.fn(() => currentTarget),
+        getSessionScope: vi.fn(() => null),
+        getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 1),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => true),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const bot = createIsolatedBot() as any;
+    sendMessageMock.mockResolvedValue({ message_id: 42 });
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "stale cached routing should not send session error",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    currentTarget = undefined;
+    routingBySessionId.set("session-1", {
+      bot,
+      target: { chatId: 123, messageThreadId: 1 },
+      scope: null,
+    });
+
+    emit({
+      type: "session.error",
+      properties: {
+        sessionID: "session-1",
+        error: {
+          message: "agent failed after routing disappeared",
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    expect(
+      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("bot.session_error")),
+    ).toBe(false);
   });
 });

@@ -218,7 +218,8 @@ export const fr: I18nDictionary = {
     "⚠️ Le serveur OpenCode est déjà en cours d'exécution\n\nPID : {pid}\nTemps de fonctionnement : {seconds} secondes",
   "opencode_start.already_running_external":
     "✅ Le serveur OpenCode est déjà en cours d'exécution en tant que processus externe\n\nVersion : {version}\n\nCe serveur n'a pas été démarré par le bot, donc /opencode-stop ne peut pas l'arrêter.",
-  "opencode_start.remote_configured": "⚠️ /opencode_start fonctionne uniquement avec un serveur OpenCode local.",
+  "opencode_start.remote_configured":
+    "⚠️ /opencode_start fonctionne uniquement avec un serveur OpenCode local.",
   "opencode_start.starting": "🔄 Démarrage du serveur OpenCode...",
   "opencode_start.start_error":
     "🔴 Impossible de démarrer le serveur OpenCode\n\nErreur : {error}\n\nVérifiez que l'interface en ligne de commande OpenCode est installée et disponible dans le PATH :\nopencode --version\nnpm install -g @opencode-ai/cli",
@@ -230,9 +231,11 @@ export const fr: I18nDictionary = {
     "🔴 Une erreur s'est produite lors du démarrage du serveur.\n\nConsultez les logs de l'application pour plus de détails.",
   "opencode_stop.external_running":
     "⚠️ Le serveur OpenCode s'exécute comme processus externe\n\nCe serveur n'a pas été démarrassé via /opencode-start.\nArrêtez-le manuellement ou utilisez /status pour vérifier son état.",
-  "opencode_stop.remote_configured": "⚠️ /opencode_stop fonctionne uniquement avec un serveur OpenCode local.",
+  "opencode_stop.remote_configured":
+    "⚠️ /opencode_stop fonctionne uniquement avec un serveur OpenCode local.",
   "opencode_stop.not_running": "⚠️ Le serveur OpenCode n'est pas en cours d'exécution",
-  "opencode_stop.pid_not_found": "⚠️ Le serveur OpenCode est en cours d'exécution, mais son identifiant de processus n'a pas pu être trouvé (port {port}).",
+  "opencode_stop.pid_not_found":
+    "⚠️ Le serveur OpenCode est en cours d'exécution, mais son identifiant de processus n'a pas pu être trouvé (port {port}).",
   "opencode_stop.stopping": "🛑 Arrêt du serveur OpenCode...\n\nPID : {pid}",
   "opencode_stop.stop_error": "🔴 Impossible d'arrêter le serveur OpenCode\n\nErreur : {error}",
   "opencode_stop.success": "✅ Serveur OpenCode arrêté avec succès",
@@ -530,7 +533,8 @@ export const fr: I18nDictionary = {
   "auth.request.chat_id": "ID du chat : {chatId}",
   "auth.request.chat_type": "Type de chat : {chatType}",
   "auth.request.language": "Langue : {language}",
-  "auth.requester.sent": "La demande d'accès a été envoyée à l'administrateur. Après approbation, vous pourrez utiliser le bot.",
+  "auth.requester.sent":
+    "La demande d'accès a été envoyée à l'administrateur. Après approbation, vous pourrez utiliser le bot.",
   "auth.error.admin_only": "Seul l'administrateur peut gérer les accès",
   "auth.error.request_not_pending": "La demande d'accès n'est plus en attente",
   "auth.callback.pending_approval": "Accès en attente d'approbation de l'administrateur",
@@ -543,7 +547,8 @@ export const fr: I18nDictionary = {
   "auth.decision.language": "Langue : {language}",
   "auth.decision.requested_at": "Demandé le : {requestedAt}",
   "auth.decision.decided_by": "Décidé par l'administrateur : {adminUserId}",
-  "auth.requester.approved": "L'administrateur a approuvé l'accès. Vous pouvez maintenant utiliser le bot.",
+  "auth.requester.approved":
+    "L'administrateur a approuvé l'accès. Vous pouvez maintenant utiliser le bot.",
   "auth.requester.denied": "L'administrateur a refusé la demande d'accès.",
 
   "ontology.summary.title": "🧭 Instantané d'ontologie",
@@ -618,6 +623,18 @@ export const fr: I18nDictionary = {
   "skills.page_load_error_callback": "",
   "skills.select": "",
   "skills.select_page": "",
+
+  "deferred.preview.header": "Reconnu depuis {count} {label}:\n",
+  "deferred.preview.label_one": "message",
+  "deferred.preview.label_other": "messages",
+  "deferred.kind.photo": "Photo",
+  "deferred.kind.document": "Document",
+  "deferred.kind.audio": "Audio",
+  "deferred.kind.video": "Vidéo",
+  "deferred.kind.text": "Texte",
+  "deferred.forwarded.from_display": "[Transféré de: {displayName}]",
+  "deferred.forwarded.from_another_user": "[Transféré d'un autre utilisateur]",
+  "deferred.forwarded.generic": "[Message transféré]",
 
   "worktree.already_selected_callback": "",
   "worktree.empty": "",

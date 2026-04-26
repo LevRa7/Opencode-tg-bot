@@ -29,7 +29,10 @@ import { threadContextManager } from "../../thread/manager.js";
 import { getDefaultProject } from "../../project/manager.js";
 import { processManager } from "../../process/manager.js";
 import { assistantRunState } from "../assistant-run-state.js";
+import { IncomingMediaBatch } from "../incoming-media-batch.js";
+import type { ResolvedDeferredItem } from "../../media/batch-types.js";
 import {
+  buildTelegramConversationScopeKey,
   extractTelegramConversationScopeFromContext,
   runWithTelegramConversationScope,
   type TelegramConversationScope,
@@ -188,6 +191,7 @@ async function resetMismatchedSessionContext(): Promise<void> {
 export interface ProcessPromptDeps {
   bot: Bot<Context>;
   ensureEventSubscription: (directory: string) => Promise<void>;
+  deferredBatch?: IncomingMediaBatch<ResolvedDeferredItem, ResolvedDeferredItem, string>;
 }
 
 /**
@@ -207,9 +211,29 @@ export async function processUserPrompt(
   fileParts: FilePartInput[] = [],
   options: ProcessPromptOptions = {},
 ): Promise<boolean> {
-  const { bot, ensureEventSubscription } = deps;
+  const { bot, ensureEventSubscription, deferredBatch } = deps;
   const responseMode = options.responseMode ?? "text_only";
   const quietPrompt = responseMode === "text_only";
+
+  // Check if there is an open batch window for this scope.
+  // If so, enqueue the item as deferred and return early.
+  if (deferredBatch) {
+    const contextScope = extractTelegramConversationScopeFromContext(ctx);
+    const scopeKey = buildTelegramConversationScopeKey(contextScope);
+    const isDeferred = deferredBatch.enqueueDeferredItem({
+      scopeKey,
+      deferredItem: {
+        correlationId: `prompt:${ctx.message?.message_id ?? Date.now()}`,
+        kind: "text",
+        directText: text,
+        previewText: text,
+        contextText: text,
+      },
+    });
+    if (isDeferred) {
+      return true;
+    }
+  }
 
   let currentProject = getCurrentProject();
   if (!currentProject) {
@@ -498,6 +522,22 @@ export async function processUserPrompt(
          }
        },
     });
+
+    if (deferredBatch) {
+      const windowScopeKey = buildTelegramConversationScopeKey(
+        extractTelegramConversationScopeFromContext(ctx),
+      );
+      deferredBatch.sendDirectPrompt({
+        scopeKey: windowScopeKey,
+        directPrompt: {
+          correlationId: `direct:${ctx.message?.message_id ?? Date.now()}`,
+          kind: "text",
+          directText: "",
+        },
+      }).catch((openErr: unknown) => {
+        logger.error("[Bot] Failed to open batch window", openErr);
+      });
+    }
 
     return true;
   } catch (err) {

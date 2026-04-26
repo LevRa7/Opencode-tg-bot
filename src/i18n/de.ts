@@ -234,7 +234,8 @@ export const de: I18nDictionary = {
   "opencode_stop.remote_configured":
     "⚠️ /opencode_stop funktioniert nur mit einem lokalen OpenCode-Server.",
   "opencode_stop.not_running": "⚠️ OpenCode-Server läuft nicht",
-  "opencode_stop.pid_not_found": "⚠️ OpenCode-Server läuft, aber seine Prozess-ID konnte nicht gefunden werden (Port {port}).",
+  "opencode_stop.pid_not_found":
+    "⚠️ OpenCode-Server läuft, aber seine Prozess-ID konnte nicht gefunden werden (Port {port}).",
   "opencode_stop.stopping": "🛑 Stoppe OpenCode-Server...\n\nPID: {pid}",
   "opencode_stop.stop_error": "🔴 OpenCode-Server konnte nicht gestoppt werden\n\nFehler: {error}",
   "opencode_stop.success": "✅ OpenCode-Server erfolgreich gestoppt",
@@ -531,7 +532,8 @@ export const de: I18nDictionary = {
   "auth.request.chat_id": "Chat-ID: {chatId}",
   "auth.request.chat_type": "Chat-Typ: {chatType}",
   "auth.request.language": "Sprache: {language}",
-  "auth.requester.sent": "Die Zugriffsanfrage wurde an den Admin gesendet. Nach der Genehmigung kannst du den Bot verwenden.",
+  "auth.requester.sent":
+    "Die Zugriffsanfrage wurde an den Admin gesendet. Nach der Genehmigung kannst du den Bot verwenden.",
   "auth.error.admin_only": "Nur der Admin kann den Zugriff verwalten",
   "auth.error.request_not_pending": "Die Zugriffsanfrage ist nicht mehr ausstehend",
   "auth.callback.pending_approval": "Zugriff wartet auf Admin-Genehmigung",
@@ -544,7 +546,8 @@ export const de: I18nDictionary = {
   "auth.decision.language": "Sprache: {language}",
   "auth.decision.requested_at": "Angefordert am: {requestedAt}",
   "auth.decision.decided_by": "Entschieden vom Admin: {adminUserId}",
-  "auth.requester.approved": "Der Admin hat den Zugriff genehmigt. Du kannst den Bot jetzt verwenden.",
+  "auth.requester.approved":
+    "Der Admin hat den Zugriff genehmigt. Du kannst den Bot jetzt verwenden.",
   "auth.requester.denied": "Der Admin hat die Zugriffsanfrage abgelehnt.",
 
   "ontology.summary.title": "🧭 Ontologie-Snapshot",
@@ -619,6 +622,18 @@ export const de: I18nDictionary = {
   "skills.page_load_error_callback": "",
   "skills.select": "",
   "skills.select_page": "",
+
+  "deferred.preview.header": "Erkannt aus {count} {label}:\n",
+  "deferred.preview.label_one": "Nachricht",
+  "deferred.preview.label_other": "Nachrichten",
+  "deferred.kind.photo": "Foto",
+  "deferred.kind.document": "Dokument",
+  "deferred.kind.audio": "Audio",
+  "deferred.kind.video": "Video",
+  "deferred.kind.text": "Text",
+  "deferred.forwarded.from_display": "[Weitergeleitet von: {displayName}]",
+  "deferred.forwarded.from_another_user": "[Weitergeleitet von einem anderen Benutzer]",
+  "deferred.forwarded.generic": "[Weitergeleitete Nachricht]",
 
   "worktree.already_selected_callback": "",
   "worktree.empty": "",

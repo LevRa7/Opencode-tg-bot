@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { MediaTranscriberKind } from "./types.js";
 
+const EMPTY_OUTPUT_RETRY_LIMIT = 3;
+
 const MEDIA_TRANSCRIBER_SCRIPT_URLS: Record<MediaTranscriberKind, URL> = {
   photo: new URL("../../skills/openai-media-transcriber/scripts/photo.mjs", import.meta.url),
   document: new URL("../../skills/openai-media-transcriber/scripts/document.mjs", import.meta.url),
@@ -32,6 +34,14 @@ export function resolveMediaTranscriberScriptPath(kind: MediaTranscriberKind): s
   return fileURLToPath(MEDIA_TRANSCRIBER_SCRIPT_URLS[kind]);
 }
 
+function sanitizeTranscriberOutput(output: string): string {
+  return output
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith("`activate_skill("))
+    .join("\n")
+    .trim();
+}
+
 export async function transcribeStoredMedia(params: {
   kind: MediaTranscriberKind;
   hostAbsolutePath: string;
@@ -46,44 +56,57 @@ export async function transcribeStoredMedia(params: {
     args.push(params.prompt);
   }
 
-  const completedProcess = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    execFileImpl(
-      process.execPath,
-      args,
-      {
-        env: process.env,
-        maxBuffer: 10 * 1024 * 1024,
-      },
-      (error, commandStdout, commandStderr) => {
-        if (error) {
-          reject(
-            new MediaTranscriberError({
-              message: error.message,
-              scriptPath,
-              stderr: commandStderr.trim(),
-              exitCode: typeof error.code === "number" ? error.code : null,
-            }),
-          );
-          return;
-        }
+  for (let attempt = 1; attempt <= EMPTY_OUTPUT_RETRY_LIMIT; attempt += 1) {
+    const completedProcess = await new Promise<{ stdout: string; stderr: string }>(
+      (resolve, reject) => {
+        execFileImpl(
+          process.execPath,
+          args,
+          {
+            env: process.env,
+            maxBuffer: 10 * 1024 * 1024,
+          },
+          (error, commandStdout, commandStderr) => {
+            if (error) {
+              reject(
+                new MediaTranscriberError({
+                  message: error.message,
+                  scriptPath,
+                  stderr: commandStderr.trim(),
+                  exitCode: typeof error.code === "number" ? error.code : null,
+                }),
+              );
+              return;
+            }
 
-        resolve({
-          stdout: commandStdout,
-          stderr: commandStderr,
-        });
+            resolve({
+              stdout: commandStdout,
+              stderr: commandStderr,
+            });
+          },
+        );
       },
     );
-  });
 
-  const trimmedStdout = completedProcess.stdout.trim();
-  if (trimmedStdout.length === 0) {
-    throw new MediaTranscriberError({
-      message: "Media transcriber returned empty output",
-      scriptPath,
-      stderr: completedProcess.stderr.trim(),
-      exitCode: null,
-    });
+    const sanitizedOutput = sanitizeTranscriberOutput(completedProcess.stdout);
+    if (sanitizedOutput.length > 0) {
+      return sanitizedOutput;
+    }
+
+    if (attempt === EMPTY_OUTPUT_RETRY_LIMIT) {
+      throw new MediaTranscriberError({
+        message: "Media transcriber returned empty output",
+        scriptPath,
+        stderr: completedProcess.stderr.trim(),
+        exitCode: null,
+      });
+    }
   }
 
-  return trimmedStdout;
+  throw new MediaTranscriberError({
+    message: "Media transcriber returned empty output",
+    scriptPath,
+    stderr: "",
+    exitCode: null,
+  });
 }

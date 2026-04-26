@@ -1788,7 +1788,12 @@ export function createBot(): Bot<Context> {
     },
   });
 
-  // Deferred media batch for correlating follow-up messages into a single prompt\n  deferredBatch = new IncomingMediaBatch<ResolvedDeferredItem, ResolvedDeferredItem, { text: string; firstContext?: any }>({\n    correlationWindowMs: 300, // Wait 300ms after the first message/item\n    maxWindowMs: 3000, // But no more than 3 seconds total\n    canFlushNow: async () => {\n      const session = getCurrentSession();
+  // Deferred media batch for correlating follow-up messages into a single prompt
+  deferredBatch = new IncomingMediaBatch<ResolvedDeferredItem, ResolvedDeferredItem, { text: string; firstContext?: any }>({
+    correlationWindowMs: 300,
+    maxWindowMs: 3000,
+    canFlushNow: async () => {
+      const session = getCurrentSession();
       if (!session) return true;
       return !(await isSessionBusy(session.id, session.directory));
     },

@@ -31,9 +31,7 @@ interface IncomingMediaBatchOptions<TDirectPrompt, TDeferredItem, TResolvedDefer
   resolveDeferredItems: (
     input: ResolveDeferredItemsInput<TDeferredItem>,
   ) => Promise<TResolvedDeferredItems>;
-  sendDeferredFollowUp: (
-    input: SendDeferredFollowUpInput<TResolvedDeferredItems>,
-  ) => Promise<void>;
+  sendDeferredFollowUp: (input: SendDeferredFollowUpInput<TResolvedDeferredItems>) => Promise<void>;
 }
 
 interface BatchWindow<TDeferredItem> {
@@ -82,7 +80,9 @@ export class IncomingMediaBatch<
   private readonly windowsByScope = new Map<string, BatchWindow<TDeferredItem>[]>();
   private nextBatchId = 0;
 
-  constructor(options: IncomingMediaBatchOptions<TDirectPrompt, TDeferredItem, TResolvedDeferredItems>) {
+  constructor(
+    options: IncomingMediaBatchOptions<TDirectPrompt, TDeferredItem, TResolvedDeferredItems>,
+  ) {
     this.correlationWindowMs = Math.max(
       0,
       Math.floor(options.correlationWindowMs ?? DEFAULT_CORRELATION_WINDOW_MS),
@@ -179,6 +179,7 @@ export class IncomingMediaBatch<
       deferredItems: [input.deferredItem],
       isDirectPromptSettled: true,
       phase: "collecting",
+      initialExpiresMs: this.maxWindowMs,
     });
     this.addWindow(window);
   }
@@ -228,16 +229,18 @@ export class IncomingMediaBatch<
     busyWarningSuppressionFlags?: BusyWarningSuppressionFlags;
     isDirectPromptSettled: boolean;
     phase: "collecting" | "retrying";
+    initialExpiresMs?: number;
   }): BatchWindow<TDeferredItem> {
     const now = Date.now();
-    const expiresAt = now + this.correlationWindowMs;
+    const initialMs = input.initialExpiresMs ?? this.correlationWindowMs;
+    const expiresAt = now + initialMs;
     const maxExpiresAt = now + this.maxWindowMs;
     const id = ++this.nextBatchId;
     const timer = setTimeout(() => {
       void this.handleWindowExpiry(id).catch((error: unknown) => {
         logger.error(`[IncomingMediaBatch] Timer flush failed for batch=${id}`, error);
       });
-    }, this.correlationWindowMs);
+    }, initialMs);
 
     return {
       id,
@@ -328,7 +331,8 @@ export class IncomingMediaBatch<
   private findOpenWindow(scopeKey: string): BatchWindow<TDeferredItem> | undefined {
     const windows = this.windowsByScope.get(scopeKey) ?? [];
     return windows.find(
-      (window) => window.phase === "collecting" && !window.hasExpired && Date.now() < window.expiresAt,
+      (window) =>
+        window.phase === "collecting" && !window.hasExpired && Date.now() < window.expiresAt,
     );
   }
 

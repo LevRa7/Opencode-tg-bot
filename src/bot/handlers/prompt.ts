@@ -63,9 +63,7 @@ async function retryPromptWithTenantRestart({
   try {
     const restartResult = await processManager.ensureRuntime();
     if (!restartResult.success) {
-      logger.error(
-        `[Bot] Failed to restart tenant: ${restartResult.error}`,
-      );
+      logger.error(`[Bot] Failed to restart tenant: ${restartResult.error}`);
       return { error: new Error(`tenant restart failed: ${restartResult.error}`) };
     }
 
@@ -86,9 +84,7 @@ async function retryPromptWithTenantRestart({
   }
 }
 
-function wrapPromptWithTimeout<T>(
-  promptPromise: Promise<T>,
-): Promise<T> {
+function wrapPromptWithTimeout<T>(promptPromise: Promise<T>): Promise<T> {
   const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(
       () => reject(new Error(`session.prompt timed out after ${PROMPT_TIMEOUT_MS}ms`)),
@@ -147,7 +143,7 @@ export function consumePromptResponseMode(sessionId: string): PromptResponseMode
   return responseMode;
 }
 
-async function isSessionBusy(sessionId: string, directory: string): Promise<boolean> {
+export async function isSessionBusy(sessionId: string, directory: string): Promise<boolean> {
   try {
     const { data, error } = await opencodeClient.session.status({ directory });
 
@@ -187,6 +183,16 @@ async function resetMismatchedSessionContext(): Promise<void> {
   } catch (err) {
     logger.error("[Bot] Failed to clear pinned message during session reset:", err);
   }
+}
+
+export interface ProcessPromptDeps {
+  bot: Bot<Context>;
+  ensureEventSubscription: (directory: string) => Promise<void>;
+  deferredBatch?: IncomingMediaBatch<
+    ResolvedDeferredItem,
+    ResolvedDeferredItem,
+    { text: string; firstContext?: any }
+  >;
 }
 
 export interface ContextInfo {
@@ -239,7 +245,9 @@ export async function maybeAutoCompactBeforePrompt(options: {
 }): Promise<boolean> {
   if (!shouldAutoCompactBeforePrompt(options)) return false;
 
-  logger.info(`[Bot] Context usage at ${Math.round((options.contextInfo.tokensUsed / options.contextInfo.tokensLimit) * 100)}%, triggering auto-compaction for session=${options.session.id}`);
+  logger.info(
+    `[Bot] Context usage at ${Math.round((options.contextInfo.tokensUsed / options.contextInfo.tokensLimit) * 100)}%, triggering auto-compaction for session=${options.session.id}`,
+  );
 
   const result = await options.summarizeSession({
     sessionID: options.session.id,
@@ -276,7 +284,9 @@ export async function processUserPrompt(
   const { bot, ensureEventSubscription, deferredBatch } = deps;
   const responseMode = options.responseMode ?? "text_only";
   const quietPrompt = responseMode === "text_only";
-  const isForwarded = !options.isFollowUpBatch && !!(ctx.message?.forward_origin || ("forward_date" in (ctx.message || {})));
+  const isForwarded =
+    !options.isFollowUpBatch &&
+    !!(ctx.message?.forward_origin || "forward_date" in (ctx.message || {}));
 
   // Check if there is an open batch window for this scope.
   // If so, enqueue the item as deferred and return early.
@@ -423,24 +433,6 @@ export async function processUserPrompt(
 
   summaryAggregator.setSession(currentSession.id);
 
-  if (isForwarded && deferredBatch && !options.isFollowUpBatch) {
-    const windowScopeKey = buildTelegramConversationScopeKey(
-      extractTelegramConversationScopeFromContext(ctx),
-    );
-    await deferredBatch.deferItem({
-      scopeKey: windowScopeKey,
-      deferredItem: {
-        correlationId: `prompt:${ctx.message?.message_id ?? Date.now()}`,
-        kind: "text",
-        directText: text,
-        previewText: text,
-        contextText: `[Forwarded message]\n${text}`,
-        ctx: ctx as any,
-      },
-    });
-    return true;
-  }
-
   const sessionIsBusy = await isSessionBusy(currentSession.id, currentSession.directory);
   if (sessionIsBusy) {
     logger.info(`[Bot] Ignoring new prompt: session ${currentSession.id} is busy`);
@@ -527,7 +519,8 @@ export async function processUserPrompt(
       bot,
       target,
       scope,
-      sourceMessageId: typeof ctx.message?.message_id === "number" ? ctx.message.message_id : undefined,
+      sourceMessageId:
+        typeof ctx.message?.message_id === "number" ? ctx.message.message_id : undefined,
       quiet: quietPrompt,
     };
     setPromptRoutingContext(currentSession.id, routingContext);
@@ -562,10 +555,7 @@ export async function processUserPrompt(
           assistantRunState.clearRun(currentSession.id, "prompt_error_result");
           clearPromptResponseMode(currentSession.id);
           const details = formatErrorDetails(error, 6000);
-          logger.error(
-            "[Bot] session.prompt error",
-            { ...promptErrorLogContext, details },
-          );
+          logger.error("[Bot] session.prompt error", { ...promptErrorLogContext, details });
 
           const routing = getPromptRoutingContext(currentSession.id) ?? routingContext;
           if (routing) {
@@ -583,58 +573,57 @@ export async function processUserPrompt(
           logger.info("[Bot] session.prompt completed");
         }
       },
-       onError: async (error) => {
-         if (isNetworkError(error)) {
-           logger.warn(
-             `[Bot] session.prompt failed with network error, attempting tenant restart and retry: sessionId=${currentSession.id}`,
-           );
-           const retryResult = await retryPromptWithTenantRestart({
-             promptOptions,
-             sessionId: currentSession.id,
-             quiet: quietPrompt,
-             routingContext,
-             promptErrorLogContext,
-           });
-           if (!retryResult.error) {
-             return;
-           }
-           // Retry failed — fall through to error notification below
-         }
+      onError: async (error) => {
+        if (isNetworkError(error)) {
+          logger.warn(
+            `[Bot] session.prompt failed with network error, attempting tenant restart and retry: sessionId=${currentSession.id}`,
+          );
+          const retryResult = await retryPromptWithTenantRestart({
+            promptOptions,
+            sessionId: currentSession.id,
+            quiet: quietPrompt,
+            routingContext,
+            promptErrorLogContext,
+          });
+          if (!retryResult.error) {
+            return;
+          }
+          // Retry failed — fall through to error notification below
+        }
 
-         foregroundSessionState.markIdle(currentSession.id);
-         assistantRunState.clearRun(currentSession.id, "prompt_error_exception");
-         clearPromptResponseMode(currentSession.id);
-         const details = formatErrorDetails(error, 6000);
-         logger.error(
-           "[Bot] session.prompt error",
-           { ...promptErrorLogContext, details },
-         );
-         const routing = getPromptRoutingContext(currentSession.id) ?? routingContext;
-         if (routing) {
-           void runWithTelegramConversationScope(routing.scope, () => {
-             if (routing.quiet) {
-               return Promise.resolve();
-             }
-             return routing.bot.api.sendMessage(routing.target.chatId, t("bot.prompt_send_error"));
-           }).catch(() => {});
-         }
-       },
+        foregroundSessionState.markIdle(currentSession.id);
+        assistantRunState.clearRun(currentSession.id, "prompt_error_exception");
+        clearPromptResponseMode(currentSession.id);
+        const details = formatErrorDetails(error, 6000);
+        logger.error("[Bot] session.prompt error", { ...promptErrorLogContext, details });
+        const routing = getPromptRoutingContext(currentSession.id) ?? routingContext;
+        if (routing) {
+          void runWithTelegramConversationScope(routing.scope, () => {
+            if (routing.quiet) {
+              return Promise.resolve();
+            }
+            return routing.bot.api.sendMessage(routing.target.chatId, t("bot.prompt_send_error"));
+          }).catch(() => {});
+        }
+      },
     });
 
     if (deferredBatch && !options.isFollowUpBatch) {
       const windowScopeKey = buildTelegramConversationScopeKey(
         extractTelegramConversationScopeFromContext(ctx),
       );
-      deferredBatch.sendDirectPrompt({
-        scopeKey: windowScopeKey,
-        directPrompt: {
-          correlationId: `direct:${ctx.message?.message_id ?? Date.now()}`,
-          kind: "text",
-          directText: "",
-        },
-      }).catch((openErr: unknown) => {
-        logger.error("[Bot] Failed to open batch window", openErr);
-      });
+      deferredBatch
+        .sendDirectPrompt({
+          scopeKey: windowScopeKey,
+          directPrompt: {
+            correlationId: `direct:${ctx.message?.message_id ?? Date.now()}`,
+            kind: "text",
+            directText: "",
+          },
+        })
+        .catch((openErr: unknown) => {
+          logger.error("[Bot] Failed to open batch window", openErr);
+        });
     }
 
     return true;

@@ -55,3 +55,22 @@ export class DeferredFollowUpQueue {
     await nextTask;
   }
 }
+
+export async function scheduleDeferredFollowUpRelease(params: {
+  sessionId: string;
+  queue: DeferredFollowUpQueue;
+  waitForCleanup: () => Promise<void>;
+  dispatchDeferredFollowUp: (item: DeferredFollowUpItem) => Promise<boolean>;
+}): Promise<void> {
+  const { sessionId, queue, waitForCleanup, dispatchDeferredFollowUp } = params;
+
+  await queue.runSerializedRelease(sessionId, async () => {
+    await waitForCleanup();
+    const item = queue.peekNext(sessionId);
+    if (!item) return;
+    const success = await dispatchDeferredFollowUp(item);
+    if (success) {
+      queue.shiftAfterSuccess(sessionId);
+    }
+  });
+}

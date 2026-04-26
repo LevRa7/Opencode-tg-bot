@@ -215,7 +215,7 @@ vi.mock("../../src/thread/manager.js", () => ({
     bindProjectToActiveContext: vi.fn(),
     bindSessionToActiveContext: vi.fn(),
     clearSessionForActiveContext: vi.fn(),
-    getSessionTarget: vi.fn(() => null),
+    getSessionTarget: vi.fn(() => ({ chatId: 123, messageThreadId: undefined })),
     getSessionScope: vi.fn(() => null),
   },
 }));
@@ -450,6 +450,7 @@ vi.mock("../../src/bot/assistant-run-state.js", () => ({
     markResponseCompleted: vi.fn(),
     finishRun: vi.fn(() => null),
     getCompletedRun: vi.fn(() => null),
+    isRunActive: vi.fn(() => false),
   },
 }));
 vi.mock("../../src/bot/utils/assistant-run-footer.js", () => ({
@@ -633,6 +634,7 @@ describe("bot/index deferred correlation", () => {
     expect(secondPromptCall?.[0]?.parts?.[0]?.text).toContain("Look at this screenshot");
 
     sessionPromptMock.mockClear();
+    await emitSessionIdle();
     await photoHandler(createPhotoContext(4));
 
     expect(sessionPromptMock).toHaveBeenCalledTimes(1);

@@ -3,7 +3,7 @@ import {
   DeferredFollowUpQueue,
   type DeferredFollowUpItem,
 } from "../../src/bot/deferred-follow-up-queue.js";
-import { scheduleDeferredFollowUpRelease } from "../../src/bot/index.js";
+import { scheduleDeferredFollowUpRelease } from "../../src/bot/deferred-follow-up-queue.js";
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;

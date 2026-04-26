@@ -25,6 +25,7 @@ interface SendDeferredFollowUpInput<TResolvedDeferredItems> {
 
 interface IncomingMediaBatchOptions<TDirectPrompt, TDeferredItem, TResolvedDeferredItems> {
   correlationWindowMs?: number;
+  maxWindowMs?: number;
   canFlushNow?: (scopeKey: string) => boolean | Promise<boolean>;
   sendDirectPrompt?: (input: SendDirectPromptInput<TDirectPrompt>) => Promise<void>;
   resolveDeferredItems: (
@@ -41,6 +42,7 @@ interface BatchWindow<TDeferredItem> {
   busyWarningSuppressionFlags?: BusyWarningSuppressionFlags;
   deferredItems: TDeferredItem[];
   expiresAt: number;
+  maxExpiresAt: number;
   hasExpired: boolean;
   isDirectPromptSettled: boolean;
   phase: "collecting" | "retrying";
@@ -48,6 +50,7 @@ interface BatchWindow<TDeferredItem> {
 }
 
 const DEFAULT_CORRELATION_WINDOW_MS = 1000;
+const DEFAULT_MAX_WINDOW_MS = 3000;
 
 export class IncomingMediaBatch<
   TDirectPrompt = string,
@@ -55,6 +58,7 @@ export class IncomingMediaBatch<
   TResolvedDeferredItems = string,
 > {
   private readonly correlationWindowMs: number;
+  private readonly maxWindowMs: number;
   private readonly canFlushNowOperation: IncomingMediaBatchOptions<
     TDirectPrompt,
     TDeferredItem,
@@ -83,6 +87,10 @@ export class IncomingMediaBatch<
       0,
       Math.floor(options.correlationWindowMs ?? DEFAULT_CORRELATION_WINDOW_MS),
     );
+    this.maxWindowMs = Math.max(
+      this.correlationWindowMs,
+      Math.floor(options.maxWindowMs ?? DEFAULT_MAX_WINDOW_MS),
+    );
     this.canFlushNowOperation = options.canFlushNow;
     this.sendDirectPromptOperation = options.sendDirectPrompt;
     this.resolveDeferredItemsOperation = options.resolveDeferredItems;
@@ -100,6 +108,7 @@ export class IncomingMediaBatch<
       if (!openWindow.busyWarningSuppressionFlags && input.busyWarningSuppressionFlags) {
         openWindow.busyWarningSuppressionFlags = input.busyWarningSuppressionFlags;
       }
+      this.extendWindowTimer(openWindow);
       return;
     }
 
@@ -149,11 +158,6 @@ export class IncomingMediaBatch<
     }
   }
 
-  /**
-   * Creates a deferred-only window that collects all items without sending any
-   * direct prompt. Items are accumulated in the window and released when the
-   * window expires and the session permits flushing.
-   */
   async deferItem(input: {
     scopeKey: string;
     deferredItem: TDeferredItem;
@@ -165,6 +169,7 @@ export class IncomingMediaBatch<
       if (!openWindow.busyWarningSuppressionFlags && input.busyWarningSuppressionFlags) {
         openWindow.busyWarningSuppressionFlags = input.busyWarningSuppressionFlags;
       }
+      this.extendWindowTimer(openWindow);
       return;
     }
 
@@ -178,15 +183,6 @@ export class IncomingMediaBatch<
     this.addWindow(window);
   }
 
-  /**
-   * Finds all expired windows for a given scope, checks whether flushing is
-   * permitted via canFlushNow, and flushes any that are ready. Intended to be
-   * called from an explicit idle transition (e.g. setOnSessionIdle) after the
-   * caller has confirmed the session is no longer busy.
-   *
-   * Note: this method bypasses the canFlushNow callback because it is called
-   * when the caller has already determined the session is idle.
-   */
   async flushExpiredWindowsForScope(scopeKey: string): Promise<void> {
     const windows = this.windowsByScope.get(scopeKey) ?? [];
     const expiredWindows = [...windows];
@@ -204,17 +200,38 @@ export class IncomingMediaBatch<
     }
 
     window.deferredItems.push(input.deferredItem);
+    this.extendWindowTimer(window);
     return true;
+  }
+
+  private extendWindowTimer(window: BatchWindow<TDeferredItem>): void {
+    if (window.hasExpired) return;
+
+    const now = Date.now();
+    const newExpiresAt = Math.min(now + this.correlationWindowMs, window.maxExpiresAt);
+
+    if (newExpiresAt > window.expiresAt) {
+      window.expiresAt = newExpiresAt;
+      clearTimeout(window.timer);
+      const remainingMs = newExpiresAt - now;
+      window.timer = setTimeout(() => {
+        void this.handleWindowExpiry(window.id).catch((error: unknown) => {
+          logger.error(`[IncomingMediaBatch] Timer flush failed for batch=${window.id}`, error);
+        });
+      }, remainingMs);
+    }
   }
 
   private createWindow(input: {
     scopeKey: string;
     deferredItems: TDeferredItem[];
-      busyWarningSuppressionFlags?: BusyWarningSuppressionFlags;
-      isDirectPromptSettled: boolean;
-      phase: "collecting" | "retrying";
+    busyWarningSuppressionFlags?: BusyWarningSuppressionFlags;
+    isDirectPromptSettled: boolean;
+    phase: "collecting" | "retrying";
   }): BatchWindow<TDeferredItem> {
-    const expiresAt = Date.now() + this.correlationWindowMs;
+    const now = Date.now();
+    const expiresAt = now + this.correlationWindowMs;
+    const maxExpiresAt = now + this.maxWindowMs;
     const id = ++this.nextBatchId;
     const timer = setTimeout(() => {
       void this.handleWindowExpiry(id).catch((error: unknown) => {
@@ -228,6 +245,7 @@ export class IncomingMediaBatch<
       busyWarningSuppressionFlags: input.busyWarningSuppressionFlags,
       deferredItems: [...input.deferredItems],
       expiresAt,
+      maxExpiresAt,
       hasExpired: false,
       isDirectPromptSettled: input.isDirectPromptSettled,
       phase: input.phase,

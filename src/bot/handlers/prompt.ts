@@ -112,8 +112,9 @@ const promptRoutingBySessionId = new Map<string, PromptRoutingContext>();
 
 export type PromptResponseMode = "text_only" | "text_and_tts";
 
-type ProcessPromptOptions = {
+export type ProcessPromptOptions = {
   responseMode?: PromptResponseMode;
+  isFollowUpBatch?: boolean;
 };
 
 function setPromptRoutingContext(sessionId: string, routing: PromptRoutingContext): void {
@@ -188,10 +189,71 @@ async function resetMismatchedSessionContext(): Promise<void> {
   }
 }
 
-export interface ProcessPromptDeps {
-  bot: Bot<Context>;
-  ensureEventSubscription: (directory: string) => Promise<void>;
-  deferredBatch?: IncomingMediaBatch<ResolvedDeferredItem, ResolvedDeferredItem, string>;
+export interface ContextInfo {
+  tokensUsed: number;
+  tokensLimit: number;
+}
+
+export interface SessionInfo {
+  id: string;
+  directory: string;
+}
+
+export interface StoredModelInfo {
+  providerID: string;
+  modelID: string;
+  variant?: string;
+}
+
+const COMPACTION_THRESHOLD = 0.95;
+
+/**
+ * Checks if the prompt should be auto-compacted based on context usage.
+ * Only compacts if no file parts are present to avoid losing media context.
+ */
+export function shouldAutoCompactBeforePrompt(options: {
+  text: string;
+  fileParts: FilePartInput[];
+  contextInfo: ContextInfo;
+}): boolean {
+  if (options.fileParts.length > 0) return false;
+  const ratio = options.contextInfo.tokensUsed / options.contextInfo.tokensLimit;
+  return ratio >= COMPACTION_THRESHOLD;
+}
+
+/**
+ * Attempts to auto-compact the session by summarizing it if the threshold is reached.
+ */
+export async function maybeAutoCompactBeforePrompt(options: {
+  text: string;
+  fileParts: FilePartInput[];
+  contextInfo: ContextInfo;
+  session: SessionInfo;
+  storedModel: StoredModelInfo;
+  summarizeSession: (params: {
+    sessionID: string;
+    directory: string;
+    providerID: string;
+    modelID: string;
+  }) => Promise<{ error: unknown }>;
+}): Promise<boolean> {
+  if (!shouldAutoCompactBeforePrompt(options)) return false;
+
+  logger.info(`[Bot] Context usage at ${Math.round((options.contextInfo.tokensUsed / options.contextInfo.tokensLimit) * 100)}%, triggering auto-compaction for session=${options.session.id}`);
+
+  const result = await options.summarizeSession({
+    sessionID: options.session.id,
+    directory: options.session.directory,
+    providerID: options.storedModel.providerID,
+    modelID: options.storedModel.modelID,
+  });
+
+  if (result.error) {
+    logger.warn(`[Bot] Auto-compaction failed for session=${options.session.id}`, result.error);
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -214,10 +276,11 @@ export async function processUserPrompt(
   const { bot, ensureEventSubscription, deferredBatch } = deps;
   const responseMode = options.responseMode ?? "text_only";
   const quietPrompt = responseMode === "text_only";
+  const isForwarded = !options.isFollowUpBatch && !!(ctx.message?.forward_origin || ("forward_date" in (ctx.message || {})));
 
   // Check if there is an open batch window for this scope.
   // If so, enqueue the item as deferred and return early.
-  if (deferredBatch) {
+  if (deferredBatch && !options.isFollowUpBatch) {
     const contextScope = extractTelegramConversationScopeFromContext(ctx);
     const scopeKey = buildTelegramConversationScopeKey(contextScope);
     const isDeferred = deferredBatch.enqueueDeferredItem({
@@ -227,10 +290,27 @@ export async function processUserPrompt(
         kind: "text",
         directText: text,
         previewText: text,
-        contextText: text,
+        contextText: isForwarded ? `[Forwarded message]\n${text}` : text,
+        ctx: ctx as any,
       },
     });
     if (isDeferred) {
+      return true;
+    }
+
+    // NEW: If it's a forwarded message, start a batching window immediately
+    if (isForwarded) {
+      await deferredBatch.deferItem({
+        scopeKey,
+        deferredItem: {
+          correlationId: `prompt:${ctx.message?.message_id ?? Date.now()}`,
+          kind: "text",
+          directText: text,
+          previewText: text,
+          contextText: `[Forwarded message]\n${text}`,
+          ctx: ctx as any,
+        },
+      });
       return true;
     }
   }
@@ -342,6 +422,24 @@ export async function processUserPrompt(
   await ensureEventSubscription(currentSession.directory);
 
   summaryAggregator.setSession(currentSession.id);
+
+  if (isForwarded && deferredBatch && !options.isFollowUpBatch) {
+    const windowScopeKey = buildTelegramConversationScopeKey(
+      extractTelegramConversationScopeFromContext(ctx),
+    );
+    await deferredBatch.deferItem({
+      scopeKey: windowScopeKey,
+      deferredItem: {
+        correlationId: `prompt:${ctx.message?.message_id ?? Date.now()}`,
+        kind: "text",
+        directText: text,
+        previewText: text,
+        contextText: `[Forwarded message]\n${text}`,
+        ctx: ctx as any,
+      },
+    });
+    return true;
+  }
 
   const sessionIsBusy = await isSessionBusy(currentSession.id, currentSession.directory);
   if (sessionIsBusy) {
@@ -523,7 +621,7 @@ export async function processUserPrompt(
        },
     });
 
-    if (deferredBatch) {
+    if (deferredBatch && !options.isFollowUpBatch) {
       const windowScopeKey = buildTelegramConversationScopeKey(
         extractTelegramConversationScopeFromContext(ctx),
       );

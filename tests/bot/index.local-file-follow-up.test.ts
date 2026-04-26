@@ -237,7 +237,12 @@ vi.mock("../../src/telegram/scope.js", () => ({
     chatId: ctx.chat?.id ?? 123,
     messageThreadId: ctx.message?.message_thread_id,
   })),
-  buildTelegramConversationScopeKey: vi.fn(() => "scope"),
+  buildTelegramConversationScopeKey: vi.fn(
+    (scope: { userId: number; chatId: number; messageThreadId?: number } | null) => {
+      if (!scope) return "global";
+      return `${scope.userId}:${scope.chatId}:${scope.messageThreadId ?? 0}`;
+    },
+  ),
   runWithTelegramConversationScope: runWithTelegramConversationScopeMock,
 }));
 
@@ -591,6 +596,7 @@ describe("bot/index local file follow-up orchestration", () => {
   });
 
   it("uses the routing target thread id for background final sends", async () => {
+    getSessionTargetMock.mockReset().mockReturnValue(null);
     const bot = createBot() as unknown as FakeBot;
     const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
@@ -669,6 +675,7 @@ describe("bot/index local file follow-up orchestration", () => {
   });
 
   it("keeps final delivery scoped to each prompt thread for interleaved sessions", async () => {
+    getSessionTargetMock.mockReset().mockReturnValue(null);
     getCurrentSessionMock.mockReset();
     getCurrentSessionMock
       .mockReturnValueOnce({ id: "session-1", title: "Session 1", directory: "/repo" })
@@ -822,6 +829,7 @@ describe("bot/index local file follow-up orchestration", () => {
   });
 
   it("replies to the source user message when sending the final keyboard-bearing response", async () => {
+    getSessionTargetMock.mockReset().mockReturnValue(null);
     keyboardIsInitializedMock.mockReturnValue(true);
     keyboardGetKeyboardMock.mockReturnValue({ keyboard: [[{ text: "A" }]] });
 
@@ -924,9 +932,9 @@ describe("bot/index local file follow-up orchestration", () => {
     await promptHandler({
       message: {
         text: "private chat without thread id",
-        chat: { id: 123 },
+        chat: { id: 123, is_forum: true },
       },
-      chat: { id: 123, type: "private" },
+      chat: { id: 123, type: "private", is_forum: true },
       from: { id: 777 },
       api: bot.api,
       reply: replyMock,

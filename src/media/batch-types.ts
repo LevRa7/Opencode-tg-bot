@@ -33,6 +33,7 @@ export interface ResolvedDeferredItem {
   contextText?: string;
   forwardedSource?: ForwardedSourceInfo;
   forwardedTag?: string;
+  ctx?: any;
 }
 
 export interface ComposedPromptResult {

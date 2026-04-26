@@ -264,7 +264,7 @@ describe("interactionGuardMiddleware", () => {
     expect(ctx.reply).toHaveBeenCalledWith(t("interaction.blocked.finish_current"));
   });
 
-  it("blocks plain text while busy with generic blocked message", async () => {
+  it("allows plain text while busy without interaction (handlers defer to batch mechanism)", async () => {
     foregroundSessionState.markBusy("session-1");
 
     const ctx = createTextContext("hello");
@@ -272,11 +272,11 @@ describe("interactionGuardMiddleware", () => {
 
     await interactionGuardMiddleware(ctx, next);
 
-    expect(next).not.toHaveBeenCalled();
-    expect(ctx.reply).toHaveBeenCalledWith(t("interaction.blocked.finish_current"));
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(ctx.reply).not.toHaveBeenCalled();
   });
 
-  it("blocks callback while busy without active question or permission", async () => {
+  it("allows callback while busy without interaction (handlers defer to batch mechanism)", async () => {
     foregroundSessionState.markBusy("session-1");
 
     const ctx = createCallbackContext("project:123");
@@ -284,10 +284,8 @@ describe("interactionGuardMiddleware", () => {
 
     await interactionGuardMiddleware(ctx, next);
 
-    expect(next).not.toHaveBeenCalled();
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
-      text: t("interaction.blocked.finish_current"),
-    });
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(ctx.answerCallbackQuery).not.toHaveBeenCalled();
   });
 
   it("allows abort, status, and help while busy", async () => {

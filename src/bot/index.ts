@@ -80,6 +80,7 @@ import {
   clearPromptRouting,
   getPromptRoutingContext,
   processUserPrompt,
+  isSessionBusy,
   type ProcessPromptDeps,
 } from "./handlers/prompt.js";
 import { IncomingMediaBatch } from "./incoming-media-batch.js";
@@ -97,6 +98,14 @@ import { finalizeAssistantResponse } from "./utils/finalize-assistant-response.j
 import { sendTtsResponseForSession } from "./utils/send-tts-response.js";
 import { MessageDraftStreamManager } from "./utils/message-draft-stream.js";
 import { deliverThinkingMessage } from "./utils/thinking-message.js";
+import { SequentialMessageDraftIdAllocator } from "./utils/message-draft-id.js";
+import {
+  clearAllThinkingBlockStreams,
+  clearThinkingBlockStream,
+  configureThinkingBlockDraftIdAllocator,
+  finalizeThinkingBlockStream,
+  streamThinkingBlocks,
+} from "./utils/thinking-block-stream.js";
 import { formatAssistantRunFooter } from "./utils/assistant-run-footer.js";
 import { sendBotText } from "./utils/telegram-text.js";
 import {
@@ -118,6 +127,7 @@ import {
   getApprovedTelegramUserIds,
   getReasoningMode,
   getTenantRuntimeInfo,
+  getThinkingClearMode,
   isMessageStreamingEnabled,
 } from "../settings/manager.js";
 import {
@@ -132,7 +142,7 @@ import {
   type TelegramConversationScope,
 } from "../telegram/scope.js";
 
-let deferredBatch: IncomingMediaBatch<ResolvedDeferredItem, ResolvedDeferredItem, string>;
+let deferredBatch: IncomingMediaBatch<ResolvedDeferredItem, ResolvedDeferredItem, { text: string; firstContext?: any }>;
 let activeBotInstance: Bot<Context> | null = null;
 
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
@@ -216,6 +226,10 @@ function getThreadTargetForSession(sessionId?: string) {
   return threadContextManager.getSessionTarget(sessionId);
 }
 
+function hasLiveSessionTarget(sessionId: string): boolean {
+  return getThreadTargetForSession(sessionId) != null;
+}
+
 
 
 function getSessionRoutingTarget(sessionId: string) {
@@ -237,6 +251,10 @@ function getSessionRoutingScope(sessionId: string): TelegramConversationScope | 
 
 function getSessionRoutingScopeKey(sessionId: string): string {
   return buildTelegramConversationScopeKey(getSessionRoutingScope(sessionId));
+}
+
+function buildThinkingRoutingIdentity(target: { chatId: number; messageThreadId?: number }): string {
+  return `${target.chatId}:${target.messageThreadId ?? "main"}`;
 }
 
 async function runWithSessionRoutingScope<T>(
@@ -276,7 +294,7 @@ function isMessageStreamingEnabledForSession(sessionId: string): boolean {
 }
 
 function isSessionCurrent(sessionId: string): boolean {
-  return getSessionRoutingApi(sessionId) !== null && getSessionRoutingTarget(sessionId) !== undefined;
+  return getSessionRoutingApi(sessionId) !== null && getSessionRoutingTarget(sessionId) != null;
 }
 
 function prepareDocumentCaption(caption: string): string {
@@ -297,6 +315,15 @@ interface TelegramMediaApi {
   sendAudio: Bot<Context>["api"]["sendAudio"];
   sendVideo: Bot<Context>["api"]["sendVideo"];
   sendDocument: Bot<Context>["api"]["sendDocument"];
+}
+
+interface LocalFileFollowUpDeliveryRoute {
+  api: TelegramMediaApi;
+  target: {
+    chatId: number;
+    messageThreadId?: number;
+  };
+  routingIdentity: string;
 }
 
 function getSessionLocalFilePathResolver(sessionId: string): ((filePath: string) => string) | undefined {
@@ -389,6 +416,15 @@ async function enqueueLocalFileFollowUpsFromText(sessionId: string, text: string
     return;
   }
 
+  const deliveryRoute: LocalFileFollowUpDeliveryRoute = {
+    api: botApi,
+    target: {
+      chatId: target.chatId,
+      messageThreadId: target.messageThreadId,
+    },
+    routingIdentity: buildThinkingRoutingIdentity(target),
+  };
+
   const reservedPaths = localFileFollowUpTracker.reserve(sessionId, extractLocalFilePaths(text));
   if (reservedPaths.length === 0) {
     return;
@@ -413,16 +449,22 @@ async function enqueueLocalFileFollowUpsFromText(sessionId: string, text: string
   safeBackgroundTask({
     taskName: `telegram.local-file-follow-up.${sessionId}`,
     task: async () => {
-      const sentPaths: string[] = [];
-      try {
-        for (const followUp of preparedFollowUps) {
-          const currentTarget = getSessionRoutingTarget(sessionId);
-          const currentApi = getSessionRoutingApi(sessionId);
-          if (!currentTarget || !currentApi || !isSessionCurrent(sessionId)) {
+        const sentPaths: string[] = [];
+        try {
+          for (const followUp of preparedFollowUps) {
+          const currentTarget = getThreadTargetForSession(sessionId);
+          const currentRoutingIdentity = currentTarget
+            ? buildThinkingRoutingIdentity(currentTarget)
+            : null;
+          if (
+            !isSessionCurrent(sessionId) ||
+            currentRoutingIdentity === null ||
+            currentRoutingIdentity !== deliveryRoute.routingIdentity
+          ) {
             break;
           }
 
-          await sendPreparedLocalFileFollowUp(currentApi, currentTarget, followUp);
+          await sendPreparedLocalFileFollowUp(deliveryRoute.api, deliveryRoute.target, followUp);
           sentPaths.push(followUp.path);
         }
       } finally {
@@ -595,7 +637,13 @@ const responseStreamer = new ResponseStreamer({
   },
 });
 
-const messageDraftStreamManager = new MessageDraftStreamManager(RESPONSE_STREAM_THROTTLE_MS);
+const sharedMessageDraftIdAllocator = new SequentialMessageDraftIdAllocator();
+
+const messageDraftStreamManager = new MessageDraftStreamManager(
+  RESPONSE_STREAM_THROTTLE_MS,
+  sharedMessageDraftIdAllocator,
+);
+configureThinkingBlockDraftIdAllocator(sharedMessageDraftIdAllocator);
 export { messageDraftStreamManager };
 
 const toolCallStreamer = new ToolCallStreamer({
@@ -777,6 +825,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     toolCallStreamer.clearAll("summary_aggregator_clear");
     responseStreamer.clearAll("summary_aggregator_clear");
     messageDraftStreamManager.clearAll();
+    clearAllThinkingBlockStreams();
     localFileFollowUpTracker.clearAll();
     assistantRunState.clearAll("summary_aggregator_clear");
   });
@@ -797,6 +846,16 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       const mode = await getReasoningModeForSession(sessionId);
       if (!messageText.trim() && !reasoningText?.trim() && !toolCalls?.length) {
         return;
+      }
+
+      if (mode > 0 && reasoningText?.trim() && !config.bot.hideThinkingMessages) {
+        await streamThinkingBlocks({
+          sessionId,
+          sendApi: botApi,
+          target,
+          title: t("bot.thinking"),
+          reasoningText,
+        });
       }
 
       const assistantFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
@@ -843,6 +902,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           clearPromptResponseMode(sessionId);
           clearSessionRoutingContext(sessionId);
           messageDraftStreamManager.clearSession(sessionId);
+          await clearThinkingBlockStream(sessionId, true);
           responseStreamer.clearMessage(sessionId, `${messageId}:assistant`, "session_mismatch");
           toolCallStreamer.clearSession(sessionId, "session_mismatch");
           assistantRunState.clearRun(sessionId, "session_mismatch");
@@ -859,16 +919,29 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           clearPromptResponseMode(sessionId);
           clearSessionRoutingContext(sessionId);
           messageDraftStreamManager.clearSession(sessionId);
+          await clearThinkingBlockStream(sessionId, true);
           responseStreamer.clearMessage(sessionId, `${messageId}:assistant`, "bot_context_missing");
+          toolMessageBatcher.clearSession(sessionId, "bot_context_missing");
           toolCallStreamer.clearSession(sessionId, "bot_context_missing");
           assistantRunState.clearRun(sessionId, "bot_context_missing");
           foregroundSessionState.markIdle(sessionId);
+          await scheduledTaskRuntime.flushDeferredDeliveries();
           return;
         }
 
         const chatId = target.chatId;
         assistantRunState.markResponseCompleted(sessionId, completionInfo);
         const mode = await getReasoningModeForSession(sessionId);
+
+        if (mode > 0) {
+          await finalizeThinkingBlockStream({
+            sessionId,
+            sendApi: botApi,
+            target,
+            title: t("bot.thinking"),
+          });
+        }
+
         const formattedTechnicals = (toolCalls || []).map((t) => ({
           description: t.title || t.tool,
           command:
@@ -979,11 +1052,17 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     const botApi = getSessionRoutingApi(sessionId);
     const target = getSessionRoutingTarget(sessionId);
-    if (!botApi || !target) {
+    if (!botApi || !target || !hasLiveSessionTarget(sessionId)) {
+      toolMessageBatcher.clearSession(sessionId, "session_idle_missing_routing");
+      toolCallStreamer.clearSession(sessionId, "session_idle_missing_routing");
+      assistantRunState.clearRun(sessionId, "session_idle_missing_routing");
       clearSessionRoutingContext(sessionId);
       localFileFollowUpTracker.clearSession(sessionId);
       messageDraftStreamManager.clearSession(sessionId);
+      responseStreamer.clearSession(sessionId, "session_idle_missing_routing");
+      await clearThinkingBlockStream(sessionId, false);
       foregroundSessionState.markIdle(sessionId);
+      await scheduledTaskRuntime.flushDeferredDeliveries();
       return;
     }
 
@@ -1008,9 +1087,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               modelID,
               elapsedMs: Date.now() - completedRun.startedAt,
             }),
-            {
-              ...(keyboard ? { reply_markup: keyboard } : {}),
-            },
+            withMessageThreadId(
+              {
+                ...(keyboard ? { reply_markup: keyboard } : {}),
+              },
+              target.messageThreadId,
+            ),
           );
         }
       }
@@ -1020,6 +1102,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     } catch (err) {
       logger.error("[Bot] Failed to send session idle footer:", err);
     } finally {
+      await clearThinkingBlockStream(sessionId, false);
       clearSessionRoutingContext(sessionId);
       localFileFollowUpTracker.clearSession(sessionId);
       messageDraftStreamManager.clearSession(sessionId);
@@ -1190,9 +1273,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     await toolCallStreamer.breakSession(sessionId, "thinking_started");
 
-    deliverThinkingMessage(sessionId, toolMessageBatcher, {
-      hideThinkingMessages: config.bot.hideThinkingMessages,
-    });
+    const reasoningMode = await getReasoningModeForSession(sessionId);
+    if (!config.bot.hideThinkingMessages && reasoningMode === 0) {
+      deliverThinkingMessage(sessionId, toolMessageBatcher, {
+        hideThinkingMessages: config.bot.hideThinkingMessages,
+      });
+    }
 
     if (pinnedMessageManager.isInitialized()) {
       await pinnedMessageManager.refresh();
@@ -1265,22 +1351,59 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     syncSessionRoutingContext(sessionId);
     const routing = getPromptRoutingContext(sessionId) ?? getSessionRoutingContext(sessionId);
     const target = getSessionRoutingTarget(sessionId);
-    if (!routing || !target) {
+    const hasLiveTarget = hasLiveSessionTarget(sessionId);
+    const shouldClearThinkingBlock = await runWithSessionRoutingScope(
+      sessionId,
+      async () => getThinkingClearMode(),
+    );
+    if (!routing || !target || !hasLiveTarget) {
       clearPromptResponseMode(sessionId);
       localFileFollowUpTracker.clearSession(sessionId);
       clearSessionRoutingContext(sessionId);
       messageDraftStreamManager.clearSession(sessionId);
+      responseStreamer.clearSession(sessionId, "session_error_missing_routing");
+      toolMessageBatcher.clearSession(sessionId, "session_error_missing_routing");
+      toolCallStreamer.clearSession(sessionId, "session_error_missing_routing");
+      assistantRunState.clearRun(sessionId, "session_error_missing_routing");
+      await clearThinkingBlockStream(sessionId, shouldClearThinkingBlock);
       foregroundSessionState.markIdle(sessionId);
+      await scheduledTaskRuntime.flushDeferredDeliveries();
       return;
     }
 
     messageDraftStreamManager.clearSession(sessionId);
+    responseStreamer.clearSession(sessionId, "session_error");
     localFileFollowUpTracker.clearSession(sessionId);
     assistantRunState.clearRun(sessionId, "session_error");
     clearPromptResponseMode(sessionId);
     await Promise.all([
       toolMessageBatcher.flushSession(sessionId, "session_error"),
       toolCallStreamer.flushSession(sessionId, "session_error"),
+      clearThinkingBlockStream(sessionId, shouldClearThinkingBlock, {
+        sendText: async (text: string) => {
+          const sent = await routing.bot.api.sendMessage(
+            target.chatId,
+            text,
+            withMessageThreadId(
+              { parse_mode: "HTML" as const, disable_notification: true },
+              target.messageThreadId,
+            ),
+          );
+          return sent.message_id;
+        },
+        editText: async (messageId: number, text: string) => {
+          await routing.bot.api.editMessageText(
+            target.chatId,
+            messageId,
+            text,
+            withMessageThreadId({ parse_mode: "HTML" as const }, target.messageThreadId),
+          );
+        },
+        deleteText: async (messageId: number) => {
+          await routing.bot.api.deleteMessage(target.chatId, messageId).catch(() => undefined);
+        },
+        routingIdentity: buildThinkingRoutingIdentity(target),
+      }),
     ]);
 
     const normalizedMessage = message.trim() || t("common.unknown_error");
@@ -1665,23 +1788,35 @@ export function createBot(): Bot<Context> {
     },
   });
 
-  // Deferred media batch for correlating follow-up messages into a single prompt
-  deferredBatch = new IncomingMediaBatch<ResolvedDeferredItem, ResolvedDeferredItem, string>({
+  // Deferred media batch for correlating follow-up messages into a single prompt\n  deferredBatch = new IncomingMediaBatch<ResolvedDeferredItem, ResolvedDeferredItem, { text: string; firstContext?: any }>({\n    correlationWindowMs: 300, // Wait 300ms after the first message/item\n    maxWindowMs: 3000, // But no more than 3 seconds total\n    canFlushNow: async () => {\n      const session = getCurrentSession();
+      if (!session) return true;
+      return !(await isSessionBusy(session.id, session.directory));
+    },
     sendDirectPrompt: async () => {},
     resolveDeferredItems: async ({ deferredItems }) => {
       const result = composeDeferredMediaPrompt(deferredItems, t as (key: string) => string);
       const parts: string[] = [];
       if (result.directText) parts.push(result.directText);
       if (result.contextText) parts.push(result.contextText);
-      return parts.join("\n\n");
+      return {
+        text: parts.join("\n\n"),
+        firstContext: (deferredItems as any[]).find(item => item?.ctx)?.ctx,
+      };
     },
     sendDeferredFollowUp: async ({ resolvedDeferredItems }) => {
+      const { text, firstContext } = resolvedDeferredItems;
+      if (firstContext) {
+        const promptDeps = { bot, ensureEventSubscription, deferredBatch };
+        await processUserPrompt(firstContext, text, promptDeps, [], { isFollowUpBatch: true });
+        return;
+      }
+
       const session = getCurrentSession();
       if (!session) return;
       await opencodeClient.session.prompt({
         sessionID: session.id,
         directory: session.directory,
-        parts: [{ type: "text", text: resolvedDeferredItems }],
+        parts: [{ type: "text", text }],
       });
     },
   });
@@ -1745,7 +1880,6 @@ export function createBot(): Bot<Context> {
       return;
     }
 
-
     if (text.startsWith("/")) {
       return;
     }
@@ -1795,6 +1929,5 @@ export function createBot(): Bot<Context> {
       );
     }
   });
-
   return bot;
 }

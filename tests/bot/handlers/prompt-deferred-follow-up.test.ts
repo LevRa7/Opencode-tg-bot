@@ -190,8 +190,13 @@ vi.mock("../../../src/process/manager.js", () => ({
 
 vi.mock("../../../src/bot/assistant-run-state.js", () => ({
   assistantRunState: {
-    startRun: mocked.assistantStartRunMock,
-    clearRun: mocked.assistantClearRunMock,
+    startRun: vi.fn(),
+    clearRun: vi.fn(),
+    clearAll: vi.fn(),
+    markResponseCompleted: vi.fn(),
+    finishRun: vi.fn(() => null),
+    getCompletedRun: vi.fn(() => null),
+    isRunActive: vi.fn(() => false),
   },
 }));
 

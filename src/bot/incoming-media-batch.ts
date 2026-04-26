@@ -162,6 +162,7 @@ export class IncomingMediaBatch<
     scopeKey: string;
     deferredItem: TDeferredItem;
     busyWarningSuppressionFlags?: BusyWarningSuppressionFlags;
+    initialExpiresMs?: number;
   }): Promise<void> {
     const openWindow = this.findOpenWindow(input.scopeKey);
     if (openWindow) {
@@ -179,7 +180,7 @@ export class IncomingMediaBatch<
       deferredItems: [input.deferredItem],
       isDirectPromptSettled: true,
       phase: "collecting",
-      initialExpiresMs: this.maxWindowMs,
+      initialExpiresMs: input.initialExpiresMs ?? this.maxWindowMs,
     });
     this.addWindow(window);
   }
@@ -234,7 +235,7 @@ export class IncomingMediaBatch<
     const now = Date.now();
     const initialMs = input.initialExpiresMs ?? this.correlationWindowMs;
     const expiresAt = now + initialMs;
-    const maxExpiresAt = now + this.maxWindowMs;
+    const maxExpiresAt = Math.max(expiresAt, now + this.maxWindowMs);
     const id = ++this.nextBatchId;
     const timer = setTimeout(() => {
       void this.handleWindowExpiry(id).catch((error: unknown) => {

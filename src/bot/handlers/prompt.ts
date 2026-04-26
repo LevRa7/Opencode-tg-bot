@@ -304,12 +304,10 @@ export async function processUserPrompt(
   const { bot, ensureEventSubscription, deferredBatch } = deps;
   const responseMode = options.responseMode ?? "text_only";
   const quietPrompt = responseMode === "text_only";
-  const isForwarded =
-    !options.isFollowUpBatch &&
-    !!(ctx.message?.forward_origin || "forward_date" in (ctx.message || {}));
 
-  // Check if there is an open batch window for this scope.
-  // If so, enqueue the item as deferred and return early.
+  // Batch window: collect all messages before sending to OpenCode.
+  // First message opens a 1-second window. Follow-ups extend to 3s from the last.
+  // After 3s of silence, the batch flushes as a single prompt via sendDeferredFollowUp.
   if (deferredBatch && !options.isFollowUpBatch) {
     const contextScope = extractTelegramConversationScopeFromContext(ctx);
     const scopeKey = buildTelegramConversationScopeKey(contextScope);
@@ -320,7 +318,7 @@ export async function processUserPrompt(
         kind: "text",
         directText: text,
         previewText: text,
-        contextText: isForwarded ? `[Forwarded message]\n${text}` : text,
+        contextText: text,
         ctx: ctx as any,
         metadata: extractMessageMetadata(ctx),
       },
@@ -329,23 +327,21 @@ export async function processUserPrompt(
       return true;
     }
 
-    // NEW: If it's a forwarded message, start a batching window immediately
-    if (isForwarded) {
-      const metadata = extractMessageMetadata(ctx);
-      await deferredBatch.deferItem({
-        scopeKey,
-        deferredItem: {
-          correlationId: `prompt:${ctx.message?.message_id ?? Date.now()}`,
-          kind: "text",
-          directText: text,
-          previewText: text,
-          contextText: `[Forwarded message]\n${text}`,
-          ctx: ctx as any,
-          metadata,
-        },
-      });
-      return true;
-    }
+    // First message in this batch — open window with 1 second initial expiry
+    await deferredBatch.deferItem({
+      scopeKey,
+      initialExpiresMs: 1000,
+      deferredItem: {
+        correlationId: `prompt:${ctx.message?.message_id ?? Date.now()}`,
+        kind: "text",
+        directText: text,
+        previewText: text,
+        contextText: text,
+        ctx: ctx as any,
+        metadata: extractMessageMetadata(ctx),
+      },
+    });
+    return true;
   }
 
   let currentProject = getCurrentProject();
@@ -456,93 +452,21 @@ export async function processUserPrompt(
 
   summaryAggregator.setSession(currentSession.id);
 
-  // Atomic session claim: ensures only ONE processUserPrompt call proceeds to
-  // send a prompt to OpenCode. The claim is held only during the narrow window
-  // between entering the busy check and completing the server isSessionBusy call.
-  // After that, subsequent calls rely on foregroundSessionState + server state.
+  // Atomic session claim: only one call proceeds past the busy check
   const claimRunId = tryClaimSession(currentSession.id);
   if (claimRunId === false) {
-    if (isForwarded && deferredBatch) {
-      logger.info(
-        `[Bot] Session ${currentSession.id} already claimed — retroactive batch for forwarded`,
-      );
-
-      await opencodeClient.session
-        .abort({
-          sessionID: currentSession.id,
-          directory: currentSession.directory,
-        })
-        .catch(() => {});
-
-      assistantRunState.clearRun(currentSession.id, "retroactive_batch");
-
-      const metadata = extractMessageMetadata(ctx);
-      const batchScopeKey = buildTelegramConversationScopeKey(
-        extractTelegramConversationScopeFromContext(ctx),
-      );
-      await deferredBatch.deferItem({
-        scopeKey: batchScopeKey,
-        deferredItem: {
-          correlationId: `prompt:${ctx.message?.message_id ?? Date.now()}`,
-          kind: "text",
-          directText: text,
-          previewText: text,
-          contextText: `[Forwarded message]\n${text}`,
-          ctx: ctx as any,
-          metadata,
-        },
-      });
-      return true;
-    }
-
     logger.info(`[Bot] Session ${currentSession.id} already claimed, ignoring`);
     await ctx.reply(t("bot.session_busy"));
     return false;
   }
 
-  // Secondary server-side check
   foregroundSessionState.markBusy(currentSession.id);
   const sessionIsBusy = await isSessionBusy(currentSession.id, currentSession.directory);
 
-  // Release the claim — it only guards the intra-process race window above.
-  // Subsequent calls rely on foregroundSessionState + server state.
   releaseSessionClaim(currentSession.id, claimRunId);
 
   if (sessionIsBusy) {
     foregroundSessionState.markIdle(currentSession.id);
-    if (isForwarded && deferredBatch) {
-      logger.info(
-        `[Bot] Forwarded messages arriving while session ${currentSession.id} is busy — retroactive batch`,
-      );
-
-      await opencodeClient.session
-        .abort({
-          sessionID: currentSession.id,
-          directory: currentSession.directory,
-        })
-        .catch(() => {});
-
-      assistantRunState.clearRun(currentSession.id, "retroactive_batch");
-
-      const metadata = extractMessageMetadata(ctx);
-      const batchScopeKey = buildTelegramConversationScopeKey(
-        extractTelegramConversationScopeFromContext(ctx),
-      );
-      await deferredBatch.deferItem({
-        scopeKey: batchScopeKey,
-        deferredItem: {
-          correlationId: `prompt:${ctx.message?.message_id ?? Date.now()}`,
-          kind: "text",
-          directText: text,
-          previewText: text,
-          contextText: `[Forwarded message]\n${text}`,
-          ctx: ctx as any,
-          metadata,
-        },
-      });
-      return true;
-    }
-
     logger.info(`[Bot] Ignoring new prompt: session ${currentSession.id} is busy`);
     await ctx.reply(t("bot.session_busy"));
     return false;

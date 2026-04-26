@@ -39,7 +39,11 @@ import { streamCommand } from "./commands/stream.js";
 import { ttsCommand } from "./commands/tts.js";
 import { worktreeCommand, handleWorktreeCallback } from "./commands/worktree.js";
 import { openCommand, handleOpenCallback, clearOpenPathIndex } from "./commands/open.js";
-import { skillsCommand, handleSkillsCallback, handleSkillTextArguments } from "./commands/skills.js";
+import {
+  skillsCommand,
+  handleSkillsCallback,
+  handleSkillTextArguments,
+} from "./commands/skills.js";
 import {
   handleQuestionCallback,
   showCurrentQuestion,
@@ -57,10 +61,7 @@ import { clearAllInteractionState } from "../interaction/cleanup.js";
 import { keyboardManager } from "../keyboard/manager.js";
 import { subscribeToEvents } from "../opencode/events.js";
 import { summaryAggregator } from "../summary/aggregator.js";
-import {
-  formatToolInfo,
-  getAssistantParseMode,
-} from "../summary/formatter.js";
+import { formatToolInfo, getAssistantParseMode } from "../summary/formatter.js";
 import {
   createPlainRenderedParts,
   prepareAssistantFinalStreamingPayload,
@@ -142,7 +143,11 @@ import {
   type TelegramConversationScope,
 } from "../telegram/scope.js";
 
-let deferredBatch: IncomingMediaBatch<ResolvedDeferredItem, ResolvedDeferredItem, { text: string; firstContext?: any }>;
+let deferredBatch: IncomingMediaBatch<
+  ResolvedDeferredItem,
+  ResolvedDeferredItem,
+  { text: string; firstContext?: any }
+>;
 let activeBotInstance: Bot<Context> | null = null;
 
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
@@ -150,8 +155,6 @@ const RESPONSE_STREAM_THROTTLE_MS = config.bot.responseStreamThrottleMs;
 const RESPONSE_STREAM_TEXT_LIMIT = 3800;
 const SESSION_RETRY_PREFIX = "🔁";
 const SUBAGENT_STREAM_PREFIX = "🧩";
-
-
 
 function prepareFinalStreamingPayload(messageText: string) {
   return prepareAssistantFinalStreamingPayload(messageText, RESPONSE_STREAM_TEXT_LIMIT);
@@ -230,8 +233,6 @@ function hasLiveSessionTarget(sessionId: string): boolean {
   return getThreadTargetForSession(sessionId) != null;
 }
 
-
-
 function getSessionRoutingTarget(sessionId: string) {
   return getSessionRoutingContext(sessionId)?.target ?? getThreadTargetForSession(sessionId);
 }
@@ -246,21 +247,23 @@ function getSessionRoutingApi(sessionId: string) {
 }
 
 function getSessionRoutingScope(sessionId: string): TelegramConversationScope | null {
-  return getSessionRoutingContext(sessionId)?.scope ?? threadContextManager.getSessionScope(sessionId);
+  return (
+    getSessionRoutingContext(sessionId)?.scope ?? threadContextManager.getSessionScope(sessionId)
+  );
 }
 
 function getSessionRoutingScopeKey(sessionId: string): string {
   return buildTelegramConversationScopeKey(getSessionRoutingScope(sessionId));
 }
 
-function buildThinkingRoutingIdentity(target: { chatId: number; messageThreadId?: number }): string {
+function buildThinkingRoutingIdentity(target: {
+  chatId: number;
+  messageThreadId?: number;
+}): string {
   return `${target.chatId}:${target.messageThreadId ?? "main"}`;
 }
 
-async function runWithSessionRoutingScope<T>(
-  sessionId: string,
-  fn: () => Promise<T>,
-): Promise<T> {
+async function runWithSessionRoutingScope<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
   return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), fn);
 }
 
@@ -284,7 +287,9 @@ function enqueueSessionCompletionTask(sessionId: string, task: () => Promise<voi
 }
 
 function getReasoningModeForSession(sessionId: string) {
-  return runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () => getReasoningMode());
+  return runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
+    getReasoningMode(),
+  );
 }
 
 function isMessageStreamingEnabledForSession(sessionId: string): boolean {
@@ -326,7 +331,9 @@ interface LocalFileFollowUpDeliveryRoute {
   routingIdentity: string;
 }
 
-function getSessionLocalFilePathResolver(sessionId: string): ((filePath: string) => string) | undefined {
+function getSessionLocalFilePathResolver(
+  sessionId: string,
+): ((filePath: string) => string) | undefined {
   const scope = getSessionRoutingScope(sessionId);
   if (!scope || scope.userId === config.telegram.adminUserId) {
     return undefined;
@@ -449,9 +456,9 @@ async function enqueueLocalFileFollowUpsFromText(sessionId: string, text: string
   safeBackgroundTask({
     taskName: `telegram.local-file-follow-up.${sessionId}`,
     task: async () => {
-        const sentPaths: string[] = [];
-        try {
-          for (const followUp of preparedFollowUps) {
+      const sentPaths: string[] = [];
+      try {
+        for (const followUp of preparedFollowUps) {
           const currentTarget = getThreadTargetForSession(sessionId);
           const currentRoutingIdentity = currentTarget
             ? buildThinkingRoutingIdentity(currentTarget)
@@ -565,7 +572,8 @@ const responseStreamer = new ResponseStreamer({
       throw new Error("Bot context missing for streamed send");
     }
 
-    const parseMode = format === "html" ? "HTML" : format === "markdown_v2" ? "MarkdownV2" : undefined;
+    const parseMode =
+      format === "html" ? "HTML" : format === "markdown_v2" ? "MarkdownV2" : undefined;
     const sentMessage = await sendMessageWithMarkdownFallback({
       api: botApi,
       chatId: target.chatId,
@@ -585,7 +593,8 @@ const responseStreamer = new ResponseStreamer({
       throw new Error("Bot context missing for streamed edit");
     }
 
-    const parseMode = format === "html" ? "HTML" : format === "markdown_v2" ? "MarkdownV2" : undefined;
+    const parseMode =
+      format === "html" ? "HTML" : format === "markdown_v2" ? "MarkdownV2" : undefined;
 
     try {
       await editMessageWithMarkdownFallback({
@@ -741,7 +750,8 @@ async function ensureCommandsInitialized(ctx: Context, next: NextFunction): Prom
 
   const userId = ctx.from.id;
   const isAdmin = userId === config.telegram.adminUserId;
-  const isAllowedUser = config.telegram.allowedUserIds.includes(userId) ||
+  const isAllowedUser =
+    config.telegram.allowedUserIds.includes(userId) ||
     getApprovedTelegramUserIds().includes(userId);
 
   if (!isAdmin && !isAllowedUser) {
@@ -751,7 +761,9 @@ async function ensureCommandsInitialized(ctx: Context, next: NextFunction): Prom
 
   try {
     await syncAuthorizedChatCommands(ctx.api, ctx.chat.id, ctx.chat.type, isAdmin);
-    logger.debug(`[Bot] Commands initialized for user (chat_id=${ctx.chat.id}, isAdmin=${isAdmin})`);
+    logger.debug(
+      `[Bot] Commands initialized for user (chat_id=${ctx.chat.id}, isAdmin=${isAdmin})`,
+    );
   } catch (err) {
     logger.error("[Bot] Failed to sync commands:", err);
   }
@@ -772,10 +784,13 @@ export function createSendRenderedPart({
   finalParseMode: "html" | "raw" | "markdown_v2";
   messageThreadId?: number;
 }) {
-  return async (part: TelegramRenderedPart, options?: {
-    reply_markup?: unknown;
-    disable_notification?: boolean;
-  }) => {
+  return async (
+    part: TelegramRenderedPart,
+    options?: {
+      reply_markup?: unknown;
+      disable_notification?: boolean;
+    },
+  ) => {
     const draftMessageId = messageDraftStreamManager.consumeLastSentMessageId(sessionId);
     if (draftMessageId) {
       await botApi.deleteMessage(chatId, draftMessageId).catch(() => {});
@@ -865,9 +880,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
       if (mode > 0) {
         if (messageText.trim()) {
-          const payload = assistantFormat === "markdown_v2"
-            ? prepareAssistantStreamingPayload(messageText, RESPONSE_STREAM_TEXT_LIMIT)
-            : null;
+          const payload =
+            assistantFormat === "markdown_v2"
+              ? prepareAssistantStreamingPayload(messageText, RESPONSE_STREAM_TEXT_LIMIT)
+              : null;
           responseStreamer.enqueue(sessionId, streamingMessageId, {
             parts: payload?.parts ?? [{ text: messageText }],
             format: payload?.format ?? assistantFormat,
@@ -878,13 +894,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           });
         }
       } else {
-        messageDraftStreamManager.enqueue(
-          sessionId,
-          botApi,
-          target,
-          messageText,
-          assistantFormat,
-        );
+        messageDraftStreamManager.enqueue(sessionId, botApi, target, messageText, assistantFormat);
       }
 
       void enqueueLocalFileFollowUpsFromText(
@@ -945,7 +955,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         const formattedTechnicals = (toolCalls || []).map((t) => ({
           description: t.title || t.tool,
           command:
-            t.input && typeof t.input === "object" && "command" in t.input && typeof t.input.command === "string"
+            t.input &&
+            typeof t.input === "object" &&
+            "command" in t.input &&
+            typeof t.input.command === "string"
               ? t.input.command
               : undefined,
         }));
@@ -956,20 +969,13 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
         if (mode > 0) {
           const assistantText =
-            (finalFormat as string) === "html"
-              ? messageText
-              : markdownToHtml(messageText);
+            (finalFormat as string) === "html" ? messageText : markdownToHtml(messageText);
 
           const technicalsOnly = formattedTechnicals.map((t) => ({
             description: t.description,
             command: t.command,
           }));
-          const chunks = formatReasoningForTelegramHtml(
-            mode,
-            "",
-            technicalsOnly,
-            assistantText,
-          );
+          const chunks = formatReasoningForTelegramHtml(mode, "", technicalsOnly, assistantText);
           finalText = chunks[0] || assistantText;
           finalParseMode = "html";
         }
@@ -1003,14 +1009,25 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               };
             },
             renderFinalParts: (text) => {
-              const summaryMode: MessageFormatMode = finalParseMode === "markdown_v2" ? "markdown" : finalParseMode === "html" ? "raw" : finalParseMode;
+              const summaryMode: MessageFormatMode =
+                finalParseMode === "markdown_v2"
+                  ? "markdown"
+                  : finalParseMode === "html"
+                    ? "raw"
+                    : finalParseMode;
               if (summaryMode === "markdown" && config.bot.messageFormatMode === "markdown") {
                 return renderAssistantFinalPartsSafe(text, RESPONSE_STREAM_TEXT_LIMIT);
               }
               return createPlainRenderedParts(text, RESPONSE_STREAM_TEXT_LIMIT);
             },
             getReplyKeyboard: async () => await getReplyKeyboardForSession(sessionId),
-            sendRenderedPart: createSendRenderedPart({ botApi, chatId, sessionId, finalParseMode, messageThreadId: target.messageThreadId }),
+            sendRenderedPart: createSendRenderedPart({
+              botApi,
+              chatId,
+              sessionId,
+              finalParseMode,
+              messageThreadId: target.messageThreadId,
+            }),
           });
 
           await sendTtsResponseForSession({
@@ -1020,8 +1037,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             text: messageText,
             messageThreadId: target.messageThreadId,
           });
-
-
         } catch (err) {
           localFileFollowUpTracker.clearSession(sessionId);
           clearPromptResponseMode(sessionId);
@@ -1072,7 +1087,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         toolCallStreamer.flushSession(sessionId, "session_idle"),
       ]);
 
-       if (completedRun?.hasCompletedResponse) {
+      if (completedRun?.hasCompletedResponse) {
         const agent = completedRun.actualAgent || completedRun.configuredAgent;
         const providerID = completedRun.actualProviderID || completedRun.configuredProviderID;
         const modelID = completedRun.actualModelID || completedRun.configuredModelID;
@@ -1134,7 +1149,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       const message = formatToolInfo(toolInfo);
       if (message) {
         const spoilerMessage = formatToolCallAsSpoiler(message);
-        toolCallStreamer.replaceByPrefix(toolInfo.sessionId, `tool:${toolInfo.callId}`, spoilerMessage);
+        toolCallStreamer.replaceByPrefix(
+          toolInfo.sessionId,
+          `tool:${toolInfo.callId}`,
+          spoilerMessage,
+        );
         void enqueueLocalFileFollowUpsFromText(toolInfo.sessionId, spoilerMessage);
       }
     } catch (err) {
@@ -1352,9 +1371,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     const routing = getPromptRoutingContext(sessionId) ?? getSessionRoutingContext(sessionId);
     const target = getSessionRoutingTarget(sessionId);
     const hasLiveTarget = hasLiveSessionTarget(sessionId);
-    const shouldClearThinkingBlock = await runWithSessionRoutingScope(
-      sessionId,
-      async () => getThinkingClearMode(),
+    const shouldClearThinkingBlock = await runWithSessionRoutingScope(sessionId, async () =>
+      getThinkingClearMode(),
     );
     if (!routing || !target || !hasLiveTarget) {
       clearPromptResponseMode(sessionId);
@@ -1628,7 +1646,6 @@ export function createBot(): Bot<Context> {
     logger.debug(`[Bot] Received callback_query:data: ${ctx.callbackQuery?.data}`);
     logger.debug(`[Bot] Callback context: from=${ctx.from?.id}, chat=${ctx.chat?.id}`);
 
-
     try {
       const handledInlineCancel = await handleInlineMenuCancel(ctx);
       if (handledInlineCancel) {
@@ -1789,8 +1806,12 @@ export function createBot(): Bot<Context> {
   });
 
   // Deferred media batch for correlating follow-up messages into a single prompt
-  deferredBatch = new IncomingMediaBatch<ResolvedDeferredItem, ResolvedDeferredItem, { text: string; firstContext?: any }>({
-    correlationWindowMs: 300,
+  deferredBatch = new IncomingMediaBatch<
+    ResolvedDeferredItem,
+    ResolvedDeferredItem,
+    { text: string; firstContext?: any }
+  >({
+    correlationWindowMs: 3000,
     maxWindowMs: 3000,
     canFlushNow: async () => {
       const session = getCurrentSession();
@@ -1805,7 +1826,7 @@ export function createBot(): Bot<Context> {
       if (result.contextText) parts.push(result.contextText);
       return {
         text: parts.join("\n\n"),
-        firstContext: (deferredItems as any[]).find(item => item?.ctx)?.ctx,
+        firstContext: (deferredItems as any[]).find((item) => item?.ctx)?.ctx,
       };
     },
     sendDeferredFollowUp: async ({ resolvedDeferredItems }) => {
@@ -1847,12 +1868,13 @@ export function createBot(): Bot<Context> {
       bot,
       ensureEventSubscription,
       deferredBatch,
-      enqueueCorrelatedItem: (item) => deferredBatch.enqueueDeferredItem({
-        scopeKey: buildTelegramConversationScopeKey(
-          extractTelegramConversationScopeFromContext(ctx),
-        ),
-        deferredItem: item,
-      }),
+      enqueueCorrelatedItem: (item) =>
+        deferredBatch.enqueueDeferredItem({
+          scopeKey: buildTelegramConversationScopeKey(
+            extractTelegramConversationScopeFromContext(ctx),
+          ),
+          deferredItem: item,
+        }),
     });
   });
 
@@ -1863,12 +1885,13 @@ export function createBot(): Bot<Context> {
       bot,
       ensureEventSubscription,
       deferredBatch,
-      enqueueCorrelatedItem: (item: ResolvedDeferredItem) => deferredBatch.enqueueDeferredItem({
-        scopeKey: buildTelegramConversationScopeKey(
-          extractTelegramConversationScopeFromContext(ctx),
-        ),
-        deferredItem: item,
-      }),
+      enqueueCorrelatedItem: (item: ResolvedDeferredItem) =>
+        deferredBatch.enqueueDeferredItem({
+          scopeKey: buildTelegramConversationScopeKey(
+            extractTelegramConversationScopeFromContext(ctx),
+          ),
+          deferredItem: item,
+        }),
     };
     await handleDocumentMessage(ctx, deps);
   });

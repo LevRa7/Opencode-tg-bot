@@ -106,6 +106,26 @@ interface PromptRoutingContext {
 
 const promptRoutingBySessionId = new Map<string, PromptRoutingContext>();
 
+// Atomic session claim: prevents race between concurrent processUserPrompt calls
+// claimSessionRunId ensures only one caller proceeds past the busy check
+const sessionClaimMap = new Map<string, number>();
+let nextClaimRunId = 1;
+
+function tryClaimSession(sessionId: string): number | false {
+  if (sessionClaimMap.has(sessionId)) {
+    return false;
+  }
+  const runId = nextClaimRunId++;
+  sessionClaimMap.set(sessionId, runId);
+  return runId;
+}
+
+function releaseSessionClaim(sessionId: string, runId: number): void {
+  if (sessionClaimMap.get(sessionId) === runId) {
+    sessionClaimMap.delete(sessionId);
+  }
+}
+
 export type PromptResponseMode = "text_only" | "text_and_tts";
 
 export type ProcessPromptOptions = {
@@ -436,10 +456,60 @@ export async function processUserPrompt(
 
   summaryAggregator.setSession(currentSession.id);
 
+  // Atomic session claim: ensures only ONE processUserPrompt call proceeds to
+  // send a prompt to OpenCode. The claim is held only during the narrow window
+  // between entering the busy check and completing the server isSessionBusy call.
+  // After that, subsequent calls rely on foregroundSessionState + server state.
+  const claimRunId = tryClaimSession(currentSession.id);
+  if (claimRunId === false) {
+    if (isForwarded && deferredBatch) {
+      logger.info(
+        `[Bot] Session ${currentSession.id} already claimed — retroactive batch for forwarded`,
+      );
+
+      await opencodeClient.session
+        .abort({
+          sessionID: currentSession.id,
+          directory: currentSession.directory,
+        })
+        .catch(() => {});
+
+      assistantRunState.clearRun(currentSession.id, "retroactive_batch");
+
+      const metadata = extractMessageMetadata(ctx);
+      const batchScopeKey = buildTelegramConversationScopeKey(
+        extractTelegramConversationScopeFromContext(ctx),
+      );
+      await deferredBatch.deferItem({
+        scopeKey: batchScopeKey,
+        deferredItem: {
+          correlationId: `prompt:${ctx.message?.message_id ?? Date.now()}`,
+          kind: "text",
+          directText: text,
+          previewText: text,
+          contextText: `[Forwarded message]\n${text}`,
+          ctx: ctx as any,
+          metadata,
+        },
+      });
+      return true;
+    }
+
+    logger.info(`[Bot] Session ${currentSession.id} already claimed, ignoring`);
+    await ctx.reply(t("bot.session_busy"));
+    return false;
+  }
+
+  // Secondary server-side check
+  foregroundSessionState.markBusy(currentSession.id);
   const sessionIsBusy = await isSessionBusy(currentSession.id, currentSession.directory);
+
+  // Release the claim — it only guards the intra-process race window above.
+  // Subsequent calls rely on foregroundSessionState + server state.
+  releaseSessionClaim(currentSession.id, claimRunId);
+
   if (sessionIsBusy) {
-    // Retroactive batch: if forwarded messages arrive while busy, silently abort
-    // and collect them into a deferred window instead of showing "session_busy"
+    foregroundSessionState.markIdle(currentSession.id);
     if (isForwarded && deferredBatch) {
       logger.info(
         `[Bot] Forwarded messages arriving while session ${currentSession.id} is busy — retroactive batch`,
@@ -452,7 +522,6 @@ export async function processUserPrompt(
         })
         .catch(() => {});
 
-      foregroundSessionState.markIdle(currentSession.id);
       assistantRunState.clearRun(currentSession.id, "retroactive_batch");
 
       const metadata = extractMessageMetadata(ctx);
@@ -546,7 +615,6 @@ export async function processUserPrompt(
       );
     }
 
-    foregroundSessionState.markBusy(currentSession.id);
     assistantRunState.startRun(currentSession.id, {
       startedAt: Date.now(),
       configuredAgent: currentAgent,

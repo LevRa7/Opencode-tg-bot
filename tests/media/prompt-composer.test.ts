@@ -122,4 +122,63 @@ describe("media/prompt-composer", () => {
         "Analyze the extracted context below.\n\n[Forwarded from: Alice]\n[Video]\nThe video shows the import button freezing after the CSV upload finishes.",
     });
   });
+
+  it("formats metadata tags for every chunked message and keeps forwarded text out of the main prompt", () => {
+    const items: ResolvedDeferredItem[] = [
+      {
+        correlationId: "corr-question",
+        kind: "text",
+        directText: "Analyze this dialog.",
+        metadata: {
+          senderFirstName: "Lev",
+          senderUsername: "levra772",
+          senderId: 101,
+          messageId: 1,
+          timestamp: 1_714_205_200,
+        },
+      },
+      {
+        correlationId: "corr-forwarded-text",
+        kind: "text",
+        directText: "We need to rethink monetization.",
+        metadata: {
+          senderFirstName: "Lev",
+          senderId: 101,
+          messageId: 2,
+          timestamp: 1_714_205_260,
+          forwardFromName: "Alice",
+        },
+      },
+      {
+        correlationId: "corr-forwarded-photo",
+        kind: "photo",
+        previewText: "Screenshot with roadmap",
+        contextText: "Roadmap mentions pricing experiments.",
+        metadata: {
+          senderFirstName: "Lev",
+          senderId: 101,
+          messageId: 3,
+          timestamp: 1_714_205_320,
+          forwardFromName: "Bob",
+        },
+      },
+    ];
+
+    const result = composeDeferredMediaPrompt(items, t);
+
+    expect(result.directText).toContain('name="Lev"');
+    expect(result.directText).toContain("Analyze this dialog.");
+    expect(result.previewText).toContain("Lev");
+    expect(result.previewText).toContain("Alice");
+    expect(result.previewText).toContain("Bob");
+    expect(result.contextText).toContain("We need to rethink monetization.");
+    expect(result.contextText).toContain("Roadmap mentions pricing experiments.");
+    expect(result.contextText).toContain('name="Lev"');
+    expect(result.contextText).toContain('forwarded_at_name="Alice"');
+    expect(result.contextText).toContain('forwarded_at_name="Bob"');
+    expect(result.contextText).not.toContain("message_id=");
+    expect(result.contextText).not.toContain("sent_at=");
+    expect(result.contextText).not.toContain("tg_id=");
+    expect(result.contextText).not.toContain("tg_username=");
+  });
 });

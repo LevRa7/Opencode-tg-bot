@@ -13,6 +13,7 @@ function createPhotoContext(overrides: Partial<Context["message"]> = {}): {
     chat: { id: 777 },
     from: { id: 123 },
     message: {
+      message_id: 10,
       photo: [
         {
           file_id: "small-photo-id",

@@ -96,9 +96,9 @@ describe("bot/incoming-media-batch", () => {
       scopeKey: "scope-1",
       directPrompt: "extra text context",
     });
-    expect(batch.enqueueDeferredItem({ scopeKey: "scope-1", deferredItem: "forwarded-message" })).toBe(
-      true,
-    );
+    expect(
+      batch.enqueueDeferredItem({ scopeKey: "scope-1", deferredItem: "forwarded-message" }),
+    ).toBe(true);
     expect(batch.enqueueDeferredItem({ scopeKey: "scope-1", deferredItem: "photo-1" })).toBe(true);
 
     await vi.advanceTimersByTimeAsync(1000);
@@ -155,11 +155,87 @@ describe("bot/incoming-media-batch", () => {
     });
   });
 
+  it("extends the correlation window from the last deferred item instead of capping it at the first message", async () => {
+    vi.useFakeTimers();
+
+    const sendDirectPrompt = vi.fn().mockResolvedValue(undefined);
+    const resolveDeferredItems = vi.fn().mockResolvedValue("resolved-follow-up");
+    const sendDeferredFollowUp = vi.fn().mockResolvedValue(undefined);
+    const batch = new IncomingMediaBatch({
+      sendDirectPrompt,
+      resolveDeferredItems,
+      sendDeferredFollowUp,
+      correlationWindowMs: 1000,
+      maxWindowMs: 1000,
+    });
+
+    await batch.sendDirectPrompt({
+      scopeKey: "scope-1",
+      directPrompt: "first direct text",
+    });
+    expect(batch.enqueueDeferredItem({ scopeKey: "scope-1", deferredItem: "second text" })).toBe(
+      true,
+    );
+
+    await vi.advanceTimersByTimeAsync(900);
+    expect(batch.enqueueDeferredItem({ scopeKey: "scope-1", deferredItem: "third text" })).toBe(
+      true,
+    );
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(resolveDeferredItems).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(800);
+    expect(resolveDeferredItems).toHaveBeenCalledTimes(1);
+    expect(resolveDeferredItems).toHaveBeenCalledWith({
+      scopeKey: "scope-1",
+      deferredItems: ["second text", "third text"],
+    });
+  });
+
+  it("flushes immediately after a processing hold is released once the silence window already elapsed", async () => {
+    vi.useFakeTimers();
+
+    const sendDirectPrompt = vi.fn().mockResolvedValue(undefined);
+    const resolveDeferredItems = vi.fn().mockResolvedValue("resolved-media-batch");
+    const sendDeferredFollowUp = vi.fn().mockResolvedValue(undefined);
+    const batch = new IncomingMediaBatch({
+      sendDirectPrompt,
+      resolveDeferredItems,
+      sendDeferredFollowUp,
+      correlationWindowMs: 1000,
+      maxWindowMs: 1000,
+    });
+
+    await batch.sendDirectPrompt({
+      scopeKey: "scope-1",
+      directPrompt: "hello from user",
+    });
+    expect(batch.enqueueDeferredItem({ scopeKey: "scope-1", deferredItem: "photo-1" })).toBe(true);
+
+    const releaseHold = (batch as any).acquireProcessingHold("scope-1");
+    expect(releaseHold).toBeTypeOf("function");
+
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(resolveDeferredItems).not.toHaveBeenCalled();
+
+    releaseHold();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(resolveDeferredItems).toHaveBeenCalledTimes(1);
+    expect(resolveDeferredItems).toHaveBeenCalledWith({
+      scopeKey: "scope-1",
+      deferredItems: ["photo-1"],
+    });
+  });
+
   it("waits for the owning direct prompt to settle before sending deferred follow-up", async () => {
     vi.useFakeTimers();
 
     const directPromptRequest = createDeferred<void>();
-    const sendDirectPrompt = vi.fn().mockImplementation(async () => await directPromptRequest.promise);
+    const sendDirectPrompt = vi
+      .fn()
+      .mockImplementation(async () => await directPromptRequest.promise);
     const resolveDeferredItems = vi.fn().mockResolvedValue("resolved-media-batch");
     const sendDeferredFollowUp = vi.fn().mockResolvedValue(undefined);
     const batch = new IncomingMediaBatch({
@@ -191,7 +267,9 @@ describe("bot/incoming-media-batch", () => {
     vi.useFakeTimers();
 
     const directPromptRequest = createDeferred<void>();
-    const sendDirectPrompt = vi.fn().mockImplementation(async () => await directPromptRequest.promise);
+    const sendDirectPrompt = vi
+      .fn()
+      .mockImplementation(async () => await directPromptRequest.promise);
     const resolveDeferredItems = vi
       .fn()
       .mockRejectedValueOnce(new Error("resolve failed"))
@@ -247,7 +325,9 @@ describe("bot/incoming-media-batch", () => {
       scopeKey: "scope-1",
       directPrompt: "first prompt",
     });
-    expect(batch.enqueueDeferredItem({ scopeKey: "scope-1", deferredItem: "retry-media" })).toBe(true);
+    expect(batch.enqueueDeferredItem({ scopeKey: "scope-1", deferredItem: "retry-media" })).toBe(
+      true,
+    );
 
     firstDirectPromptRequest.reject(new Error("direct prompt failed"));
     await expect(firstDirectTask).rejects.toThrow("direct prompt failed");
@@ -256,7 +336,9 @@ describe("bot/incoming-media-batch", () => {
       scopeKey: "scope-1",
       directPrompt: "second prompt",
     });
-    expect(batch.enqueueDeferredItem({ scopeKey: "scope-1", deferredItem: "new-window-media" })).toBe(true);
+    expect(
+      batch.enqueueDeferredItem({ scopeKey: "scope-1", deferredItem: "new-window-media" }),
+    ).toBe(true);
 
     await vi.advanceTimersByTimeAsync(1000);
     expect(resolveDeferredItems).toHaveBeenCalledTimes(2);
@@ -387,7 +469,9 @@ describe("bot/incoming-media-batch", () => {
       deferredItems: ["a-media"],
     });
 
-    expect(batch.enqueueDeferredItem({ scopeKey: "scope-1", deferredItem: "b-media-2" })).toBe(true);
+    expect(batch.enqueueDeferredItem({ scopeKey: "scope-1", deferredItem: "b-media-2" })).toBe(
+      true,
+    );
 
     await vi.advanceTimersByTimeAsync(1000);
     expect(resolveDeferredItems).toHaveBeenCalledTimes(1);

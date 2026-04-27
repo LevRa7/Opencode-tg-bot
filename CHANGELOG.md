@@ -81,6 +81,9 @@ Documentation rule:
 
 ### Fixed
 
+- Unified deferred Telegram batching across text, forwarded messages, and media preprocessing, so large bursts now stay in a single OpenCode follow-up chunk while media is still downloading/transcribing.
+  - Why: large forwarded batches with photos, videos, voice notes, and documents could split into multiple OpenCode prompts because media handlers finished after the silence timer expired, and deferred chunk items did not all carry stable sender/forward metadata.
+  - Affects: `src/bot/incoming-media-batch.ts`, `src/bot/index.ts`, `src/bot/handlers/photo.ts`, `src/bot/handlers/document.ts`, `src/bot/handlers/video.ts`, `src/bot/handlers/voice.ts`, `src/media/batch-types.ts`, `src/media/prompt-composer.ts`, `tests/bot/incoming-media-batch.test.ts`, `tests/media/prompt-composer.test.ts`
 - Fixed video attachment mode to transcribe audio before sending the video to OpenCode, so the user's spoken question is included in the prompt when the selected model supports video input and attachments.
   - Why: when the model supports video input, the bot previously sent the video file without transcribing its audio track, losing the user's spoken content.
   - Affects: `src/media/ingest.ts`, `tests/media/ingest.test.ts`

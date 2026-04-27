@@ -11,6 +11,7 @@ import {
   OversizedVideoCompressionError,
 } from "../../media/video-preprocess.js";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
+import { extractMessageMetadata, type MessageMetadata } from "../../media/batch-types.js";
 import {
   downloadTelegramFile,
   downloadTelegramVideoForCompression,
@@ -50,6 +51,15 @@ export interface VideoHandlerDeps extends ProcessPromptDeps {
     deps: ProcessPromptDeps,
     fileParts?: FilePartInput[],
   ) => Promise<boolean>;
+  acquireProcessingHold?: () => (() => void) | null;
+  enqueueCorrelatedItem?: (item: {
+    correlationId: string;
+    kind: "video";
+    caption?: string;
+    previewText?: string;
+    contextText?: string;
+    metadata?: MessageMetadata;
+  }) => boolean;
 }
 
 function getVideoMessageInfo(ctx: Context): VideoMessageInfo | null {
@@ -154,6 +164,8 @@ export async function handleVideoMessage(ctx: Context, deps: VideoHandlerDeps): 
   const removeTempDir = deps.rm ?? rm;
   const prepareMediaPrompt = deps.prepareMediaPrompt ?? prepareAttachmentMediaPrompt;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
+  const acquireProcessingHold = deps.acquireProcessingHold;
+  const enqueueCorrelatedItem = deps.enqueueCorrelatedItem;
 
   const videoInfo = getVideoMessageInfo(ctx);
   if (!videoInfo) {
@@ -173,6 +185,8 @@ export async function handleVideoMessage(ctx: Context, deps: VideoHandlerDeps): 
   let promptFilename = videoInfo.filename;
   let promptMimeType = videoInfo.mimeType.startsWith("video/") ? videoInfo.mimeType : "video/mp4";
   let requiresCompression = false;
+
+  const releaseHold = acquireProcessingHold?.() ?? null;
 
   try {
     const resolvedFileSizeBytes = await resolveVideoFileSizeBytes({
@@ -207,7 +221,10 @@ export async function handleVideoMessage(ctx: Context, deps: VideoHandlerDeps): 
         readCompressedFile,
         removeTempDir,
       });
-      promptFilename = normalizeVideoFilename(path.basename(downloadedFile.filePath), downloadedFile.filePath);
+      promptFilename = normalizeVideoFilename(
+        path.basename(downloadedFile.filePath),
+        downloadedFile.filePath,
+      );
       promptMimeType = "video/mp4";
     } catch (error) {
       logger.error("[Video] Error preprocessing oversized video:", error);
@@ -246,6 +263,19 @@ export async function handleVideoMessage(ctx: Context, deps: VideoHandlerDeps): 
       `[Video] Sending ${videoInfo.kind} (${downloadedFile.buffer.length} bytes, duration=${videoInfo.durationSec}s) via shared media prompt`,
     );
 
+    if (
+      enqueueCorrelatedItem?.({
+        correlationId: `video:${ctx.message?.message_id ?? videoInfo.fileId}`,
+        kind: "video",
+        caption,
+        previewText: caption.trim() || promptFilename,
+        contextText: prepared.promptText,
+        metadata: extractMessageMetadata(ctx),
+      })
+    ) {
+      return;
+    }
+
     if (prepared.mode === "attachment") {
       await processPrompt(ctx, prepared.promptText, deps, prepared.fileParts);
       return;
@@ -255,5 +285,7 @@ export async function handleVideoMessage(ctx: Context, deps: VideoHandlerDeps): 
   } catch (error) {
     logger.error("[Video] Error processing video message:", error);
     await ctx.reply(t("bot.video_process_error"));
+  } finally {
+    releaseHold?.();
   }
 }

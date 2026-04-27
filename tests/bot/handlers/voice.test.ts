@@ -13,7 +13,9 @@ function createVoiceContext(): {
 
   const ctx = {
     chat: { id: 777 },
+    from: { id: 123, first_name: "Lev" },
     message: {
+      message_id: 10,
       voice: {
         file_id: "voice-file-id",
       },
@@ -63,6 +65,8 @@ function createVoiceDeps(overrides: Partial<VoiceMessageDeps> = {}): {
     transcribeAudio: transcribeMock,
     prepareAudioPrompt: prepareAudioPromptMock,
     processPrompt: processPromptMock,
+    acquireProcessingHold: vi.fn(() => vi.fn()),
+    enqueueCorrelatedItem: vi.fn(() => false),
     ...overrides,
   };
 
@@ -84,6 +88,28 @@ describe("bot/handlers/voice", () => {
 
     expect(replyMock).toHaveBeenCalledWith(t("stt.recognizing"));
     expect(processPromptMock).toHaveBeenCalledWith(ctx, "stored prompt text", deps);
+  });
+
+  it("acquires and releases the processing hold during standalone audio preprocessing", async () => {
+    const { ctx } = createVoiceContext();
+    const releaseHoldMock = vi.fn();
+    const acquireProcessingHoldMock = vi.fn(() => releaseHoldMock);
+    const enqueueCorrelatedItemMock = vi.fn(() => false);
+    const { deps, processPromptMock } = createVoiceDeps({
+      acquireProcessingHold: acquireProcessingHoldMock,
+      enqueueCorrelatedItem: enqueueCorrelatedItemMock,
+    });
+
+    await handleVoiceMessage(ctx, deps);
+
+    expect(acquireProcessingHoldMock).toHaveBeenCalledTimes(1);
+    expect(releaseHoldMock).toHaveBeenCalledTimes(1);
+    expect(enqueueCorrelatedItemMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "audio",
+      }),
+    );
+    expect(processPromptMock).toHaveBeenCalled();
   });
 
   it("continues through shared audio preparation when STT is not configured", async () => {
@@ -115,24 +141,26 @@ describe("bot/handlers/voice", () => {
 
   it("updates the status message when audio fallback transcription starts", async () => {
     const { ctx, editMessageTextMock } = createVoiceContext();
-    const fallbackPrepareAudioPrompt = vi.fn(async (params: Parameters<NonNullable<VoiceMessageDeps["prepareAudioPrompt"]>>[0]) => {
-      await params.onFallbackStart?.();
+    const fallbackPrepareAudioPrompt = vi.fn(
+      async (params: Parameters<NonNullable<VoiceMessageDeps["prepareAudioPrompt"]>>[0]) => {
+        await params.onFallbackStart?.();
 
-      return {
-        mode: "text" as const,
-        recognizedText: "run tests",
-        promptText: "stored prompt text",
-        sourceFile: {
-          hostAbsolutePath: "/tmp/file_1.ogg",
-          runtimeVisiblePath: "/state/file_1.ogg",
-          fileName: "file_1.ogg",
-          mimeType: "audio/ogg",
-          sizeBytes: 5,
-          mediaType: "audio" as const,
-        },
-        transcriberKind: "audio" as const,
-      };
-    });
+        return {
+          mode: "text" as const,
+          recognizedText: "run tests",
+          promptText: "stored prompt text",
+          sourceFile: {
+            hostAbsolutePath: "/tmp/file_1.ogg",
+            runtimeVisiblePath: "/state/file_1.ogg",
+            fileName: "file_1.ogg",
+            mimeType: "audio/ogg",
+            sizeBytes: 5,
+            mediaType: "audio" as const,
+          },
+          transcriberKind: "audio" as const,
+        };
+      },
+    );
     const { deps, processPromptMock } = createVoiceDeps({
       prepareAudioPrompt: fallbackPrepareAudioPrompt,
     });
@@ -145,24 +173,26 @@ describe("bot/handlers/voice", () => {
 
   it("continues prompt processing when fallback progress edit fails", async () => {
     const { ctx, replyMock, editMessageTextMock } = createVoiceContext();
-    const fallbackPrepareAudioPrompt = vi.fn(async (params: Parameters<NonNullable<VoiceMessageDeps["prepareAudioPrompt"]>>[0]) => {
-      await params.onFallbackStart?.();
+    const fallbackPrepareAudioPrompt = vi.fn(
+      async (params: Parameters<NonNullable<VoiceMessageDeps["prepareAudioPrompt"]>>[0]) => {
+        await params.onFallbackStart?.();
 
-      return {
-        mode: "text" as const,
-        recognizedText: "run tests",
-        promptText: "stored prompt text",
-        sourceFile: {
-          hostAbsolutePath: "/tmp/file_1.ogg",
-          runtimeVisiblePath: "/state/file_1.ogg",
-          fileName: "file_1.ogg",
-          mimeType: "audio/ogg",
-          sizeBytes: 5,
-          mediaType: "audio" as const,
-        },
-        transcriberKind: "audio" as const,
-      };
-    });
+        return {
+          mode: "text" as const,
+          recognizedText: "run tests",
+          promptText: "stored prompt text",
+          sourceFile: {
+            hostAbsolutePath: "/tmp/file_1.ogg",
+            runtimeVisiblePath: "/state/file_1.ogg",
+            fileName: "file_1.ogg",
+            mimeType: "audio/ogg",
+            sizeBytes: 5,
+            mediaType: "audio" as const,
+          },
+          transcriberKind: "audio" as const,
+        };
+      },
+    );
     const { deps, processPromptMock } = createVoiceDeps({
       prepareAudioPrompt: fallbackPrepareAudioPrompt,
     });

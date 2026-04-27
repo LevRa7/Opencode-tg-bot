@@ -83,32 +83,19 @@ export function formatMetadataLine(m: MessageMetadata | undefined, label: string
 
   const parts: string[] = [];
 
-  if (m.senderFirstName || m.senderLastName) {
-    const name = [m.senderFirstName, m.senderLastName].filter(Boolean).join(" ");
-    parts.push(`👤 ${name}`);
-  } else if (m.senderUsername) {
-    parts.push(`👤 @${m.senderUsername}`);
+  const quoted = (value: string): string => JSON.stringify(value);
+
+  const name = [m.senderFirstName, m.senderLastName].filter(Boolean).join(" ").trim();
+  if (name) {
+    parts.push(`name=${quoted(name)}`);
   }
 
-  if (m.senderId) {
-    parts.push(`🆔 ${m.senderId}`);
+  if (m.forwardFromName) {
+    parts.push(`forwarded_at_name=${quoted(m.forwardFromName)}`);
   }
 
-  if (m.messageId) {
-    parts.push(`#msg${m.messageId}`);
-  }
-
-  if (m.timestamp) {
-    const d = new Date(m.timestamp * 1000);
-    const time = d.toLocaleString("ru-RU", {
-      day: "numeric", month: "short",
-      hour: "2-digit", minute: "2-digit",
-    });
-    parts.push(`🕐 ${time}`);
-  }
-
-  const metaStr = parts.length > 0 ? ` (${parts.join(", ")})` : "";
-  return `${label}${metaStr}`;
+  const metaStr = parts.length > 0 ? `[${parts.join(" ")}]` : "";
+  return label ? `${label}${metaStr ? ` ${metaStr}` : ""}` : metaStr;
 }
 
 export function extractMessageMetadata(ctx: any): MessageMetadata | undefined {

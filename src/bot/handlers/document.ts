@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import { config } from "../../config.js";
 import { prepareAttachmentMediaPrompt } from "../../media/ingest.js";
-import type { ResolvedDeferredItem } from "../../media/batch-types.js";
+import { extractMessageMetadata, type ResolvedDeferredItem } from "../../media/batch-types.js";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
 import { downloadTelegramFile, isTextMimeType, isFileSizeAllowed } from "../utils/file-download.js";
 import { logger } from "../../utils/logger.js";
@@ -21,7 +21,7 @@ export interface DocumentHandlerDeps extends ProcessPromptDeps {
     fileParts?: FilePartInput[],
   ) => Promise<boolean>;
   enqueueCorrelatedItem?: (item: ResolvedDeferredItem) => boolean;
-  keepAlive?: (ms: number) => boolean;
+  acquireProcessingHold?: () => (() => void) | null;
 }
 
 export async function handleDocumentMessage(
@@ -32,7 +32,7 @@ export async function handleDocumentMessage(
   const prepareMediaPrompt = deps.prepareMediaPrompt ?? prepareAttachmentMediaPrompt;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
   const enqueueCorrelatedItem = deps.enqueueCorrelatedItem;
-  const keepAlive = deps.keepAlive;
+  const acquireProcessingHold = deps.acquireProcessingHold;
 
   const doc = ctx.message?.document;
   if (!doc) {
@@ -58,9 +58,7 @@ export async function handleDocumentMessage(
 
     let downloadedFile: Awaited<ReturnType<typeof downloadTelegramFile>>;
 
-    if (keepAlive) {
-      keepAlive(30000);
-    }
+    const releaseHold = acquireProcessingHold?.() ?? null;
 
     try {
       downloadedFile = await downloadFile(ctx.api, doc.file_id);
@@ -95,6 +93,7 @@ export async function handleDocumentMessage(
           caption,
           previewText: caption.trim() || filename,
           contextText: prepared.promptText,
+          metadata: extractMessageMetadata(ctx),
         })
       ) {
         return;
@@ -106,6 +105,8 @@ export async function handleDocumentMessage(
       logger.error("[Document] Error processing document message:", error);
       await ctx.reply(t("bot.file_process_error"));
       return;
+    } finally {
+      releaseHold?.();
     }
   }
 
@@ -114,9 +115,7 @@ export async function handleDocumentMessage(
 
     let downloadedFile: Awaited<ReturnType<typeof downloadTelegramFile>>;
 
-    if (keepAlive) {
-      keepAlive(30000);
-    }
+    const releaseHold = acquireProcessingHold?.() ?? null;
 
     try {
       downloadedFile = await downloadFile(ctx.api, doc.file_id);
@@ -152,6 +151,7 @@ export async function handleDocumentMessage(
           caption,
           previewText: caption.trim() || filename,
           contextText: prepared.promptText,
+          metadata: extractMessageMetadata(ctx),
         })
       ) {
         return;
@@ -168,6 +168,8 @@ export async function handleDocumentMessage(
       logger.error("[Document] Error processing document message:", error);
       await ctx.reply(t("bot.file_process_error"));
       return;
+    } finally {
+      releaseHold?.();
     }
   }
 

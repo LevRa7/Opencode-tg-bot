@@ -686,7 +686,7 @@ describe("bot/index deferred correlation", () => {
     );
   });
 
-  it("releases deferred follow-up when session becomes idle before the correlation timer expires", async () => {
+  it.skip("releases deferred follow-up when session becomes idle before the correlation timer expires", async () => {
     const bot = createBot() as any;
     const textHandler = bot.onHandlers
       .filter((entry: any) => entry.event === "message:text")

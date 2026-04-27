@@ -7,6 +7,7 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { config } from "../../config.js";
 import { prepareAudioPrompt } from "../../media/ingest.js";
+import { extractMessageMetadata, type MessageMetadata } from "../../media/batch-types.js";
 import { isSttConfigured, transcribeAudio, type SttResult } from "../../stt/client.js";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
 import { logger } from "../../utils/logger.js";
@@ -106,6 +107,14 @@ export interface VoiceMessageDeps extends ProcessPromptDeps {
     fileParts?: FilePartInput[],
     options?: { responseMode?: "text_only" | "text_and_tts" },
   ) => Promise<boolean>;
+  acquireProcessingHold?: () => (() => void) | null;
+  enqueueCorrelatedItem?: (item: {
+    correlationId: string;
+    kind: "audio";
+    previewText?: string;
+    contextText?: string;
+    metadata?: MessageMetadata;
+  }) => boolean;
 }
 
 /**
@@ -172,6 +181,8 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
   const transcribe = deps.transcribeAudio ?? transcribeAudio;
   const preparePrompt = deps.prepareAudioPrompt ?? prepareAudioPrompt;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
+  const acquireProcessingHold = deps.acquireProcessingHold;
+  const enqueueCorrelatedItem = deps.enqueueCorrelatedItem;
 
   // Determine file_id from voice or audio message
   const voice = ctx.message?.voice;
@@ -186,6 +197,8 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
   // Send "recognizing..." status message (will be edited later)
   const statusMessage = await ctx.reply(t("stt.recognizing"));
   const chatId = ctx.chat!.id;
+
+  const releaseHold = acquireProcessingHold?.() ?? null;
 
   try {
     // Download the audio file from Telegram
@@ -205,9 +218,16 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
       transcribeAudio: transcribe,
       onFallbackStart: async () => {
         try {
-          await ctx.api.editMessageText(chatId, statusMessage.message_id, t("bot.audio_processing"));
+          await ctx.api.editMessageText(
+            chatId,
+            statusMessage.message_id,
+            t("bot.audio_processing"),
+          );
         } catch (editError) {
-          logger.warn("[Voice] Failed to update status message for audio fallback start:", editError);
+          logger.warn(
+            "[Voice] Failed to update status message for audio fallback start:",
+            editError,
+          );
         }
       },
     });
@@ -233,6 +253,18 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
 
     logger.info(`[Voice] Transcribed audio: ${recognizedText.length} chars`);
 
+    if (
+      enqueueCorrelatedItem?.({
+        correlationId: `audio:${ctx.message?.message_id ?? fileId}`,
+        kind: "audio",
+        previewText: recognizedText,
+        contextText: prepared.promptText,
+        metadata: extractMessageMetadata(ctx),
+      })
+    ) {
+      return;
+    }
+
     // Process the recognized text as a prompt
     await processPrompt(ctx, prepared.promptText, deps);
   } catch (err) {
@@ -243,5 +275,7 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
     } catch {
       await ctx.reply(t("bot.audio_process_error")).catch(() => {});
     }
+  } finally {
+    releaseHold?.();
   }
 }

@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import type { FilePartInput } from "@opencode-ai/sdk/v2";
 import { prepareAttachmentMediaPrompt } from "../../media/ingest.js";
-import type { ResolvedDeferredItem } from "../../media/batch-types.js";
+import { extractMessageMetadata, type ResolvedDeferredItem } from "../../media/batch-types.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { downloadTelegramFile } from "../utils/file-download.js";
@@ -20,7 +20,7 @@ export interface PhotoHandlerDeps extends ProcessPromptDeps {
     fileParts?: FilePartInput[],
   ) => Promise<boolean>;
   enqueueCorrelatedItem?: (item: ResolvedDeferredItem) => boolean;
-  keepAlive?: (ms: number) => boolean;
+  acquireProcessingHold?: () => (() => void) | null;
 }
 
 export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): Promise<void> {
@@ -33,14 +33,11 @@ export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): 
   const prepareMediaPrompt = deps.prepareMediaPrompt ?? prepareAttachmentMediaPrompt;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
   const enqueueCorrelatedItem = deps.enqueueCorrelatedItem;
-  const keepAlive = deps.keepAlive;
+  const acquireProcessingHold = deps.acquireProcessingHold;
   const largestPhoto = photos[photos.length - 1];
   const caption = ctx.message?.caption || "";
 
-  // Keep the batch window alive if it exists — processing may take several seconds
-  if (keepAlive) {
-    keepAlive(30000);
-  }
+  const releaseHold = acquireProcessingHold?.() ?? null;
 
   await ctx.reply(t("bot.photo_downloading"));
 
@@ -75,6 +72,7 @@ export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): 
         caption,
         previewText: caption.trim() || prepared.sourceFile.fileName,
         contextText: prepared.promptText,
+        metadata: extractMessageMetadata(ctx),
       })
     ) {
       return;
@@ -89,5 +87,7 @@ export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): 
   } catch (error) {
     logger.error("[Photo] Error processing photo message:", error);
     await ctx.reply(t("bot.photo_process_error"));
+  } finally {
+    releaseHold?.();
   }
 }

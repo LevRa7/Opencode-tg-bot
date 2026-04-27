@@ -1848,16 +1848,32 @@ export function createBot(): Bot<Context> {
   });
 
   // Voice and audio message handlers (STT transcription -> prompt)
-  const voicePromptDeps = { bot, ensureEventSubscription, deferredBatch };
+  const buildVoicePromptDeps = (ctx: Context) => {
+    const scopeKey = buildTelegramConversationScopeKey(
+      extractTelegramConversationScopeFromContext(ctx),
+    );
+
+    return {
+      bot,
+      ensureEventSubscription,
+      deferredBatch,
+      acquireProcessingHold: () => deferredBatch.acquireProcessingHold(scopeKey),
+      enqueueCorrelatedItem: (item: ResolvedDeferredItem) =>
+        deferredBatch.enqueueDeferredItem({
+          scopeKey,
+          deferredItem: item,
+        }),
+    };
+  };
 
   bot.on("message:voice", async (ctx) => {
     logger.debug(`[Bot] Received voice message, chatId=${ctx.chat.id}`);
-    await handleVoiceMessage(ctx, voicePromptDeps);
+    await handleVoiceMessage(ctx, buildVoicePromptDeps(ctx));
   });
 
   bot.on("message:audio", async (ctx) => {
     logger.debug(`[Bot] Received audio message, chatId=${ctx.chat.id}`);
-    await handleVoiceMessage(ctx, voicePromptDeps);
+    await handleVoiceMessage(ctx, buildVoicePromptDeps(ctx));
   });
 
   // Photo message handler
@@ -1876,9 +1892,8 @@ export function createBot(): Bot<Context> {
         deferredBatch.enqueueDeferredItem({
           scopeKey: photoScopeKey,
           deferredItem: item,
-          extendMs: 30000,
         }),
-      keepAlive: (ms) => deferredBatch.keepAlive(photoScopeKey, ms),
+      acquireProcessingHold: () => deferredBatch.acquireProcessingHold(photoScopeKey),
     });
   });
 
@@ -1898,16 +1913,28 @@ export function createBot(): Bot<Context> {
         deferredBatch.enqueueDeferredItem({
           scopeKey: docScopeKey,
           deferredItem: item,
-          extendMs: 30000,
         }),
-      keepAlive: (ms: number) => deferredBatch.keepAlive(docScopeKey, ms),
+      acquireProcessingHold: () => deferredBatch.acquireProcessingHold(docScopeKey),
     };
     await handleDocumentMessage(ctx, deps);
   });
 
   bot.on(["message:video", "message:video_note"], async (ctx) => {
     logger.debug(`[Bot] Received video message, chatId=${ctx.chat.id}`);
-    const deps = { bot, ensureEventSubscription, deferredBatch };
+    const videoScopeKey = buildTelegramConversationScopeKey(
+      extractTelegramConversationScopeFromContext(ctx),
+    );
+    const deps = {
+      bot,
+      ensureEventSubscription,
+      deferredBatch,
+      acquireProcessingHold: () => deferredBatch.acquireProcessingHold(videoScopeKey),
+      enqueueCorrelatedItem: (item: ResolvedDeferredItem) =>
+        deferredBatch.enqueueDeferredItem({
+          scopeKey: videoScopeKey,
+          deferredItem: item,
+        }),
+    };
     await handleVideoMessage(ctx, deps);
   });
 

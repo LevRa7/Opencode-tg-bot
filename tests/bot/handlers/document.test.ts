@@ -16,7 +16,9 @@ function createDocumentContext(overrides: Partial<Context["message"]> = {}): {
 
   const ctx = {
     chat: { id: 777 },
+    from: { id: 123, first_name: "Lev" },
     message: {
+      message_id: 10,
       document: {
         file_id: "doc-file-id",
         file_unique_id: "unique-id",
@@ -214,26 +216,23 @@ describe("bot/handlers/document", () => {
           filename: "document.pdf",
           url: "data:application/pdf;base64,ZmFrZQ==",
         },
-      ] as PreparedMediaPrompt extends { mode: "attachment"; fileParts: infer T }
-        ? T
-        : never;
-      const { deps, processPromptMock, downloadMock, prepareMediaPromptMock } =
-        createDocumentDeps({
-          prepareMediaPrompt: vi.fn().mockResolvedValue({
-            mode: "attachment",
-            promptText: "Summarize this document",
-            fileParts,
-            sourceFile: {
-              hostAbsolutePath: "/tmp/document.pdf",
-              runtimeVisiblePath: ".opencode/media/document.pdf",
-              fileName: "document.pdf",
-              mimeType: "application/pdf",
-              sizeBytes: 5000,
-              mediaType: "pdf",
-            },
-            transcriberKind: "document",
-          } satisfies PreparedMediaPrompt),
-        });
+      ] as PreparedMediaPrompt extends { mode: "attachment"; fileParts: infer T } ? T : never;
+      const { deps, processPromptMock, downloadMock, prepareMediaPromptMock } = createDocumentDeps({
+        prepareMediaPrompt: vi.fn().mockResolvedValue({
+          mode: "attachment",
+          promptText: "Summarize this document",
+          fileParts,
+          sourceFile: {
+            hostAbsolutePath: "/tmp/document.pdf",
+            runtimeVisiblePath: ".opencode/media/document.pdf",
+            fileName: "document.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 5000,
+            mediaType: "pdf",
+          },
+          transcriberKind: "document",
+        } satisfies PreparedMediaPrompt),
+      });
 
       await handleDocumentMessage(ctx, deps);
 
@@ -284,7 +283,9 @@ describe("bot/handlers/document", () => {
           transcriberKind: "document",
         } satisfies PreparedMediaPrompt;
       });
-      const { deps, processPromptMock } = createDocumentDeps({ prepareMediaPrompt: prepareMediaPromptMock });
+      const { deps, processPromptMock } = createDocumentDeps({
+        prepareMediaPrompt: prepareMediaPromptMock,
+      });
 
       await handleDocumentMessage(ctx, deps);
 

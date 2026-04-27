@@ -25,6 +25,16 @@ function resolveForwardedTag(item: DeferredPromptItem, t: TranslateFn): string |
     return createForwardedSourceTag(item.forwardedSource, t);
   }
 
+  const metadata = "metadata" in item ? item.metadata : undefined;
+  const forwardedDisplay = metadata?.forwardFromName?.trim() || metadata?.forwardFromUsername?.trim();
+  if (forwardedDisplay) {
+    return createForwardedSourceTag({ displayName: forwardedDisplay }, t);
+  }
+
+  if (metadata?.forwardFromId) {
+    return createForwardedSourceTag({ isFromAnotherUser: true }, t);
+  }
+
   return undefined;
 }
 
@@ -92,15 +102,16 @@ function buildPreviewLine(item: DeferredPromptItem, t: TranslateFn): string | un
 
   const metadataPrefix = buildMetadataPrefix(item);
   const forwardedTag = resolveForwardedTag(item, t);
+  const prefixParts = [metadataPrefix, forwardedTag].filter(Boolean);
   if (forwardedTag) {
     if (item.kind !== "text") {
-      return `${forwardedTag}${metadataPrefix} ${getKindLabel(item.kind, t)}: ${preview}`;
+      return `${prefixParts.join(" ")} ${getKindLabel(item.kind, t)}: ${preview}`;
     }
 
-    return `${forwardedTag}${metadataPrefix} ${preview}`;
+    return `${prefixParts.join(" ")} ${preview}`;
   }
 
-  return preview;
+  return prefixParts.length > 0 ? `${prefixParts.join(" ")} ${preview}` : preview;
 }
 
 function buildContextBlock(item: DeferredPromptItem, t: TranslateFn): string | undefined {
@@ -116,15 +127,20 @@ function buildContextBlock(item: DeferredPromptItem, t: TranslateFn): string | u
 
   const metadataPrefix = buildMetadataPrefix(item);
   const forwardedTag = resolveForwardedTag(item, t);
+  const headerParts = [metadataPrefix, forwardedTag].filter(Boolean);
   if (forwardedTag) {
     if (item.kind !== "text") {
-      return `${forwardedTag}${metadataPrefix}\n[${getKindLabel(item.kind, t)}]\n${body}`;
+      return `${headerParts.join("\n")}\n[${getKindLabel(item.kind, t)}]\n${body}`;
     }
 
-    return `${forwardedTag}${metadataPrefix}\n${body}`;
+    return `${headerParts.join("\n")}\n${body}`;
   }
 
-  return `[${getKindLabel(item.kind, t)}]\n${body}`;
+  if (item.kind === "text") {
+    return headerParts.length > 0 ? `${headerParts.join("\n")}\n${body}` : body;
+  }
+
+  return `${headerParts.length > 0 ? `${headerParts.join("\n")}\n` : ""}[${getKindLabel(item.kind, t)}]\n${body}`;
 }
 
 function buildPreviewText(items: DeferredPromptItem[], t: TranslateFn): string | undefined {
@@ -166,13 +182,16 @@ export function composeDeferredMediaPrompt(
 
   if (directTextItem) {
     const directText = normalizeText(directTextItem.directText);
+    const directTextWithMeta = directText
+      ? [buildMetadataPrefix(directTextItem), directText].filter(Boolean).join("\n")
+      : directText;
     const contextBlocks = items
       .filter((item) => item !== directTextItem)
       .map((item) => buildContextBlock(item, t))
       .filter((block): block is string => block !== undefined);
 
     return {
-      directText,
+      directText: directTextWithMeta,
       previewText,
       contextText: buildPrefixedContext(
         "Additional context for the user's previous request:",

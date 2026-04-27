@@ -43,6 +43,7 @@ interface BatchWindow<TDeferredItem> {
   maxExpiresAt: number;
   hasExpired: boolean;
   isDirectPromptSettled: boolean;
+  activeProcessingHolds: number;
   phase: "collecting" | "retrying";
   timer: ReturnType<typeof setTimeout>;
 }
@@ -200,27 +201,55 @@ export class IncomingMediaBatch<
     deferredItem: TDeferredItem;
     extendMs?: number;
   }): boolean {
-    const window = this.findOpenWindow(input.scopeKey);
+    const window = this.findEnqueueableWindow(input.scopeKey);
     if (!window) {
       return false;
     }
 
     window.deferredItems.push(input.deferredItem);
-    this.extendWindowTimer(window, input.extendMs);
+    if (!window.hasExpired) {
+      this.extendWindowTimer(window, input.extendMs);
+    }
     return true;
   }
 
   /**
-   * Extends the batch window for a scope without adding an item.
-   * Used by media handlers to keep the window alive during processing.
+   * Acquires a processing hold for the currently open window.
+   * Holds do NOT extend user-visible waiting time by themselves.
+   * They only prevent flush while media is still processing.
+   * When the returned release function is called, a timed-out window flushes immediately.
    */
-  keepAlive(scopeKey: string, ms: number): boolean {
+  acquireProcessingHold(scopeKey: string): (() => void) | null {
     const window = this.findOpenWindow(scopeKey);
     if (!window) {
-      return false;
+      return null;
     }
-    this.extendWindowTimer(window, ms);
-    return true;
+
+    window.activeProcessingHolds += 1;
+
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+
+      const currentWindow = this.getWindow(window.id);
+      if (!currentWindow) {
+        return;
+      }
+
+      currentWindow.activeProcessingHolds = Math.max(0, currentWindow.activeProcessingHolds - 1);
+
+      if (currentWindow.activeProcessingHolds === 0 && currentWindow.hasExpired) {
+        void this.flushWindow(currentWindow.id).catch((error: unknown) => {
+          logger.error(
+            `[IncomingMediaBatch] Delayed flush after hold release failed for batch=${currentWindow.id}`,
+            error,
+          );
+        });
+      }
+    };
   }
 
   private extendWindowTimer(window: BatchWindow<TDeferredItem>, customMs?: number): void {
@@ -228,7 +257,7 @@ export class IncomingMediaBatch<
 
     const now = Date.now();
     const extendMs = customMs ?? this.correlationWindowMs;
-    const newExpiresAt = Math.min(now + extendMs, window.maxExpiresAt);
+    const newExpiresAt = now + extendMs;
 
     if (newExpiresAt > window.expiresAt) {
       window.expiresAt = newExpiresAt;
@@ -270,6 +299,7 @@ export class IncomingMediaBatch<
       maxExpiresAt,
       hasExpired: false,
       isDirectPromptSettled: input.isDirectPromptSettled,
+      activeProcessingHolds: 0,
       phase: input.phase,
       timer,
     };
@@ -284,7 +314,7 @@ export class IncomingMediaBatch<
     window.hasExpired = true;
     clearTimeout(window.timer);
 
-    if (window.isDirectPromptSettled) {
+    if (window.isDirectPromptSettled && window.activeProcessingHolds === 0) {
       const canFlush = this.canFlushNowOperation
         ? await this.canFlushNowOperation(window.scopeKey)
         : true;
@@ -296,7 +326,12 @@ export class IncomingMediaBatch<
 
   private async flushWindow(batchId: number): Promise<void> {
     const window = this.getWindow(batchId);
-    if (!window || !window.hasExpired || !window.isDirectPromptSettled) {
+    if (
+      !window ||
+      !window.hasExpired ||
+      !window.isDirectPromptSettled ||
+      window.activeProcessingHolds > 0
+    ) {
       return;
     }
 
@@ -352,6 +387,16 @@ export class IncomingMediaBatch<
     return windows.find(
       (window) =>
         window.phase === "collecting" && !window.hasExpired && Date.now() < window.expiresAt,
+    );
+  }
+
+  private findEnqueueableWindow(scopeKey: string): BatchWindow<TDeferredItem> | undefined {
+    const windows = this.windowsByScope.get(scopeKey) ?? [];
+    return windows.find(
+      (window) =>
+        window.phase === "collecting" &&
+        ((!window.hasExpired && Date.now() < window.expiresAt) ||
+          (window.hasExpired && window.activeProcessingHolds > 0)),
     );
   }
 

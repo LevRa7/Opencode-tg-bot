@@ -18,6 +18,7 @@ function createVideoContext(overrides: Partial<Context["message"]> = {}): {
     chat: { id: 777 },
     from: { id: 123 },
     message: {
+      message_id: 10,
       video: {
         file_id: "video-file-id",
         file_unique_id: "video-unique-id",
@@ -70,6 +71,8 @@ function createVideoDeps(overrides: Partial<VideoHandlerDeps> = {}): {
     downloadFile: downloadMock,
     prepareMediaPrompt: prepareMediaPromptMock,
     processPrompt: processPromptMock,
+    acquireProcessingHold: vi.fn(() => vi.fn()),
+    enqueueCorrelatedItem: vi.fn(() => false),
     ...overrides,
   };
 
@@ -117,6 +120,28 @@ describe("bot/handlers/video", () => {
         }),
       ]),
     );
+  });
+
+  it("acquires and releases the processing hold during standalone video preprocessing", async () => {
+    const { ctx } = createVideoContext();
+    const releaseHoldMock = vi.fn();
+    const acquireProcessingHoldMock = vi.fn(() => releaseHoldMock);
+    const enqueueCorrelatedItemMock = vi.fn(() => false);
+    const { deps, processPromptMock } = createVideoDeps({
+      acquireProcessingHold: acquireProcessingHoldMock,
+      enqueueCorrelatedItem: enqueueCorrelatedItemMock,
+    });
+
+    await handleVideoMessage(ctx, deps);
+
+    expect(acquireProcessingHoldMock).toHaveBeenCalledTimes(1);
+    expect(releaseHoldMock).toHaveBeenCalledTimes(1);
+    expect(enqueueCorrelatedItemMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "video",
+      }),
+    );
+    expect(processPromptMock).toHaveBeenCalled();
   });
 
   it("accepts video notes and uses default file metadata", async () => {
@@ -410,7 +435,9 @@ describe("bot/handlers/video", () => {
       },
     });
 
-    const regularDownloadMock = vi.fn().mockRejectedValue(new Error("should not use default downloader"));
+    const regularDownloadMock = vi
+      .fn()
+      .mockRejectedValue(new Error("should not use default downloader"));
     const oversizedDownloadMock = vi.fn().mockResolvedValue({
       buffer: Buffer.from("oversized-video-binary"),
       filePath: "videos/missing-size.mp4",

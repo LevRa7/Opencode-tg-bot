@@ -1864,34 +1864,43 @@ export function createBot(): Bot<Context> {
   bot.on("message:photo", async (ctx) => {
     logger.debug(`[Bot] Received photo message, chatId=${ctx.chat.id}`);
 
+    const photoScopeKey = buildTelegramConversationScopeKey(
+      extractTelegramConversationScopeFromContext(ctx),
+    );
+
     await handlePhotoMessage(ctx, {
       bot,
       ensureEventSubscription,
       deferredBatch,
       enqueueCorrelatedItem: (item) =>
         deferredBatch.enqueueDeferredItem({
-          scopeKey: buildTelegramConversationScopeKey(
-            extractTelegramConversationScopeFromContext(ctx),
-          ),
+          scopeKey: photoScopeKey,
           deferredItem: item,
+          extendMs: 30000,
         }),
+      keepAlive: (ms) => deferredBatch.keepAlive(photoScopeKey, ms),
     });
   });
 
   // Document message handler (PDF and text files)
   bot.on("message:document", async (ctx) => {
     logger.debug(`[Bot] Received document message, chatId=${ctx.chat.id}`);
+
+    const docScopeKey = buildTelegramConversationScopeKey(
+      extractTelegramConversationScopeFromContext(ctx),
+    );
+
     const deps = {
       bot,
       ensureEventSubscription,
       deferredBatch,
       enqueueCorrelatedItem: (item: ResolvedDeferredItem) =>
         deferredBatch.enqueueDeferredItem({
-          scopeKey: buildTelegramConversationScopeKey(
-            extractTelegramConversationScopeFromContext(ctx),
-          ),
+          scopeKey: docScopeKey,
           deferredItem: item,
+          extendMs: 30000,
         }),
+      keepAlive: (ms: number) => deferredBatch.keepAlive(docScopeKey, ms),
     };
     await handleDocumentMessage(ctx, deps);
   });

@@ -20,6 +20,7 @@ export interface PhotoHandlerDeps extends ProcessPromptDeps {
     fileParts?: FilePartInput[],
   ) => Promise<boolean>;
   enqueueCorrelatedItem?: (item: ResolvedDeferredItem) => boolean;
+  keepAlive?: (ms: number) => boolean;
 }
 
 export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): Promise<void> {
@@ -32,8 +33,14 @@ export async function handlePhotoMessage(ctx: Context, deps: PhotoHandlerDeps): 
   const prepareMediaPrompt = deps.prepareMediaPrompt ?? prepareAttachmentMediaPrompt;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
   const enqueueCorrelatedItem = deps.enqueueCorrelatedItem;
+  const keepAlive = deps.keepAlive;
   const largestPhoto = photos[photos.length - 1];
   const caption = ctx.message?.caption || "";
+
+  // Keep the batch window alive if it exists — processing may take several seconds
+  if (keepAlive) {
+    keepAlive(30000);
+  }
 
   await ctx.reply(t("bot.photo_downloading"));
 

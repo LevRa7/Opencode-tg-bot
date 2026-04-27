@@ -3,11 +3,7 @@ import { config } from "../../config.js";
 import { prepareAttachmentMediaPrompt } from "../../media/ingest.js";
 import type { ResolvedDeferredItem } from "../../media/batch-types.js";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
-import {
-  downloadTelegramFile,
-  isTextMimeType,
-  isFileSizeAllowed,
-} from "../utils/file-download.js";
+import { downloadTelegramFile, isTextMimeType, isFileSizeAllowed } from "../utils/file-download.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import type { FilePartInput } from "@opencode-ai/sdk/v2";
@@ -25,6 +21,7 @@ export interface DocumentHandlerDeps extends ProcessPromptDeps {
     fileParts?: FilePartInput[],
   ) => Promise<boolean>;
   enqueueCorrelatedItem?: (item: ResolvedDeferredItem) => boolean;
+  keepAlive?: (ms: number) => boolean;
 }
 
 export async function handleDocumentMessage(
@@ -35,6 +32,7 @@ export async function handleDocumentMessage(
   const prepareMediaPrompt = deps.prepareMediaPrompt ?? prepareAttachmentMediaPrompt;
   const processPrompt = deps.processPrompt ?? processUserPrompt;
   const enqueueCorrelatedItem = deps.enqueueCorrelatedItem;
+  const keepAlive = deps.keepAlive;
 
   const doc = ctx.message?.document;
   if (!doc) {
@@ -59,6 +57,10 @@ export async function handleDocumentMessage(
     await ctx.reply(t("bot.file_downloading"));
 
     let downloadedFile: Awaited<ReturnType<typeof downloadTelegramFile>>;
+
+    if (keepAlive) {
+      keepAlive(30000);
+    }
 
     try {
       downloadedFile = await downloadFile(ctx.api, doc.file_id);
@@ -111,6 +113,10 @@ export async function handleDocumentMessage(
     await ctx.reply(t("bot.file_downloading"));
 
     let downloadedFile: Awaited<ReturnType<typeof downloadTelegramFile>>;
+
+    if (keepAlive) {
+      keepAlive(30000);
+    }
 
     try {
       downloadedFile = await downloadFile(ctx.api, doc.file_id);

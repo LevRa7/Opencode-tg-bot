@@ -195,22 +195,40 @@ export class IncomingMediaBatch<
     }
   }
 
-  enqueueDeferredItem(input: { scopeKey: string; deferredItem: TDeferredItem }): boolean {
+  enqueueDeferredItem(input: {
+    scopeKey: string;
+    deferredItem: TDeferredItem;
+    extendMs?: number;
+  }): boolean {
     const window = this.findOpenWindow(input.scopeKey);
     if (!window) {
       return false;
     }
 
     window.deferredItems.push(input.deferredItem);
-    this.extendWindowTimer(window);
+    this.extendWindowTimer(window, input.extendMs);
     return true;
   }
 
-  private extendWindowTimer(window: BatchWindow<TDeferredItem>): void {
+  /**
+   * Extends the batch window for a scope without adding an item.
+   * Used by media handlers to keep the window alive during processing.
+   */
+  keepAlive(scopeKey: string, ms: number): boolean {
+    const window = this.findOpenWindow(scopeKey);
+    if (!window) {
+      return false;
+    }
+    this.extendWindowTimer(window, ms);
+    return true;
+  }
+
+  private extendWindowTimer(window: BatchWindow<TDeferredItem>, customMs?: number): void {
     if (window.hasExpired) return;
 
     const now = Date.now();
-    const newExpiresAt = Math.min(now + this.correlationWindowMs, window.maxExpiresAt);
+    const extendMs = customMs ?? this.correlationWindowMs;
+    const newExpiresAt = Math.min(now + extendMs, window.maxExpiresAt);
 
     if (newExpiresAt > window.expiresAt) {
       window.expiresAt = newExpiresAt;

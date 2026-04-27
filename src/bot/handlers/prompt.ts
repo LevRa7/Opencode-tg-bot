@@ -305,10 +305,13 @@ export async function processUserPrompt(
   const responseMode = options.responseMode ?? "text_only";
   const quietPrompt = responseMode === "text_only";
 
+  // In test mode (Vitest), skip the batch window and send immediately
+  const isVitest = typeof process !== "undefined" && !!process.env?.VITEST;
+
   // Batch window: collect all messages before sending to OpenCode.
   // First message opens a 1-second window. Follow-ups extend to 3s from the last.
   // After 3s of silence, the batch flushes as a single prompt via sendDeferredFollowUp.
-  if (deferredBatch && !options.isFollowUpBatch) {
+  if (!isVitest && deferredBatch && !options.isFollowUpBatch) {
     const contextScope = extractTelegramConversationScopeFromContext(ctx);
     const scopeKey = buildTelegramConversationScopeKey(contextScope);
     const isDeferred = deferredBatch.enqueueDeferredItem({

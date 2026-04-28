@@ -4,6 +4,7 @@
 
 Что дает эта сборка:
 
+- OpenSSH client tools внутри контейнера для доступа из tenant workspace
 - OpenCode server в Docker
 - `tg-cli`, установленный в том же контейнере
 - отдельная рабочая область для каждого tenant
@@ -159,6 +160,28 @@ OPENCODE_SERVER_PASSWORD='your-password' /home/me/MyProjects/opencode-tg/docker/
 Эти helper scripts рассчитаны на запуск без `sudo`. При возможности они используют пользовательский Docker socket `${XDG_RUNTIME_DIR}/docker.sock` и хранят Docker client state в `docker/.docker-config`.
 
 Root filesystem контейнера теперь записываемый. Tenant-specific OpenCode, tg-cli и skill state по-прежнему живут в `/state`.
+
+## Как работает tenant SSH
+
+Контейнер запускает tenant-команды с:
+
+```text
+HOME=/workspace
+```
+
+Это значит, что стандартная tenant SSH-директория внутри контейнера:
+
+```text
+/workspace/.ssh
+```
+
+Практические последствия:
+
+- SSH-ключи, созданные внутри контейнера через `ssh-keygen` и другие OpenSSH tools, остаются в workspace этого tenant
+- существующие tenant SSH-файлы можно положить в `/workspace/.ssh`
+- при необходимости можно явно указать другой путь к ключу через `-i /path/to/key`
+
+Так как `/workspace` смонтирован как tenant bind mount, SSH-материалы, созданные там, сохраняются вместе с workspace этого tenant между перезапусками контейнера.
 
 ## Запуск на конкретном порту
 

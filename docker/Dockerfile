@@ -3,6 +3,10 @@ FROM ${TENANT_IMAGE}
 
 USER root
 
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssh-client \
+  && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd -g 1000 opencode || true \
   && useradd -m -u 1000 -g 1000 -s /bin/sh opencode || true
 

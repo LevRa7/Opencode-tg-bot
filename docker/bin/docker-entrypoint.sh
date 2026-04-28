@@ -3,6 +3,44 @@ set -eu
 
 merge-agents
 
+home_path="${HOME}"
+
+# 2026-04: Resolve HOME through the filesystem before using it so tenant-controlled
+# paths like /workspace/home-link/. cannot hide a symlink that would redirect root.
+resolved_home="$(CDPATH= cd -- "${home_path}" 2>/dev/null && pwd -P)" || {
+  echo "refusing to use inaccessible home directory: ${home_path}" >&2
+  exit 1
+}
+logical_home="$(CDPATH= cd -- "${home_path}" 2>/dev/null && pwd -L)" || {
+  echo "refusing to use inaccessible home directory: ${home_path}" >&2
+  exit 1
+}
+
+if [ -L "${home_path}" ] || [ "${logical_home}" != "${resolved_home}" ]; then
+  echo "refusing to use symlinked home directory: ${home_path}" >&2
+  exit 1
+fi
+
+HOME="${resolved_home}"
+export HOME
+
+if [ -L "${HOME}" ]; then
+  echo "refusing to use symlinked home directory: ${HOME}" >&2
+  exit 1
+fi
+
+tenant_ssh_dir="${HOME}/.ssh"
+
+if [ -L "${tenant_ssh_dir}" ] || { [ -e "${tenant_ssh_dir}" ] && [ ! -d "${tenant_ssh_dir}" ]; }; then
+  echo "refusing to use non-directory ssh path: ${tenant_ssh_dir}" >&2
+  exit 1
+fi
+
+if [ ! -d "${tenant_ssh_dir}" ]; then
+  mkdir -p "${tenant_ssh_dir}"
+  chmod 700 "${tenant_ssh_dir}"
+fi
+
 mkdir -p /run/opencode-gemini-media
 
 # Fix permissions for cliproxyapi.key if it exists

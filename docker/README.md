@@ -4,6 +4,7 @@ This directory contains a Docker-based OpenCode server setup with isolated Teleg
 
 The setup provides:
 
+- OpenSSH client tools inside the container for tenant workspace access
 - OpenCode server running in Docker
 - `tg-cli` installed in the same container
 - one workspace per tenant
@@ -159,6 +160,28 @@ OPENCODE_SERVER_PASSWORD='your-password' /home/me/MyProjects/opencode-tg/docker/
 The helper scripts are designed to run without `sudo`. They prefer the user Docker socket at `${XDG_RUNTIME_DIR}/docker.sock` when available and keep Docker client state in `docker/.docker-config`.
 
 The container root filesystem is writable. Tenant-specific OpenCode, tg-cli, and skill state still lives under `/state`.
+
+## Tenant SSH behavior
+
+The container runs tenant commands with:
+
+```text
+HOME=/workspace
+```
+
+That means the default tenant SSH directory inside the container is:
+
+```text
+/workspace/.ssh
+```
+
+Practical consequences:
+
+- SSH keys generated inside the container with tools like `ssh-keygen` stay in that tenant workspace
+- existing tenant SSH files can be placed in `/workspace/.ssh`
+- you can also point OpenSSH commands at another key path explicitly with `-i /path/to/key`
+
+Because `/workspace` is the tenant bind mount, SSH material created there persists with that tenant workspace across container restarts.
 
 ## Start on a specific port
 

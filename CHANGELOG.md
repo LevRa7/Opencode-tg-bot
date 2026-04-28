@@ -21,6 +21,9 @@ Documentation rule:
 - Added a Docker-bundled `openai-media-transcriber` skill that is materialized into each tenant's `/state/skills` and routed through a root-owned local proxy instead of exposing the upstream Gemini media endpoint or API key to tenant-visible config.
   - Why: Docker tenants need immediate media transcription support, but the Gemini CLI API credentials at `192.168.2.166:8124/v1` must stay outside the tenant-visible workspace and OpenCode config.
   - Affects: `docker/skills/openai-media-transcriber/SKILL.md`, `docker/bin/opencode-gemini-media`, `docker/bin/gemini-media-proxy.mjs`, `docker/bin/docker-entrypoint.sh`, `docker/Dockerfile`, `docker/run-opencode-serve.sh`, `docker/tests/*.sh`
+- Added Docker tenant OpenSSH client support with workspace-backed SSH home behavior under `/workspace/.ssh`.
+  - Why: tenant sessions need standard `ssh` tooling and persistent per-workspace key storage so in-container clones, fetches, and remote access flows can reuse generated keys without exposing host-level SSH state.
+  - Affects: `docker/Dockerfile`, `docker/bin/docker-entrypoint.sh`, `docker/tests/tenant-entrypoint-permissions.test.sh`, `docker/tests/tg-cli-image.test.sh`, `docker/README.md`, `docker/README-ru.md`
 
 ### Changed
 

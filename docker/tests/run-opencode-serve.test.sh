@@ -130,6 +130,8 @@ export TG_CHAT_ID="123456"
 export TG_TENANT_ID="tenant-alpha"
 export OPENCODE_SERVER_PASSWORD="test-password"
 export CLIPROXYAPI_BASE_URL="http://192.168.2.166:8317/v1"
+export GEMINI_MEDIA_UPSTREAM_BASE_URL="http://gemini-media.example.test/v1"
+export GEMINI_MEDIA_UPSTREAM_API_KEY="test-gemini-media-key"
 export GPT_IMAGE_UPSTREAM_BASE_URL="http://gpt-image.example.test/v1"
 export GPT_IMAGE_UPSTREAM_API_KEY="test-gpt-image-key"
 unset DOCKER_HOST
@@ -213,7 +215,11 @@ if grep -Fq '192.168.2.166:8124' "${STATE_DIR}/config/opencode.json"; then
   echo "tenant config should not expose gemini media endpoint" >&2
   exit 1
 fi
-if grep -Fq 'GEMINI' "${STATE_DIR}/config/opencode.json"; then
+if grep -Fq 'gemini-media.example.test' "${STATE_DIR}/config/opencode.json"; then
+  echo "tenant config should not expose gemini media endpoint" >&2
+  exit 1
+fi
+if grep -Fq 'test-gemini-media-key' "${STATE_DIR}/config/opencode.json"; then
   echo "tenant config should not expose gemini media secrets" >&2
   exit 1
 fi

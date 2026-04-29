@@ -44,6 +44,7 @@
 - `bin/tg-cli-wrapper.sh` — wrapper, который принудительно использует изолированный tg-cli config для текущей workspace
 - `skills/tg-cli/SKILL.md` — project skill, объясняющий OpenCode как использовать Telegram CLI
 - `skills/gpt-image-api/SKILL.md` — project skill, объясняющий OpenCode как генерировать/редактировать изображения через защищенный helper контейнера
+- `skills/openai-media-transcriber/SKILL.md` — project skill, объясняющий OpenCode как анализировать медиа через защищенный helper контейнера
 - `tg-cli/` — локальные исходники tg-cli из `https://github.com/miolamio/tg-cli`
 - `vendor/python-tg-cli/` — vendored tg-cli source, используемый во время Docker build
 - `README.md` — инструкция на английском

@@ -16,6 +16,8 @@ fi
 sh -n "${DOCKER_ROOT}/skills/gpt-image-api/scripts/opencode-gpt-image"
 node --check "${DOCKER_ROOT}/bin/opencode-gpt-image"
 node --check "${DOCKER_ROOT}/bin/gpt-image-proxy.mjs"
+node --check "${DOCKER_ROOT}/bin/gemini-media-proxy.mjs"
+node "${DOCKER_ROOT}/tests/gemini-media-proxy-contract.test.mjs"
 node "${DOCKER_ROOT}/tests/gpt-image-proxy-contract.test.mjs"
 node "${DOCKER_ROOT}/tests/gpt-image-helper-output-dir.test.mjs"
 

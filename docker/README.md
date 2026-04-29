@@ -44,6 +44,7 @@ So future rebuilds do not need Docker Hub as long as the base image remains cach
 - `bin/tg-cli-wrapper.sh` — wrapper that forces isolated tg-cli config per workspace
 - `skills/tg-cli/SKILL.md` — project skill telling OpenCode how to use Telegram CLI
 - `skills/gpt-image-api/SKILL.md` — project skill telling OpenCode how to generate/edit images through the protected container helper
+- `skills/openai-media-transcriber/SKILL.md` — project skill telling OpenCode how to analyze media through the protected container helper
 - `tg-cli/` — local tg-cli source from `https://github.com/miolamio/tg-cli`
 - `vendor/python-tg-cli/` — vendored tg-cli source used during Docker build
 - `README.md` — English instructions

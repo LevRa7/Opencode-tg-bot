@@ -192,7 +192,17 @@ print_versions() {
 }
 
 run_verification() {
+  local image_name="${1:-}"
+
+  if [[ -n "${image_name}" ]]; then
+    OPENCODE_DOCKER_IMAGE="${image_name}" bash "${SCRIPT_DIR}/tests/tg-cli-image.test.sh"
+    OPENCODE_DOCKER_IMAGE="${image_name}" bash "${SCRIPT_DIR}/tests/tenant-python-env.test.sh"
+    OPENCODE_DOCKER_IMAGE="${image_name}" bash "${SCRIPT_DIR}/tests/tenant-entrypoint-permissions.test.sh"
+    return 0
+  fi
+
   bash "${SCRIPT_DIR}/tests/tg-cli-image.test.sh"
+  bash "${SCRIPT_DIR}/tests/tenant-python-env.test.sh"
   bash "${SCRIPT_DIR}/tests/tenant-entrypoint-permissions.test.sh"
 }
 
@@ -203,8 +213,7 @@ main() {
   if [[ -f "${SCRIPT_DIR}/tests/tg-cli-image.test.sh" && ! -f "${SCRIPT_DIR}/Dockerfile" ]]; then
     clone_upstream
     log "Smoke mode complete"
-    bash "${SCRIPT_DIR}/tests/tg-cli-image.test.sh"
-    bash "${SCRIPT_DIR}/tests/tenant-entrypoint-permissions.test.sh"
+    run_verification
     return 0
   fi
 
@@ -219,8 +228,7 @@ main() {
   rebuild_tenant_image
   TG_CLI_SOURCE_DIR="${TG_CLI_STAGE_SRC}" OPENCODE_TENANT_IMAGE="${TENANT_IMAGE}" OPENCODE_DOCKER_IMAGE="${TG_IMAGE}" bash "${SCRIPT_DIR}/build-opencode-tg-image.sh"
   print_versions
-  OPENCODE_DOCKER_IMAGE="${TG_IMAGE}" bash "${SCRIPT_DIR}/tests/tg-cli-image.test.sh"
-  OPENCODE_DOCKER_IMAGE="${TG_IMAGE}" bash "${SCRIPT_DIR}/tests/tenant-entrypoint-permissions.test.sh"
+  run_verification "${TG_IMAGE}"
 }
 
 main "$@"

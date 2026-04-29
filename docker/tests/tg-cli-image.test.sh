@@ -13,9 +13,12 @@ fi
 
 "${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'command -v tg >/dev/null && command -v telegram-cli >/dev/null && command -v tg-cli >/dev/null'
 "${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'tg --help >/dev/null'
+"${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc '. /usr/local/bin/ensure-tenant-python-env.sh && HOME=/tmp ensure_tenant_python_env && tg --help >/dev/null'
 "${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'command -v opencode >/dev/null && version="$(opencode --version 2>&1)" && test -n "${version}"'
 "${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'command -v ssh >/dev/null && command -v scp >/dev/null && command -v sftp >/dev/null && command -v ssh-keygen >/dev/null'
 "${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'ssh -V >/dev/null 2>&1'
+"${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'command -v python3 >/dev/null && python3 -m pip --version >/dev/null'
+"${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'python3 -m venv /tmp/image-venv && /tmp/image-venv/bin/pip --version >/dev/null'
 "${DOCKER_CMD}" run --rm \
   --entrypoint sh \
   -e TG_API_ID=123 \
@@ -24,4 +27,4 @@ fi
   -lc 'command -v opencode-tg-cli >/dev/null && opencode-tg-cli --help >/dev/null'
 "${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'command -v opencode-gemini-media >/dev/null && test -f /usr/local/lib/opencode-gemini-media/gemini-media-proxy.mjs && test -f /usr/local/bin/docker-entrypoint.sh'
 
-printf 'ok: tg-cli is present in the image\n'
+printf 'ok: tg-cli, ssh, and Python bootstrap tools are present in the image\n'

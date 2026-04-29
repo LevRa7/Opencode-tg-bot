@@ -35,6 +35,9 @@ skills-lock.json
 
 # Project specific
 .worktrees/
+.venvs/
+.local/
+.cache/pip/
 logs/
 run/
 .tmp/

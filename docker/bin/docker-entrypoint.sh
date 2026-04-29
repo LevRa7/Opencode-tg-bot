@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-merge-agents
+PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH
 
 home_path="${HOME}"
 
@@ -41,6 +42,11 @@ if [ ! -d "${tenant_ssh_dir}" ]; then
   chmod 700 "${tenant_ssh_dir}"
 fi
 
+merge-agents
+
+. /usr/local/bin/ensure-tenant-python-env.sh
+ensure_tenant_python_env
+
 mkdir -p /run/opencode-gemini-media
 
 # Fix permissions for cliproxyapi.key if it exists
@@ -69,4 +75,7 @@ unset GEMINI_MEDIA_MODEL
 # Rootless Docker bind mounts expose the host user as container root, not uid 1000.
 # Keep uid/gid 0 for writable /workspace and /state, but drop all capabilities and
 # move the proxy config to a different owner so the tenant runtime still cannot read it.
-exec setpriv --reuid=0 --regid=0 --clear-groups --bounding-set=-all --nnp opencode "$@"
+exec /usr/bin/env \
+  PATH="${TENANT_RUNTIME_PATH:-${PATH}}" \
+  /usr/bin/setpriv --reuid=0 --regid=0 --clear-groups --bounding-set=-all --nnp \
+  /usr/local/bin/opencode "$@"

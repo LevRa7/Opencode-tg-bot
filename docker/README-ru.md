@@ -14,7 +14,7 @@
 - общие глобальные Telegram app credentials
 - доступ из контейнера к хостовому `cliproxyapi`
 - минимальный tenant-specific OpenCode config вместо наследования полной host-конфигурации
-- только явно скопированные skills `tg-cli` и `embedding-strategies` внутри изолированной сессии
+- только явно скопированные skills `tg-cli`, `embedding-strategies` и `openai-media-transcriber` внутри изолированной сессии
 - публикация только на `127.0.0.1`
 - локально завендоренные build inputs, чтобы пересборка не требовала Docker Hub
 
@@ -50,7 +50,7 @@
 
 ## Что изолировано, а что общее
 
-### Общее для всех портов
+### Общее для всех tenant и портов
 
 Эти значения общие:
 
@@ -61,20 +61,18 @@
 
 Полная host-конфигурация OpenCode в tenant state больше не переносится.
 
-### Отдельно для каждого порта
+### Отдельно для каждого tenant
 
-Если сервер запущен на `49601`, он использует:
+Runtime привязывает persistent data к идентичности tenant: использует `TG_TENANT_ID`, а если он не задан - значение по умолчанию `tg-<TG_ID>`.
 
-- workspace: `/home/me/Workspaces/49601`
-- OpenCode DB: `/home/me/Workspaces/49601/.opencode-data`
-- Telegram config/session: `/home/me/Workspaces/49601/.tg-cli`
+У каждого tenant есть соседние host-директории под `/home/me/Workspaces/<tenant-id>/`:
 
-Если сервер запущен на `49602`, он получит свои отдельные:
+- `workspace/` - пользовательская working tree, которая монтируется в контейнер как `/workspace`
+- `state/` - persistent runtime state, который монтируется в контейнер как `/state`
 
-- `/home/me/Workspaces/49602/.opencode-data`
-- `/home/me/Workspaces/49602/.tg-cli`
+Это значит, что tenant-specific OpenCode data, Telegram auth/session state, cache и bundled skills изолируются по идентичности tenant, а не по выбранному порту.
 
-То есть Telegram session-файлы между портами не шарятся.
+Если для того же tenant поменять `HOST_PORT`, будут переиспользованы те же `workspace/` + `state/`. Если указать другой `TG_TENANT_ID`, будет создан отдельный tenant root со своей persistent login и runtime state.
 
 ## Доступ к cliproxyapi из Docker
 
@@ -158,6 +156,12 @@ OPENCODE_BASE_IMAGE='ghcr.io/anomalyco/opencode:latest' /home/me/MyProjects/open
 
 Этот сценарий обновления предполагает, что локально завендоренное дерево исходников tg-cli уже существует, и также требует локальный tenant base image, который по умолчанию равен `opencode-tenant:latest`, но может быть переопределен через `OPENCODE_TENANT_BASE_IMAGE`.
 
+Host tools, которые нужны `docker/update-opencode.sh`:
+
+- `git`
+- `bun`
+- `python3`
+
 ### Что делает эта команда
 
 - клонирует upstream-репозиторий OpenCode в `docker/.cache/opencode-upstream`
@@ -168,6 +172,7 @@ OPENCODE_BASE_IMAGE='ghcr.io/anomalyco/opencode:latest' /home/me/MyProjects/open
 - выводит `opencode --version` из обоих пересобранных образов
 - запускает Docker verification scripts:
   - `docker/tests/tg-cli-image.test.sh`
+  - `docker/tests/tenant-python-env.test.sh`
   - `docker/tests/tenant-entrypoint-permissions.test.sh`
 
 ### Необязательное переопределение
@@ -215,6 +220,23 @@ HOME=/workspace
 - при необходимости можно явно указать другой путь к ключу через `-i /path/to/key`
 
 Так как `/workspace` смонтирован как tenant bind mount, SSH-материалы, созданные там, сохраняются вместе с workspace этого tenant между перезапусками контейнера.
+
+## Tenant Python environment
+
+Контейнер теперь подготавливает tenant-local Python virtual environment в:
+
+```text
+/workspace/.venvs/default
+```
+
+Практические последствия:
+
+- команды tenant runtime используют `python`, `python3` и `pip` из `/workspace/.venvs/default/bin`
+- Python-пакеты, установленные через `pip install <package>`, сохраняются в workspace этого tenant между перезапусками контейнера
+- pip cache tenant находится в `/workspace/.cache/pip`
+- если `/workspace/.venvs/default` отсутствует или поврежден, entrypoint автоматически пересоздает его перед запуском OpenCode
+
+Системный interpreter остается доступным для обслуживания image, но штатная установка tenant-пакетов должна идти через tenant-local environment выше.
 
 ## Запуск на конкретном порту
 
@@ -265,6 +287,7 @@ Launcher материализует tenant-visible skills в:
 ```text
 /state/skills/tg-cli/SKILL.md
 /state/skills/embedding-strategies/SKILL.md
+/state/skills/openai-media-transcriber/SKILL.md
 ```
 
 Сгенерированный tenant config в `/state/config/opencode.json` указывает `skills.paths` только на:
@@ -283,14 +306,14 @@ Launcher материализует tenant-visible skills в:
 
 для Telegram-задач вместо прямой работы с session-файлами.
 
-## Первый Telegram login для нового порта
+## Первый Telegram login для нового tenant
 
 Типовой сценарий первой авторизации:
 
-1. запустить сервер на нужном порту
+1. запустить сервер для нужного tenant
 2. проверить статус авторизации
 3. либо запустить QR-авторизацию или login по коду, либо импортировать готовую session
-4. далее тот же порт будет переиспользовать сохраненную session
+4. далее тот же tenant будет переиспользовать сохраненную session, даже если `HOST_PORT` изменится
 
 ### Проверить статус авторизации внутри контейнера
 

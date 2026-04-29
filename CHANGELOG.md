@@ -40,6 +40,9 @@ Documentation rule:
 - Added Docker tenant OpenSSH client support with workspace-backed SSH home behavior under `/workspace/.ssh`.
   - Why: tenant sessions need standard `ssh` tooling and persistent per-workspace key storage so in-container clones, fetches, and remote access flows can reuse generated keys without exposing host-level SSH state.
   - Affects: `docker/Dockerfile`, `docker/bin/docker-entrypoint.sh`, `docker/tests/tenant-entrypoint-permissions.test.sh`, `docker/tests/tg-cli-image.test.sh`, `docker/README.md`, `docker/README-ru.md`
+- Added a tenant-local Python bootstrap flow for Docker runtimes that creates and repairs `/workspace/.venvs/default`, routes tenant `python`/`pip` commands there, and keeps installed packages persistent in the tenant workspace across container restarts.
+  - Why: Docker tenants were hitting blocked system `pip` flows and missing `python3-venv`, which made ad-hoc Python package installation unreliable and often impossible to repair remotely.
+  - Affects: `docker/Dockerfile`, `docker/bin/ensure-tenant-python-env.sh`, `docker/bin/docker-entrypoint.sh`, `docker/tests/tg-cli-image.test.sh`, `docker/tests/tenant-python-env.test.sh`, `docker/update-opencode.sh`, `docker/README.md`, `docker/README-ru.md`
 
 ### Changed
 

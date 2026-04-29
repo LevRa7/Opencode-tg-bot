@@ -14,7 +14,7 @@ The setup provides:
 - shared global Telegram app credentials
 - access from the container to the host `cliproxyapi` endpoint
 - a minimal tenant-specific OpenCode config instead of inheriting the full host config
-- only the explicitly copied `tg-cli` and `embedding-strategies` skills inside the isolated session
+- only the explicitly copied `tg-cli`, `embedding-strategies`, and `openai-media-transcriber` skills inside the isolated session
 - local-only publishing on `127.0.0.1`
 - local vendored build inputs so rebuilds do not need Docker Hub
 
@@ -50,7 +50,7 @@ So future rebuilds do not need Docker Hub as long as the base image remains cach
 
 ## What is isolated and what is shared
 
-### Shared across all ports
+### Shared across all tenants and ports
 
 These values are global:
 
@@ -61,20 +61,18 @@ These values are global:
 
 The full host OpenCode config is not copied into the container tenant state.
 
-### Isolated per port
+### Isolated per tenant
 
-If you start the server on `49601`, it uses:
+The runtime keys persistent data by tenant identity, using `TG_TENANT_ID` when provided and otherwise defaulting to `tg-<TG_ID>`.
 
-- workspace: `/home/me/Workspaces/49601`
-- OpenCode DB: `/home/me/Workspaces/49601/.opencode-data`
-- Telegram config/session data: `/home/me/Workspaces/49601/.tg-cli`
+Each tenant gets sibling host directories under `/home/me/Workspaces/<tenant-id>/`:
 
-If you start the server on `49602`, it gets its own separate:
+- `workspace/` - the user-facing working tree mounted into the container as `/workspace`
+- `state/` - the persistent runtime state mounted into the container as `/state`
 
-- `/home/me/Workspaces/49602/.opencode-data`
-- `/home/me/Workspaces/49602/.tg-cli`
+That means tenant-specific OpenCode data, Telegram auth/session state, caches, and bundled skills are isolated by tenant identity rather than by chosen port.
 
-So Telegram session files are not shared between ports.
+Changing `HOST_PORT` for the same tenant reuses the same `workspace/` + `state/` pair. Using a different `TG_TENANT_ID` creates a separate tenant root with its own persistent login and runtime state.
 
 ## cliproxyapi access from Docker
 
@@ -158,6 +156,12 @@ When you want to pull in the latest upstream OpenCode build into the Docker work
 
 This refresh flow expects the local vendored tg-cli source tree to already be present and also requires a local tenant base image, which defaults to `opencode-tenant:latest` and can be overridden with `OPENCODE_TENANT_BASE_IMAGE`.
 
+Host tools required by `docker/update-opencode.sh`:
+
+- `git`
+- `bun`
+- `python3`
+
 ### What this command does
 
 - clones the upstream OpenCode repository into `docker/.cache/opencode-upstream`
@@ -168,6 +172,7 @@ This refresh flow expects the local vendored tg-cli source tree to already be pr
 - prints `opencode --version` from both rebuilt images
 - runs the Docker verification scripts:
   - `docker/tests/tg-cli-image.test.sh`
+  - `docker/tests/tenant-python-env.test.sh`
   - `docker/tests/tenant-entrypoint-permissions.test.sh`
 
 ### Optional override
@@ -215,6 +220,23 @@ Practical consequences:
 - you can also point OpenSSH commands at another key path explicitly with `-i /path/to/key`
 
 Because `/workspace` is the tenant bind mount, SSH material created there persists with that tenant workspace across container restarts.
+
+## Tenant Python environment
+
+The container now prepares a tenant-local Python virtual environment under:
+
+```text
+/workspace/.venvs/default
+```
+
+Practical consequences:
+
+- commands launched by the tenant runtime resolve `python`, `python3`, and `pip` from `/workspace/.venvs/default/bin`
+- Python packages installed with `pip install <package>` persist in the tenant workspace across container restarts
+- the tenant pip cache lives under `/workspace/.cache/pip`
+- if `/workspace/.venvs/default` is missing or broken, the entrypoint recreates it automatically before launching OpenCode
+
+The system interpreter remains available for image maintenance, but normal tenant package installation should use the tenant-local environment above.
 
 ## Start on a specific port
 
@@ -265,6 +287,7 @@ The launcher materializes tenant-visible skills under:
 ```text
 /state/skills/tg-cli/SKILL.md
 /state/skills/embedding-strategies/SKILL.md
+/state/skills/openai-media-transcriber/SKILL.md
 ```
 
 The generated tenant config at `/state/config/opencode.json` points `skills.paths` only to:
@@ -283,14 +306,14 @@ The `tg-cli` skill tells OpenCode to use:
 
 for Telegram-related work instead of touching session files directly.
 
-## First-time Telegram login for a new port
+## First-time Telegram login for a new tenant
 
 Typical first-time flow:
 
-1. start the server on the target port
+1. start the server for the target tenant
 2. check auth status
 3. either start QR login or phone-code login, or import an existing session
-4. reuse that saved session on later runs of the same port
+4. reuse that saved session on later runs of the same tenant, even if `HOST_PORT` changes
 
 ### Check auth status inside the container
 

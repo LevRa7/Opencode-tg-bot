@@ -199,6 +199,12 @@ if ! grep -Fq 'refusing to use non-directory ssh path: /workspace/tenant-home/.s
   exit 1
 fi
 
+if grep -Fq '[merge-agents]' "${SYMLINK_LOG}"; then
+  echo "FAIL: merge-agents should not run before tenant HOME validation rejects startup" >&2
+  cat "${SYMLINK_LOG}" >&2
+  exit 1
+fi
+
 if [[ -e "${SYMLINK_TARGET_DIR}/test_ed25519" || -e "${SYMLINK_TARGET_DIR}/test_ed25519.pub" ]]; then
   echo "FAIL: entrypoint followed the tenant-controlled ssh symlink" >&2
   ls -l "${SYMLINK_TARGET_DIR}" >&2
@@ -227,6 +233,12 @@ fi
 
 if ! grep -Fq 'refusing to use symlinked home directory: /workspace/tenant-home-link/.' "${SYMLINKED_HOME_LOG}"; then
   echo "FAIL: expected startup failure to reject the symlinked HOME path explicitly" >&2
+  cat "${SYMLINKED_HOME_LOG}" >&2
+  exit 1
+fi
+
+if grep -Fq '[merge-agents]' "${SYMLINKED_HOME_LOG}"; then
+  echo "FAIL: merge-agents should not run before symlinked HOME rejection" >&2
   cat "${SYMLINKED_HOME_LOG}" >&2
   exit 1
 fi

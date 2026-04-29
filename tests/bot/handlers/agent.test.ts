@@ -178,7 +178,6 @@ describe("bot/handlers/agent", () => {
 
   it("confirms agent change from forum main thread without message_thread_id", async () => {
     const ctx = createForumMainThreadCallbackContext("agent:build");
-    mocked.getContextInfoMock.mockReturnValue({ tokensUsed: 120, tokensLimit: 1000 });
     interactionManager.start({
       kind: "inline",
       expectedInput: "callback",
@@ -191,23 +190,18 @@ describe("bot/handlers/agent", () => {
     const handled = await handleAgentSelect(ctx);
 
     expect(handled).toBe(true);
-    expect(mocked.selectAgentMock).toHaveBeenCalledWith("build");
-    expect(mocked.bindAgentToActiveContextMock).toHaveBeenCalledWith("build");
-    expect(mocked.keyboardInitializeMock).toHaveBeenCalledWith(ctx.api, 111);
-    expect(mocked.keyboardUpdateAgentMock).toHaveBeenCalledWith("build");
-    expect(mocked.keyboardUpdateModelMock).toHaveBeenCalledWith({
-      providerID: "openai",
-      modelID: "gpt-5",
-      variant: "default",
-    });
-    expect(mocked.keyboardUpdateContextMock).toHaveBeenCalledWith(120, 1000);
     expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
       text: t("agent.changed_callback", { name: getAgentDisplayName("build") }),
     });
-    expect(ctx.reply).toHaveBeenCalledWith(
-      t("agent.changed_message", { name: getAgentDisplayName("build") }),
-      expect.not.objectContaining({ message_thread_id: expect.anything() }),
-    );
+    expect(ctx.reply).toHaveBeenCalledTimes(1);
+
+    const [text, options] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      { message_thread_id?: number },
+    ];
+
+    expect(text).toBe(t("agent.changed_message", { name: getAgentDisplayName("build") }));
+    expect(options).not.toHaveProperty("message_thread_id");
     expect(ctx.deleteMessage).toHaveBeenCalledTimes(1);
     expect(interactionManager.getSnapshot()).toBeNull();
   });

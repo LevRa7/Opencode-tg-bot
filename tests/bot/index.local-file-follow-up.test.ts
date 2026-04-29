@@ -18,6 +18,13 @@ const editMessageTextMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const keyboardGetKeyboardMock = vi.hoisted(() => vi.fn(() => undefined));
 const keyboardIsInitializedMock = vi.hoisted(() => vi.fn(() => false));
 const getSessionTargetMock = vi.hoisted(() => vi.fn(() => null));
+const attachManagerAttachMock = vi.hoisted(() => vi.fn());
+const getAttachedTargetForSessionMock = vi.hoisted(() => vi.fn(() => null));
+const getAttachedScopeForSessionMock = vi.hoisted(() => vi.fn(() => null));
+const getActiveScopeMock = vi.hoisted(() =>
+  vi.fn(() => ({ userId: 777, chatId: 123, messageThreadId: 1 })),
+);
+const isActiveScopeMock = vi.hoisted(() => vi.fn(() => true));
 const runWithTelegramConversationScopeMock = vi.hoisted(() =>
   vi.fn(async (_scope: unknown, fn: () => Promise<unknown> | unknown) => await fn()),
 );
@@ -27,6 +34,12 @@ const subscribeToEventsMock = vi.hoisted(() =>
     callbacks.push(callback);
     capturedEventCallbacksByDirectory.set(directory, callbacks);
   }),
+);
+const attachedTargetsBySessionId = vi.hoisted(
+  () => new Map<string, { chatId: number; messageThreadId?: number }>(),
+);
+const attachedScopesBySessionId = vi.hoisted(
+  () => new Map<string, { userId: number; chatId: number; messageThreadId?: number }>(),
 );
 const sessionPromptMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ error: undefined })));
 const sessionStatusMock = vi.hoisted(() => vi.fn().mockResolvedValue({ data: {}, error: undefined }));
@@ -221,9 +234,43 @@ vi.mock("../../src/thread/manager.js", () => ({
     bindProjectToActiveContext: vi.fn(),
     bindSessionToActiveContext: vi.fn(),
     clearSessionForActiveContext: vi.fn(),
+    getActiveScope: getActiveScopeMock,
+    isActiveScope: isActiveScopeMock,
     getSessionTarget: getSessionTargetMock,
     getSessionScope: vi.fn(() => null),
     getSessionDirectory: vi.fn(() => "/repo"),
+  },
+}));
+
+vi.mock("../../src/attach/manager.js", () => ({
+  attachManager: {
+    attach: vi.fn(
+      (
+        scope: { userId: number; chatId: number; messageThreadId?: number },
+        session: { id: string },
+      ) => {
+      attachManagerAttachMock(scope, session);
+      attachedTargetsBySessionId.set(session.id, {
+        chatId: scope.chatId,
+        messageThreadId: scope.messageThreadId,
+      });
+      attachedScopesBySessionId.set(session.id, {
+        userId: scope.userId,
+        chatId: scope.chatId,
+        messageThreadId: scope.messageThreadId,
+      });
+      },
+    ),
+    detach: vi.fn((scope: { chatId: number; messageThreadId?: number }) => {
+      for (const [sessionId, target] of attachedTargetsBySessionId.entries()) {
+        if (target.chatId === scope.chatId && target.messageThreadId === scope.messageThreadId) {
+          attachedTargetsBySessionId.delete(sessionId);
+          attachedScopesBySessionId.delete(sessionId);
+        }
+      }
+    }),
+    getTargetForSession: getAttachedTargetForSessionMock,
+    getScopeForSession: getAttachedScopeForSessionMock,
   },
 }));
 
@@ -326,6 +373,10 @@ vi.mock("../../src/question/manager.js", () => ({
   questionManager: {
     isActive: vi.fn(() => false),
     getMessageIds: vi.fn(() => []),
+    previewSessionRestore: vi.fn(() => null),
+    stageSessionRestore: vi.fn(),
+    commitSessionRestore: vi.fn(),
+    rollbackSessionRestore: vi.fn(),
     startQuestions: vi.fn(),
     clear: vi.fn(),
   },
@@ -333,6 +384,12 @@ vi.mock("../../src/question/manager.js", () => ({
 
 vi.mock("../../src/permission/manager.js", () => ({
   permissionManager: {
+    clearMismatchedTargetScopeRequests: vi.fn(),
+    previewSessionRestore: vi.fn(() => ({ sessionId: "", targetScopeKey: "", staleTargetMessageIds: [], entries: [] })),
+    commitSessionRestore: vi.fn(),
+    getMessageIds: vi.fn(() => []),
+    getRequest: vi.fn(() => null),
+    removeByMessageId: vi.fn(),
     clear: vi.fn(),
   },
 }));
@@ -394,8 +451,23 @@ describe("bot/index local file follow-up orchestration", () => {
     keyboardGetKeyboardMock.mockReturnValue(undefined);
     keyboardIsInitializedMock.mockReset();
     keyboardIsInitializedMock.mockReturnValue(false);
+    attachManagerAttachMock.mockReset();
+    attachedTargetsBySessionId.clear();
+    attachedScopesBySessionId.clear();
+    getAttachedTargetForSessionMock.mockReset();
+    getAttachedTargetForSessionMock.mockImplementation(
+      (sessionId: string) => attachedTargetsBySessionId.get(sessionId) ?? null,
+    );
+    getAttachedScopeForSessionMock.mockReset();
+    getAttachedScopeForSessionMock.mockImplementation(
+      (sessionId: string) => attachedScopesBySessionId.get(sessionId) ?? null,
+    );
     getSessionTargetMock.mockReset();
     getSessionTargetMock.mockReturnValue({ chatId: 123, messageThreadId: 1 });
+    getActiveScopeMock.mockReset();
+    getActiveScopeMock.mockReturnValue({ userId: 777, chatId: 123, messageThreadId: 1 });
+    isActiveScopeMock.mockReset();
+    isActiveScopeMock.mockReturnValue(true);
     runWithTelegramConversationScopeMock.mockClear();
     subscribeToEventsMock.mockClear();
     sessionPromptMock.mockClear();
@@ -595,8 +667,205 @@ describe("bot/index local file follow-up orchestration", () => {
     );
   });
 
-  it("uses the routing target thread id for background final sends", async () => {
+  it("keeps cached prompt fallback deliverable when no attached route exists", async () => {
+    // This reproduces the prompt-only routing path: the session never gets an attached live target,
+    // so the cached prompt routing must still carry the in-flight final answer back to Telegram.
     getSessionTargetMock.mockReset().mockReturnValue(null);
+    getAttachedTargetForSessionMock.mockReset().mockReturnValue(null);
+    getAttachedScopeForSessionMock.mockReset().mockReturnValue(null);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "prompt fallback delivery",
+        chat: { id: 123 },
+        message_thread_id: 42,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-prompt-fallback-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-prompt-fallback-1",
+          sessionID: "session-1",
+          messageID: "message-prompt-fallback-1",
+          type: "text",
+          text: "Prompt fallback final reply",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-prompt-fallback-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      123,
+      "Prompt fallback final reply",
+      expect.objectContaining({ message_thread_id: 42 }),
+    );
+  });
+
+  it("uses the attached scope instead of the original prompt scope when attached routing wins", async () => {
+    // The prompt starts in thread 42, but delivery should adopt the newer attached route/scope on thread 1.
+    keyboardIsInitializedMock.mockReturnValue(true);
+    keyboardGetKeyboardMock.mockReturnValue({ keyboard: [[{ text: "Attached" }]] });
+    getSessionTargetMock.mockReset().mockReturnValue(null);
+    getAttachedTargetForSessionMock.mockReset().mockReturnValue({
+      chatId: 123,
+      messageThreadId: 1,
+    });
+    getAttachedScopeForSessionMock.mockReset().mockReturnValue({
+      userId: 777,
+      chatId: 123,
+      messageThreadId: 1,
+    });
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "attached scope wins",
+        chat: { id: 123 },
+        message_thread_id: 42,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-attached-scope-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-attached-scope-1",
+          sessionID: "session-1",
+          messageID: "message-attached-scope-1",
+          type: "text",
+          text: "Attached scope reply",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-attached-scope-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      123,
+      "Attached scope reply",
+      expect.objectContaining({
+        message_thread_id: 1,
+        reply_markup: { keyboard: [[{ text: "Attached" }]] },
+      }),
+    );
+
+    const attachedScope = { userId: 777, chatId: 123, messageThreadId: 1 };
+    const originalPromptScope = { userId: 777, chatId: 123, messageThreadId: 42 };
+
+    expect(
+      runWithTelegramConversationScopeMock.mock.calls.some(
+        ([scope]) => JSON.stringify(scope) === JSON.stringify(attachedScope),
+      ),
+    ).toBe(true);
+    expect(
+      runWithTelegramConversationScopeMock.mock.calls.some(
+        ([scope]) => JSON.stringify(scope) === JSON.stringify(originalPromptScope),
+      ),
+    ).toBe(false);
+  });
+
+  it("uses the attached target thread id for background final sends", async () => {
+    getSessionTargetMock.mockReset().mockReturnValue(null);
+    getAttachedTargetForSessionMock.mockReset().mockReturnValue({
+      chatId: 123,
+      messageThreadId: 1,
+    });
     const bot = createBot() as unknown as FakeBot;
     const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
@@ -670,12 +939,207 @@ describe("bot/index local file follow-up orchestration", () => {
     expect(sendMessageMock).toHaveBeenCalledWith(
       123,
       "Route-target reply",
-      expect.objectContaining({ message_thread_id: 42 }),
+      expect.objectContaining({ message_thread_id: 1 }),
     );
   });
 
-  it("keeps final delivery scoped to each prompt thread for interleaved sessions", async () => {
+  it("suppresses self-origin external input only for the same attached session scope", async () => {
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "run tests",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    // This reproduces the upstream user-role message event that should notify Telegram
+    // only when it was not just sent from the same session + topic by this bot instance.
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "user-message-same-topic",
+          sessionID: "session-1",
+          role: "user",
+          parts: [{ type: "text", text: "run tests" }],
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await Promise.resolve();
+    expect(sendMessageMock).not.toHaveBeenCalled();
+
+    attachedTargetsBySessionId.set("session-1", { chatId: 123, messageThreadId: 2 });
+    attachedScopesBySessionId.set("session-1", { userId: 777, chatId: 123, messageThreadId: 2 });
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "user-message-other-topic",
+          sessionID: "session-1",
+          role: "user",
+          parts: [{ type: "text", text: "run tests" }],
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    expect(sendMessageMock).toHaveBeenNthCalledWith(
+      1,
+      123,
+      expect.stringContaining("run tests"),
+      expect.objectContaining({ message_thread_id: 2 }),
+    );
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "user-message-different-text",
+          sessionID: "session-1",
+          role: "user",
+          parts: [{ type: "text", text: "open docs" }],
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(2));
+    expect(sendMessageMock).toHaveBeenNthCalledWith(
+      2,
+      123,
+      expect.stringContaining("open docs"),
+      expect.objectContaining({ message_thread_id: 2 }),
+    );
+
+    attachedTargetsBySessionId.set("session-1", { chatId: 123, messageThreadId: 9 });
+    attachedScopesBySessionId.set("session-1", { userId: 777, chatId: 123, messageThreadId: 9 });
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "user-message-external",
+          sessionID: "session-1",
+          role: "user",
+          parts: [{ type: "text", text: "true external input" }],
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(3));
+    expect(sendMessageMock).toHaveBeenNthCalledWith(
+      3,
+      123,
+      expect.stringContaining("true external input"),
+      expect.objectContaining({ message_thread_id: 9 }),
+    );
+  });
+
+  it("does not notify twice for the same external user message id", async () => {
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "seed routing",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    attachedTargetsBySessionId.set("session-1", { chatId: 123, messageThreadId: 7 });
+    attachedScopesBySessionId.set("session-1", { userId: 777, chatId: 123, messageThreadId: 7 });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    const repeatedEvent = {
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "external-repeat-1",
+          sessionID: "session-1",
+          role: "user",
+          parts: [{ type: "text", text: "shared text" }],
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event;
+
+    emit(repeatedEvent);
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+
+    emit(repeatedEvent);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "external-repeat-2",
+          sessionID: "session-1",
+          role: "user",
+          parts: [{ type: "text", text: "shared text" }],
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(2));
+    expect(sendMessageMock).toHaveBeenNthCalledWith(
+      2,
+      123,
+      expect.stringContaining("shared text"),
+      expect.objectContaining({ message_thread_id: 7 }),
+    );
+  });
+
+  it("keeps final delivery scoped to each attached topic for interleaved sessions", async () => {
     getSessionTargetMock.mockReset().mockReturnValue(null);
+    getAttachedTargetForSessionMock.mockReset();
+    getAttachedTargetForSessionMock.mockImplementation((sessionId: string) => {
+      if (sessionId === "session-1") {
+        return { chatId: 123, messageThreadId: 11 };
+      }
+
+      if (sessionId === "session-2") {
+        return { chatId: 123, messageThreadId: 22 };
+      }
+
+      return null;
+    });
     getCurrentSessionMock.mockReset();
     getCurrentSessionMock
       .mockReturnValueOnce({ id: "session-1", title: "Session 1", directory: "/repo" })
@@ -828,8 +1292,12 @@ describe("bot/index local file follow-up orchestration", () => {
     );
   });
 
-  it("replies to the source user message when sending the final keyboard-bearing response", async () => {
+  it("replies to the source user message when sending the final keyboard-bearing response through the attached target", async () => {
     getSessionTargetMock.mockReset().mockReturnValue(null);
+    getAttachedTargetForSessionMock.mockReset().mockReturnValue({
+      chatId: 123,
+      messageThreadId: 1,
+    });
     keyboardIsInitializedMock.mockReturnValue(true);
     keyboardGetKeyboardMock.mockReturnValue({ keyboard: [[{ text: "A" }]] });
 
@@ -908,7 +1376,7 @@ describe("bot/index local file follow-up orchestration", () => {
       123,
       "Reply-bound keyboard",
       expect.objectContaining({
-        message_thread_id: 42,
+        message_thread_id: 1,
         reply_parameters: expect.objectContaining({ message_id: 321 }),
         reply_markup: { keyboard: [[{ text: "A" }]] },
       }),
@@ -2026,9 +2494,41 @@ describe("bot/index local file follow-up orchestration", () => {
         bindProjectToActiveContext: vi.fn(),
         bindSessionToActiveContext: vi.fn(),
         clearSessionForActiveContext: vi.fn(),
+        getActiveScope: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
+        isActiveScope: vi.fn(() => true),
         getSessionTarget: vi.fn(() => currentTarget),
         getSessionScope: vi.fn(() => null),
         getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/attach/manager.js", () => ({
+      attachManager: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        getTargetForSession: vi.fn(() => currentTarget ?? null),
+        getScopeForSession: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
+      },
+    }));
+
+    vi.doMock("../../src/attach/manager.js", () => ({
+      attachManager: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        getTargetForSession: vi.fn(() => currentTarget ?? null),
+        getScopeForSession: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
       },
     }));
 
@@ -2191,9 +2691,28 @@ describe("bot/index local file follow-up orchestration", () => {
         bindProjectToActiveContext: vi.fn(),
         bindSessionToActiveContext: vi.fn(),
         clearSessionForActiveContext: vi.fn(),
+        getActiveScope: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
+        isActiveScope: vi.fn(() => true),
         getSessionTarget: vi.fn(() => currentTarget),
         getSessionScope: vi.fn(() => null),
         getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/attach/manager.js", () => ({
+      attachManager: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        getTargetForSession: vi.fn(() => currentTarget ?? null),
+        getScopeForSession: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
       },
     }));
 
@@ -2360,9 +2879,28 @@ describe("bot/index local file follow-up orchestration", () => {
         bindProjectToActiveContext: vi.fn(),
         bindSessionToActiveContext: vi.fn(),
         clearSessionForActiveContext: vi.fn(),
+        getActiveScope: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
+        isActiveScope: vi.fn(() => true),
         getSessionTarget: vi.fn(() => currentTarget),
         getSessionScope: vi.fn(() => null),
         getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/attach/manager.js", () => ({
+      attachManager: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        getTargetForSession: vi.fn(() => currentTarget ?? null),
+        getScopeForSession: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
       },
     }));
 
@@ -2545,9 +3083,28 @@ describe("bot/index local file follow-up orchestration", () => {
         bindProjectToActiveContext: vi.fn(),
         bindSessionToActiveContext: vi.fn(),
         clearSessionForActiveContext: vi.fn(),
+        getActiveScope: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
+        isActiveScope: vi.fn(() => true),
         getSessionTarget: vi.fn(() => currentTarget),
         getSessionScope: vi.fn(() => null),
         getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/attach/manager.js", () => ({
+      attachManager: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        getTargetForSession: vi.fn(() => currentTarget ?? null),
+        getScopeForSession: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
       },
     }));
 
@@ -2680,6 +3237,12 @@ describe("bot/index local file follow-up orchestration", () => {
           bindProjectToActiveContext: vi.fn(),
           bindSessionToActiveContext: vi.fn(),
           clearSessionForActiveContext: vi.fn(),
+          getActiveScope: vi.fn(() =>
+            currentTarget
+              ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+              : null,
+          ),
+          isActiveScope: vi.fn(() => true),
           getSessionTarget: vi.fn(() => currentTarget),
           getSessionScope: vi.fn(() => null),
           getSessionDirectory: vi.fn(() => "/repo"),
@@ -2882,9 +3445,28 @@ describe("bot/index local file follow-up orchestration", () => {
         bindProjectToActiveContext: vi.fn(),
         bindSessionToActiveContext: vi.fn(),
         clearSessionForActiveContext: vi.fn(),
+        getActiveScope: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
+        isActiveScope: vi.fn(() => true),
         getSessionTarget: vi.fn(() => currentTarget),
         getSessionScope: vi.fn(() => null),
         getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/attach/manager.js", () => ({
+      attachManager: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        getTargetForSession: vi.fn(() => currentTarget ?? null),
+        getScopeForSession: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
       },
     }));
 
@@ -3030,9 +3612,28 @@ describe("bot/index local file follow-up orchestration", () => {
         bindProjectToActiveContext: vi.fn(),
         bindSessionToActiveContext: vi.fn(),
         clearSessionForActiveContext: vi.fn(),
+        getActiveScope: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
+        isActiveScope: vi.fn(() => true),
         getSessionTarget: vi.fn(() => currentTarget),
         getSessionScope: vi.fn(() => null),
         getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/attach/manager.js", () => ({
+      attachManager: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        getTargetForSession: vi.fn(() => currentTarget ?? null),
+        getScopeForSession: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
       },
     }));
 
@@ -3162,9 +3763,28 @@ describe("bot/index local file follow-up orchestration", () => {
         bindProjectToActiveContext: vi.fn(),
         bindSessionToActiveContext: vi.fn(),
         clearSessionForActiveContext: vi.fn(),
+        getActiveScope: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
+        isActiveScope: vi.fn(() => true),
         getSessionTarget: vi.fn(() => currentTarget),
         getSessionScope: vi.fn(() => null),
         getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/attach/manager.js", () => ({
+      attachManager: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        getTargetForSession: vi.fn(() => currentTarget ?? null),
+        getScopeForSession: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
       },
     }));
 
@@ -3352,9 +3972,28 @@ describe("bot/index local file follow-up orchestration", () => {
         bindProjectToActiveContext: vi.fn(),
         bindSessionToActiveContext: vi.fn(),
         clearSessionForActiveContext: vi.fn(),
+        getActiveScope: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
+        isActiveScope: vi.fn(() => true),
         getSessionTarget: vi.fn(() => currentTarget),
         getSessionScope: vi.fn(() => null),
         getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/attach/manager.js", () => ({
+      attachManager: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        getTargetForSession: vi.fn(() => currentTarget ?? null),
+        getScopeForSession: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
       },
     }));
 
@@ -3523,6 +4162,7 @@ describe("bot/index local file follow-up orchestration", () => {
       messageThreadId: 1,
     };
     getSessionTargetMock.mockImplementation(() => currentTarget);
+    getAttachedTargetForSessionMock.mockImplementation(() => currentTarget);
     const bot = createBot() as any;
     const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
@@ -3689,6 +4329,8 @@ describe("bot/index local file follow-up orchestration", () => {
   });
 
   it("maps tenant /state paths to host files before sending follow-up media", async () => {
+    getActiveScopeMock.mockReturnValue({ userId: 888, chatId: 123, messageThreadId: 1 });
+
     vi.mocked(getTenantRuntimeInfo).mockReturnValue({
       userId: 888,
       chatId: 123,
@@ -4004,9 +4646,28 @@ describe("bot/index local file follow-up orchestration", () => {
         bindProjectToActiveContext: vi.fn(),
         bindSessionToActiveContext: vi.fn(),
         clearSessionForActiveContext: vi.fn(),
+        getActiveScope: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
+        isActiveScope: vi.fn(() => true),
         getSessionTarget: vi.fn(() => currentTarget),
         getSessionScope: vi.fn(() => null),
         getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/attach/manager.js", () => ({
+      attachManager: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        getTargetForSession: vi.fn(() => currentTarget ?? null),
+        getScopeForSession: vi.fn(() =>
+          currentTarget
+            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            : null,
+        ),
       },
     }));
 

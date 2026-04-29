@@ -1,11 +1,21 @@
 import { logger } from "../utils/logger.js";
-import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
+import {
+  resolveTelegramConversationScopeKey,
+  type TelegramConversationScope,
+} from "../telegram/scope.js";
+
+type ForegroundScope = TelegramConversationScope | string | null;
 
 class ForegroundSessionState {
   private activeSessionIdsByScope = new Map<string, Set<string>>();
+  private busyScopeKeyBySessionId = new Map<string, string>();
 
-  private getScopeState(scopeKey?: string): Set<string> {
+  private getScopeState(scopeKey?: ForegroundScope): Set<string> {
     const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    return this.getOrCreateScopeState(resolvedScopeKey);
+  }
+
+  private getOrCreateScopeState(resolvedScopeKey: string): Set<string> {
     const existingState = this.activeSessionIdsByScope.get(resolvedScopeKey);
     if (existingState) {
       return existingState;
@@ -16,7 +26,12 @@ class ForegroundSessionState {
     return nextState;
   }
 
-  markBusy(sessionId: string, scopeKey?: string): void {
+  private getExistingScopeState(scopeKey?: ForegroundScope): Set<string> | undefined {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    return this.activeSessionIdsByScope.get(resolvedScopeKey);
+  }
+
+  markBusy(sessionId: string, scopeKey?: ForegroundScope): void {
     if (!sessionId) {
       return;
     }
@@ -24,24 +39,31 @@ class ForegroundSessionState {
     const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
     const scopeState = this.getScopeState(resolvedScopeKey);
     scopeState.add(sessionId);
+    this.busyScopeKeyBySessionId.set(sessionId, resolvedScopeKey);
     logger.debug(
       `[ScheduledTaskForeground] Marked session busy: scope=${resolvedScopeKey}, session=${sessionId}, count=${scopeState.size}`,
     );
   }
 
-  tryMarkBusy(sessionId: string, scopeKey?: string): boolean {
+  tryMarkBusy(sessionId: string, scopeKey?: ForegroundScope): boolean {
     this.markBusy(sessionId, scopeKey);
     return true;
   }
 
-  markIdle(sessionId: string, scopeKey?: string): void {
+  markIdle(sessionId: string, scopeKey?: ForegroundScope): void {
     if (!sessionId) {
       return;
     }
 
-    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
-    const scopeState = this.getScopeState(resolvedScopeKey);
+    const resolvedScopeKey =
+      this.busyScopeKeyBySessionId.get(sessionId) ?? resolveTelegramConversationScopeKey(scopeKey);
+    const scopeState = this.activeSessionIdsByScope.get(resolvedScopeKey);
+    if (!scopeState) {
+      this.busyScopeKeyBySessionId.delete(sessionId);
+      return;
+    }
     scopeState.delete(sessionId);
+    this.busyScopeKeyBySessionId.delete(sessionId);
     logger.debug(
       `[ScheduledTaskForeground] Marked session idle: scope=${resolvedScopeKey}, session=${sessionId}, count=${scopeState.size}`,
     );
@@ -51,15 +73,19 @@ class ForegroundSessionState {
     }
   }
 
-  isBusy(scopeKey?: string): boolean {
-    return this.getScopeState(scopeKey).size > 0;
+  isBusy(scopeKey?: ForegroundScope): boolean {
+    return (this.getExistingScopeState(scopeKey)?.size ?? 0) > 0;
   }
 
-  getActiveCount(scopeKey?: string): number {
-    return this.getScopeState(scopeKey).size;
+  isBusyForScope(scopeKey?: ForegroundScope): boolean {
+    return this.isBusy(scopeKey);
   }
 
-  clearAll(reason: string, scopeKey?: string): void {
+  getActiveCount(scopeKey?: ForegroundScope): number {
+    return this.getExistingScopeState(scopeKey)?.size ?? 0;
+  }
+
+  clearAll(reason: string, scopeKey?: ForegroundScope): void {
     const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
     const scopeState = this.activeSessionIdsByScope.get(resolvedScopeKey);
     if (!scopeState || scopeState.size === 0) {
@@ -69,11 +95,17 @@ class ForegroundSessionState {
     logger.info(
       `[ScheduledTaskForeground] Cleared foreground busy state: reason=${reason}, scope=${resolvedScopeKey}, count=${scopeState.size}`,
     );
+    for (const activeSessionId of scopeState) {
+      if (this.busyScopeKeyBySessionId.get(activeSessionId) === resolvedScopeKey) {
+        this.busyScopeKeyBySessionId.delete(activeSessionId);
+      }
+    }
     this.activeSessionIdsByScope.delete(resolvedScopeKey);
   }
 
   __resetForTests(): void {
     this.activeSessionIdsByScope.clear();
+    this.busyScopeKeyBySessionId.clear();
   }
 }
 

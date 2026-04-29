@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseTelegramBlocks } from "../../../src/telegram/render/block-parser.js";
 import {
+  renderInlineNodesAsTelegramMarkdownV2,
   renderInlineNodes,
   renderInlineNodesValidated,
 } from "../../../src/telegram/render/inline-renderer.js";
@@ -190,5 +191,52 @@ describe("telegram/render/inline-renderer", () => {
     ];
 
     expect(() => renderInlineNodesValidated(nodes)).toThrow(/Invalid Telegram inline entities/);
+  });
+
+  it("renders supported inline nodes into deterministic MarkdownV2 text", () => {
+    const nodes: InlineNode[] = [
+      { type: "text", text: "Hello " },
+      { type: "bold", children: [{ type: "text", text: "bold" }] },
+      { type: "text", text: " " },
+      { type: "italic", children: [{ type: "text", text: "italic" }] },
+      { type: "text", text: " " },
+      { type: "strike", children: [{ type: "text", text: "strike" }] },
+      { type: "text", text: " " },
+      { type: "code", text: "npm run test" },
+      { type: "text", text: " " },
+      {
+        type: "link",
+        text: [{ type: "text", text: "docs" }],
+        url: "https://example.com/docs?q=1&v=test",
+      },
+      { type: "text", text: "!" },
+    ];
+
+    expect(renderInlineNodesAsTelegramMarkdownV2(nodes)).toBe(
+      "Hello *bold* _italic_ ~strike~ `npm run test` [docs](https://example.com/docs?q=1&v=test)\\!",
+    );
+  });
+
+  it("keeps literal backticks escaped inside inline code in MarkdownV2 output", () => {
+    const nodes: InlineNode[] = [{ type: "code", text: "npm `test`" }];
+
+    expect(renderInlineNodesAsTelegramMarkdownV2(nodes)).toBe("`npm \\`test\\``");
+  });
+
+  it("escapes unsupported or malformed link text safely in MarkdownV2 output", () => {
+    const nodes: InlineNode[] = [
+      {
+        type: "link",
+        text: [
+          { type: "bold", children: [{ type: "text", text: "bold" }] },
+          { type: "text", text: " [raw]" },
+        ],
+        url: "https://example.com/path(with)parens",
+      },
+    ];
+
+    expect(renderInlineNodesAsTelegramMarkdownV2(nodes)).toBe(
+      "bold \\[raw\\]\\(https://example\\.com/path\\(with\\)parens\\)",
+    );
   });
 });

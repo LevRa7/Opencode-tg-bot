@@ -73,6 +73,9 @@ describe("command sync helpers", () => {
     const commands = getLocalizedBotCommands({ isAdmin: false });
 
     expect(commands.find((c) => c.command === "restart")).toBeUndefined();
+    expect(commands.find((c) => c.command === "opencode_start")).toBeUndefined();
+    expect(commands.find((c) => c.command === "opencode_stop")).toBeUndefined();
+    expect(commands.find((c) => c.command === "mcps")).toBeDefined();
     expect(commands.find((c) => c.command === "status")).toBeDefined();
     expect(commands.find((c) => c.command === "help")).toBeDefined();
   });
@@ -81,6 +84,8 @@ describe("command sync helpers", () => {
     const commands = getLocalizedBotCommands({ isAdmin: true });
 
     expect(commands.find((c) => c.command === "restart")).toBeDefined();
+    expect(commands.find((c) => c.command === "opencode_start")).toBeDefined();
+    expect(commands.find((c) => c.command === "opencode_stop")).toBeDefined();
     expect(commands.find((c) => c.command === "status")).toBeDefined();
   });
 

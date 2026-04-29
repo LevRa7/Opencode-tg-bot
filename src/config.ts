@@ -33,6 +33,7 @@ function loadMergedEnv(): void {
 loadMergedEnv();
 
 export type MessageFormatMode = "raw" | "markdown";
+export type TtsProvider = "openai" | "google";
 
 function getEnvVar(key: string, required: boolean = true): string {
   const value = process.env[key];
@@ -120,6 +121,30 @@ function getOptionalMessageFormatModeEnvVar(
   return defaultValue;
 }
 
+function getOptionalTtsProviderEnvVar(key: string, defaultValue: TtsProvider): TtsProvider {
+  const value = getEnvVar(key, false);
+
+  if (!value) {
+    return defaultValue;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "openai" || normalized === "google") {
+    return normalized;
+  }
+
+  return defaultValue;
+}
+
+function getOptionalTtsVoiceEnvVar(provider: TtsProvider): string {
+  const configuredVoice = getEnvVar("TTS_VOICE", false);
+  if (configuredVoice) {
+    return configuredVoice;
+  }
+
+  return provider === "google" ? "en-US-Standard-A" : "alloy";
+}
+
 function getOptionalStringListEnvVar(key: string): string[] {
   const value = getEnvVar(key, false);
   if (!value) {
@@ -187,6 +212,17 @@ const configuredAllowedUserIds = new Set<number>([
 ]);
 
 export const config = {
+  tts: (() => {
+    const provider = getOptionalTtsProviderEnvVar("TTS_PROVIDER", "openai");
+
+    return {
+      provider,
+      apiUrl: getEnvVar("TTS_API_URL", false),
+      apiKey: getEnvVar("TTS_API_KEY", false),
+      model: getEnvVar("TTS_MODEL", false) || "gpt-4o-mini-tts",
+      voice: getOptionalTtsVoiceEnvVar(provider),
+    };
+  })(),
   telegram: {
     token: getEnvVar("TELEGRAM_BOT_TOKEN"),
     adminUserId,
@@ -197,6 +233,10 @@ export const config = {
     apiUrl: getEnvVar("OPENCODE_API_URL", false) || "http://localhost:4096",
     username: getEnvVar("OPENCODE_SERVER_USERNAME", false) || "opencode",
     password: getEnvVar("OPENCODE_SERVER_PASSWORD", false),
+    autoRestart: {
+      enabled: getOptionalBooleanEnvVar("OPENCODE_AUTO_RESTART_ENABLED", false),
+      monitorIntervalSec: getOptionalPositiveIntEnvVar("OPENCODE_MONITOR_INTERVAL_SEC", 300),
+    },
     model: {
       provider: getEnvVar("OPENCODE_MODEL_PROVIDER", true),
       modelId: getEnvVar("OPENCODE_MODEL_ID", true),
@@ -240,11 +280,5 @@ export const config = {
     model: getEnvVar("STT_MODEL", false) || "whisper-large-v3-turbo",
     language: getEnvVar("STT_LANGUAGE", false),
     notePrompt: getEnvVar("STT_NOTE_PROMPT", false),
-  },
-  tts: {
-    apiUrl: getEnvVar("TTS_API_URL", false),
-    apiKey: getEnvVar("TTS_API_KEY", false),
-    model: getEnvVar("TTS_MODEL", false) || "gpt-4o-mini-tts",
-    voice: getEnvVar("TTS_VOICE", false) || "alloy",
   },
 };

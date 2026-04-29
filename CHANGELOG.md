@@ -12,6 +12,19 @@ Documentation rule:
 
 ### Added
 
+- Added topic-scoped session attach/follow behavior for multi-user and forum-thread workflows, keeping attached-session restores, follow-up routing, and startup pinned status isolated per private chat or Telegram topic.
+  - Why: one shared global route caused attached-session events and pinned state to bleed across users or topics, which made concurrent remote work hard to trust.
+  - Affects: `src/attach/*`, `src/thread/*`, `src/pinned/manager.ts`, `src/bot/index.ts`, `tests/attach/*.test.ts`, `tests/pinned/manager.test.ts`
+- Added `/mcps` for browsing configured MCP servers, their connection state, enabled/disabled status, command/url details, and connection errors from Telegram.
+  - Why: users need a lightweight way to verify MCP availability remotely without opening the local OpenCode UI.
+  - Affects: `src/bot/commands/mcps.ts`, `src/bot/commands/definitions.ts`, `src/i18n/*.ts`, `tests/bot/commands/mcps.test.ts`, `README.md`, `PRODUCT.md`
+- Added optional OpenCode server monitoring with automatic restart controlled by `OPENCODE_AUTO_RESTART_ENABLED` and `OPENCODE_MONITOR_INTERVAL_SEC`.
+  - Why: remote users need the managed local OpenCode server to recover from stop/crash events without manual access to the host machine.
+  - Affects: `src/opencode/auto-restart.ts`, `src/app/start-bot-app.ts`, `src/config.ts`, `tests/opencode/auto-restart.test.ts`, `tests/runtime/start-bot-app.test.ts`, `.env.example`, `README.md`, `PRODUCT.md`
+- Added Google Cloud TTS as an alternative `/tts` provider via `TTS_PROVIDER=google` and `GOOGLE_APPLICATION_CREDENTIALS`, alongside provider-specific default voices.
+  - Why: some deployments need local service-account based speech synthesis instead of OpenAI-compatible API credentials.
+  - Affects: `src/config.ts`, `src/tts/client.ts`, `tests/config.test.ts`, `tests/tts/client.test.ts`, `.env.example`, `README.md`, `PRODUCT.md`
+
 - Added an automated Docker OpenCode refresh workflow through `docker/update-opencode.sh`, including upstream fetch, local tenant/image rebuilds, version reporting, and Docker test reruns.
   - Why: updating the Dockerized OpenCode runtime should be reproducible from one documented entrypoint instead of requiring manual rebuild sequencing.
   - Affects: `docker/update-opencode.sh`, `docker/README.md`, `docker/README-ru.md`
@@ -29,6 +42,13 @@ Documentation rule:
   - Affects: `docker/Dockerfile`, `docker/bin/docker-entrypoint.sh`, `docker/tests/tenant-entrypoint-permissions.test.sh`, `docker/tests/tg-cli-image.test.sh`, `docker/README.md`, `docker/README-ru.md`
 
 ### Changed
+
+- Changed assistant reply delivery to use a local Telegram MarkdownV2 formatter for user-visible `MESSAGE_FORMAT_MODE=markdown` rendering.
+  - Why: Telegram MarkdownV2 is stricter than generic markdown, so a local formatter reduces broken escaping and makes streamed/final replies more predictable.
+  - Affects: `src/telegram/render/*`, `src/bot/utils/assistant-rendering.ts`, `tests/telegram/render/*.test.ts`, `README.md`
+- Changed TTS synthesis to strip Markdown before generating speech output.
+  - Why: links, headings, and markdown markers should not be read out literally in spoken replies.
+  - Affects: `src/tts/client.ts`, `tests/tts/client.test.ts`, `README.md`, `PRODUCT.md`
 
 - Added local `ffmpeg`-based preprocessing for oversized Telegram videos and video notes up to 61 seconds, compressing them to a derivative under 19.5MB before the existing video attachment/transcription flow continues.
   - Why: Telegram videos can exceed the downloader ceiling well before they exceed the duration ceiling, so the bot needs a deterministic way to accept longer high-bitrate clips without breaking the downstream 20MB media path.
@@ -86,6 +106,13 @@ Documentation rule:
   - Affects: `src/bot/index.ts`, `src/bot/utils/assistant-rendering.ts`, `tests/bot/index.local-file-follow-up.test.ts`
 
 ### Fixed
+
+- Fixed duplicate or misleading subagent/tool-call presentation so repeated completion updates and overlapping tool-call streams do not spam Telegram with stale or duplicate progress summaries.
+  - Why: concurrent subagent and tool activity could produce repeated completion lines or visually overlapping tool-call updates, making live progress harder to follow.
+  - Affects: `src/summary/aggregator.ts`, `src/bot/streaming/tool-call-streamer.ts`, `tests/summary/aggregator.test.ts`, `tests/bot/streaming/tool-call-streamer.test.ts`
+- Fixed scoped external-input and busy-state routing so attached-session input suppression and foreground busy tracking stay isolated to the same chat/topic scope.
+  - Why: concurrent users or forum topics must not inherit each other's external-input notices or "bot is busy" protection state.
+  - Affects: `src/bot/index.ts`, `src/scheduled-task/foreground-state.ts`, `tests/bot/index.local-file-follow-up.test.ts`, `tests/scheduled-task/foreground-state.test.ts`
 
 - Unified deferred Telegram batching across text, forwarded messages, and media preprocessing, so large bursts now stay in a single OpenCode follow-up chunk while media is still downloading/transcribing.
   - Why: large forwarded batches with photos, videos, voice notes, and documents could split into multiple OpenCode prompts because media handlers finished after the silence timer expired, and deferred chunk items did not all carry stable sender/forward metadata.
@@ -146,6 +173,10 @@ Documentation rule:
   - Affects: `src/bot/index.ts`, `src/bot/handlers/prompt.ts`, `src/bot/utils/assistant-run-state.ts`, `src/bot/utils/finalize-assistant-response.ts`, `src/bot/utils/assistant-run-footer.ts`, `tests/bot/index.local-file-follow-up.test.ts`
 
 ### Documentation
+
+- Updated `.env.example`, `README.md`, and `PRODUCT.md` for `/mcps`, optional OpenCode auto-restart, Google TTS configuration, topic-scoped attach/follow behavior, and current formatting behavior.
+  - Why: the user-facing docs and product state should reflect the multi-user v0.17.0-based feature set that is already implemented in this branch.
+  - Affects: `.env.example`, `README.md`, `PRODUCT.md`, `CHANGELOG.md`
 
 - Added `docs/architecture.md` to keep a textual description of the full bot flow, internal layers, component interactions, and external API usage.
 - Strengthened `AGENTS.md` documentation requirements so functional and architectural changes must update the textual docs.

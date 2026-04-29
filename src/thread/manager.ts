@@ -478,6 +478,14 @@ class ThreadContextManager {
     return this.activeScope ? { ...this.activeScope } : null;
   }
 
+  isActiveScope(scope: TelegramConversationScope): boolean {
+    if (!this.activeScope) {
+      return false;
+    }
+
+    return buildContextKey(this.activeScope) === buildContextKey(scope);
+  }
+
   clearAll(reason: string): void {
     this.ensureHydrated();
 

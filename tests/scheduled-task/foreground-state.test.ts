@@ -77,4 +77,46 @@ describe("scheduled-task/foreground-state", () => {
       ),
     ).toBe(true);
   });
+
+  it("clears the original busy scope even if the caller later uses another topic scope", () => {
+    const topicAScope = { userId: 1, chatId: 100, messageThreadId: 10 };
+    const topicBScope = { userId: 1, chatId: 100, messageThreadId: 20 };
+
+    runWithTelegramConversationScope(topicAScope, () => {
+      foregroundSessionState.markBusy("session-a");
+    });
+
+    runWithTelegramConversationScope(topicBScope, () => {
+      foregroundSessionState.markIdle("session-a");
+    });
+
+    expect(runWithTelegramConversationScope(topicAScope, () => foregroundSessionState.isBusy())).toBe(
+      false,
+    );
+    expect(runWithTelegramConversationScope(topicBScope, () => foregroundSessionState.isBusy())).toBe(
+      false,
+    );
+  });
+
+  it("does not create busy state entries during read-only checks", () => {
+    const topicScope = { userId: 1, chatId: 100, messageThreadId: 10 };
+
+    expect(runWithTelegramConversationScope(topicScope, () => foregroundSessionState.isBusy())).toBe(
+      false,
+    );
+    expect(
+      runWithTelegramConversationScope(topicScope, () => foregroundSessionState.getActiveCount()),
+    ).toBe(0);
+
+    runWithTelegramConversationScope(topicScope, () => {
+      foregroundSessionState.clearAll("empty_scope_read_should_not_create_state");
+    });
+
+    expect(runWithTelegramConversationScope(topicScope, () => foregroundSessionState.isBusy())).toBe(
+      false,
+    );
+    expect(
+      runWithTelegramConversationScope(topicScope, () => foregroundSessionState.getActiveCount()),
+    ).toBe(0);
+  });
 });

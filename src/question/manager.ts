@@ -2,7 +2,43 @@ import { logger } from "../utils/logger.js";
 import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
 import { Question, QuestionAnswer, QuestionState } from "./types.js";
 
-function createQuestionState(): QuestionState {
+interface InternalQuestionState extends QuestionState {
+  sessionId: string | null;
+}
+
+interface QuestionRestorePlan {
+  sessionId: string;
+  sourceScopeKey: string;
+  targetScopeKey: string;
+  targetState: InternalQuestionState;
+  previousTargetState: InternalQuestionState | null;
+}
+
+function cloneSelectedOptions(selectedOptions: Map<number, Set<number>>): Map<number, Set<number>> {
+  const cloned = new Map<number, Set<number>>();
+  for (const [questionIndex, selected] of selectedOptions.entries()) {
+    cloned.set(questionIndex, new Set(selected));
+  }
+
+  return cloned;
+}
+
+function cloneQuestionState(state: InternalQuestionState): InternalQuestionState {
+  return {
+    questions: [...state.questions],
+    currentIndex: state.currentIndex,
+    selectedOptions: cloneSelectedOptions(state.selectedOptions),
+    customAnswers: new Map(state.customAnswers),
+    customInputQuestionIndex: state.customInputQuestionIndex,
+    activeMessageId: state.activeMessageId,
+    messageIds: [...state.messageIds],
+    isActive: state.isActive,
+    requestID: state.requestID,
+    sessionId: state.sessionId,
+  };
+}
+
+function createQuestionState(): InternalQuestionState {
   return {
     questions: [],
     currentIndex: 0,
@@ -13,13 +49,15 @@ function createQuestionState(): QuestionState {
     messageIds: [],
     isActive: false,
     requestID: null,
+    sessionId: null,
   };
 }
 
 class QuestionManager {
-  private states = new Map<string, QuestionState>();
+  private states = new Map<string, InternalQuestionState>();
+  private scopeKeyBySessionId = new Map<string, string>();
 
-  private getScopeState(scopeKey?: string): QuestionState {
+  private getScopeState(scopeKey?: string): InternalQuestionState {
     const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
     const existingState = this.states.get(resolvedScopeKey);
     if (existingState) {
@@ -31,7 +69,18 @@ class QuestionManager {
     return nextState;
   }
 
-  startQuestions(questions: Question[], requestID: string, scopeKey?: string): void {
+  private clearSessionScope(scopeKey: string): void {
+    const state = this.states.get(scopeKey);
+    if (!state?.sessionId) {
+      return;
+    }
+
+    if (this.scopeKeyBySessionId.get(state.sessionId) === scopeKey) {
+      this.scopeKeyBySessionId.delete(state.sessionId);
+    }
+  }
+
+  startQuestions(questions: Question[], requestID: string, scopeKey?: string, sessionId?: string): void {
     const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
     const state = this.getScopeState(resolvedScopeKey);
 
@@ -50,6 +99,8 @@ class QuestionManager {
       `[QuestionManager] Starting new poll for scope=${resolvedScopeKey} with ${questions.length} questions, requestID=${requestID}`,
     );
 
+    this.clearSessionScope(resolvedScopeKey);
+
     this.states.set(resolvedScopeKey, {
       questions,
       currentIndex: 0,
@@ -60,7 +111,94 @@ class QuestionManager {
       messageIds: [],
       isActive: true,
       requestID,
+      sessionId: sessionId ?? null,
     });
+
+    if (sessionId) {
+      this.scopeKeyBySessionId.set(sessionId, resolvedScopeKey);
+    }
+  }
+
+  private buildRestoreState(sourceState: InternalQuestionState, sessionId: string): InternalQuestionState {
+    return {
+      questions: [...sourceState.questions],
+      currentIndex: sourceState.currentIndex,
+      selectedOptions: cloneSelectedOptions(sourceState.selectedOptions),
+      customAnswers: new Map(sourceState.customAnswers),
+      customInputQuestionIndex: null,
+      activeMessageId: null,
+      messageIds: [],
+      isActive: sourceState.isActive,
+      requestID: sourceState.requestID,
+      sessionId,
+    };
+  }
+
+  previewSessionRestore(
+    sessionId: string,
+    targetScopeKey: string,
+    sourceScopeKeyOverride?: string,
+  ): QuestionRestorePlan | null {
+    const sourceScopeKey = sourceScopeKeyOverride ?? this.scopeKeyBySessionId.get(sessionId);
+    if (!sourceScopeKey || sourceScopeKey === targetScopeKey) {
+      return null;
+    }
+
+    const sourceState = this.states.get(sourceScopeKey);
+    if (!sourceState || !sourceState.isActive) {
+      return null;
+    }
+
+    return {
+      sessionId,
+      sourceScopeKey,
+      targetScopeKey,
+      targetState: this.buildRestoreState(sourceState, sessionId),
+      previousTargetState: this.states.get(targetScopeKey)
+        ? cloneQuestionState(this.getScopeState(targetScopeKey))
+        : null,
+    };
+  }
+
+  stageSessionRestore(plan: QuestionRestorePlan): void {
+    this.states.set(plan.targetScopeKey, cloneQuestionState(plan.targetState));
+  }
+
+  rollbackSessionRestore(plan: QuestionRestorePlan): void {
+    this.states.set(plan.targetScopeKey, plan.previousTargetState ?? createQuestionState());
+
+    if (plan.previousTargetState?.sessionId) {
+      this.scopeKeyBySessionId.set(plan.previousTargetState.sessionId, plan.targetScopeKey);
+    }
+  }
+
+  commitSessionRestore(plan: QuestionRestorePlan): void {
+    if (
+      plan.previousTargetState?.sessionId &&
+      this.scopeKeyBySessionId.get(plan.previousTargetState.sessionId) === plan.targetScopeKey
+    ) {
+      this.scopeKeyBySessionId.delete(plan.previousTargetState.sessionId);
+    }
+
+    this.states.set(plan.sourceScopeKey, createQuestionState());
+    const committedState = this.getScopeState(plan.targetScopeKey);
+    committedState.sessionId = plan.sessionId;
+    this.scopeKeyBySessionId.set(plan.sessionId, plan.targetScopeKey);
+
+    logger.info(
+      `[QuestionManager] Restored pending poll for session=${plan.sessionId} from scope=${plan.sourceScopeKey} to scope=${plan.targetScopeKey}`,
+    );
+  }
+
+  restoreSessionToScope(sessionId: string, targetScopeKey: string): boolean {
+    const plan = this.previewSessionRestore(sessionId, targetScopeKey);
+    if (!plan) {
+      return false;
+    }
+
+    this.stageSessionRestore(plan);
+    this.commitSessionRestore(plan);
+    return true;
   }
 
   getRequestID(scopeKey?: string): string | null {
@@ -222,11 +360,14 @@ class QuestionManager {
   }
 
   clear(scopeKey?: string): void {
-    this.states.set(resolveTelegramConversationScopeKey(scopeKey), createQuestionState());
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+    this.clearSessionScope(resolvedScopeKey);
+    this.states.set(resolvedScopeKey, createQuestionState());
   }
 
   clearAll(): void {
     this.states.clear();
+    this.scopeKeyBySessionId.clear();
   }
 
   getAllAnswers(scopeKey?: string): QuestionAnswer[] {

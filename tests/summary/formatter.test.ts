@@ -112,6 +112,26 @@ describe("summary/formatter", () => {
     expect(parts[0]).toContain('const row = "| raw |";');
   });
 
+  it("treats malformed markdown markers as plain text instead of formatting", () => {
+    const text = "Broken **bold and [link](https://example.com";
+
+    const parts = formatSummaryWithMode(text, "markdown");
+
+    expect(parts).toEqual([
+      "Broken \\*\\*bold and \\[link\\]\\(https://example\\.com",
+    ]);
+  });
+
+  it("keeps malformed fenced code deterministic and fully escaped", () => {
+    const text = ["```ts", "const value = 1;", "still open fence"].join("\n");
+
+    const parts = formatSummaryWithMode(text, "markdown");
+
+    expect(parts).toEqual([
+      "\\`\\`\\`ts\nconst value \\= 1;\nstill open fence",
+    ]);
+  });
+
   it("renders markdown checklists as visual checkboxes", () => {
     const text = ["- [ ] Open task", "- [x] Done task", "1. [ ] Numbered task"].join("\n");
     const parts = formatSummaryWithMode(text, "markdown");

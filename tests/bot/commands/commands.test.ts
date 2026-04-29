@@ -12,6 +12,8 @@ import {
 import { interactionManager } from "../../../src/interaction/manager.js";
 import { t } from "../../../src/i18n/index.js";
 import { foregroundSessionState } from "../../../src/scheduled-task/foreground-state.js";
+import { runWithTelegramConversationScope } from "../../../src/telegram/scope.js";
+import { attachManager } from "../../../src/attach/manager.js";
 
 const mocked = vi.hoisted(() => ({
   currentProject: {
@@ -34,6 +36,10 @@ const mocked = vi.hoisted(() => ({
   clearSummaryMock: vi.fn(),
   ensureEventSubscriptionMock: vi.fn(),
   safeBackgroundTaskMock: vi.fn(),
+  threadBindSessionMock: vi.fn(),
+  threadClearSessionForActiveContextMock: vi.fn(),
+  threadGetActiveScopeMock: vi.fn(),
+  attachSessionForScopeMock: vi.fn(),
 }));
 
 vi.mock("../../../src/settings/manager.js", () => ({
@@ -113,9 +119,25 @@ vi.mock("../../../src/utils/safe-background-task.js", () => ({
   }),
 }));
 
-function createCommandContext(messageId: number): Context {
+vi.mock("../../../src/thread/manager.js", () => ({
+  threadContextManager: {
+    bindSessionToActiveContext: mocked.threadBindSessionMock,
+    clearSessionForActiveContext: mocked.threadClearSessionForActiveContextMock,
+    getActiveScope: mocked.threadGetActiveScopeMock,
+  },
+}));
+
+vi.mock("../../../src/attach/service.js", () => ({
+  attachSessionForScope: mocked.attachSessionForScopeMock,
+}));
+
+function createCommandContext(messageId: number, messageThreadId?: number): Context {
   return {
     chat: { id: 777 },
+    message:
+      typeof messageThreadId === "number"
+        ? ({ message_id: 50, message_thread_id: messageThreadId } as Context["message"])
+        : undefined,
     reply: vi.fn().mockResolvedValue({ message_id: messageId }),
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
     deleteMessage: vi.fn().mockResolvedValue(undefined),
@@ -127,13 +149,14 @@ function createCommandContext(messageId: number): Context {
   } as unknown as Context;
 }
 
-function createCallbackContext(data: string, messageId: number): Context {
+function createCallbackContext(data: string, messageId: number, messageThreadId?: number): Context {
   return {
     chat: { id: 777 },
     callbackQuery: {
       data,
       message: {
         message_id: messageId,
+        ...(typeof messageThreadId === "number" ? { message_thread_id: messageThreadId } : {}),
       },
     } as Context["callbackQuery"],
     reply: vi.fn().mockResolvedValue({ message_id: 901 }),
@@ -147,10 +170,13 @@ function createCallbackContext(data: string, messageId: number): Context {
   } as unknown as Context;
 }
 
-function createTextContext(text: string): Context {
+function createTextContext(text: string, messageThreadId?: number): Context {
   return {
     chat: { id: 777 },
-    message: { text } as Context["message"],
+    message: {
+      text,
+      ...(typeof messageThreadId === "number" ? { message_thread_id: messageThreadId } : {}),
+    } as Context["message"],
     reply: vi.fn().mockResolvedValue({ message_id: 903 }),
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
     deleteMessage: vi.fn().mockResolvedValue(undefined),
@@ -195,6 +221,10 @@ describe("bot/commands/commands", () => {
     mocked.clearSummaryMock.mockReset();
     mocked.ensureEventSubscriptionMock.mockReset();
     mocked.safeBackgroundTaskMock.mockReset();
+    mocked.threadBindSessionMock.mockReset();
+    mocked.threadClearSessionForActiveContextMock.mockReset();
+    mocked.threadGetActiveScopeMock.mockReset();
+    mocked.attachSessionForScopeMock.mockReset();
 
     mocked.sessionStatusMock.mockResolvedValue({
       data: {
@@ -205,6 +235,8 @@ describe("bot/commands/commands", () => {
       error: null,
     });
     mocked.sessionCommandMock.mockResolvedValue({ data: {}, error: null });
+    mocked.threadGetActiveScopeMock.mockReturnValue(null);
+    mocked.attachSessionForScopeMock.mockResolvedValue(undefined);
   });
 
   it("shows commands list and starts custom interaction", async () => {
@@ -307,6 +339,94 @@ describe("bot/commands/commands", () => {
     });
   });
 
+  it("does not refresh attachment when command execution is blocked by a busy session", async () => {
+    mocked.threadGetActiveScopeMock.mockReturnValue({
+      userId: 10,
+      chatId: 777,
+      messageThreadId: 20,
+    });
+    mocked.sessionStatusMock.mockResolvedValueOnce({
+      data: {
+        "session-1": {
+          type: "busy",
+        },
+      },
+      error: null,
+    });
+
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "mixed",
+      metadata: {
+        flow: "commands",
+        stage: "confirm",
+        messageId: 401,
+        projectDirectory: "D:\\Projects\\Repo",
+        commandName: "poem",
+      },
+    });
+
+    const ctx = createCallbackContext("commands:execute", 401, 20);
+    const handled = await handleCommandsCallback(ctx, createDeps());
+
+    expect(handled).toBe(true);
+    expect(ctx.reply).toHaveBeenCalledWith(t("bot.session_busy"), { message_thread_id: 20 });
+    expect(ctx.reply).not.toHaveBeenCalledWith(
+      `${t("commands.executing_prefix")}\n/poem`,
+      expect.anything(),
+    );
+    expect(mocked.attachSessionForScopeMock).not.toHaveBeenCalled();
+    expect(mocked.sessionCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps command list replies scoped to the active topic", async () => {
+    mocked.commandListMock.mockResolvedValue({
+      data: [{ name: "init", description: "create/update AGENTS.md", source: "command" }],
+      error: null,
+    });
+
+    const ctx = createCommandContext(123, 42);
+    await commandsCommand(ctx as never);
+
+    expect(ctx.reply).toHaveBeenCalledWith(
+      formatCommandsSelectText(0),
+      expect.objectContaining({ message_thread_id: 42 }),
+    );
+  });
+
+  it("keeps command validation replies scoped to the active topic", async () => {
+    mocked.currentProject = null;
+
+    const ctx = createCommandContext(124, 42);
+    await commandsCommand(ctx as never);
+
+    expect(ctx.reply).toHaveBeenCalledWith(t("bot.project_not_selected"), {
+      message_thread_id: 42,
+    });
+  });
+
+  it("keeps text-argument validation replies scoped to the active topic", async () => {
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "mixed",
+      metadata: {
+        flow: "commands",
+        stage: "confirm",
+        messageId: 500,
+        projectDirectory: "D:\\Projects\\Repo",
+        commandName: "poem",
+      },
+    });
+
+    const ctx = createTextContext("   ", 42);
+    const handled = await handleCommandTextArguments(ctx, createDeps());
+
+    expect(handled).toBe(true);
+    expect(ctx.reply).toHaveBeenCalledWith(t("commands.arguments_empty"), {
+      message_thread_id: 42,
+    });
+  });
+
   it("executes selected command with arguments from text message", async () => {
     interactionManager.start({
       kind: "custom",
@@ -341,6 +461,138 @@ describe("bot/commands/commands", () => {
       agent: "build",
       model: "openai/gpt-5",
       variant: "default",
+    });
+  });
+
+  it("does not bind the active scope directly when creating a session for command execution", async () => {
+    mocked.currentSession = null;
+    mocked.threadGetActiveScopeMock.mockReturnValue({
+      userId: 10,
+      chatId: 777,
+      messageThreadId: 42,
+    });
+    mocked.sessionCreateMock.mockResolvedValueOnce({
+      data: {
+        id: "session-created",
+        title: "Created Session",
+      },
+      error: null,
+    });
+
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "mixed",
+      metadata: {
+        flow: "commands",
+        stage: "confirm",
+        messageId: 501,
+        projectDirectory: "D:\\Projects\\Repo",
+        commandName: "poem",
+      },
+    });
+
+    const ctx = createCallbackContext("commands:execute", 501, 42);
+    const handled = await handleCommandsCallback(ctx, createDeps());
+    await Promise.resolve();
+
+    expect(handled).toBe(true);
+    expect(mocked.threadBindSessionMock).not.toHaveBeenCalled();
+    expect(mocked.attachSessionForScopeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: { userId: 10, chatId: 777, messageThreadId: 42 },
+        session: { id: "session-created", title: "Created Session", directory: "D:\\Projects\\Repo" },
+        reason: "new_session",
+      }),
+    );
+  });
+
+  it("marks command execution busy only for the active topic", async () => {
+    mocked.threadGetActiveScopeMock.mockReturnValue({
+      userId: 10,
+      chatId: 777,
+      messageThreadId: 42,
+    });
+
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "mixed",
+      metadata: {
+        flow: "commands",
+        stage: "confirm",
+        messageId: 700,
+        projectDirectory: "D:\\Projects\\Repo",
+        commandName: "poem",
+      },
+    });
+
+    const ctx = createCallbackContext("commands:execute", 700, 42);
+    const handled = await handleCommandsCallback(ctx, createDeps());
+    await Promise.resolve();
+
+    expect(handled).toBe(true);
+    expect(
+      runWithTelegramConversationScope(
+        { userId: 10, chatId: 777, messageThreadId: 42 },
+        () => foregroundSessionState.isBusy(),
+      ),
+    ).toBe(true);
+    expect(
+      runWithTelegramConversationScope(
+        { userId: 10, chatId: 777, messageThreadId: 99 },
+        () => foregroundSessionState.isBusy(),
+      ),
+    ).toBe(false);
+  });
+
+  it("clears the actual busy session scope on session/project mismatch reset", async () => {
+    const topicAScope = { userId: 10, chatId: 777, messageThreadId: 42 };
+    const topicBScope = { userId: 10, chatId: 777, messageThreadId: 99 };
+
+    mocked.currentProject = {
+      id: "project-1",
+      worktree: "D:\\Projects\\Repo",
+    };
+    mocked.currentSession = {
+      id: "session-1",
+      title: "Session",
+      directory: "D:\\Projects\\OtherRepo",
+    };
+    mocked.sessionCreateMock.mockResolvedValueOnce({
+      data: {
+        id: "session-created",
+        title: "Created Session",
+      },
+      error: null,
+    });
+    mocked.threadGetActiveScopeMock.mockReturnValue(topicBScope);
+
+    attachManager.attach(topicAScope, mocked.currentSession);
+    runWithTelegramConversationScope(topicAScope, () => {
+      foregroundSessionState.markBusy("session-1");
+    });
+
+    interactionManager.start({
+      kind: "custom",
+      expectedInput: "mixed",
+      metadata: {
+        flow: "commands",
+        stage: "confirm",
+        messageId: 800,
+        projectDirectory: "D:\\Projects\\Repo",
+        commandName: "poem",
+      },
+    });
+
+    const ctx = createCallbackContext("commands:execute", 800, 99);
+    const handled = await handleCommandsCallback(ctx, createDeps());
+    await Promise.resolve();
+
+    expect(handled).toBe(true);
+    expect(runWithTelegramConversationScope(topicAScope, () => foregroundSessionState.isBusy())).toBe(
+      false,
+    );
+    expect(ctx.reply).toHaveBeenCalledWith(t("bot.session_reset_project_mismatch"), {
+      message_thread_id: 99,
     });
   });
 

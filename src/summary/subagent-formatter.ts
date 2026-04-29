@@ -9,6 +9,26 @@ function formatToolStep(subagent: SubagentInfo): string {
     return "";
   }
 
+  const inputDetails = formatCompactToolInfo(
+    {
+      sessionId: subagent.sessionId ?? subagent.parentSessionId,
+      messageId: subagent.cardId,
+      callId: subagent.cardId,
+      tool: subagent.currentTool,
+      state: {
+        status: "running",
+        input: subagent.currentToolInput ?? {},
+        metadata: {},
+        time: { start: subagent.updatedAt },
+      },
+      input: subagent.currentToolInput,
+      metadata: {},
+      hasFileAttachment: false,
+    },
+    128,
+    "",
+  ).trim();
+
   const toolInfo: ToolInfo = {
     sessionId: subagent.sessionId ?? subagent.parentSessionId,
     messageId: subagent.cardId,
@@ -28,6 +48,10 @@ function formatToolStep(subagent: SubagentInfo): string {
   };
 
   const formatted = formatCompactToolInfo(toolInfo, 128, "").trim();
+  if (inputDetails && inputDetails !== formatted) {
+    return inputDetails;
+  }
+
   const firstSpaceIndex = formatted.indexOf(" ");
   if (firstSpaceIndex >= 0 && formatted.slice(firstSpaceIndex + 1) === subagent.currentTool) {
     return "";

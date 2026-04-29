@@ -144,7 +144,7 @@ async function loadCurrentWorktreeContext() {
 
 export async function worktreeCommand(ctx: CommandContext<Context>) {
   try {
-    if (isForegroundBusy()) {
+    if (isForegroundBusy(ctx)) {
       await replyBusyBlocked(ctx);
       return;
     }
@@ -185,7 +185,7 @@ export async function handleWorktreeCallback(ctx: Context): Promise<boolean> {
     return false;
   }
 
-  if (isForegroundBusy()) {
+  if (isForegroundBusy(ctx)) {
     await replyBusyBlocked(ctx);
     return true;
   }

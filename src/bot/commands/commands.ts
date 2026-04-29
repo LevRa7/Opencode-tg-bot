@@ -20,6 +20,11 @@ import { foregroundSessionState } from "../../scheduled-task/foreground-state.js
 import { config } from "../../config.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import { attachManager } from "../../attach/manager.js";
+import { attachSessionForScope } from "../../attach/service.js";
+import { showPermissionRequest } from "../handlers/permission.js";
+import { showCurrentQuestion } from "../handlers/question.js";
+import type { TelegramConversationScope } from "../../telegram/scope.js";
 
 const COMMANDS_CALLBACK_PREFIX = "commands:";
 const COMMANDS_CALLBACK_SELECT_PREFIX = `${COMMANDS_CALLBACK_PREFIX}select:`;
@@ -56,6 +61,17 @@ interface ExecuteCommandParams {
   projectDirectory: string;
   commandName: string;
   argumentsText: string;
+}
+
+function resolveBusyScopeForSession(
+  sessionId: string,
+  fallbackScope?: TelegramConversationScope | null,
+): TelegramConversationScope | null {
+  return attachManager.getScopeForSession(sessionId) ?? fallbackScope ?? null;
+}
+
+function getReplyThreadOptions(ctx: Context): { message_thread_id?: number } {
+  return withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx));
 }
 
 export interface ExecuteCommandDeps {
@@ -359,17 +375,21 @@ async function ensureSessionForProject(
   ctx: Context,
   projectDirectory: string,
 ): Promise<SessionInfo | null> {
+  const threadOptions = getReplyThreadOptions(ctx);
   let currentSession = getCurrentSession();
 
   if (currentSession && currentSession.directory !== projectDirectory) {
     logger.warn(
       `[Commands] Session/project mismatch detected. sessionDirectory=${currentSession.directory}, projectDirectory=${projectDirectory}. Resetting session context.`,
     );
+    foregroundSessionState.markIdle(
+      currentSession.id,
+      attachManager.getScopeForSession(currentSession.id),
+    );
     clearSession();
     threadContextManager.clearSessionForActiveContext();
     summaryAggregator.clear();
-    foregroundSessionState.clearAll("session_mismatch_reset");
-    await ctx.reply(t("bot.session_reset_project_mismatch"));
+    await ctx.reply(t("bot.session_reset_project_mismatch"), threadOptions);
     currentSession = null;
   }
 
@@ -377,14 +397,14 @@ async function ensureSessionForProject(
     return currentSession;
   }
 
-  await ctx.reply(t("bot.creating_session"));
+  await ctx.reply(t("bot.creating_session"), threadOptions);
 
   const { data: session, error } = await opencodeClient.session.create({
     directory: projectDirectory,
   });
 
   if (error || !session) {
-    await ctx.reply(t("bot.create_session_error"));
+    await ctx.reply(t("bot.create_session_error"), threadOptions);
     return null;
   }
 
@@ -395,9 +415,25 @@ async function ensureSessionForProject(
   };
 
   setCurrentSession(sessionInfo);
-  threadContextManager.bindSessionToActiveContext(sessionInfo);
+  const activeScope = threadContextManager.getActiveScope();
+  if (activeScope) {
+      await attachSessionForScope({
+        scope: activeScope,
+        session: sessionInfo,
+        reason: "new_session",
+        restoreQuestion: () =>
+          showCurrentQuestion(ctx.api, activeScope.chatId, activeScope.messageThreadId),
+        restorePermission: (request) =>
+          showPermissionRequest(
+            ctx.api,
+            activeScope.chatId,
+            request,
+            activeScope.messageThreadId,
+          ),
+      });
+    }
   await ingestSessionInfoForCache(session);
-  await ctx.reply(t("bot.session_created", { title: session.title }));
+  await ctx.reply(t("bot.session_created", { title: session.title }), threadOptions);
 
   return sessionInfo;
 }
@@ -412,8 +448,8 @@ async function executeCommand(
   }
 
   const args = params.argumentsText.trim();
+  const threadOptions = getReplyThreadOptions(ctx);
   const executingMessage = formatExecutingCommandMessage(params.commandName, args);
-  await ctx.reply(executingMessage.text, { entities: executingMessage.entities });
 
   const session = await ensureSessionForProject(ctx, params.projectDirectory);
   if (!session) {
@@ -425,9 +461,33 @@ async function executeCommand(
 
   const sessionIsBusy = await isSessionBusy(session.id, session.directory);
   if (sessionIsBusy) {
-    await ctx.reply(t("bot.session_busy"));
+    await ctx.reply(t("bot.session_busy"), threadOptions);
     return;
   }
+
+  await ctx.reply(executingMessage.text, {
+    ...threadOptions,
+    entities: executingMessage.entities,
+  });
+
+  const activeScope = threadContextManager.getActiveScope();
+  if (activeScope) {
+      await attachSessionForScope({
+        scope: activeScope,
+        session,
+        reason: "prompt",
+        restoreQuestion: () =>
+          showCurrentQuestion(ctx.api, activeScope.chatId, activeScope.messageThreadId),
+        restorePermission: (request) =>
+          showPermissionRequest(
+            ctx.api,
+            activeScope.chatId,
+            request,
+            activeScope.messageThreadId,
+          ),
+      });
+    }
+  const busyScope = resolveBusyScopeForSession(session.id, activeScope);
 
   const currentAgent = getStoredAgent();
   const storedModel = getStoredModel();
@@ -436,7 +496,7 @@ async function executeCommand(
       ? `${storedModel.providerID}/${storedModel.modelID}`
       : undefined;
 
-  foregroundSessionState.markBusy(session.id);
+  foregroundSessionState.markBusy(session.id, busyScope);
 
   safeBackgroundTask({
     taskName: "session.command",
@@ -452,14 +512,16 @@ async function executeCommand(
       }),
     onSuccess: ({ error }) => {
       if (error) {
-        foregroundSessionState.markIdle(session.id);
+        foregroundSessionState.markIdle(session.id, busyScope);
         logger.error("[Commands] OpenCode API returned an error for session.command", {
           sessionId: session.id,
           command: params.commandName,
           args,
         });
         logger.error("[Commands] session.command error details:", error);
-        void ctx.api.sendMessage(ctx.chat!.id, t("commands.execute_error")).catch(() => {});
+        void ctx.api
+          .sendMessage(ctx.chat!.id, t("commands.execute_error"), threadOptions)
+          .catch(() => {});
         return;
       }
 
@@ -468,29 +530,30 @@ async function executeCommand(
       );
     },
     onError: (error) => {
-      foregroundSessionState.markIdle(session.id);
+      foregroundSessionState.markIdle(session.id, busyScope);
       logger.error("[Commands] session.command background task failed", {
         sessionId: session.id,
         command: params.commandName,
         args,
       });
       logger.error("[Commands] session.command background failure details:", error);
-      void ctx.api.sendMessage(ctx.chat!.id, t("commands.execute_error")).catch(() => {});
+      void ctx.api.sendMessage(ctx.chat!.id, t("commands.execute_error"), threadOptions).catch(() => {});
     },
   });
 }
 
 export async function commandsCommand(ctx: CommandContext<Context>): Promise<void> {
   try {
+    const threadOptions = getReplyThreadOptions(ctx);
     const currentProject = getCurrentProject();
     if (!currentProject) {
-      await ctx.reply(t("bot.project_not_selected"));
+      await ctx.reply(t("bot.project_not_selected"), threadOptions);
       return;
     }
 
     const commands = await getCommandList(currentProject.worktree);
     if (commands.length === 0) {
-      await ctx.reply(t("commands.empty"));
+      await ctx.reply(t("commands.empty"), threadOptions);
       return;
     }
 
@@ -515,7 +578,7 @@ export async function commandsCommand(ctx: CommandContext<Context>): Promise<voi
     });
   } catch (error) {
     logger.error("[Commands] Error fetching commands list:", error);
-    await ctx.reply(t("commands.fetch_error"));
+    await ctx.reply(t("commands.fetch_error"), getReplyThreadOptions(ctx));
   }
 }
 
@@ -655,7 +718,7 @@ export async function handleCommandTextArguments(
 
   const argumentsText = text.trim();
   if (!argumentsText) {
-    await ctx.reply(t("commands.arguments_empty"));
+    await ctx.reply(t("commands.arguments_empty"), getReplyThreadOptions(ctx));
     return true;
   }
 

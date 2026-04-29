@@ -17,6 +17,9 @@ import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { getDefaultProject } from "../../project/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import { attachSessionForScope } from "../../attach/service.js";
+import { showPermissionRequest } from "../handlers/permission.js";
+import { showCurrentQuestion } from "../handlers/question.js";
 
 export async function newCommand(ctx: CommandContext<Context>) {
   try {
@@ -60,7 +63,23 @@ export async function newCommand(ctx: CommandContext<Context>) {
       directory: currentProject.worktree,
     };
     setCurrentSession(sessionInfo);
-    threadContextManager.bindSessionToActiveContext(sessionInfo);
+    const activeScope = threadContextManager.getActiveScope();
+    if (activeScope) {
+      await attachSessionForScope({
+        scope: activeScope,
+        session: sessionInfo,
+        reason: "new_session",
+        restoreQuestion: () =>
+          showCurrentQuestion(ctx.api, activeScope.chatId, activeScope.messageThreadId),
+        restorePermission: (request) =>
+          showPermissionRequest(
+            ctx.api,
+            activeScope.chatId,
+            request,
+            activeScope.messageThreadId,
+          ),
+      });
+    }
     summaryAggregator.clear();
     clearAllInteractionState("session_created");
     await ingestSessionInfoForCache(session);

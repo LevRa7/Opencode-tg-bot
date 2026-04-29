@@ -19,6 +19,9 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { config } from "../../config.js";
 import { getDateLocale, t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
+import { attachSessionForScope } from "../../attach/service.js";
+import { showPermissionRequest } from "../handlers/permission.js";
+import { showCurrentQuestion } from "../handlers/question.js";
 
 const SESSION_CALLBACK_PREFIX = "session:";
 const SESSION_PAGE_CALLBACK_PREFIX = "session:page:";
@@ -295,7 +298,23 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
       directory: currentProject.worktree,
     };
     setCurrentSession(sessionInfo);
-    threadContextManager.bindSessionToActiveContext(sessionInfo);
+    const activeScope = threadContextManager.getActiveScope();
+    if (activeScope) {
+      await attachSessionForScope({
+        scope: activeScope,
+        session: sessionInfo,
+        reason: "selected_session",
+        restoreQuestion: () =>
+          showCurrentQuestion(ctx.api, activeScope.chatId, activeScope.messageThreadId),
+        restorePermission: (request) =>
+          showPermissionRequest(
+            ctx.api,
+            activeScope.chatId,
+            request,
+            activeScope.messageThreadId,
+          ),
+      });
+    }
     summaryAggregator.clear();
     clearAllInteractionState("session_switched");
 

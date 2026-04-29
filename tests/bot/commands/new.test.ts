@@ -7,6 +7,10 @@ import { t } from "../../../src/i18n/index.js";
 const mocked = vi.hoisted(() => ({
   sessionCreateMock: vi.fn(),
   getCurrentProjectMock: vi.fn(),
+  threadBindProjectMock: vi.fn(),
+  threadBindSessionMock: vi.fn(),
+  threadGetActiveScopeMock: vi.fn(),
+  attachSessionForScopeMock: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -68,6 +72,18 @@ vi.mock("../../../src/variant/manager.js", () => ({
   formatVariantForButton: vi.fn(() => "Default"),
 }));
 
+vi.mock("../../../src/thread/manager.js", () => ({
+  threadContextManager: {
+    bindProjectToActiveContext: mocked.threadBindProjectMock,
+    bindSessionToActiveContext: mocked.threadBindSessionMock,
+    getActiveScope: mocked.threadGetActiveScopeMock,
+  },
+}));
+
+vi.mock("../../../src/attach/service.js", () => ({
+  attachSessionForScope: mocked.attachSessionForScopeMock,
+}));
+
 vi.mock("../../../src/bot/utils/keyboard.js", () => ({
   createMainKeyboard: vi.fn(() => ({ keyboard: true })),
 }));
@@ -86,7 +102,13 @@ describe("bot/commands/new", () => {
     foregroundSessionState.__resetForTests();
     mocked.sessionCreateMock.mockReset();
     mocked.getCurrentProjectMock.mockReset();
+    mocked.threadBindProjectMock.mockReset();
+    mocked.threadBindSessionMock.mockReset();
+    mocked.threadGetActiveScopeMock.mockReset();
+    mocked.attachSessionForScopeMock.mockReset();
     mocked.getCurrentProjectMock.mockReturnValue({ id: "project-1", worktree: "/repo" });
+    mocked.threadGetActiveScopeMock.mockReturnValue(null);
+    mocked.attachSessionForScopeMock.mockResolvedValue(undefined);
   });
 
   it("blocks new session creation while foreground session is busy", async () => {
@@ -112,5 +134,29 @@ describe("bot/commands/new", () => {
       reply_markup: { keyboard: true },
       message_thread_id: 88,
     });
+  });
+
+  it("does not bind the active scope directly when attachment owns session binding", async () => {
+    mocked.threadGetActiveScopeMock.mockReturnValue({
+      userId: 10,
+      chatId: 123,
+      messageThreadId: 88,
+    });
+    mocked.sessionCreateMock.mockResolvedValue({
+      data: { id: "session-1", title: "Scoped Session" },
+      error: null,
+    });
+
+    const ctx = createContext();
+    await newCommand(ctx as never);
+
+    expect(mocked.threadBindSessionMock).not.toHaveBeenCalled();
+    expect(mocked.attachSessionForScopeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: { userId: 10, chatId: 123, messageThreadId: 88 },
+        session: { id: "session-1", title: "Scoped Session", directory: "/repo" },
+        reason: "new_session",
+      }),
+    );
   });
 });

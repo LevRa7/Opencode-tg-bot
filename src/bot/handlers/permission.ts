@@ -55,17 +55,21 @@ function getCallbackMessageId(ctx: Context): number | null {
 }
 
 function clearPermissionInteraction(reason: string): void {
-  const state = interactionManager.getSnapshot();
+  clearPermissionInteractionForScope(reason);
+}
+
+function clearPermissionInteractionForScope(reason: string, scopeKey?: string): void {
+  const state = interactionManager.getSnapshot(scopeKey);
   if (state?.kind === "permission") {
-    interactionManager.clear(reason);
+    interactionManager.clear(reason, scopeKey);
   }
 }
 
-function syncPermissionInteractionState(metadata: Record<string, unknown> = {}): void {
-  const pendingCount = permissionManager.getPendingCount();
+function syncPermissionInteractionState(metadata: Record<string, unknown> = {}, scopeKey?: string): void {
+  const pendingCount = permissionManager.getPendingCount(scopeKey);
 
   if (pendingCount === 0) {
-    clearPermissionInteraction("permission_no_pending_requests");
+    clearPermissionInteractionForScope("permission_no_pending_requests", scopeKey);
     return;
   }
 
@@ -74,12 +78,12 @@ function syncPermissionInteractionState(metadata: Record<string, unknown> = {}):
     ...metadata,
   };
 
-  const state = interactionManager.getSnapshot();
+  const state = interactionManager.getSnapshot(scopeKey);
   if (state?.kind === "permission") {
     interactionManager.transition({
       expectedInput: "callback",
       metadata: nextMetadata,
-    });
+    }, scopeKey);
     return;
   }
 
@@ -87,7 +91,7 @@ function syncPermissionInteractionState(metadata: Record<string, unknown> = {}):
     kind: "permission",
     expectedInput: "callback",
     metadata: nextMetadata,
-  });
+  }, scopeKey);
 }
 
 function isPermissionReply(value: string): value is PermissionReply {
@@ -233,6 +237,7 @@ export async function showPermissionRequest(
   chatId: number,
   request: PermissionRequest,
   messageThreadId?: number,
+  scopeKey?: string,
 ): Promise<void> {
   logger.info(
     `[PermissionHandler] Sending permission request: permission=${request.permission}, requestID=${request.id}, chatId=${chatId}, threadId=${messageThreadId ?? "none"}, patterns=${request.patterns.length}`,
@@ -256,12 +261,12 @@ export async function showPermissionRequest(
     logger.info(
       `[PermissionHandler] Permission message sent: permission=${request.permission}, requestID=${request.id}, chatId=${chatId}, threadId=${messageThreadId ?? "none"}, messageId=${message.message_id}`,
     );
-    permissionManager.startPermission(request, message.message_id);
+    permissionManager.startPermission(request, message.message_id, scopeKey);
 
     syncPermissionInteractionState({
       requestID: request.id,
       messageId: message.message_id,
-    });
+    }, scopeKey);
 
     summaryAggregator.stopTypingIndicator();
   } catch (err) {

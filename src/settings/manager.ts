@@ -3,6 +3,7 @@ import { cloneScheduledTask, type ScheduledTask } from "../scheduled-task/types.
 import {
   buildTelegramConversationScopeKey,
   getCurrentTelegramConversationScope,
+  type TelegramConversationScope,
 } from "../telegram/scope.js";
 import path from "node:path";
 import { getRuntimePaths } from "../runtime/paths.js";
@@ -60,6 +61,14 @@ export interface ThreadContextBinding {
   model?: ModelInfo;
 }
 
+export interface AttachedSessionSettings {
+  scope: TelegramConversationScope;
+  session: SessionInfo;
+  attachedAt: string;
+  busy: boolean;
+  lastEventId?: string;
+}
+
 export interface AccessApprovalRequest {
   userId: number;
   chatId: number;
@@ -107,6 +116,7 @@ export interface Settings {
   scheduledTasks?: ScheduledTask[];
   lastRestartRequest?: LastRestartRequest;
   threadContextBindings?: ThreadContextBinding[];
+  attachedSessions?: Record<string, AttachedSessionSettings>;
   approvedTelegramUserIds?: number[];
   pendingAccessRequests?: AccessApprovalRequest[];
 }
@@ -197,6 +207,43 @@ function cloneThreadContextBindings(
     agent: binding.agent,
     model: cloneModelInfo(binding.model),
   }));
+}
+
+function cloneTelegramConversationScope(
+  scope: TelegramConversationScope | undefined,
+): TelegramConversationScope | undefined {
+  return scope ? { ...scope } : undefined;
+}
+
+function cloneAttachedSessionSettings(
+  settings: AttachedSessionSettings | undefined,
+): AttachedSessionSettings | undefined {
+  if (!settings) {
+    return undefined;
+  }
+
+  return {
+    scope: cloneTelegramConversationScope(settings.scope) ?? settings.scope,
+    session: cloneSessionInfo(settings.session) ?? settings.session,
+    attachedAt: settings.attachedAt,
+    busy: settings.busy,
+    lastEventId: settings.lastEventId,
+  };
+}
+
+function cloneAttachedSessionSettingsMap(
+  settingsByScope: Record<string, AttachedSessionSettings> | undefined,
+): Record<string, AttachedSessionSettings> | undefined {
+  if (!settingsByScope) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    Object.entries(settingsByScope).map(([scopeKey, settings]) => [
+      scopeKey,
+      cloneAttachedSessionSettings(settings) ?? settings,
+    ]),
+  );
 }
 
 function cloneAccessApprovalRequests(
@@ -786,6 +833,17 @@ export function setThreadContextBindings(bindings: ThreadContextBinding[]): Prom
   return writeSettingsFile(currentSettings);
 }
 
+export function getAttachedSessions(): Record<string, AttachedSessionSettings> {
+  return cloneAttachedSessionSettingsMap(currentSettings.attachedSessions) ?? {};
+}
+
+export function setAttachedSessions(
+  attachedSessions: Record<string, AttachedSessionSettings>,
+): Promise<void> {
+  currentSettings.attachedSessions = cloneAttachedSessionSettingsMap(attachedSessions);
+  return writeSettingsFile(currentSettings);
+}
+
 export function getApprovedTelegramUserIds(): number[] {
   return normalizeTelegramUserIds(currentSettings.approvedTelegramUserIds);
 }
@@ -852,6 +910,7 @@ export async function loadSettings(): Promise<void> {
     scheduledTasks: cloneScheduledTasks(loadedSettings.scheduledTasks) ?? [],
     lastRestartRequest: cloneLastRestartRequest(loadedSettings.lastRestartRequest),
     threadContextBindings: cloneThreadContextBindings(loadedSettings.threadContextBindings) ?? [],
+    attachedSessions: cloneAttachedSessionSettingsMap(loadedSettings.attachedSessions),
     approvedTelegramUserIds: normalizeTelegramUserIds(loadedSettings.approvedTelegramUserIds),
     pendingAccessRequests:
       cloneAccessApprovalRequests(loadedSettings.pendingAccessRequests) ?? [],

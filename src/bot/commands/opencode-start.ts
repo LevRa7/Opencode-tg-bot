@@ -32,6 +32,11 @@ async function waitForServerReady(maxWaitMs: number = 10000): Promise<boolean> {
 export async function opencodeStartCommand(ctx: CommandContext<Context>) {
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
 
+  if (ctx.from?.id !== config.telegram.adminUserId) {
+    await ctx.reply(t("restart.admin_only"), withMessageThreadId(undefined, messageThreadId));
+    return;
+  }
+
   try {
     const localTarget = resolveLocalOpencodeTarget(config.opencode.apiUrl);
     if (!localTarget) {

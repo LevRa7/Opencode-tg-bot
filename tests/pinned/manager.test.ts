@@ -52,6 +52,7 @@ describe("pinned/manager", () => {
     editMessageText: ReturnType<typeof vi.fn>;
     pinChatMessage: ReturnType<typeof vi.fn>;
     unpinAllChatMessages: ReturnType<typeof vi.fn>;
+    deleteMessage: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -61,6 +62,7 @@ describe("pinned/manager", () => {
       editMessageText: vi.fn().mockResolvedValue(undefined),
       pinChatMessage: vi.fn().mockResolvedValue(undefined),
       unpinAllChatMessages: vi.fn().mockResolvedValue(undefined),
+      deleteMessage: vi.fn().mockResolvedValue(undefined),
     };
 
     mocked.getCurrentSession.mockReturnValue({ id: "ses-1", title: "Test Session" });
@@ -140,6 +142,53 @@ describe("pinned/manager", () => {
         await expect(pinnedMessageManager.refresh()).resolves.not.toThrow();
       });
     });
+
+    it("reuses the scoped startup pinned message without pinning again", async () => {
+      __resetPinnedMessageManagersForTests();
+      mocked.getPinnedMessageId.mockReturnValue(777);
+
+      await runWithTelegramConversationScope(scopeA, async () => {
+        pinnedMessageManager.initialize(fakeApi as never, 123);
+
+        expect(pinnedMessageManager.getState().messageId).toBe(777);
+        expect(pinnedMessageManager.getState().createdInCurrentProcess).toBe(false);
+
+        await pinnedMessageManager.refresh();
+
+        expect(fakeApi.editMessageText).toHaveBeenCalledTimes(1);
+        expect(fakeApi.editMessageText).toHaveBeenCalledWith(
+          123,
+          777,
+          expect.any(String),
+          {
+            message_thread_id: 10,
+          },
+        );
+        expect(fakeApi.pinChatMessage).not.toHaveBeenCalled();
+        expect(pinnedMessageManager.getState().createdInCurrentProcess).toBe(false);
+      });
+    });
+
+    it("targets the active message thread when creating and refreshing a pinned message", async () => {
+      await runWithTelegramConversationScope(scopeA, async () => {
+        await pinnedMessageManager.onSessionChange("ses-1", "Test Session");
+
+        expect(fakeApi.sendMessage).toHaveBeenCalledWith(123, expect.any(String), {
+          message_thread_id: 10,
+        });
+        expect(fakeApi.pinChatMessage).toHaveBeenCalledWith(123, 999, {
+          disable_notification: true,
+        });
+
+        fakeApi.editMessageText.mockClear();
+
+        await pinnedMessageManager.refresh();
+
+        expect(fakeApi.editMessageText).toHaveBeenCalledWith(123, 999, expect.any(String), {
+          message_thread_id: 10,
+        });
+      });
+    });
   });
 
   describe("setOnKeyboardUpdate race condition fix", () => {
@@ -191,6 +240,22 @@ describe("pinned/manager", () => {
       expect(
         runWithTelegramConversationScope(scopeB, () => pinnedMessageManager.getState().sessionId),
       ).toBe("ses-b");
+    });
+
+    it("does not clear unrelated chat pins when replacing a topic-scoped pinned message", async () => {
+      await runWithTelegramConversationScope(scopeA, async () => {
+        await pinnedMessageManager.onSessionChange("ses-a", "Session A");
+      });
+
+      fakeApi.unpinAllChatMessages.mockClear();
+      fakeApi.sendMessage.mockClear();
+
+      await runWithTelegramConversationScope(scopeA, async () => {
+        await pinnedMessageManager.onSessionChange("ses-next", "Session Next");
+      });
+
+      expect(fakeApi.unpinAllChatMessages).not.toHaveBeenCalled();
+      expect(fakeApi.sendMessage).toHaveBeenCalledTimes(1);
     });
   });
 });

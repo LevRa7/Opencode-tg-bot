@@ -215,7 +215,7 @@ function buildRootsKeyboard(): InlineKeyboard {
 
 export async function openCommand(ctx: CommandContext<Context>) {
   try {
-    if (isForegroundBusy()) {
+    if (isForegroundBusy(ctx)) {
       await replyBusyBlocked(ctx);
       return;
     }

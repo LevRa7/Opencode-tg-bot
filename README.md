@@ -25,13 +25,17 @@ Languages: English (`en`), Deutsch (`de`), Español (`es`), Français (`fr`), Р
 
 - **Remote coding** — send prompts to OpenCode from anywhere, receive complete results with code sent as files
 - **Session management** — create new sessions or continue existing ones, just like in the TUI
-- **Live status** — pinned message with current project, model, context usage, and changed files list, updated in real time
+- **Live status** — pinned status per private chat or forum topic with current project, model, context usage, and changed files list, updated in real time
 - **Model switching** — pick models from OpenCode favorites and recent history directly in the chat (favorites are shown first)
 - **Agent modes** — switch between Plan and Build modes on the fly
 - **Subagent activity** — watch live subagent progress in chat, including the current task, agent, model, and active tool step
+- **Topic-scoped attach/follow** — attach existing OpenCode sessions independently per private chat or forum topic so follow-up updates stay in the right conversation
 - **Custom Commands** — run OpenCode custom commands (and built-ins like `init`/`review`) from an inline menu with confirmation
+- **MCP visibility** — inspect configured MCP servers and their connection state with `/mcps`
 - **Interactive Q&A** — answer agent questions and approve permissions via inline buttons
 - **Voice prompts** — send voice/audio messages, transcribe them via a Whisper-compatible API, and optionally enable spoken replies with `/tts`
+- **Optional auto-restart** — monitor the local OpenCode server and restart it automatically after stop/crash when enabled in config
+- **Telegram-safe formatting** — assistant replies are rendered with a local MarkdownV2 formatter for more stable Telegram output
 - **File attachments** — send images, PDF documents, and any text-based files to OpenCode (code, logs, configs etc.)
 - **Scheduled tasks** — schedule prompts to run later or on a recurring interval; see [Scheduled Tasks](#scheduled-tasks)
 - **Context control** — compact context when it gets too large, right from the chat
@@ -112,6 +116,7 @@ opencode-telegram config
 | `/tts`            | Toggle audio replies                                    |
 | `/rename`         | Rename the current session                              |
 | `/commands`       | Browse and run custom commands                          |
+| `/mcps`           | Browse available MCP servers and connection state       |
 | `/task`           | Create a scheduled task                                 |
 | `/tasklist`       | Browse and delete scheduled tasks                       |
 | `/opencode_start` | Start the OpenCode server remotely                      |
@@ -121,7 +126,7 @@ opencode-telegram config
 | `/worktree`       | Manage worktrees                                        |
 | `/help`           | Show available commands                                 |
 
-Any regular text message is sent as a prompt to the coding agent only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured.
+Any regular text message is sent as a prompt to the coding agent only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured. When a chat or forum topic is attached to a session, follow-up updates and external-input notices stay scoped to that same conversation target.
 
 > `/opencode_start` and `/opencode_stop` are intended as emergency commands — for example, if you need to restart a stuck server while away from your computer. Under normal usage, start `opencode serve` yourself before launching the bot.
 
@@ -154,11 +159,14 @@ When installed via npm, the configuration wizard handles the initial setup. The 
 | Variable                        | Description                                                                                                  | Required | Default                  |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------ | :------: | ------------------------ |
 | `TELEGRAM_BOT_TOKEN`            | Bot token from @BotFather                                                                                    |   Yes    | —                        |
-| `TELEGRAM_ALLOWED_USER_ID`      | Your numeric Telegram user ID                                                                                |   Yes    | —                        |
+| `TELEGRAM_ADMIN_USER_ID`        | Admin Telegram user ID used for setup and privileged commands                                                |   Yes    | —                        |
+| `TELEGRAM_ALLOWED_USER_IDS`     | Additional allowed Telegram user IDs (comma- or space-separated)                                             |    No    | —                        |
 | `TELEGRAM_PROXY_URL`            | Proxy URL for Telegram API (SOCKS5/HTTP)                                                                     |    No    | —                        |
 | `OPENCODE_API_URL`              | OpenCode server URL                                                                                          |    No    | `http://localhost:4096`  |
 | `OPENCODE_SERVER_USERNAME`      | Server auth username                                                                                         |    No    | `opencode`               |
 | `OPENCODE_SERVER_PASSWORD`      | Server auth password                                                                                         |    No    | —                        |
+| `OPENCODE_AUTO_RESTART_ENABLED` | Monitor the local OpenCode server and restart it automatically after stop/crash                              |    No    | `false`                  |
+| `OPENCODE_MONITOR_INTERVAL_SEC` | Health-check interval for OpenCode auto-restart monitoring (seconds)                                         |    No    | `300`                    |
 | `OPENCODE_MODEL_PROVIDER`       | Default model provider                                                                                       |   Yes    | `cliproxyapi`            |
 | `OPENCODE_MODEL_ID`             | Default model ID                                                                                             |   Yes    | `gpt-5.4-mini`           |
 | `OPEN_BROWSER_ROOTS`            | Directory browser roots (comma-separated paths)                                                              |    No    | —                        |
@@ -182,10 +190,12 @@ When installed via npm, the configuration wizard handles the initial setup. The 
 | `STT_MODEL`                     | STT model name passed to `/audio/transcriptions`                                                             |    No    | `whisper-large-v3-turbo` |
 | `STT_LANGUAGE`                  | Optional language hint (empty = provider auto-detect)                                                        |    No    | —                        |
 | `STT_NOTE_PROMPT`               | Note prompt for transcribed text                                                                             |    No    | —                        |
-| `TTS_API_URL`                   | TTS API base URL                                                                                             |    No    | —                        |
-| `TTS_API_KEY`                   | TTS API key                                                                                                  |    No    | —                        |
-| `TTS_MODEL`                     | TTS model name passed to `/audio/speech`                                                                     |    No    | `gpt-4o-mini-tts`        |
-| `TTS_VOICE`                     | OpenAI-compatible TTS voice name                                                                             |    No    | `alloy`                  |
+| `TTS_PROVIDER`                  | TTS provider: `openai` or `google`                                                                           |    No    | `openai`                 |
+| `TTS_API_URL`                   | TTS API base URL for OpenAI-compatible providers                                                             |    No    | —                        |
+| `TTS_API_KEY`                   | TTS API key for OpenAI-compatible providers                                                                  |    No    | —                        |
+| `TTS_MODEL`                     | TTS model name passed to `/audio/speech` for OpenAI-compatible providers                                     |    No    | `gpt-4o-mini-tts`        |
+| `TTS_VOICE`                     | TTS voice name; defaults to `alloy` for OpenAI and `en-US-Standard-A` for Google                            |    No    | provider-specific        |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Absolute path to a Google service account JSON file for Google Cloud TTS                                    |    No    | —                        |
 | `LOG_LEVEL`                     | Log level (`debug`, `info`, `warn`, `error`)                                                                 |    No    | `info`                   |
 | `LOG_RETENTION`                 | Number of log files to keep                                                                                  |    No    | `10`                     |
 
@@ -200,16 +210,28 @@ If `STT_API_URL` and `STT_API_KEY` are set, the bot will:
 3. Show recognized text in chat
 4. Send the recognized text to OpenCode as a normal prompt
 
-If TTS credentials are configured, you can toggle spoken replies globally with `/tts`. The preference is stored in `settings.json` and persists across restarts.
+If TTS is configured, you can toggle spoken replies globally with `/tts`. The preference is stored in `settings.json` and persists across restarts.
 
-TTS configuration example:
+OpenAI-compatible TTS example:
 
 ```env
+TTS_PROVIDER=openai
 TTS_API_URL=https://api.openai.com/v1
 TTS_API_KEY=your-tts-api-key
 TTS_MODEL=gpt-4o-mini-tts
 TTS_VOICE=alloy
 ```
+
+Google Cloud TTS example:
+
+```env
+TTS_PROVIDER=google
+GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/google-service-account.json
+# Optional override; defaults to en-US-Standard-A for Google
+# TTS_VOICE=en-US-Standard-A
+```
+
+The bot strips Markdown before generating speech so links, headings, and formatting markers do not get read out literally.
 
 Supported provider examples (Whisper-compatible):
 
@@ -238,7 +260,7 @@ To add a model to favorites, open OpenCode TUI (`opencode`), go to model selecti
 
 ## Security
 
-The bot enforces a strict **user ID whitelist**. Only the Telegram user whose numeric ID matches `TELEGRAM_ALLOWED_USER_ID` can interact with the bot. Messages from any other user are silently ignored and logged as unauthorized access attempts.
+The bot enforces a strict **user ID whitelist**. The admin user from `TELEGRAM_ADMIN_USER_ID` is always allowed, and you can optionally grant access to additional users with `TELEGRAM_ALLOWED_USER_IDS`. Messages from any other user are silently ignored and logged as unauthorized access attempts.
 
 Since the bot runs locally on your machine and connects to your local OpenCode server, there is no external attack surface beyond the Telegram Bot API itself.
 
@@ -273,7 +295,7 @@ npm run dev
 | `npm test`                      | Run tests (Vitest)                   |
 | `npm run test:coverage`         | Tests with coverage report           |
 
-> **Note:** No file watcher or auto-restart is used. The bot maintains persistent SSE and long-polling connections — automatic restarts would break them mid-task. After making changes, restart manually with `npm run dev`.
+> **Note:** `npm run dev` still does not use a file watcher. For local source changes, rebuild/restart manually. Runtime auto-restart is an optional production safeguard for the managed OpenCode server process, not a development hot-reload feature.
 
 ## Troubleshooting
 

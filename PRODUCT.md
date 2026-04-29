@@ -46,6 +46,7 @@ No public inbound ports are required for normal usage.
 - Create a new session
 - Use OpenCode-generated session title (based on conversation)
 - When a session is selected inside a Telegram forum topic, sync the topic name with the selected session title
+- Keep attached-session routing isolated per private chat or forum topic so follow-up updates, external input, and restored interactive controls return to the correct scope
 
 ### Task handling
 
@@ -73,13 +74,13 @@ No public inbound ports are required for normal usage.
 
 ### Security
 
-- Whitelist by Telegram user ID (single-user mode)
+- Whitelist by Telegram admin user ID plus optional allowed user IDs
 - Ignore messages from non-authorized users
 
 ### Configuration
 
 - Telegram bot token
-- Allowed Telegram user ID
+- Admin Telegram user ID and optional allowed user IDs
 - Default model provider and model ID
 - Selected project persisted in `settings.json`
 - Configurable sessions list size (default: 10)
@@ -89,7 +90,8 @@ No public inbound ports are required for normal usage.
 - Configurable visibility for service messages (thinking/tool calls)
 - Configurable max code file size in KB (default: 100)
 - Optional STT settings for voice transcription (`STT_API_URL`, `STT_API_KEY`, `STT_MODEL`, `STT_LANGUAGE`)
-- Optional TTS settings for global audio replies (`TTS_API_URL`, `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`)
+- Optional TTS settings for global audio replies (`TTS_PROVIDER`, `TTS_API_URL`, `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`, `GOOGLE_APPLICATION_CREDENTIALS`)
+- Optional OpenCode server monitoring with automatic restart (`OPENCODE_AUTO_RESTART_ENABLED`, `OPENCODE_MONITOR_INTERVAL_SEC`)
 
 ## Current Product Scope
 
@@ -108,6 +110,7 @@ Current command set:
 - `/tasklist` - browse and delete scheduled tasks
 - `/rename` - rename current session
 - `/commands` - browse and run custom commands (plus built-ins like `init` and `review`)
+- `/mcps` - browse available MCP servers and their status
 - `/opencode_start` - start local OpenCode server
 - `/opencode_stop` - stop local OpenCode server
 - `/skills` - browse and execute available skills
@@ -137,7 +140,7 @@ Model picker behavior:
 
 ### Main features already implemented
 
-- [x] Single-user access control by allowed Telegram user ID
+- [x] Access control by admin Telegram user ID plus optional allowed user IDs
 - [x] OpenCode server control from Telegram (`/status`, `/opencode_start`, `/opencode_stop`)
 - [x] Project and session management from Telegram (`/projects`, `/sessions`, `/new`)
 - [x] Remote task execution and interruption support (`/abort`)
@@ -157,8 +160,9 @@ Model picker behavior:
 - [x] PDF attachments support (persist original PDF files and fall back to local text extraction when the selected model lacks PDF input)
 - [x] Text file attachments support (include the saved local file path in the generated prompt for code/config/log files)
 - [x] Voice/audio transcription via Whisper-compatible APIs with automatic local media fallback when STT is unavailable or fails
-- [x] Optional global audio replies with `/tts` via OpenAI-compatible APIs
+- [x] Optional global audio replies with `/tts` via OpenAI-compatible and Google Cloud TTS providers, including Markdown stripping before speech synthesis
 - [x] Short Telegram video and video-note attachments support (persist saved copies, use automatic local analysis fallback when the selected model lacks video input, and locally compress oversized videos up to 61 seconds before analysis)
+- [x] Topic-scoped session attach/follow routing, pinned status isolation, and external-input/busy-state isolation for multi-user and forum workflows
 
 ## Current Task List
 
@@ -168,11 +172,11 @@ Open tasks for upcoming iterations:
 - [x] `/skills` command: browse skills and choose one for usage
 - [x] `/worktree` command: switch between git worktrees
 - [x] `/open` command: browse project files and open them
-- [ ] `/mcps` command: browse available MCP servers
+- [x] `/mcps` command: browse available MCP servers
 - [x] Dynamic subagent activity display during task execution
 - [ ] Git tree support
 - [x] Docker runtime support and deployment guide
-- [ ] OpenCode server monitoring with automatic restart on stop/crash
+- [x] OpenCode server monitoring with automatic restart on stop/crash
 
 ## Possible Improvements
 

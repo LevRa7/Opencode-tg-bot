@@ -3,6 +3,11 @@ import path from "node:path";
 
 import { createBot } from "../bot/index.js";
 import { config } from "../config.js";
+import {
+  createOpenCodeAutoRestartMonitor,
+  type OpenCodeAutoRestartMonitor,
+} from "../opencode/auto-restart.js";
+import type { ProcessOperationResult } from "../process/types.js";
 import { loadSettings } from "../settings/manager.js";
 import { processManager } from "../process/manager.js";
 import { scheduledTaskRuntime } from "../scheduled-task/runtime.js";
@@ -98,11 +103,26 @@ export async function tryAutoStartServer(): Promise<boolean> {
   return true;
 }
 
-export async function startBotApp(): Promise<void> {
+interface StartBotAppDependencies {
+  createMonitor?: (config: {
+    enabled: boolean;
+    intervalMs: number;
+    isRuntimeAvailable: () => Promise<boolean>;
+    start: () => Promise<ProcessOperationResult>;
+  }) => OpenCodeAutoRestartMonitor;
+}
+
+async function isHostRuntimeAvailable(): Promise<boolean> {
+  const runtimeInfo = processManager.getCurrentRuntimeInfo();
+  return runtimeInfo.kind === "host" && runtimeInfo.managed;
+}
+
+export async function startBotApp(dependencies: StartBotAppDependencies = {}): Promise<void> {
   const mode = getRuntimeMode();
   const runtimePaths = getRuntimePaths();
   const version = await getBotVersion();
   const releaseStartupLock = await acquireStartupLock(runtimePaths);
+  const createMonitor = dependencies.createMonitor ?? createOpenCodeAutoRestartMonitor;
 
   logger.info(`Starting OpenCode Telegram Bot v${version}...`);
   logger.info(`Config loaded from ${runtimePaths.envFilePath}`);
@@ -110,6 +130,7 @@ export async function startBotApp(): Promise<void> {
   logger.debug(`[Runtime] Application start mode: ${mode}`);
 
   let bot: ReturnType<typeof createBot> | null = null;
+  let autoRestartMonitor: OpenCodeAutoRestartMonitor | null = null;
   let shutdownRequested = false;
 
   const shutdownBotContainers = async (): Promise<void> => {
@@ -133,6 +154,13 @@ export async function startBotApp(): Promise<void> {
     await loadSettings();
     await processManager.initialize();
     await tryAutoStartServer();
+    autoRestartMonitor = createMonitor({
+      enabled: config.opencode.autoRestart.enabled,
+      intervalMs: config.opencode.autoRestart.monitorIntervalSec * 1000,
+      isRuntimeAvailable: isHostRuntimeAvailable,
+      start: processManager.start.bind(processManager),
+    });
+    autoRestartMonitor.start();
     await reconcileStoredModelSelection();
     await warmupHostSessionDirectoryCache();
 
@@ -156,6 +184,7 @@ export async function startBotApp(): Promise<void> {
   } finally {
     process.off("SIGINT", handleSignal);
     process.off("SIGTERM", handleSignal);
+    autoRestartMonitor?.stop();
     processManager.dispose();
     await shutdownBotContainers();
     await releaseStartupLock();

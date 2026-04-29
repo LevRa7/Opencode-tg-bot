@@ -18,7 +18,10 @@ import {
   formatCostLine,
   formatModelDisplayName,
 } from "./format.js";
-import { getCurrentTelegramConversationScopeKey } from "../telegram/scope.js";
+import {
+  getCurrentTelegramConversationScope,
+  getCurrentTelegramConversationScopeKey,
+} from "../telegram/scope.js";
 
 interface ScopedPinnedRuntime {
   api: Api | null;
@@ -36,6 +39,8 @@ function createInitialPinnedMessageState(): PinnedMessageState {
   return {
     messageId: null,
     chatId: null,
+    messageThreadId: undefined,
+    createdInCurrentProcess: false,
     sessionId: null,
     sessionTitle: t("pinned.default_session_title"),
     projectName: "",
@@ -79,15 +84,43 @@ class PinnedMessageManager {
     return runtime;
   }
 
+  private getSendMessageThreadOptions(
+    runtime: ScopedPinnedRuntime,
+  ): Parameters<Api["sendMessage"]>[2] {
+    if (!runtime.state.messageThreadId || runtime.state.messageThreadId <= 0) {
+      return undefined;
+    }
+
+    return {
+      message_thread_id: runtime.state.messageThreadId,
+    } as Parameters<Api["sendMessage"]>[2];
+  }
+
+  private getEditMessageThreadOptions(
+    runtime: ScopedPinnedRuntime,
+  ): Parameters<Api["editMessageText"]>[3] {
+    if (!runtime.state.messageThreadId || runtime.state.messageThreadId <= 0) {
+      return undefined;
+    }
+
+    return {
+      message_thread_id: runtime.state.messageThreadId,
+    } as Parameters<Api["editMessageText"]>[3];
+  }
+
   initialize(api: Api, chatId: number): void {
     const runtime = this.getRuntime();
+    const scope = getCurrentTelegramConversationScope();
     runtime.api = api;
     runtime.chatId = chatId;
+    runtime.state.chatId = chatId;
+    runtime.state.messageThreadId = scope?.messageThreadId;
 
     const savedMessageId = getPinnedMessageId();
     if (savedMessageId) {
       runtime.state.messageId = savedMessageId;
       runtime.state.chatId = chatId;
+      runtime.state.createdInCurrentProcess = false;
     }
   }
 
@@ -613,10 +646,15 @@ class PinnedMessageManager {
 
     try {
       const text = this.formatMessage();
-      const sentMessage = await runtime.api.sendMessage(runtime.chatId, text);
+      const sentMessage = await runtime.api.sendMessage(
+        runtime.chatId,
+        text,
+        this.getSendMessageThreadOptions(runtime),
+      );
 
       runtime.state.messageId = sentMessage.message_id;
       runtime.state.chatId = runtime.chatId;
+      runtime.state.createdInCurrentProcess = true;
       runtime.state.lastUpdated = Date.now();
       runtime.lastRenderedMessageText = text;
 
@@ -676,7 +714,12 @@ class PinnedMessageManager {
       }
 
       try {
-        await runtime.api.editMessageText(runtime.chatId, runtime.state.messageId, text);
+        await runtime.api.editMessageText(
+          runtime.chatId,
+          runtime.state.messageId,
+          text,
+          this.getEditMessageThreadOptions(runtime),
+        );
         runtime.state.lastUpdated = Date.now();
         runtime.lastRenderedMessageText = text;
 
@@ -699,6 +742,7 @@ class PinnedMessageManager {
         if (errorMessage.includes("message to edit not found")) {
           logger.warn("[PinnedManager] Pinned message was deleted, recreating...");
           runtime.state.messageId = null;
+          runtime.state.createdInCurrentProcess = false;
           runtime.lastRenderedMessageText = null;
           runtime.pendingForceUpdate = false;
           clearPinnedMessageId();
@@ -719,9 +763,14 @@ class PinnedMessageManager {
     }
 
     try {
-      await runtime.api.unpinAllChatMessages(runtime.chatId).catch(() => {});
+      if (runtime.state.messageId && runtime.state.createdInCurrentProcess) {
+        // Telegram's available unpin methods in this codebase are chat-global; deleting the
+        // pinned status message is the smallest topic-safe cleanup that avoids clearing other pins.
+        await runtime.api.deleteMessage?.(runtime.chatId, runtime.state.messageId).catch(() => {});
+      }
 
       runtime.state.messageId = null;
+      runtime.state.createdInCurrentProcess = false;
       runtime.lastRenderedMessageText = null;
       runtime.pendingUpdate = false;
       runtime.pendingForceUpdate = false;
@@ -759,7 +808,10 @@ class PinnedMessageManager {
     }
 
     try {
-      await runtime.api.unpinAllChatMessages(runtime.chatId).catch(() => {});
+      if (runtime.state.messageId && runtime.state.createdInCurrentProcess) {
+        // Keep unrelated topic or chat pins intact; only remove the message this runtime created.
+        await runtime.api.deleteMessage?.(runtime.chatId, runtime.state.messageId).catch(() => {});
+      }
 
       runtime.state = createInitialPinnedMessageState();
       runtime.lastRenderedMessageText = null;

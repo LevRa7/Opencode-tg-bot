@@ -209,16 +209,36 @@ describe("config boolean env parsing", () => {
   it("keeps TTS credentials unset when dedicated vars are missing", async () => {
     vi.stubEnv("STT_API_URL", "https://api.openai.com/v1");
     vi.stubEnv("STT_API_KEY", "sk-test-key");
+    vi.stubEnv("TTS_PROVIDER", "");
     vi.stubEnv("TTS_API_URL", "");
     vi.stubEnv("TTS_API_KEY", "");
     vi.stubEnv("TTS_VOICE", "");
 
     const config = await loadConfig();
 
+    expect(config.tts.provider).toBe("openai");
     expect(config.tts.apiUrl).toBe("");
     expect(config.tts.apiKey).toBe("");
     expect(config.tts.model).toBe("gpt-4o-mini-tts");
     expect(config.tts.voice).toBe("alloy");
+  });
+
+  it("parses the google TTS provider", async () => {
+    vi.stubEnv("TTS_PROVIDER", "GOOGLE");
+    vi.stubEnv("TTS_VOICE", "");
+
+    const config = await loadConfig();
+
+    expect(config.tts.provider).toBe("google");
+    expect(config.tts.voice).toBe("en-US-Standard-A");
+  });
+
+  it("falls back to openai when TTS_PROVIDER is invalid", async () => {
+    vi.stubEnv("TTS_PROVIDER", "azure");
+
+    const config = await loadConfig();
+
+    expect(config.tts.provider).toBe("openai");
   });
 
   it("loads host telegram and bot defaults from admin env file", async () => {
@@ -305,5 +325,33 @@ describe("config boolean env parsing", () => {
     expect(config.bot.logRetention).toBe(10);
     expect(config.bot.scheduledTaskExecutionTimeoutMinutes).toBe(120);
     expect(config.stt.notePrompt).toBe("");
+  });
+
+  it("uses disabled auto-restart defaults when env vars are missing", async () => {
+    vi.stubEnv("OPENCODE_AUTO_RESTART_ENABLED", "");
+    vi.stubEnv("OPENCODE_MONITOR_INTERVAL_SEC", "");
+
+    const config = await loadConfig();
+
+    expect(config.opencode.autoRestart.enabled).toBe(false);
+    expect(config.opencode.autoRestart.monitorIntervalSec).toBe(300);
+  });
+
+  it("parses optional auto-restart config values", async () => {
+    vi.stubEnv("OPENCODE_AUTO_RESTART_ENABLED", "true");
+    vi.stubEnv("OPENCODE_MONITOR_INTERVAL_SEC", "45");
+
+    const config = await loadConfig();
+
+    expect(config.opencode.autoRestart.enabled).toBe(true);
+    expect(config.opencode.autoRestart.monitorIntervalSec).toBe(45);
+  });
+
+  it("falls back to default monitor interval when configured value is invalid", async () => {
+    vi.stubEnv("OPENCODE_MONITOR_INTERVAL_SEC", "zero");
+
+    const config = await loadConfig();
+
+    expect(config.opencode.autoRestart.monitorIntervalSec).toBe(300);
   });
 });

@@ -1,3 +1,5 @@
+import type { Context } from "grammy";
+
 export type DeferredItemKind = "text" | "photo" | "document" | "audio" | "video";
 
 type DeferredMediaItemKind = Extract<DeferredItemKind, "photo" | "document" | "audio" | "video">;
@@ -45,7 +47,7 @@ export interface ResolvedDeferredItem {
   contextText?: string;
   forwardedSource?: ForwardedSourceInfo;
   forwardedTag?: string;
-  ctx?: any;
+  ctx?: Context;
   metadata?: MessageMetadata;
 }
 
@@ -98,7 +100,7 @@ export function formatMetadataLine(m: MessageMetadata | undefined, label: string
   return label ? `${label}${metaStr ? ` ${metaStr}` : ""}` : metaStr;
 }
 
-export function extractMessageMetadata(ctx: any): MessageMetadata | undefined {
+export function extractMessageMetadata(ctx: Context): MessageMetadata | undefined {
   const msg = ctx?.message;
   if (!msg) return undefined;
 

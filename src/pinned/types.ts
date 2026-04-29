@@ -24,6 +24,8 @@ export interface FileChange {
 export interface PinnedMessageState {
   messageId: number | null;
   chatId: number | null;
+  messageThreadId?: number;
+  createdInCurrentProcess: boolean;
   sessionId: string | null;
   sessionTitle: string;
   projectName: string;

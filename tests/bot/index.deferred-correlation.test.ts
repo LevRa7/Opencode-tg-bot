@@ -65,6 +65,12 @@ const prepareAttachmentMediaPromptMock = vi.hoisted(() =>
 const summaryCallbacks = vi.hoisted(() => ({
   onSessionIdle: undefined as undefined | ((sessionId: string) => Promise<void> | void),
 }));
+const attachTargetBySessionId = vi.hoisted(() =>
+  new Map<string, { chatId: number; messageThreadId?: number }>(),
+);
+const attachScopeBySessionId = vi.hoisted(
+  () => new Map<string, { userId: number; chatId: number; messageThreadId?: number }>(),
+);
 
 vi.mock("grammy", () => {
   class FakeInputFile {
@@ -222,6 +228,21 @@ vi.mock("../../src/thread/manager.js", () => ({
     clearSessionForActiveContext: vi.fn(),
     getSessionTarget: vi.fn(() => ({ chatId: 123, messageThreadId: undefined })),
     getSessionScope: vi.fn(() => null),
+    getActiveScope: vi.fn(() => null),
+    isActiveScope: vi.fn(() => false),
+  },
+}));
+vi.mock("../../src/attach/manager.js", () => ({
+  attachManager: {
+    attach: vi.fn((scope: { userId: number; chatId: number; messageThreadId?: number }, session: { id: string }) => {
+      attachScopeBySessionId.set(session.id, scope);
+      attachTargetBySessionId.set(session.id, {
+        chatId: scope.chatId,
+        ...(scope.messageThreadId === undefined ? {} : { messageThreadId: scope.messageThreadId }),
+      });
+    }),
+    getTargetForSession: vi.fn((sessionId: string) => attachTargetBySessionId.get(sessionId) ?? null),
+    getScopeForSession: vi.fn((sessionId: string) => attachScopeBySessionId.get(sessionId) ?? null),
   },
 }));
 vi.mock("../../src/project/manager.js", () => ({
@@ -453,7 +474,13 @@ vi.mock("../../src/bot/assistant-run-state.js", () => ({
     clearRun: vi.fn(),
     clearAll: vi.fn(),
     markResponseCompleted: vi.fn(),
-    finishRun: vi.fn(() => null),
+    finishRun: vi.fn(() => ({
+      hasCompletedResponse: true,
+      actualAgent: "planner",
+      actualProviderID: "openai",
+      actualModelID: "gpt-5.4",
+      startedAt: Date.now() - 1000,
+    })),
     getCompletedRun: vi.fn(() => null),
     isRunActive: vi.fn(() => false),
   },
@@ -562,6 +589,8 @@ describe("bot/index deferred correlation", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     capturedEventCallbacksByDirectory.clear();
+    attachTargetBySessionId.clear();
+    attachScopeBySessionId.clear();
     sendMessageMock.mockClear();
     sendMessageDraftMock.mockClear();
     setMyCommandsMock.mockClear();
@@ -645,7 +674,7 @@ describe("bot/index deferred correlation", () => {
     expect(secondPromptCall?.[0]?.parts?.[0]?.text).toContain("Look at this screenshot");
 
     sessionPromptMock.mockClear();
-    await emitSessionIdle();
+    await summaryCallbacks.onSessionIdle?.("session-1");
     await photoHandler(createPhotoContext(4));
 
     expect(sessionPromptMock).toHaveBeenCalledTimes(1);
@@ -676,13 +705,38 @@ describe("bot/index deferred correlation", () => {
     expect(sessionPromptMock).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1000);
-    await emitSessionIdle();
+    await summaryCallbacks.onSessionIdle?.("session-1");
 
     expect(sessionPromptMock).not.toHaveBeenCalled();
     expect(sendMessageMock).not.toHaveBeenCalledWith(
       123,
       expect.stringContaining("blocked direct text"),
       expect.anything(),
+    );
+  });
+
+  it("routes deferred follow-up delivery to the attached topic for the session", async () => {
+    attachTargetBySessionId.set("session-1", { chatId: 123, messageThreadId: 22 });
+    attachScopeBySessionId.set("session-1", { userId: 777, chatId: 123, messageThreadId: 22 });
+
+    const bot = createBot() as any;
+    const textHandler = bot.onHandlers
+      .filter((entry: any) => entry.event === "message:text")
+      .at(-1)?.handler;
+
+    expect(textHandler).toBeTypeOf("function");
+
+    await textHandler(createTextContext("primary direct text", 31));
+    await vi.advanceTimersByTimeAsync(1100);
+
+    await vi.waitFor(() => expect(sessionPromptMock).toHaveBeenCalledTimes(1));
+
+    await summaryCallbacks.onSessionIdle?.("session-1");
+
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      123,
+      "footer",
+      expect.objectContaining({ message_thread_id: 22 }),
     );
   });
 

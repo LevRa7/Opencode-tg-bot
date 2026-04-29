@@ -796,6 +796,61 @@ describe("summary/aggregator", () => {
     ]);
   });
 
+  it("does not emit duplicate completion updates for unchanged completed subagents", () => {
+    const onSubagent = vi.fn();
+    summaryAggregator.setOnSubagent(onSubagent);
+    summaryAggregator.setSession("root-session");
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "subtask-1",
+          sessionID: "root-session",
+          messageID: "root-message",
+          type: "subtask",
+          prompt: "done task",
+          description: "done task",
+          agent: "explore",
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "child-done",
+          parentID: "root-session",
+          title: "done task (@explore subagent)",
+          slug: "child-done",
+          directory: "D:/repo",
+          projectID: "p1",
+          version: "1",
+          time: { created: Date.now(), updated: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "session.idle",
+      properties: {
+        sessionID: "child-done",
+      },
+    } as unknown as Event);
+
+    onSubagent.mockClear();
+
+    summaryAggregator.processEvent({
+      type: "session.idle",
+      properties: {
+        sessionID: "child-done",
+      },
+    } as unknown as Event);
+
+    expect(onSubagent).not.toHaveBeenCalled();
+  });
+
   it("marks write tool without file attachment when payload is oversized", () => {
     const onTool = vi.fn();
     const onToolFile = vi.fn();

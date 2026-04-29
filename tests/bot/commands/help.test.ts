@@ -21,6 +21,7 @@ describe("bot/commands/help", () => {
       expect(helpText).toContain(`/${item.command}`);
       expect(helpText).toContain(item.description);
     }
+    expect(helpText).toContain("/mcps");
     expect(helpText).not.toContain("/export_data");
   });
 });

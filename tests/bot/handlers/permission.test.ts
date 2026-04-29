@@ -8,6 +8,7 @@ import {
   handlePermissionCallback,
 } from "../../../src/bot/handlers/permission.js";
 import { t } from "../../../src/i18n/index.js";
+import { buildTelegramConversationScopeKey } from "../../../src/telegram/scope.js";
 
 const mocked = vi.hoisted(() => ({
   permissionReplyMock: vi.fn(),
@@ -155,6 +156,28 @@ describe("bot/handlers/permission", () => {
     expect(state?.expectedInput).toBe("callback");
     expect(state?.metadata.requestID).toBe("perm-1");
     expect(state?.metadata.messageId).toBe(500);
+  });
+
+  it("stores permission state in the explicit scope key when provided", async () => {
+    const botApi = createBotApi(505);
+    const request = createPermissionRequest("perm-scoped");
+    const scopeKey = buildTelegramConversationScopeKey({
+      userId: 4,
+      chatId: 777,
+      messageThreadId: 99,
+    });
+
+    await showPermissionRequest(botApi, 777, request, undefined, scopeKey);
+
+    expect(permissionManager.getRequestID(505, scopeKey)).toBe("perm-scoped");
+    expect(permissionManager.getPendingCount(scopeKey)).toBe(1);
+    expect(permissionManager.getRequestID(505)).toBeNull();
+    expect(permissionManager.getPendingCount()).toBe(0);
+
+    const scopedState = interactionManager.getSnapshot(scopeKey);
+    expect(scopedState?.kind).toBe("permission");
+    expect(scopedState?.metadata.requestID).toBe("perm-scoped");
+    expect(interactionManager.getSnapshot()).toBeNull();
   });
 
   it("keeps multiple active permission requests without deleting previous messages", async () => {

@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { questionManager } from "../../src/question/manager.js";
 import type { Question } from "../../src/question/types.js";
+import { buildTelegramConversationScopeKey } from "../../src/telegram/scope.js";
 
 const SINGLE_QUESTION: Question = {
   question: "Pick one option",
@@ -23,6 +24,10 @@ const MULTIPLE_QUESTION: Question = {
 };
 
 describe("questionManager", () => {
+  beforeEach(() => {
+    questionManager.clearAll();
+  });
+
   it("starts poll and moves through questions", () => {
     questionManager.startQuestions([SINGLE_QUESTION, MULTIPLE_QUESTION], "req-1");
 
@@ -119,5 +124,40 @@ describe("questionManager", () => {
     expect(questionManager.getTotalQuestions()).toBe(0);
     expect(questionManager.getRequestID()).toBeNull();
     expect(questionManager.getCurrentQuestion()).toBeNull();
+  });
+
+  it("restores pending question state by session id into a new scope without reusing telegram message ids", () => {
+    const sourceScopeKey = buildTelegramConversationScopeKey({
+      userId: 1,
+      chatId: 100,
+      messageThreadId: 10,
+    });
+    const targetScopeKey = buildTelegramConversationScopeKey({
+      userId: 1,
+      chatId: 100,
+      messageThreadId: 20,
+    });
+
+    // The source scope represents the original Telegram topic where the agent asked the question.
+    questionManager.startQuestions([SINGLE_QUESTION, MULTIPLE_QUESTION], "req-restore", sourceScopeKey, "session-a");
+    questionManager.selectOption(0, 1, sourceScopeKey);
+    questionManager.addMessageId(501, sourceScopeKey);
+    questionManager.setActiveMessageId(501, sourceScopeKey);
+
+    const restored = questionManager.restoreSessionToScope("session-a", targetScopeKey);
+
+    expect(restored).toBe(true);
+    expect(questionManager.isActive(sourceScopeKey)).toBe(false);
+    expect(questionManager.getCurrentQuestion(targetScopeKey)?.question).toBe(SINGLE_QUESTION.question);
+    expect(questionManager.getSelectedOptions(0, targetScopeKey)).toEqual(new Set([1]));
+    expect(questionManager.getMessageIds(targetScopeKey)).toEqual([]);
+    expect(questionManager.getActiveMessageId(targetScopeKey)).toBeNull();
+
+    // The restored scope must own an isolated copy so later button taps do not mutate another topic.
+    questionManager.selectOption(0, 0, targetScopeKey);
+
+    expect(questionManager.getSelectedOptions(0, targetScopeKey)).toEqual(new Set([0]));
+    expect(questionManager.getSelectedOptions(0, sourceScopeKey)).toEqual(new Set<number>());
+    expect(questionManager.getMessageIds(sourceScopeKey)).toEqual([]);
   });
 });

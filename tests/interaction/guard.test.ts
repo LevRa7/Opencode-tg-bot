@@ -353,6 +353,29 @@ describe("interaction guard", () => {
     expect(blockedDecision.busy).toBe(true);
   });
 
+  it("blocks new work only in the same topic when busy state is scoped to that topic", () => {
+    runWithTelegramConversationScope(
+      { userId: 1, chatId: 100, messageThreadId: 10 },
+      () => foregroundSessionState.markBusy("session-1"),
+    );
+
+    const sameTopicDecision = runWithTelegramConversationScope(
+      { userId: 1, chatId: 100, messageThreadId: 10 },
+      () => resolveInteractionGuardDecision(createContext({ text: "/new" })),
+    );
+    const otherTopicDecision = runWithTelegramConversationScope(
+      { userId: 1, chatId: 100, messageThreadId: 20 },
+      () => resolveInteractionGuardDecision(createContext({ text: "/new" })),
+    );
+
+    expect(sameTopicDecision.allow).toBe(false);
+    expect(sameTopicDecision.reason).toBe("command_not_allowed");
+    expect(sameTopicDecision.busy).toBe(true);
+
+    expect(otherTopicDecision.allow).toBe(true);
+    expect(otherTopicDecision.state).toBeNull();
+  });
+
   it("allows plain text and media while busy without interaction, but blocks unallowed commands", () => {
     foregroundSessionState.markBusy("session-1");
 

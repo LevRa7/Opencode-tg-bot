@@ -19,6 +19,24 @@ const handleRenameCancelMock = vi.hoisted(() => vi.fn(async () => false));
 const handleCommandsCallbackMock = vi.hoisted(() => vi.fn(async () => false));
 const syncAuthorizedChatCommandsMock = vi.hoisted(() => vi.fn(async () => undefined));
 const getApprovedTelegramUserIdsMock = vi.hoisted(() => vi.fn(() => [1]));
+const attachTargetBySessionId = vi.hoisted(() => new Map<string, { chatId: number; messageThreadId?: number }>());
+const attachScopeBySessionId = vi.hoisted(
+  () => new Map<string, { userId: number; chatId: number; messageThreadId?: number }>(),
+);
+const capturedEventCallbacksByDirectory = vi.hoisted(
+  () => new Map<string, Array<(event: any) => void>>(),
+);
+const summaryCallbacks = vi.hoisted(() => ({
+  onQuestion: undefined as
+    | undefined
+    | ((sessionId: string, questions: Array<Record<string, unknown>>, requestID: string) => Promise<void> | void),
+}));
+const sendMessageWithMarkdownFallbackMock = vi.hoisted(() =>
+  vi.fn(async ({ messageThreadId }: { messageThreadId?: number }) => ({
+    message_id: typeof messageThreadId === "number" ? messageThreadId : 1,
+  })),
+);
+const processUserPromptMock = vi.hoisted(() => vi.fn(async () => true));
 
 vi.mock("grammy", () => {
   class FakeBot {
@@ -229,13 +247,26 @@ vi.mock("../../src/keyboard/manager.js", () => ({
 }));
 
 vi.mock("../../src/opencode/events.js", () => ({
-  subscribeToEvents: vi.fn(async () => undefined),
+  subscribeToEvents: vi.fn(async (directory: string, callback: (event: any) => void) => {
+    const callbacks = capturedEventCallbacksByDirectory.get(directory) ?? [];
+    callbacks.push(callback);
+    capturedEventCallbacksByDirectory.set(directory, callbacks);
+  }),
   stopEventListening: vi.fn(),
+}));
+
+vi.mock("../../src/attach/manager.js", () => ({
+  attachManager: {
+    getTargetForSession: vi.fn((sessionId: string) => attachTargetBySessionId.get(sessionId) ?? null),
+    getScopeForSession: vi.fn((sessionId: string) => attachScopeBySessionId.get(sessionId) ?? null),
+  },
 }));
 
 vi.mock("../../src/summary/aggregator.js", () => ({
   summaryAggregator: {
     clear: vi.fn(),
+    setTypingIndicatorEnabled: vi.fn(),
+    setSessionDirectoryResolver: vi.fn(),
     setOnCleared: vi.fn(),
     setOnPartial: vi.fn(),
     setOnComplete: vi.fn(),
@@ -243,7 +274,9 @@ vi.mock("../../src/summary/aggregator.js", () => ({
     setOnTool: vi.fn(),
     setOnSubagent: vi.fn(),
     setOnToolFile: vi.fn(),
-    setOnQuestion: vi.fn(),
+    setOnQuestion: vi.fn((callback: typeof summaryCallbacks.onQuestion) => {
+      summaryCallbacks.onQuestion = callback;
+    }),
     setOnQuestionError: vi.fn(),
     setOnPermission: vi.fn(),
     setOnThinking: vi.fn(),
@@ -268,6 +301,13 @@ vi.mock("../../src/summary/formatter.js", () => ({
 
 vi.mock("../../src/summary/subagent-formatter.js", () => ({
   renderSubagentCards: vi.fn(async () => ""),
+}));
+
+vi.mock("../../src/bot/utils/assistant-rendering.js", () => ({
+  createPlainRenderedParts: vi.fn((text: string) => [{ text, fallbackText: text }]),
+  prepareAssistantFinalStreamingPayload: vi.fn(() => null),
+  prepareAssistantStreamingPayload: vi.fn(() => null),
+  renderAssistantFinalPartsSafe: vi.fn((text: string) => [{ text, fallbackText: text }]),
 }));
 
 vi.mock("../../src/summary/tool-message-batcher.js", () => ({
@@ -333,7 +373,7 @@ vi.mock("../../src/bot/handlers/prompt.js", () => ({
   clearPromptResponseMode: vi.fn(),
   clearPromptRouting: vi.fn(),
   getPromptRoutingContext: vi.fn(() => null),
-  processUserPrompt: vi.fn(async () => true),
+  processUserPrompt: processUserPromptMock,
 }));
 
 vi.mock("../../src/bot/handlers/voice.js", () => ({
@@ -350,7 +390,13 @@ vi.mock("../../src/bot/utils/file-download.js", () => ({
   toDataUri: vi.fn(() => ""),
 }));
 vi.mock("../../src/bot/utils/finalize-assistant-response.js", () => ({
-  finalizeAssistantResponse: vi.fn(async () => ({ followUpFiles: [] })),
+  finalizeAssistantResponse: vi.fn(async ({ messageText, renderFinalParts, sendRenderedPart }: any) => {
+    const parts = renderFinalParts(messageText);
+    for (const part of parts) {
+      await sendRenderedPart(part, { disable_notification: true });
+    }
+    return { followUpFiles: [] };
+  }),
 }));
 vi.mock("../../src/bot/utils/send-tts-response.js", () => ({
   sendTtsResponseForSession: vi.fn(async () => undefined),
@@ -376,8 +422,10 @@ vi.mock("../../src/bot/utils/thinking-message-lifecycle.js", () => ({
 vi.mock("../../src/bot/utils/thinking-message.js", () => ({
   buildThinkingMessageHtml: vi.fn(() => "thinking"),
 }));
+const sendBotTextMock = vi.hoisted(() => vi.fn(async () => 1));
+
 vi.mock("../../src/bot/utils/telegram-text.js", () => ({
-  sendBotText: vi.fn(async () => 1),
+  sendBotText: sendBotTextMock,
 }));
 vi.mock("../../src/bot/utils/telegram-local-file-follow-up.js", () => ({
   createLocalFileFollowUpTracker: vi.fn(() => ({
@@ -437,7 +485,7 @@ vi.mock("../../src/bot/streaming/tool-call-streamer.js", () => ({
 }));
 vi.mock("../../src/bot/utils/send-with-markdown-fallback.js", () => ({
   editMessageWithMarkdownFallback: vi.fn(async () => undefined),
-  sendMessageWithMarkdownFallback: vi.fn(async () => ({ message_id: 1 })),
+  sendMessageWithMarkdownFallback: sendMessageWithMarkdownFallbackMock,
 }));
 vi.mock("../../src/thread/manager.js", () => ({
   threadContextManager: {
@@ -448,6 +496,8 @@ vi.mock("../../src/thread/manager.js", () => ({
     getSessionTarget: vi.fn(() => null),
     getSessionScope: vi.fn(() => null),
     getSessionDirectory: vi.fn(() => "/repo"),
+    getActiveScope: vi.fn(() => null),
+    isActiveScope: vi.fn(() => false),
   },
 }));
 vi.mock("../../src/bot/utils/message-thread.js", () => ({
@@ -475,6 +525,8 @@ vi.mock("../../src/telegram/scope.js", () => ({
 }));
 
 import { createBot } from "../../src/bot/index.js";
+import { summaryAggregator } from "../../src/summary/aggregator.js";
+import { questionManager } from "../../src/question/manager.js";
 
 function createCallbackContext(data: string) {
   return {
@@ -489,10 +541,35 @@ function createCallbackContext(data: string) {
   };
 }
 
+function createTextContext(text: string, messageId: number) {
+  return {
+    message: {
+      message_id: messageId,
+      text,
+      chat: { id: 123 },
+      message_thread_id: 99,
+    },
+    chat: { id: 123, type: "private" },
+    from: { id: 1 },
+    api: {},
+    reply: vi.fn().mockResolvedValue({ message_id: messageId + 1000 }),
+  };
+}
+
 describe("bot/index callback routing", () => {
   beforeEach(() => {
     onHandlers.length = 0;
     useHandlers.length = 0;
+    capturedEventCallbacksByDirectory.clear();
+    summaryCallbacks.onQuestion = undefined;
+    attachTargetBySessionId.clear();
+    attachScopeBySessionId.clear();
+    sendMessageWithMarkdownFallbackMock.mockClear();
+    sendBotTextMock.mockClear();
+    processUserPromptMock.mockReset().mockImplementation(async (_ctx, _text, promptDeps) => {
+      await promptDeps.ensureEventSubscription("/repo");
+      return true;
+    });
     handleInlineMenuCancelMock.mockReset().mockResolvedValue(false);
     handleSessionSelectMock.mockReset().mockResolvedValue(false);
     handleProjectSelectMock.mockReset().mockResolvedValue(false);
@@ -573,5 +650,92 @@ describe("bot/index callback routing", () => {
     expect(handleTaskListCallbackMock).toHaveBeenCalledTimes(1);
     expect(handleTaskListCallbackMock).toHaveBeenCalledWith(ctx);
     expect(ctx.answerCallbackQuery).not.toHaveBeenCalledWith({ text: "callback.unknown_command" });
+  });
+
+  it("routes SSE assistant completions to the attached topic for each session in the same chat", async () => {
+    attachTargetBySessionId.set("session-a", { chatId: 123, messageThreadId: 11 });
+    attachTargetBySessionId.set("session-b", { chatId: 123, messageThreadId: 22 });
+    attachScopeBySessionId.set("session-a", { userId: 1, chatId: 123, messageThreadId: 11 });
+    attachScopeBySessionId.set("session-b", { userId: 1, chatId: 123, messageThreadId: 22 });
+
+    const bot = createBot() as unknown as { onHandlers: typeof onHandlers };
+    const textHandler = bot.onHandlers
+      .filter((entry) => entry.event === "message:text")
+      .at(-1)?.handler;
+
+    expect(textHandler).toBeTypeOf("function");
+
+    await textHandler?.(createTextContext("prime subscription", 1));
+
+    const onComplete = summaryAggregator.setOnComplete.mock.calls[0]?.[0];
+    expect(onComplete).toBeTypeOf("function");
+
+    await onComplete?.(
+      "session-a",
+      "msg-a",
+      "Assistant reply for A",
+      "",
+      [],
+      undefined,
+    );
+    await onComplete?.(
+      "session-b",
+      "msg-b",
+      "Assistant reply for B",
+      "",
+      [],
+      undefined,
+    );
+
+    expect(sendBotTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: 123,
+        messageThreadId: 11,
+        text: "Assistant reply for A",
+      }),
+    );
+    expect(sendBotTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: 123,
+        messageThreadId: 22,
+        text: "Assistant reply for B",
+      }),
+    );
+  });
+
+  it("starts question state with the current session id for later attach restoration", async () => {
+    attachTargetBySessionId.set("session-a", { chatId: 123, messageThreadId: 11 });
+    attachScopeBySessionId.set("session-a", { userId: 1, chatId: 123, messageThreadId: 11 });
+
+    const bot = createBot() as unknown as { onHandlers: typeof onHandlers };
+    const textHandler = bot.onHandlers
+      .filter((entry) => entry.event === "message:text")
+      .at(-1)?.handler;
+
+    expect(textHandler).toBeTypeOf("function");
+
+    await textHandler?.(createTextContext("prime subscription", 1));
+
+    const onQuestion = summaryCallbacks.onQuestion;
+    expect(onQuestion).toBeTypeOf("function");
+
+    await onQuestion?.(
+      "session-a",
+      [
+        {
+          header: "Restore",
+          question: "Continue?",
+          options: [{ label: "Yes", description: "continue" }],
+        },
+      ],
+      "req-1",
+    );
+
+    expect(questionManager.startQuestions).toHaveBeenCalledWith(
+      expect.any(Array),
+      "req-1",
+      "scope",
+      "session-a",
+    );
   });
 });

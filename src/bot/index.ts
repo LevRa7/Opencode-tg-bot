@@ -44,6 +44,7 @@ import {
   handleSkillsCallback,
   handleSkillTextArguments,
 } from "./commands/skills.js";
+import { handleMcpsCallback, mcpsCommand } from "./commands/mcps.js";
 import {
   handleQuestionCallback,
   showCurrentQuestion,
@@ -82,7 +83,6 @@ import {
   getPromptRoutingContext,
   processUserPrompt,
   isSessionBusy,
-  type ProcessPromptDeps,
 } from "./handlers/prompt.js";
 import { IncomingMediaBatch } from "./incoming-media-batch.js";
 import type { ResolvedDeferredItem } from "../media/batch-types.js";
@@ -142,19 +142,31 @@ import {
   runWithTelegramConversationScope,
   type TelegramConversationScope,
 } from "../telegram/scope.js";
+import { attachManager } from "../attach/manager.js";
+import { externalInputSuppression } from "../external-input/suppression.js";
+import {
+  extractExternalUserInputText,
+  formatExternalUserInputMessage,
+} from "./utils/external-user-input.js";
 
 let deferredBatch: IncomingMediaBatch<
   ResolvedDeferredItem,
   ResolvedDeferredItem,
-  { text: string; firstContext?: any }
+  DeferredPromptBatchResolution
 >;
 let activeBotInstance: Bot<Context> | null = null;
+
+interface DeferredPromptBatchResolution {
+  text: string;
+  firstContext?: Context;
+}
 
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
 const RESPONSE_STREAM_THROTTLE_MS = config.bot.responseStreamThrottleMs;
 const RESPONSE_STREAM_TEXT_LIMIT = 3800;
 const SESSION_RETRY_PREFIX = "🔁";
 const SUBAGENT_STREAM_PREFIX = "🧩";
+const EXTERNAL_INPUT_NOTIFICATION_DEDUPE_TTL_MS = 15_000;
 
 function prepareFinalStreamingPayload(messageText: string) {
   return prepareAssistantFinalStreamingPayload(messageText, RESPONSE_STREAM_TEXT_LIMIT);
@@ -164,6 +176,33 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const TEMP_DIR = path.join(__dirname, "..", ".tmp");
 const sessionCompletionTasks = new Map<string, Promise<void>>();
+const externalInputNotificationExpiresAtByKey = new Map<string, number>();
+
+function clearExpiredExternalInputNotificationDedupe(now = Date.now()): void {
+  for (const [key, expiresAt] of externalInputNotificationExpiresAtByKey.entries()) {
+    if (expiresAt <= now) {
+      externalInputNotificationExpiresAtByKey.delete(key);
+    }
+  }
+}
+
+function shouldDeliverExternalInputNotification(options: {
+  sessionId: string;
+  scope: TelegramConversationScope;
+  messageId: string;
+}): boolean {
+  clearExpiredExternalInputNotificationDedupe();
+  const dedupeKey = `${options.sessionId}::${buildTelegramConversationScopeKey(options.scope)}::${options.messageId}`;
+  if (externalInputNotificationExpiresAtByKey.has(dedupeKey)) {
+    return false;
+  }
+
+  externalInputNotificationExpiresAtByKey.set(
+    dedupeKey,
+    Date.now() + EXTERNAL_INPUT_NOTIFICATION_DEDUPE_TTL_MS,
+  );
+  return true;
+}
 
 interface SessionRoutingContext {
   bot: Bot<Context>;
@@ -172,6 +211,7 @@ interface SessionRoutingContext {
     messageThreadId?: number;
   };
   scope: TelegramConversationScope | null;
+  targetSource: "attached" | "prompt";
   sourceMessageId?: number;
 }
 
@@ -188,10 +228,14 @@ function syncSessionRoutingContext(sessionId: string): SessionRoutingContext | n
     return routingBySessionId.get(sessionId) ?? null;
   }
 
+  const attachedScope = attachManager.getScopeForSession(sessionId);
+  const attachedTarget = attachedScope ? attachManager.getTargetForSession(sessionId) : null;
+
   const routing: SessionRoutingContext = {
     bot: promptRouting.bot,
-    target: getThreadTargetForSession(sessionId) ?? promptRouting.target,
-    scope: promptRouting.scope,
+    target: attachedTarget ?? promptRouting.target,
+    scope: attachedScope ?? promptRouting.scope,
+    targetSource: attachedTarget ? "attached" : "prompt",
     sourceMessageId: promptRouting.sourceMessageId,
   };
 
@@ -221,20 +265,16 @@ function getCurrentReplyKeyboard() {
   return keyboardManager.getKeyboard();
 }
 
-function getThreadTargetForSession(sessionId?: string) {
-  if (!sessionId) {
-    return null;
-  }
-
-  return threadContextManager.getSessionTarget(sessionId);
+function resolveAttachedSessionTarget(sessionId: string) {
+  return attachManager.getTargetForSession(sessionId) ?? threadContextManager.getSessionTarget(sessionId);
 }
 
 function hasLiveSessionTarget(sessionId: string): boolean {
-  return getThreadTargetForSession(sessionId) != null;
+  return resolveAttachedSessionTarget(sessionId) != null;
 }
 
 function getSessionRoutingTarget(sessionId: string) {
-  return getSessionRoutingContext(sessionId)?.target ?? getThreadTargetForSession(sessionId);
+  return resolveAttachedSessionTarget(sessionId) ?? getSessionRoutingContext(sessionId)?.target;
 }
 
 function getSessionRoutingApi(sessionId: string) {
@@ -247,13 +287,20 @@ function getSessionRoutingApi(sessionId: string) {
 }
 
 function getSessionRoutingScope(sessionId: string): TelegramConversationScope | null {
-  return (
-    getSessionRoutingContext(sessionId)?.scope ?? threadContextManager.getSessionScope(sessionId)
-  );
+  const routing = getSessionRoutingContext(sessionId);
+  if (routing) {
+    return routing.scope;
+  }
+
+  return attachManager.getScopeForSession(sessionId) ?? threadContextManager.getSessionScope(sessionId);
 }
 
 function getSessionRoutingScopeKey(sessionId: string): string {
   return buildTelegramConversationScopeKey(getSessionRoutingScope(sessionId));
+}
+
+function getBusyScopeForSession(sessionId: string): TelegramConversationScope | null {
+  return getSessionRoutingScope(sessionId);
 }
 
 function buildThinkingRoutingIdentity(target: {
@@ -261,6 +308,10 @@ function buildThinkingRoutingIdentity(target: {
   messageThreadId?: number;
 }): string {
   return `${target.chatId}:${target.messageThreadId ?? "main"}`;
+}
+
+function isSessionRoutingLiveAttached(sessionId: string): boolean {
+  return getSessionRoutingContext(sessionId)?.targetSource === "attached";
 }
 
 async function runWithSessionRoutingScope<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
@@ -299,7 +350,20 @@ function isMessageStreamingEnabledForSession(sessionId: string): boolean {
 }
 
 function isSessionCurrent(sessionId: string): boolean {
-  return getSessionRoutingApi(sessionId) !== null && getSessionRoutingTarget(sessionId) != null;
+  const routing = getSessionRoutingContext(sessionId);
+  if (getSessionRoutingApi(sessionId) === null) {
+    return false;
+  }
+
+  if (!routing) {
+    return hasLiveSessionTarget(sessionId);
+  }
+
+  if (routing.targetSource === "prompt") {
+    return true;
+  }
+
+  return hasLiveSessionTarget(sessionId);
 }
 
 function prepareDocumentCaption(caption: string): string {
@@ -459,14 +523,21 @@ async function enqueueLocalFileFollowUpsFromText(sessionId: string, text: string
       const sentPaths: string[] = [];
       try {
         for (const followUp of preparedFollowUps) {
-          const currentTarget = getThreadTargetForSession(sessionId);
+          const currentTarget = resolveAttachedSessionTarget(sessionId);
           const currentRoutingIdentity = currentTarget
             ? buildThinkingRoutingIdentity(currentTarget)
             : null;
+
+          // 2026-04-29: prompt-only fallback routes stay deliverable from cached routing,
+          // but attach-first routes must stop once the live attached target disappears.
+          const lostAttachedRoute =
+            isSessionRoutingLiveAttached(sessionId) && currentRoutingIdentity === null;
+          const switchedLiveRoute =
+            currentRoutingIdentity !== null && currentRoutingIdentity !== deliveryRoute.routingIdentity;
           if (
             !isSessionCurrent(sessionId) ||
-            currentRoutingIdentity === null ||
-            currentRoutingIdentity !== deliveryRoute.routingIdentity
+            lostAttachedRoute ||
+            switchedLiveRoute
           ) {
             break;
           }
@@ -916,7 +987,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           responseStreamer.clearMessage(sessionId, `${messageId}:assistant`, "session_mismatch");
           toolCallStreamer.clearSession(sessionId, "session_mismatch");
           assistantRunState.clearRun(sessionId, "session_mismatch");
-          foregroundSessionState.markIdle(sessionId);
+          foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
           await scheduledTaskRuntime.flushDeferredDeliveries();
           return;
         }
@@ -934,7 +1005,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           toolMessageBatcher.clearSession(sessionId, "bot_context_missing");
           toolCallStreamer.clearSession(sessionId, "bot_context_missing");
           assistantRunState.clearRun(sessionId, "bot_context_missing");
-          foregroundSessionState.markIdle(sessionId);
+          foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
           await scheduledTaskRuntime.flushDeferredDeliveries();
           return;
         }
@@ -1076,7 +1147,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       messageDraftStreamManager.clearSession(sessionId);
       responseStreamer.clearSession(sessionId, "session_idle_missing_routing");
       await clearThinkingBlockStream(sessionId, false);
-      foregroundSessionState.markIdle(sessionId);
+       foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
       await scheduledTaskRuntime.flushDeferredDeliveries();
       return;
     }
@@ -1121,7 +1192,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       clearSessionRoutingContext(sessionId);
       localFileFollowUpTracker.clearSession(sessionId);
       messageDraftStreamManager.clearSession(sessionId);
-      foregroundSessionState.markIdle(sessionId);
+       foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
       await scheduledTaskRuntime.flushDeferredDeliveries();
     }
   });
@@ -1129,6 +1200,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   summaryAggregator.setOnTool(async (toolInfo) => {
     syncSessionRoutingContext(toolInfo.sessionId);
     if (!isSessionCurrent(toolInfo.sessionId)) {
+      toolCallStreamer.clearSession(toolInfo.sessionId, "tool_missing_live_routing");
       logger.error("Bot or chat ID not available for sending tool notification");
       return;
     }
@@ -1148,6 +1220,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     try {
       const message = formatToolInfo(toolInfo);
       if (message) {
+        if (!isSessionCurrent(toolInfo.sessionId)) {
+          toolCallStreamer.clearSession(toolInfo.sessionId, "tool_lost_live_routing_before_queue");
+          return;
+        }
+
         const spoilerMessage = formatToolCallAsSpoiler(message);
         toolCallStreamer.replaceByPrefix(
           toolInfo.sessionId,
@@ -1174,6 +1251,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     try {
       const renderedCards = await renderSubagentCards(subagents);
       if (!renderedCards) {
+        return;
+      }
+
+      if (!isSessionCurrent(sessionId)) {
         return;
       }
 
@@ -1234,7 +1315,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
 
     logger.info(`[Bot] Received ${questions.length} questions from agent, requestID=${requestID}`);
-    questionManager.startQuestions(questions, requestID, scopeKey);
+    questionManager.startQuestions(questions, requestID, scopeKey, sessionId);
     await runWithSessionRoutingScope(sessionId, () =>
       showCurrentQuestion(botApi, target.chatId, target.messageThreadId),
     );
@@ -1384,7 +1465,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       toolCallStreamer.clearSession(sessionId, "session_error_missing_routing");
       assistantRunState.clearRun(sessionId, "session_error_missing_routing");
       await clearThinkingBlockStream(sessionId, shouldClearThinkingBlock);
-      foregroundSessionState.markIdle(sessionId);
+       foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
       await scheduledTaskRuntime.flushDeferredDeliveries();
       return;
     }
@@ -1444,7 +1525,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     clearSessionRoutingContext(sessionId);
     localFileFollowUpTracker.clearSession(sessionId);
-    foregroundSessionState.markIdle(sessionId);
+    foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
     await scheduledTaskRuntime.flushDeferredDeliveries();
   });
 
@@ -1505,6 +1586,45 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           taskName: `session.cache.${event.type}`,
           task: () => ingestSessionInfoForCache(info),
         });
+      }
+    }
+
+    if (event.type === "message.updated") {
+      const info = (
+        event.properties as {
+          info?: {
+            id?: string;
+            sessionID?: string;
+            role?: string;
+            parts?: Array<{ type?: string; text?: string }>;
+          };
+        }
+      ).info;
+
+      const sessionId = info?.sessionID;
+      const messageId = info?.id;
+      if (sessionId && messageId && info?.role === "user") {
+        const scope = attachManager.getScopeForSession(sessionId);
+        const target = scope ? attachManager.getTargetForSession(sessionId) : null;
+        const text = extractExternalUserInputText(event as { properties?: { info?: { parts?: Array<{ type?: string; text?: string }> } } });
+
+        if (
+          scope &&
+          target &&
+          text &&
+          !externalInputSuppression.shouldSuppress(sessionId, scope, text) &&
+          shouldDeliverExternalInputNotification({ sessionId, scope, messageId })
+        ) {
+          void runWithTelegramConversationScope(scope, async () => {
+            await activeBotInstance?.api.sendMessage(
+              target.chatId,
+              formatExternalUserInputMessage(text, t("bot.external_user_input")),
+              withMessageThreadId(undefined, target.messageThreadId),
+            );
+          }).catch((error) => {
+            logger.warn("[Bot] Failed to send external user input notification", error);
+          });
+        }
       }
     }
 
@@ -1639,6 +1759,7 @@ export function createBot(): Bot<Context> {
   bot.command("worktree", worktreeCommand);
   bot.command("open", openCommand);
   bot.command("skills", skillsCommand);
+  bot.command("mcps", mcpsCommand);
 
   bot.on("message:text", unknownCommandMiddleware);
 
@@ -1667,9 +1788,10 @@ export function createBot(): Bot<Context> {
       const handledWorktree = await handleWorktreeCallback(ctx);
       const handledOpen = await handleOpenCallback(ctx);
       const handledSkills = await handleSkillsCallback(ctx, { bot, ensureEventSubscription });
+      const handledMcps = await handleMcpsCallback(ctx);
 
       logger.debug(
-        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, worktree=${handledWorktree}, open=${handledOpen}, skills=${handledSkills}`,
+        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, worktree=${handledWorktree}, open=${handledOpen}, skills=${handledSkills}, mcps=${handledMcps}`,
       );
 
       if (
@@ -1689,7 +1811,8 @@ export function createBot(): Bot<Context> {
         !handledCommands &&
         !handledWorktree &&
         !handledOpen &&
-        !handledSkills
+        !handledSkills &&
+        !handledMcps
       ) {
         logger.debug("Unknown callback query:", ctx.callbackQuery?.data);
         await ctx.answerCallbackQuery({ text: t("callback.unknown_command") });
@@ -1809,7 +1932,7 @@ export function createBot(): Bot<Context> {
   deferredBatch = new IncomingMediaBatch<
     ResolvedDeferredItem,
     ResolvedDeferredItem,
-    { text: string; firstContext?: any }
+    DeferredPromptBatchResolution
   >({
     correlationWindowMs: 3000,
     maxWindowMs: 3000,
@@ -1826,7 +1949,7 @@ export function createBot(): Bot<Context> {
       if (result.contextText) parts.push(result.contextText);
       return {
         text: parts.join("\n\n"),
-        firstContext: (deferredItems as any[]).find((item) => item?.ctx)?.ctx,
+        firstContext: deferredItems.find((item) => item.ctx)?.ctx,
       };
     },
     sendDeferredFollowUp: async ({ resolvedDeferredItems }) => {

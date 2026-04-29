@@ -5,8 +5,11 @@ const loadSettingsMock = vi.hoisted(() => vi.fn());
 const processManagerMock = vi.hoisted(() => ({
   initialize: vi.fn(),
   ensureRuntime: vi.fn(),
+  start: vi.fn(),
   dispose: vi.fn(),
 }));
+const autoRestartMonitorStartMock = vi.hoisted(() => vi.fn());
+const autoRestartMonitorStopMock = vi.hoisted(() => vi.fn());
 const reconcileStoredModelSelectionMock = vi.hoisted(() => vi.fn());
 const warmupHostSessionDirectoryCacheMock = vi.hoisted(() => vi.fn());
 const scheduledTaskRuntimeMock = vi.hoisted(() => ({
@@ -61,6 +64,12 @@ vi.mock("../../src/bot/index.js", () => ({
 vi.mock("../../src/config.js", () => ({
   config: {
     telegram: { adminUserId: 777 },
+    opencode: {
+      autoRestart: {
+        enabled: true,
+        monitorIntervalSec: 300,
+      },
+    },
   },
 }));
 
@@ -94,6 +103,9 @@ describe("runtime/start-bot-app", () => {
     loadSettingsMock.mockReset();
     processManagerMock.initialize.mockReset();
     processManagerMock.ensureRuntime.mockReset();
+    processManagerMock.start.mockReset();
+    autoRestartMonitorStartMock.mockReset();
+    autoRestartMonitorStopMock.mockReset();
     reconcileStoredModelSelectionMock.mockReset();
     warmupHostSessionDirectoryCacheMock.mockReset();
     scheduledTaskRuntimeMock.initialize.mockReset();
@@ -106,6 +118,7 @@ describe("runtime/start-bot-app", () => {
     loadSettingsMock.mockResolvedValue(undefined);
     processManagerMock.initialize.mockResolvedValue(undefined);
     processManagerMock.ensureRuntime.mockResolvedValue({ success: true });
+    processManagerMock.start.mockResolvedValue({ success: true });
     reconcileStoredModelSelectionMock.mockResolvedValue(undefined);
     warmupHostSessionDirectoryCacheMock.mockResolvedValue(undefined);
     scheduledTaskRuntimeMock.initialize.mockResolvedValue(undefined);
@@ -141,8 +154,13 @@ describe("runtime/start-bot-app", () => {
       delete signalHandlers[event as NodeJS.Signals];
       return process;
     }) as typeof process.off);
+    const createMonitor = vi.fn(() => ({
+      start: autoRestartMonitorStartMock,
+      stop: autoRestartMonitorStopMock,
+      checkNow: vi.fn(),
+    }));
 
-    const startPromise = startBotApp();
+    const startPromise = startBotApp({ createMonitor });
     await vi.waitFor(() => expect(createBotMock).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(botStartMock).toHaveBeenCalledTimes(1));
 
@@ -152,6 +170,14 @@ describe("runtime/start-bot-app", () => {
 
     expect(botStopMock).toHaveBeenCalledTimes(1);
     expect(stopBotContainersMock).toHaveBeenCalledTimes(1);
+    expect(createMonitor).toHaveBeenCalledWith({
+      enabled: true,
+      intervalMs: 300000,
+      isRuntimeAvailable: expect.any(Function),
+      start: expect.any(Function),
+    });
+    expect(autoRestartMonitorStartMock).toHaveBeenCalledTimes(1);
+    expect(autoRestartMonitorStopMock).toHaveBeenCalledTimes(1);
     expect(onSpy).toHaveBeenCalled();
     expect(offSpy).toHaveBeenCalled();
   });

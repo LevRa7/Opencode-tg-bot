@@ -9,6 +9,9 @@ import { interactionManager } from "../../../src/interaction/manager.js";
 import type { Question } from "../../../src/question/types.js";
 import type { PermissionRequest } from "../../../src/permission/types.js";
 import { t } from "../../../src/i18n/index.js";
+import { foregroundSessionState } from "../../../src/scheduled-task/foreground-state.js";
+import { attachManager } from "../../../src/attach/manager.js";
+import { runWithTelegramConversationScope } from "../../../src/telegram/scope.js";
 
 const mocked = vi.hoisted(() => ({
   currentSession: null as { id: string; title: string; directory: string } | null,
@@ -62,6 +65,8 @@ function activateInteractionState(): void {
 describe("bot/commands/abort", () => {
   beforeEach(() => {
     clearAllInteractionState("test_setup");
+    foregroundSessionState.__resetForTests();
+    attachManager.__resetForTests();
     mocked.currentSession = null;
     mocked.abortMock.mockReset();
     mocked.statusMock.mockReset();
@@ -163,5 +168,98 @@ describe("bot/commands/abort", () => {
     expect(permissionManager.isActive()).toBe(false);
     expect(renameManager.isWaitingForName()).toBe(false);
     expect(interactionManager.getSnapshot()).toBeNull();
+  });
+
+  it("clears busy state only for the attached topic after abort reaches idle", async () => {
+    const topicAScope = { userId: 1, chatId: 777, messageThreadId: 10 };
+    const topicBScope = { userId: 1, chatId: 777, messageThreadId: 20 };
+
+    mocked.currentSession = {
+      id: "session-1",
+      title: "Session",
+      directory: "D:/repo",
+    };
+
+    attachManager.attach(topicAScope, mocked.currentSession);
+    runWithTelegramConversationScope(topicAScope, () => {
+      foregroundSessionState.markBusy("session-1");
+    });
+    runWithTelegramConversationScope(topicBScope, () => {
+      foregroundSessionState.markBusy("session-2");
+    });
+
+    mocked.abortMock.mockResolvedValue({ data: true, error: null });
+    mocked.statusMock.mockResolvedValue({
+      data: {
+        "session-1": { type: "idle" },
+      },
+      error: null,
+    });
+
+    const replyMock = vi.fn().mockResolvedValue({ message_id: 88 });
+    const editMessageTextMock = vi.fn().mockResolvedValue(undefined);
+
+    const ctx = {
+      chat: { id: 777 },
+      reply: replyMock,
+      api: {
+        editMessageText: editMessageTextMock,
+      },
+    } as unknown as Context;
+
+    await abortCommand(ctx as never);
+
+    expect(runWithTelegramConversationScope(topicAScope, () => foregroundSessionState.isBusy())).toBe(
+      false,
+    );
+    expect(runWithTelegramConversationScope(topicBScope, () => foregroundSessionState.isBusy())).toBe(
+      true,
+    );
+  });
+
+  it("clears the original busy topic when attachment changes before abort cleanup", async () => {
+    const topicAScope = { userId: 1, chatId: 777, messageThreadId: 10 };
+    const topicBScope = { userId: 1, chatId: 777, messageThreadId: 20 };
+
+    mocked.currentSession = {
+      id: "session-1",
+      title: "Session",
+      directory: "D:/repo",
+    };
+
+    attachManager.attach(topicAScope, mocked.currentSession);
+    runWithTelegramConversationScope(topicAScope, () => {
+      foregroundSessionState.markBusy("session-1");
+    });
+
+    attachManager.attach(topicBScope, mocked.currentSession);
+
+    mocked.abortMock.mockResolvedValue({ data: true, error: null });
+    mocked.statusMock.mockResolvedValue({
+      data: {
+        "session-1": { type: "idle" },
+      },
+      error: null,
+    });
+
+    const replyMock = vi.fn().mockResolvedValue({ message_id: 88 });
+    const editMessageTextMock = vi.fn().mockResolvedValue(undefined);
+
+    const ctx = {
+      chat: { id: 777 },
+      reply: replyMock,
+      api: {
+        editMessageText: editMessageTextMock,
+      },
+    } as unknown as Context;
+
+    await abortCommand(ctx as never);
+
+    expect(runWithTelegramConversationScope(topicAScope, () => foregroundSessionState.isBusy())).toBe(
+      false,
+    );
+    expect(runWithTelegramConversationScope(topicBScope, () => foregroundSessionState.isBusy())).toBe(
+      false,
+    );
   });
 });

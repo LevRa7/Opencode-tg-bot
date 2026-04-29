@@ -6,19 +6,30 @@ import { processManager } from "../../process/manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { editBotText } from "../utils/telegram-text.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 
 export async function opencodeStopCommand(ctx: CommandContext<Context>) {
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+
+  if (ctx.from?.id !== config.telegram.adminUserId) {
+    await ctx.reply(t("restart.admin_only"), withMessageThreadId(undefined, messageThreadId));
+    return;
+  }
+
   try {
     const localTarget = resolveLocalOpencodeTarget(config.opencode.apiUrl);
     if (!localTarget) {
-      await ctx.reply(t("opencode_stop.remote_configured"));
+      await ctx.reply(t("opencode_stop.remote_configured"), withMessageThreadId(undefined, messageThreadId));
       return;
     }
 
     // If the server is managed by our process manager, stop it via manager
     if (processManager.isRunning()) {
       const pid = processManager.getPID();
-      const statusMessage = await ctx.reply(t("opencode_stop.stopping", { pid: pid ?? "-" }));
+      const statusMessage = await ctx.reply(
+        t("opencode_stop.stopping", { pid: pid ?? "-" }),
+        withMessageThreadId(undefined, messageThreadId),
+      );
       const { success, error } = await processManager.stop(5000);
 
       if (!success) {
@@ -52,18 +63,24 @@ export async function opencodeStopCommand(ctx: CommandContext<Context>) {
       healthError = String(err);
     }
     if (healthError || !isHealthy) {
-      await ctx.reply(t("opencode_stop.not_running"));
+      await ctx.reply(t("opencode_stop.not_running"), withMessageThreadId(undefined, messageThreadId));
       return;
     }
 
     // Server is healthy but not managed by us
     const pid = await findServerPid(localTarget.port);
     if (pid === null) {
-      await ctx.reply(t("opencode_stop.pid_not_found", { port: localTarget.port }));
+      await ctx.reply(
+        t("opencode_stop.pid_not_found", { port: localTarget.port }),
+        withMessageThreadId(undefined, messageThreadId),
+      );
       return;
     }
 
-    const statusMessage = await ctx.reply(t("opencode_stop.stopping", { pid }));
+    const statusMessage = await ctx.reply(
+      t("opencode_stop.stopping", { pid }),
+      withMessageThreadId(undefined, messageThreadId),
+    );
     const killed = await killServerProcess(pid, 5000);
 
     if (!killed) {
@@ -85,6 +102,6 @@ export async function opencodeStopCommand(ctx: CommandContext<Context>) {
     logger.info("[Bot] OpenCode external server stopped successfully");
   } catch (err) {
     logger.error("[Bot] Error in /opencode-stop command:", err);
-    await ctx.reply(t("opencode_stop.error"));
+    await ctx.reply(t("opencode_stop.error"), withMessageThreadId(undefined, messageThreadId));
   }
 }

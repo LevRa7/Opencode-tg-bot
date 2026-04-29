@@ -23,6 +23,9 @@ const mocked = vi.hoisted(() => ({
   pinnedOnSessionChangeMock: vi.fn(),
   pinnedLoadContextFromHistoryMock: vi.fn(),
   pinnedGetContextInfoMock: vi.fn(() => null),
+  threadBindSessionMock: vi.fn(),
+  threadGetActiveScopeMock: vi.fn(),
+  attachSessionForScopeMock: vi.fn(),
   configAdminUserId: 777,
 }));
 
@@ -85,6 +88,17 @@ vi.mock("../../../src/config.js", () => ({
       adminUserId: mocked.configAdminUserId,
     },
   },
+}));
+
+vi.mock("../../../src/thread/manager.js", () => ({
+  threadContextManager: {
+    bindSessionToActiveContext: mocked.threadBindSessionMock,
+    getActiveScope: mocked.threadGetActiveScopeMock,
+  },
+}));
+
+vi.mock("../../../src/attach/service.js", () => ({
+  attachSessionForScope: mocked.attachSessionForScopeMock,
 }));
 
 vi.mock("../../../src/utils/safe-background-task.js", () => ({
@@ -190,6 +204,11 @@ describe("bot/commands/sessions", () => {
     mocked.pinnedLoadContextFromHistoryMock.mockResolvedValue(undefined);
     mocked.pinnedGetContextInfoMock.mockReset();
     mocked.pinnedGetContextInfoMock.mockReturnValue(null);
+    mocked.threadBindSessionMock.mockReset();
+    mocked.threadGetActiveScopeMock.mockReset();
+    mocked.threadGetActiveScopeMock.mockReturnValue(null);
+    mocked.attachSessionForScopeMock.mockReset();
+    mocked.attachSessionForScopeMock.mockResolvedValue(undefined);
   });
 
   it("shows next-page button when sessions exceed page size", async () => {
@@ -457,5 +476,48 @@ describe("bot/commands/sessions", () => {
 
     expect(handled).toBe(true);
     expect(editForumTopic).not.toHaveBeenCalled();
+  });
+
+  it("does not bind the active scope directly when selecting a session attaches it", async () => {
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+      metadata: {
+        menuKind: "session",
+        messageId: 456,
+      },
+    });
+    mocked.threadGetActiveScopeMock.mockReturnValue({
+      userId: 10,
+      chatId: 111,
+      messageThreadId: 100,
+    });
+    mocked.sessionGetMock.mockResolvedValueOnce({
+      data: {
+        id: "session-1",
+        title: "Selected Session",
+        directory: "/repo",
+        time: { created: 1700000000000 },
+      },
+      error: null,
+    });
+
+    const ctx = createCallbackContext("session:session-1", 456);
+    setCallbackMessage(ctx, {
+      message_id: 456,
+      message_thread_id: 100,
+    });
+
+    const handled = await handleSessionSelect(ctx);
+
+    expect(handled).toBe(true);
+    expect(mocked.threadBindSessionMock).not.toHaveBeenCalled();
+    expect(mocked.attachSessionForScopeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: { userId: 10, chatId: 111, messageThreadId: 100 },
+        session: { id: "session-1", title: "Selected Session", directory: "/repo" },
+        reason: "selected_session",
+      }),
+    );
   });
 });

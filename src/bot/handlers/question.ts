@@ -30,9 +30,13 @@ function getCallbackMessageId(ctx: Context): number | null {
 }
 
 function clearQuestionInteraction(reason: string): void {
-  const state = interactionManager.getSnapshot();
+  clearQuestionInteractionForScope(reason);
+}
+
+function clearQuestionInteractionForScope(reason: string, scopeKey?: string): void {
+  const state = interactionManager.getSnapshot(scopeKey);
   if (state?.kind === "question") {
-    interactionManager.clear(reason);
+    interactionManager.clear(reason, scopeKey);
   }
 }
 
@@ -40,13 +44,14 @@ function syncQuestionInteractionState(
   expectedInput: "callback" | "mixed",
   questionIndex: number,
   messageId: number | null,
+  scopeKey?: string,
 ): void {
   const metadata: Record<string, unknown> = {
     questionIndex,
     inputMode: expectedInput === "mixed" ? "custom" : "options",
   };
 
-  const requestID = questionManager.getRequestID();
+  const requestID = questionManager.getRequestID(scopeKey);
   if (requestID) {
     metadata.requestID = requestID;
   }
@@ -55,12 +60,12 @@ function syncQuestionInteractionState(
     metadata.messageId = messageId;
   }
 
-  const state = interactionManager.getSnapshot();
+  const state = interactionManager.getSnapshot(scopeKey);
   if (state?.kind === "question") {
     interactionManager.transition({
       expectedInput,
       metadata,
-    });
+    }, scopeKey);
     return;
   }
 
@@ -68,7 +73,7 @@ function syncQuestionInteractionState(
     kind: "question",
     expectedInput,
     metadata,
-  });
+  }, scopeKey);
 }
 
 export async function handleQuestionCallback(ctx: Context): Promise<boolean> {
@@ -263,8 +268,9 @@ export async function showCurrentQuestion(
   bot: Context["api"],
   chatId: number,
   messageThreadId?: number,
+  scopeKey?: string,
 ): Promise<void> {
-  const question = questionManager.getCurrentQuestion();
+  const question = questionManager.getCurrentQuestion(scopeKey);
 
   if (!question) {
     await showPollSummary(bot, chatId, messageThreadId);
@@ -277,10 +283,13 @@ export async function showCurrentQuestion(
   const useDirectTextAnswer = shouldUseDirectTextAnswer(question);
   const keyboard = useDirectTextAnswer
     ? undefined
-    : buildQuestionKeyboard(question, questionManager.getSelectedOptions(questionManager.getCurrentIndex()));
+    : buildQuestionKeyboard(
+        question,
+        questionManager.getSelectedOptions(questionManager.getCurrentIndex(scopeKey), scopeKey),
+      );
 
   logger.info(
-    `[QuestionHandler] Sending question message: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, requestID=${questionManager.getRequestID() ?? "none"}, questionIndex=${questionManager.getCurrentIndex()}, directText=${useDirectTextAnswer}, textLength=${text.length}`,
+    `[QuestionHandler] Sending question message: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, requestID=${questionManager.getRequestID(scopeKey) ?? "none"}, questionIndex=${questionManager.getCurrentIndex(scopeKey)}, directText=${useDirectTextAnswer}, textLength=${text.length}`,
   );
 
   try {
@@ -298,24 +307,25 @@ export async function showCurrentQuestion(
     );
 
     logger.info(
-      `[QuestionHandler] Question message sent: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, messageId=${message.message_id}, requestID=${questionManager.getRequestID() ?? "none"}, questionIndex=${questionManager.getCurrentIndex()}`,
+      `[QuestionHandler] Question message sent: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, messageId=${message.message_id}, requestID=${questionManager.getRequestID(scopeKey) ?? "none"}, questionIndex=${questionManager.getCurrentIndex(scopeKey)}`,
     );
 
-    questionManager.addMessageId(message.message_id);
-    questionManager.setActiveMessageId(message.message_id);
+    questionManager.addMessageId(message.message_id, scopeKey);
+    questionManager.setActiveMessageId(message.message_id, scopeKey);
     syncQuestionInteractionState(
       useDirectTextAnswer ? "mixed" : "callback",
-      questionManager.getCurrentIndex(),
-      questionManager.getActiveMessageId(),
+      questionManager.getCurrentIndex(scopeKey),
+      questionManager.getActiveMessageId(scopeKey),
+      scopeKey,
     );
 
     summaryAggregator.stopTypingIndicator();
   } catch (err) {
-    questionManager.clear();
-    clearQuestionInteraction("question_message_send_failed");
+    questionManager.clear(scopeKey);
+    clearQuestionInteractionForScope("question_message_send_failed", scopeKey);
 
     logger.error(
-      `[QuestionHandler] Failed to send question message: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, requestID=${questionManager.getRequestID() ?? "none"}, questionIndex=${questionManager.getCurrentIndex()}, directText=${useDirectTextAnswer}, textLength=${text.length}`,
+      `[QuestionHandler] Failed to send question message: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, requestID=${questionManager.getRequestID(scopeKey) ?? "none"}, questionIndex=${questionManager.getCurrentIndex(scopeKey)}, directText=${useDirectTextAnswer}, textLength=${text.length}`,
       err,
     );
     throw err;

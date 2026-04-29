@@ -14,6 +14,9 @@ const mocked = vi.hoisted(() => ({
     opencode: {
       apiUrl: "http://localhost:4096",
     },
+    telegram: {
+      adminUserId: 777,
+    },
   },
   processManagerMock: {
     isRunning: vi.fn(() => false),
@@ -63,9 +66,10 @@ vi.mock("../../../src/utils/logger.js", () => ({
 
 import { opencodeStartCommand } from "../../../src/bot/commands/opencode-start.js";
 
-function createContext(): Context {
+function createContext(userId = mocked.config.telegram.adminUserId): Context {
   return {
     chat: { id: 42, type: "private" },
+    from: { id: userId } as Context["from"],
     api: {},
     reply: vi.fn().mockResolvedValue({ message_id: 10 }),
   } as unknown as Context;
@@ -114,6 +118,17 @@ describe("bot/commands/opencode-start", () => {
 
     expect(ctx.reply).toHaveBeenCalledWith(t("opencode_start.remote_configured"), expect.anything());
     expect(mocked.spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects direct invocation from non-admin users", async () => {
+    const ctx = createContext(100);
+
+    await opencodeStartCommand(ctx as never);
+
+    expect(ctx.reply).toHaveBeenCalledWith(t("restart.admin_only"), expect.anything());
+    expect(mocked.resolveLocalOpencodeTargetMock).not.toHaveBeenCalled();
+    expect(mocked.healthMock).not.toHaveBeenCalled();
+    expect(mocked.processManagerMock.ensureRuntime).not.toHaveBeenCalled();
   });
 
   it("reports that the server is already running when health-check succeeds", async () => {

@@ -7,7 +7,7 @@ describe("summary/subagent-formatter", () => {
     resetRuntimeLocale();
   });
 
-  it("renders subagent cards with requested OpenCode-like layout", async () => {
+  it("renders subagent cards with input-derived tool details in the card body", async () => {
     setRuntimeLocale("en");
 
     const text = await renderSubagentCards([
@@ -45,7 +45,8 @@ describe("summary/subagent-formatter", () => {
     expect(text).toContain("Model: openai/gpt-5.4");
     expect(text).not.toContain("Context:");
     expect(text).not.toContain("Cost:");
-    expect(text).toContain('📖 "read" `Reading pinned manager`');
+    expect(text).toContain('📖 "read" `src/pinned/manager.ts`');
+    expect(text).not.toContain("Reading pinned manager");
     expect(text).not.toContain("Working:");
   });
 
@@ -170,5 +171,40 @@ describe("summary/subagent-formatter", () => {
 
     expect(text).toContain('📖 "read"');
     expect(text).not.toContain("⚙️ Working...");
+  });
+
+  it("shows useful subagent tool input details instead of internal generated titles", async () => {
+    setRuntimeLocale("en");
+
+    const text = await renderSubagentCards([
+      {
+        cardId: "card-1",
+        sessionId: "child-1",
+        parentSessionId: "root-1",
+        agent: "explore",
+        description: "inspect formatter",
+        prompt: "inspect formatter",
+        status: "running",
+        providerID: "openai",
+        modelID: "gpt-5.4",
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        cost: 0,
+        currentTool: "read",
+        currentToolInput: {
+          filePath: "src/summary/subagent-formatter.ts",
+        },
+        currentToolTitle: "Reading subagent formatter",
+        updatedAt: Date.now(),
+      },
+    ]);
+
+    expect(text).toContain("src/summary/subagent-formatter.ts");
+    expect(text).not.toContain("Reading subagent formatter");
   });
 });

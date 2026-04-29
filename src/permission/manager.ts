@@ -2,6 +2,29 @@ import { logger } from "../utils/logger.js";
 import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
 import { PermissionRequest, PermissionState } from "./types.js";
 
+interface PermissionRestoreEntry {
+  request: PermissionRequest;
+  sourceScopeKey: string;
+  sourceMessageId: number;
+}
+
+interface PermissionRestorePlan {
+  sessionId: string;
+  targetScopeKey: string;
+  staleTargetMessageIds: number[];
+  entries: PermissionRestoreEntry[];
+}
+
+function clonePermissionRequest(request: PermissionRequest): PermissionRequest {
+  return {
+    ...request,
+    patterns: [...request.patterns],
+    metadata: { ...request.metadata },
+    always: [...request.always],
+    tool: request.tool ? { ...request.tool } : undefined,
+  };
+}
+
 function createPermissionState(): PermissionState {
   return {
     requestsByMessageId: new Map(),
@@ -21,6 +44,81 @@ class PermissionManager {
     const nextState = createPermissionState();
     this.states.set(resolvedScopeKey, nextState);
     return nextState;
+  }
+
+  previewSessionRestore(
+    sessionId: string,
+    targetScopeKey: string,
+    sourceScopeKeyOverride?: string,
+  ): PermissionRestorePlan {
+    const staleTargetMessageIds: number[] = [];
+    const targetState = this.getScopeState(targetScopeKey);
+
+    for (const [messageId, request] of targetState.requestsByMessageId.entries()) {
+      if (request.sessionID !== sessionId) {
+        staleTargetMessageIds.push(messageId);
+      }
+    }
+
+    const entries: PermissionRestoreEntry[] = [];
+    for (const [scopeKey, state] of this.states.entries()) {
+      if (scopeKey === targetScopeKey) {
+        continue;
+      }
+
+      if (sourceScopeKeyOverride && scopeKey !== sourceScopeKeyOverride) {
+        continue;
+      }
+
+      for (const [messageId, request] of state.requestsByMessageId.entries()) {
+        if (request.sessionID !== sessionId) {
+          continue;
+        }
+
+        entries.push({
+          request: clonePermissionRequest(request),
+          sourceScopeKey: scopeKey,
+          sourceMessageId: messageId,
+        });
+      }
+    }
+
+    return {
+      sessionId,
+      targetScopeKey,
+      staleTargetMessageIds,
+      entries,
+    };
+  }
+
+  clearMismatchedTargetScopeRequests(sessionId: string, targetScopeKey: string): void {
+    const state = this.getScopeState(targetScopeKey);
+    for (const [messageId, request] of state.requestsByMessageId.entries()) {
+      if (request.sessionID !== sessionId) {
+        state.requestsByMessageId.delete(messageId);
+      }
+    }
+  }
+
+  commitSessionRestore(plan: PermissionRestorePlan): void {
+    this.clearMismatchedTargetScopeRequests(plan.sessionId, plan.targetScopeKey);
+
+    for (const entry of plan.entries) {
+      const state = this.getScopeState(entry.sourceScopeKey);
+      state.requestsByMessageId.delete(entry.sourceMessageId);
+    }
+
+    if (plan.entries.length > 0) {
+      logger.info(
+        `[PermissionManager] Restored ${plan.entries.length} pending permission request(s) for session=${plan.sessionId} into scope=${plan.targetScopeKey}`,
+      );
+    }
+  }
+
+  restoreSessionToScope(sessionId: string, targetScopeKey: string): PermissionRequest[] {
+    const plan = this.previewSessionRestore(sessionId, targetScopeKey);
+    this.commitSessionRestore(plan);
+    return plan.entries.map((entry) => entry.request);
   }
 
   startPermission(request: PermissionRequest, messageId: number, scopeKey?: string): void {

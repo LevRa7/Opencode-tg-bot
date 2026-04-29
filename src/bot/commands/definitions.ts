@@ -25,11 +25,12 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "commands", descriptionKey: "cmd.description.commands" },
   { command: "worktree", descriptionKey: "cmd.description.worktree" },
   { command: "skills", descriptionKey: "cmd.description.skills" },
+  { command: "mcps", descriptionKey: "cmd.description.mcps" },
   { command: "open", descriptionKey: "cmd.description.open" },
   { command: "stream", descriptionKey: "cmd.description.stream" },
   { command: "restart", descriptionKey: "cmd.description.restart", adminOnly: true },
-  { command: "opencode_start", descriptionKey: "cmd.description.opencode_start" },
-  { command: "opencode_stop", descriptionKey: "cmd.description.opencode_stop" },
+  { command: "opencode_start", descriptionKey: "cmd.description.opencode_start", adminOnly: true },
+  { command: "opencode_stop", descriptionKey: "cmd.description.opencode_stop", adminOnly: true },
   { command: "help", descriptionKey: "cmd.description.help" },
 ];
 

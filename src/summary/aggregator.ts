@@ -953,11 +953,22 @@ class SummaryAggregator {
       return;
     }
 
+    const nextTerminalMessage = terminalMessage?.trim() || undefined;
+    if (
+      subagent.status === status &&
+      subagent.currentTool === undefined &&
+      subagent.currentToolInput === undefined &&
+      subagent.currentToolTitle === undefined &&
+      subagent.terminalMessage === nextTerminalMessage
+    ) {
+      return;
+    }
+
     subagent.status = status;
     subagent.currentTool = undefined;
     subagent.currentToolInput = undefined;
     subagent.currentToolTitle = undefined;
-    subagent.terminalMessage = terminalMessage?.trim() || undefined;
+    subagent.terminalMessage = nextTerminalMessage;
     subagent.updatedAt = Date.now();
     this.emitSubagentState(subagent.parentSessionId);
   }

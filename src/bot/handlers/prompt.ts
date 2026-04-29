@@ -32,13 +32,27 @@ import { assistantRunState } from "../assistant-run-state.js";
 import { IncomingMediaBatch } from "../incoming-media-batch.js";
 import { extractMessageMetadata, type ResolvedDeferredItem } from "../../media/batch-types.js";
 import {
+  getCurrentTelegramConversationScope,
   buildTelegramConversationScopeKey,
   extractTelegramConversationScopeFromContext,
   runWithTelegramConversationScope,
   type TelegramConversationScope,
 } from "../../telegram/scope.js";
+import { attachManager } from "../../attach/manager.js";
+import { attachSessionForScope } from "../../attach/service.js";
+import { showPermissionRequest } from "./permission.js";
+import { showCurrentQuestion } from "./question.js";
+import { externalInputSuppression } from "../../external-input/suppression.js";
 
 const PROMPT_TIMEOUT_MS = 60_000;
+
+function getEffectivePromptText(parts: Array<TextPartInput | FilePartInput>): string | null {
+  const firstTextPart = parts.find(
+    (part): part is TextPartInput => part.type === "text" && typeof part.text === "string",
+  );
+
+  return firstTextPart?.text ?? null;
+}
 
 function isNetworkError(error: unknown): boolean {
   const errorText = String(error).toLowerCase();
@@ -48,7 +62,7 @@ function isNetworkError(error: unknown): boolean {
 interface RetryPromptOptions {
   promptOptions: Parameters<typeof opencodeClient.session.prompt>[0];
   sessionId: string;
-  quiet: boolean;
+  logRetrySuccess: boolean;
   routingContext: PromptRoutingContext;
   promptErrorLogContext: Record<string, unknown>;
 }
@@ -56,7 +70,7 @@ interface RetryPromptOptions {
 async function retryPromptWithTenantRestart({
   promptOptions,
   sessionId,
-  quiet,
+  logRetrySuccess,
   routingContext: _routingContext,
   promptErrorLogContext,
 }: RetryPromptOptions): Promise<{ error: unknown | null }> {
@@ -74,7 +88,7 @@ async function retryPromptWithTenantRestart({
       return { error: retryResult.error };
     }
 
-    if (!quiet) {
+    if (logRetrySuccess) {
       logger.info("[Bot] session.prompt retry succeeded");
     }
     return { error: null };
@@ -101,7 +115,14 @@ interface PromptRoutingContext {
   target: TelegramThreadTarget;
   scope: TelegramConversationScope | null;
   sourceMessageId?: number;
-  quiet: boolean;
+  suppressSendErrorMessage: boolean;
+}
+
+function resolveBusyScopeForSession(
+  sessionId: string,
+  fallbackScope?: TelegramConversationScope | null,
+): TelegramConversationScope | null {
+  return fallbackScope ?? attachManager.getScopeForSession(sessionId) ?? getCurrentTelegramConversationScope();
 }
 
 const promptRoutingBySessionId = new Map<string, PromptRoutingContext>();
@@ -131,6 +152,7 @@ export type PromptResponseMode = "text_only" | "text_and_tts";
 export type ProcessPromptOptions = {
   responseMode?: PromptResponseMode;
   isFollowUpBatch?: boolean;
+  suppressSendErrorMessage?: boolean;
 };
 
 function setPromptRoutingContext(sessionId: string, routing: PromptRoutingContext): void {
@@ -185,10 +207,12 @@ export async function isSessionBusy(sessionId: string, directory: string): Promi
   }
 }
 
-async function resetMismatchedSessionContext(): Promise<void> {
+async function resetMismatchedSessionContext(sessionId?: string): Promise<void> {
   stopEventListening();
   summaryAggregator.clear();
-  foregroundSessionState.clearAll("session_mismatch_reset");
+  if (sessionId) {
+    foregroundSessionState.markIdle(sessionId, attachManager.getScopeForSession(sessionId));
+  }
   clearAllInteractionState("session_mismatch_reset");
   clearSession();
   threadContextManager.clearSessionForActiveContext();
@@ -211,8 +235,13 @@ export interface ProcessPromptDeps {
   deferredBatch?: IncomingMediaBatch<
     ResolvedDeferredItem,
     ResolvedDeferredItem,
-    { text: string; firstContext?: any }
+    DeferredPromptBatchResolution
   >;
+}
+
+interface DeferredPromptBatchResolution {
+  text: string;
+  firstContext?: Context;
 }
 
 export interface ContextInfo {
@@ -303,7 +332,7 @@ export async function processUserPrompt(
 ): Promise<boolean> {
   const { bot, ensureEventSubscription, deferredBatch } = deps;
   const responseMode = options.responseMode ?? "text_only";
-  const quietPrompt = responseMode === "text_only";
+  const suppressSendErrorMessage = options.suppressSendErrorMessage === true;
 
   // In test mode (Vitest), skip the batch window and send immediately
   const isVitest = typeof process !== "undefined" && !!process.env?.VITEST;
@@ -322,7 +351,7 @@ export async function processUserPrompt(
         directText: text,
         previewText: text,
         contextText: text,
-        ctx: ctx as any,
+        ctx,
         metadata: extractMessageMetadata(ctx),
       },
     });
@@ -340,7 +369,7 @@ export async function processUserPrompt(
         directText: text,
         previewText: text,
         contextText: text,
-        ctx: ctx as any,
+        ctx,
         metadata: extractMessageMetadata(ctx),
       },
     });
@@ -383,7 +412,7 @@ export async function processUserPrompt(
     logger.warn(
       `[Bot] Session/project mismatch detected. sessionDirectory=${currentSession.directory}, projectDirectory=${currentProject.worktree}. Resetting session context.`,
     );
-    await resetMismatchedSessionContext();
+    await resetMismatchedSessionContext(currentSession.id);
     await ctx.reply(t("bot.session_reset_project_mismatch"));
     return false;
   }
@@ -411,7 +440,23 @@ export async function processUserPrompt(
     };
 
     setCurrentSession(currentSession);
-    threadContextManager.bindSessionToActiveContext(currentSession);
+    const activeScope = threadContextManager.getActiveScope();
+    if (activeScope) {
+      await attachSessionForScope({
+        scope: activeScope,
+        session: currentSession,
+        reason: "new_session",
+        restoreQuestion: () =>
+          showCurrentQuestion(ctx.api, activeScope.chatId, activeScope.messageThreadId),
+        restorePermission: (request) =>
+          showPermissionRequest(
+            ctx.api,
+            activeScope.chatId,
+            request,
+            activeScope.messageThreadId,
+          ),
+      });
+    }
     await ingestSessionInfoForCache(session);
 
     // Create pinned message for new session
@@ -453,8 +498,6 @@ export async function processUserPrompt(
 
   await ensureEventSubscription(currentSession.directory);
 
-  summaryAggregator.setSession(currentSession.id);
-
   // Atomic session claim: only one call proceeds past the busy check
   const claimRunId = tryClaimSession(currentSession.id);
   if (claimRunId === false) {
@@ -463,17 +506,38 @@ export async function processUserPrompt(
     return false;
   }
 
-  foregroundSessionState.markBusy(currentSession.id);
+  const busyScope = threadContextManager.getActiveScope() ?? scope;
+  foregroundSessionState.markBusy(currentSession.id, resolveBusyScopeForSession(currentSession.id, busyScope));
   const sessionIsBusy = await isSessionBusy(currentSession.id, currentSession.directory);
 
   releaseSessionClaim(currentSession.id, claimRunId);
 
   if (sessionIsBusy) {
-    foregroundSessionState.markIdle(currentSession.id);
+    foregroundSessionState.markIdle(currentSession.id, resolveBusyScopeForSession(currentSession.id, busyScope));
     logger.info(`[Bot] Ignoring new prompt: session ${currentSession.id} is busy`);
     await ctx.reply(t("bot.session_busy"));
     return false;
   }
+
+  const activeScope = threadContextManager.getActiveScope();
+  if (activeScope) {
+    await attachSessionForScope({
+      scope: activeScope,
+      session: currentSession,
+      reason: "prompt",
+      restoreQuestion: () =>
+        showCurrentQuestion(ctx.api, activeScope.chatId, activeScope.messageThreadId),
+      restorePermission: (request) =>
+        showPermissionRequest(
+          ctx.api,
+          activeScope.chatId,
+          request,
+          activeScope.messageThreadId,
+        ),
+    });
+  }
+
+  summaryAggregator.setSession(currentSession.id);
 
   try {
     const currentAgent = getStoredAgent();
@@ -536,11 +600,9 @@ export async function processUserPrompt(
       fileCount: fileParts.length,
     };
 
-    if (!quietPrompt) {
-      logger.info(
-        `[Bot] Calling session.prompt (fire-and-forget) with agent=${currentAgent}, fileCount=${fileParts.length}...`,
-      );
-    }
+    logger.info(
+      `[Bot] Calling session.prompt (fire-and-forget) with agent=${currentAgent}, fileCount=${fileParts.length}...`,
+    );
 
     assistantRunState.startRun(currentSession.id, {
       startedAt: Date.now(),
@@ -555,9 +617,14 @@ export async function processUserPrompt(
       scope,
       sourceMessageId:
         typeof ctx.message?.message_id === "number" ? ctx.message.message_id : undefined,
-      quiet: quietPrompt,
+      suppressSendErrorMessage,
     };
     setPromptRoutingContext(currentSession.id, routingContext);
+
+    const effectivePromptText = getEffectivePromptText(parts);
+    if (scope && effectivePromptText) {
+      externalInputSuppression.rememberSelfInput(currentSession.id, scope, effectivePromptText);
+    }
 
     // CRITICAL: DO NOT wait for session.prompt to complete.
     // If we wait, the handler will not finish and grammY will not call getUpdates,
@@ -575,7 +642,7 @@ export async function processUserPrompt(
             const retryResult = await retryPromptWithTenantRestart({
               promptOptions,
               sessionId: currentSession.id,
-              quiet: quietPrompt,
+              logRetrySuccess: true,
               routingContext,
               promptErrorLogContext,
             });
@@ -585,7 +652,10 @@ export async function processUserPrompt(
             // Retry failed — fall through to error notification below
           }
 
-          foregroundSessionState.markIdle(currentSession.id);
+          foregroundSessionState.markIdle(
+            currentSession.id,
+            resolveBusyScopeForSession(currentSession.id, routingContext.scope),
+          );
           assistantRunState.clearRun(currentSession.id, "prompt_error_result");
           clearPromptResponseMode(currentSession.id);
           const details = formatErrorDetails(error, 6000);
@@ -594,18 +664,20 @@ export async function processUserPrompt(
           const routing = getPromptRoutingContext(currentSession.id) ?? routingContext;
           if (routing) {
             void runWithTelegramConversationScope(routing.scope, () => {
-              if (routing.quiet) {
+              if (routing.suppressSendErrorMessage) {
                 return Promise.resolve();
               }
-              return routing.bot.api.sendMessage(routing.target.chatId, t("bot.prompt_send_error"));
+              return routing.bot.api.sendMessage(
+                routing.target.chatId,
+                t("bot.prompt_send_error"),
+                withMessageThreadId(undefined, routing.target.messageThreadId),
+              );
             }).catch(() => {});
           }
           return;
         }
 
-        if (!quietPrompt) {
-          logger.info("[Bot] session.prompt completed");
-        }
+        logger.info("[Bot] session.prompt completed");
       },
       onError: async (error) => {
         if (isNetworkError(error)) {
@@ -615,7 +687,7 @@ export async function processUserPrompt(
           const retryResult = await retryPromptWithTenantRestart({
             promptOptions,
             sessionId: currentSession.id,
-            quiet: quietPrompt,
+            logRetrySuccess: true,
             routingContext,
             promptErrorLogContext,
           });
@@ -625,7 +697,10 @@ export async function processUserPrompt(
           // Retry failed — fall through to error notification below
         }
 
-        foregroundSessionState.markIdle(currentSession.id);
+        foregroundSessionState.markIdle(
+          currentSession.id,
+          resolveBusyScopeForSession(currentSession.id, routingContext.scope),
+        );
         assistantRunState.clearRun(currentSession.id, "prompt_error_exception");
         clearPromptResponseMode(currentSession.id);
         const details = formatErrorDetails(error, 6000);
@@ -633,10 +708,14 @@ export async function processUserPrompt(
         const routing = getPromptRoutingContext(currentSession.id) ?? routingContext;
         if (routing) {
           void runWithTelegramConversationScope(routing.scope, () => {
-            if (routing.quiet) {
+            if (routing.suppressSendErrorMessage) {
               return Promise.resolve();
             }
-            return routing.bot.api.sendMessage(routing.target.chatId, t("bot.prompt_send_error"));
+            return routing.bot.api.sendMessage(
+              routing.target.chatId,
+              t("bot.prompt_send_error"),
+              withMessageThreadId(undefined, routing.target.messageThreadId),
+            );
           }).catch(() => {});
         }
       },
@@ -663,7 +742,7 @@ export async function processUserPrompt(
     return true;
   } catch (err) {
     if (currentSession) {
-      foregroundSessionState.markIdle(currentSession.id);
+      foregroundSessionState.markIdle(currentSession.id, resolveBusyScopeForSession(currentSession.id, scope));
       assistantRunState.clearRun(currentSession.id, "prompt_handler_exception");
     }
     logger.error("Error in prompt handler:", err);

@@ -21,7 +21,7 @@ describe("bot/utils/keyboard", () => {
     expect(getButtonText(keyboard.keyboard[1][0])).toBe("🤖 openrouter\nopenai/gpt-4o");
     expect(getButtonText(keyboard.keyboard[1][1])).toBe("💡 Default");
     expect(keyboard.resize_keyboard).toBe(true);
-    expect(keyboard.is_persistent).toBe(true);
+    expect(keyboard.is_persistent).toBeUndefined();
   });
 
   it("creates main keyboard with context info and custom variant", () => {
@@ -49,7 +49,7 @@ describe("bot/utils/keyboard", () => {
 
     expect(nonEmptyRows).toEqual([[{ text: "🤖 Custom Mode" }]]);
     expect(keyboard.resize_keyboard).toBe(true);
-    expect(keyboard.is_persistent).toBe(true);
+    expect(keyboard.is_persistent).toBeUndefined();
 
     expect(removeKeyboard()).toEqual({ remove_keyboard: true });
   });

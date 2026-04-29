@@ -93,6 +93,32 @@ describe("bot/handlers/inline-menu", () => {
     expect(typeof state?.expiresAt).toBe("number");
   });
 
+  it("opens inline menu in forum main thread without sending message_thread_id", async () => {
+    const ctx = {
+      chat: { id: 100, type: "supergroup", is_forum: true },
+      message: {
+        chat: { id: 100, type: "supergroup", is_forum: true },
+        is_topic_message: true,
+        message_thread_id: 42,
+      },
+      reply: vi.fn().mockResolvedValue({ message_id: 55 }),
+      answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      deleteMessage: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Context;
+
+    await replyWithInlineMenu(ctx, {
+      menuKind: "model",
+      text: "Select model",
+      keyboard: new InlineKeyboard().text("Model A", "model:a"),
+      messageThreadId: 0,
+    });
+
+    expect(ctx.reply).toHaveBeenCalledWith(
+      "Select model",
+      expect.not.objectContaining({ message_thread_id: expect.anything() }),
+    );
+  });
+
   it("accepts callback from active inline menu", async () => {
     interactionManager.start({
       kind: "inline",

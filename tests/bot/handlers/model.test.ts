@@ -134,6 +134,24 @@ function createCommandContext(): Context {
   } as unknown as Context;
 }
 
+function createForumMainThreadCommandContext(): Context {
+  return {
+    chat: { id: 111, type: "supergroup", is_forum: true },
+    message: {
+      chat: { id: 111, type: "supergroup", is_forum: true },
+    },
+    reply: vi.fn().mockResolvedValue({ message_id: 500 }),
+    answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+    deleteMessage: vi.fn().mockResolvedValue(undefined),
+    editMessageText: vi.fn().mockResolvedValue(undefined),
+    api: {
+      sendMessage: vi.fn().mockResolvedValue({ message_id: 999 }),
+      deleteMessage: vi.fn().mockResolvedValue(true),
+      editMessageText: vi.fn().mockResolvedValue(true),
+    },
+  } as unknown as Context;
+}
+
 function createCallbackContext(data: string): Context {
   return {
     chat: { id: 111 },
@@ -141,6 +159,28 @@ function createCallbackContext(data: string): Context {
       data,
       message: {
         message_id: 500,
+      },
+    } as Context["callbackQuery"],
+    answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+    deleteMessage: vi.fn().mockResolvedValue(undefined),
+    editMessageText: vi.fn().mockResolvedValue(undefined),
+    reply: vi.fn().mockResolvedValue({ message_id: 700 }),
+    api: {
+      sendMessage: vi.fn().mockResolvedValue({ message_id: 999 }),
+      deleteMessage: vi.fn().mockResolvedValue(true),
+      editMessageText: vi.fn().mockResolvedValue(true),
+    },
+  } as unknown as Context;
+}
+
+function createForumMainThreadCallbackContext(data: string): Context {
+  return {
+    chat: { id: 111, type: "supergroup", is_forum: true },
+    callbackQuery: {
+      data,
+      message: {
+        message_id: 500,
+        chat: { id: 111, type: "supergroup", is_forum: true },
       },
     } as Context["callbackQuery"],
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
@@ -327,6 +367,19 @@ describe("bot/handlers/model", () => {
     );
     expect(mocked.clearActiveInlineMenuMock).toHaveBeenCalledWith("model_selected");
     expect(ctx.deleteMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirms model change in forum main thread without message_thread_id", async () => {
+    const ctx = createForumMainThreadCallbackContext("model:openai:gpt-4.11");
+    mocked.getContextInfoMock.mockReturnValue({ tokensUsed: 120, tokensLimit: 1000 });
+
+    const handled = await handleModelSelect(ctx);
+
+    expect(handled).toBe(true);
+    expect(ctx.reply).toHaveBeenCalledWith(
+      t("model.changed_message", { name: "openai / gpt-4.11" }),
+      expect.not.objectContaining({ message_thread_id: expect.anything() }),
+    );
   });
 
   it("parses delimiter-safe model callbacks for provider ids containing colons", async () => {

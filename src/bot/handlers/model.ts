@@ -25,7 +25,10 @@ import {
 } from "./inline-menu.js";
 import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
-import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import {
+  extractMessageThreadIdFromContext,
+  withMessageThreadId,
+} from "../utils/message-thread.js";
 
 const MODELS_PER_PAGE = 10;
 const MODEL_CALLBACK_PREFIX = "model:";

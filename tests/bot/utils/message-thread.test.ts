@@ -3,6 +3,8 @@ import type { Context } from "grammy";
 import {
   extractMessageThreadIdFromContext,
   extractThreadTargetFromContext,
+  isForumMainThreadContext,
+  resolveReplyKeyboardActionThreadId,
   withMessageThreadId,
 } from "../../../src/bot/utils/message-thread.js";
 
@@ -48,6 +50,26 @@ describe("bot/utils/message-thread", () => {
       chatId: -100123,
       messageThreadId: 0,
     });
+  });
+
+  it("detects forum main-thread message contexts", () => {
+    const ctx = {
+      chat: { id: -100123, type: "supergroup", is_forum: true },
+      message: { chat: { id: -100123, type: "supergroup", is_forum: true } },
+    } as unknown as Context;
+
+    expect(isForumMainThreadContext(ctx)).toBe(true);
+    expect(resolveReplyKeyboardActionThreadId(ctx)).toBe(0);
+  });
+
+  it("keeps topic thread ids for topic contexts", () => {
+    const ctx = {
+      chat: { id: -100123, type: "supergroup", is_forum: true },
+      message: { chat: { id: -100123, type: "supergroup", is_forum: true }, message_thread_id: 42 },
+    } as unknown as Context;
+
+    expect(isForumMainThreadContext(ctx)).toBe(false);
+    expect(resolveReplyKeyboardActionThreadId(ctx)).toBe(42);
   });
 
   it("merges message_thread_id into send options", () => {

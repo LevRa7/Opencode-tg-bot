@@ -39,6 +39,7 @@ So future rebuilds do not need Docker Hub as long as the base image remains cach
 
 - `run-opencode-serve.sh` — starts the server container
 - `build-opencode-tg-image.sh` — vendors the local tg-cli source and builds the image
+- `update-opencode.sh` — refreshes the Docker images from upstream OpenCode and reruns the Docker checks
 - `Dockerfile` — builds the custom image from the locally cached OpenCode base image plus vendored tg-cli
 - `bin/tg-cli-wrapper.sh` — wrapper that forces isolated tg-cli config per workspace
 - `skills/tg-cli/SKILL.md` — project skill telling OpenCode how to use Telegram CLI
@@ -143,6 +144,38 @@ Use a different cached base image tag:
 
 ```bash
 OPENCODE_BASE_IMAGE='ghcr.io/anomalyco/opencode:latest' /home/me/MyProjects/opencode-tg/docker/build-opencode-tg-image.sh
+```
+
+## Refresh Docker images from upstream OpenCode
+
+When you want to pull in the latest upstream OpenCode build into the Docker workflow, run:
+
+```bash
+/home/me/MyProjects/opencode-tg/docker/update-opencode.sh
+```
+
+### Prerequisites
+
+This refresh flow expects the local vendored tg-cli source tree to already be present and also requires a local tenant base image, which defaults to `opencode-tenant:latest` and can be overridden with `OPENCODE_TENANT_BASE_IMAGE`.
+
+### What this command does
+
+- clones the upstream OpenCode repository into `docker/.cache/opencode-upstream`
+- uses the upstream default branch by default, or `OPENCODE_UPSTREAM_REF` if you want a specific branch or tag
+- builds a fresh local OpenCode binary plus the local tg-cli wheel and staging tree used by the Docker images
+- rebuilds `opencode-tenant:local`
+- rebuilds `opencode-tg:local`
+- prints `opencode --version` from both rebuilt images
+- runs the Docker verification scripts:
+  - `docker/tests/tg-cli-image.test.sh`
+  - `docker/tests/tenant-entrypoint-permissions.test.sh`
+
+### Optional override
+
+Pin the upstream source to a specific ref:
+
+```bash
+OPENCODE_UPSTREAM_REF='v0.17.0' /home/me/MyProjects/opencode-tg/docker/update-opencode.sh
 ```
 
 ## Script path

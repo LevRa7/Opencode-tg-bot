@@ -39,6 +39,7 @@
 
 - `run-opencode-serve.sh` — запускает контейнер с сервером
 - `build-opencode-tg-image.sh` — внедряет локальное tg-cli source и затем собирает image
+- `update-opencode.sh` — обновляет Docker-образы из upstream OpenCode и повторно прогоняет Docker-проверки
 - `Dockerfile` — собирает кастомный image из локального кешированного OpenCode base image плюс vendored tg-cli
 - `bin/tg-cli-wrapper.sh` — wrapper, который принудительно использует изолированный tg-cli config для текущей workspace
 - `skills/tg-cli/SKILL.md` — project skill, объясняющий OpenCode как использовать Telegram CLI
@@ -143,6 +144,38 @@ TG_CLI_SOURCE_DIR='/path/to/tg-cli' /home/me/MyProjects/opencode-tg/docker/build
 
 ```bash
 OPENCODE_BASE_IMAGE='ghcr.io/anomalyco/opencode:latest' /home/me/MyProjects/opencode-tg/docker/build-opencode-tg-image.sh
+```
+
+## Обновление Docker-образов из upstream OpenCode
+
+Если нужно подтянуть актуальную upstream-сборку OpenCode в Docker workflow, запустите:
+
+```bash
+/home/me/MyProjects/opencode-tg/docker/update-opencode.sh
+```
+
+### Предварительные условия
+
+Этот сценарий обновления предполагает, что локально завендоренное дерево исходников tg-cli уже существует, и также требует локальный tenant base image, который по умолчанию равен `opencode-tenant:latest`, но может быть переопределен через `OPENCODE_TENANT_BASE_IMAGE`.
+
+### Что делает эта команда
+
+- клонирует upstream-репозиторий OpenCode в `docker/.cache/opencode-upstream`
+- по умолчанию использует upstream default branch, либо `OPENCODE_UPSTREAM_REF`, если нужен конкретный branch или tag
+- собирает свежий локальный бинарник OpenCode, а также локальный tg-cli wheel и staging tree, которые используются Docker-образами
+- пересобирает `opencode-tenant:local`
+- пересобирает `opencode-tg:local`
+- выводит `opencode --version` из обоих пересобранных образов
+- запускает Docker verification scripts:
+  - `docker/tests/tg-cli-image.test.sh`
+  - `docker/tests/tenant-entrypoint-permissions.test.sh`
+
+### Необязательное переопределение
+
+Зафиксировать upstream source на конкретном ref:
+
+```bash
+OPENCODE_UPSTREAM_REF='v0.17.0' /home/me/MyProjects/opencode-tg/docker/update-opencode.sh
 ```
 
 ## Путь к скрипту

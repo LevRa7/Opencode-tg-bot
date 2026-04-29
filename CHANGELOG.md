@@ -12,6 +12,9 @@ Documentation rule:
 
 ### Added
 
+- Added an automated Docker OpenCode refresh workflow through `docker/update-opencode.sh`, including upstream fetch, local tenant/image rebuilds, version reporting, and Docker test reruns.
+  - Why: updating the Dockerized OpenCode runtime should be reproducible from one documented entrypoint instead of requiring manual rebuild sequencing.
+  - Affects: `docker/update-opencode.sh`, `docker/README.md`, `docker/README-ru.md`
 - Added a real architecture map in `docs/architecture.md` with concrete runtime entrypoints, managers, handlers, scheduled-task modules, and API integration paths.
   - Why: the project now requires not just feature lists, but also explicit documentation of how modules, managers, and external APIs interact.
   - Affects: `docs/architecture.md`, `src/app/start-bot-app.ts`, `src/bot/index.ts`, `src/opencode/events.ts`, `src/summary/aggregator.ts`, `src/scheduled-task/runtime.ts`

@@ -1,6 +1,7 @@
 # Rebuild tenant image with locally built opencode and tg-cli
 # This uses the existing tenant image as base and swaps in the local binaries
-FROM opencode-tenant:latest
+ARG TENANT_BASE_IMAGE=opencode-tenant:latest
+FROM ${TENANT_BASE_IMAGE}
 
 USER root
 

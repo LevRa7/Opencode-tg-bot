@@ -13,6 +13,7 @@ fi
 
 "${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'command -v tg >/dev/null && command -v telegram-cli >/dev/null && command -v tg-cli >/dev/null'
 "${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'tg --help >/dev/null'
+"${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'command -v opencode >/dev/null && version="$(opencode --version 2>&1)" && test -n "${version}"'
 "${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'command -v ssh >/dev/null && command -v scp >/dev/null && command -v sftp >/dev/null && command -v ssh-keygen >/dev/null'
 "${DOCKER_CMD}" run --rm --entrypoint sh "${IMAGE}" -lc 'ssh -V >/dev/null 2>&1'
 "${DOCKER_CMD}" run --rm \

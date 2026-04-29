@@ -180,6 +180,38 @@ describe("settings/manager scoped state", () => {
     expect(runWithTelegramConversationScope(scopeB, () => isMessageStreamingEnabled())).toBe(true);
   });
 
+  it("keeps topic-local agent and model selections isolated for the same user", () => {
+    runWithTelegramConversationScope(scopeA, () => {
+      setCurrentAgent("build");
+      setCurrentModel({ providerID: "openai", modelID: "gpt-5", variant: "default" });
+    });
+
+    runWithTelegramConversationScope(scopeAOtherTopic, () => {
+      setCurrentAgent("plan");
+      setCurrentModel({ providerID: "anthropic", modelID: "claude", variant: "fast" });
+    });
+
+    expect(
+      runWithTelegramConversationScope(scopeA, () => ({
+        agent: getCurrentAgent(),
+        model: getCurrentModel(),
+      })),
+    ).toEqual({
+      agent: "build",
+      model: { providerID: "openai", modelID: "gpt-5", variant: "default" },
+    });
+
+    expect(
+      runWithTelegramConversationScope(scopeAOtherTopic, () => ({
+        agent: getCurrentAgent(),
+        model: getCurrentModel(),
+      })),
+    ).toEqual({
+      agent: "plan",
+      model: { providerID: "anthropic", modelID: "claude", variant: "fast" },
+    });
+  });
+
   it("keeps global fallback values outside scoped execution", () => {
     setCurrentProject({ id: "project-global", worktree: "/repo-global" });
     setCurrentSession({ id: "session-global", title: "Global", directory: "/repo-global" });

@@ -113,7 +113,9 @@ Documentation rule:
 - Fixed scoped external-input and busy-state routing so attached-session input suppression and foreground busy tracking stay isolated to the same chat/topic scope.
   - Why: concurrent users or forum topics must not inherit each other's external-input notices or "bot is busy" protection state.
   - Affects: `src/bot/index.ts`, `src/scheduled-task/foreground-state.ts`, `tests/bot/index.local-file-follow-up.test.ts`, `tests/scheduled-task/foreground-state.test.ts`
-
+- Fixed Docker tenant `opencode serve` project/session API failures after the upstream OpenCode refresh by preparing `.gitignore` in the host-side mounted config directory before launching the container.
+  - Why: the refreshed OpenCode bootstrap now ensures `OPENCODE_CONFIG_DIR/.gitignore` exists, but the tenant launcher mounts that directory into the container as read-only, causing 500 `UnknownError` responses from `/project` and `/session` when the file was missing.
+  - Affects: `docker/run-opencode-serve.sh`, `docker/tests/run-opencode-serve.test.sh`
 - Unified deferred Telegram batching across text, forwarded messages, and media preprocessing, so large bursts now stay in a single OpenCode follow-up chunk while media is still downloading/transcribing.
   - Why: large forwarded batches with photos, videos, voice notes, and documents could split into multiple OpenCode prompts because media handlers finished after the silence timer expired, and deferred chunk items did not all carry stable sender/forward metadata.
   - Affects: `src/bot/incoming-media-batch.ts`, `src/bot/index.ts`, `src/bot/handlers/photo.ts`, `src/bot/handlers/document.ts`, `src/bot/handlers/video.ts`, `src/bot/handlers/voice.ts`, `src/media/batch-types.ts`, `src/media/prompt-composer.ts`, `tests/bot/incoming-media-batch.test.ts`, `tests/media/prompt-composer.test.ts`

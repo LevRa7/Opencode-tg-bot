@@ -148,6 +148,10 @@ mkdir -p "$STATE_SKILLS_DIR/tg-cli"
 mkdir -p "$STATE_SKILLS_DIR/embedding-strategies"
 mkdir -p "$STATE_SKILLS_DIR/openai-media-transcriber"
 
+# OpenCode creates this ignore file for OPENCODE_CONFIG_DIR during bootstrap.
+# The container mounts this directory read-only, so prepare it on the writable host side.
+printf '%s\n' node_modules package.json package-lock.json bun.lock .gitignore > "${XDG_CONFIG_DIR}/.gitignore"
+
 cp "$HOST_AUTH_FILE" "$OPENCODE_DATA_DIR/auth.json"
 
 # Copy cliproxyapi.key to workspace if it exists

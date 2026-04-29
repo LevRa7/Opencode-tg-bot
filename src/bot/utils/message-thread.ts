@@ -72,6 +72,14 @@ export function extractMessageThreadIdFromContext(ctx: Context): number | undefi
   return normalizeMessageThreadId(callbackMessage?.message_thread_id);
 }
 
+export function isForumMainThreadContext(ctx: Context): boolean {
+  return isForumChat(ctx) && extractMessageThreadIdFromContext(ctx) === undefined;
+}
+
+export function resolveReplyKeyboardActionThreadId(ctx: Context): number | undefined {
+  return isForumMainThreadContext(ctx) ? 0 : extractMessageThreadIdFromContext(ctx);
+}
+
 export function extractCallbackMessageIdFromContext(ctx: Context): number | null {
   const callbackMessage = ctx.callbackQuery?.message as { message_id?: unknown } | undefined;
   return typeof callbackMessage?.message_id === "number" ? callbackMessage.message_id : null;

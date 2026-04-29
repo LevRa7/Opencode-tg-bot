@@ -313,21 +313,27 @@ function cloneScopedUserSettingsMap(
   );
 }
 
-function isScopedConversationSettingsEmpty(settings: ScopedConversationSettings | undefined): boolean {
-  return !settings ||
+function isScopedConversationSettingsEmpty(
+  settings: ScopedConversationSettings | undefined,
+): boolean {
+  return (
+    !settings ||
     (settings.currentProject === undefined &&
       settings.currentSession === undefined &&
       settings.currentAgent === undefined &&
       settings.currentModel === undefined &&
       settings.pinnedMessageId === undefined &&
-      settings.reasoningMode === undefined);
+      settings.reasoningMode === undefined)
+  );
 }
 
 function isScopedUserSettingsEmpty(settings: ScopedUserSettings | undefined): boolean {
-  return !settings ||
+  return (
+    !settings ||
     (settings.ttsEnabled === undefined &&
       settings.messageStreamingEnabled === undefined &&
-      settings.thinkingClearMode === undefined);
+      settings.thinkingClearMode === undefined)
+  );
 }
 
 function getSettingsFilePath(): string {
@@ -388,6 +394,11 @@ function normalizeTelegramUserIds(userIds: number[] | undefined): number[] {
 function getActiveConversationScopeKey(): string | null {
   const scope = getCurrentTelegramConversationScope();
   return scope ? buildTelegramConversationScopeKey(scope) : null;
+}
+
+function isMainThreadGlobalDefaultScope(): boolean {
+  const scope = getCurrentTelegramConversationScope();
+  return !!scope && (scope.messageThreadId ?? 0) <= 0;
 }
 
 function getActiveUserScopeKey(): string | null {
@@ -607,6 +618,10 @@ export function setThinkingClearMode(enabled: boolean): void {
 }
 
 export function getCurrentAgent(): string | undefined {
+  if (isMainThreadGlobalDefaultScope()) {
+    return currentSettings.currentAgent;
+  }
+
   const scopedSettings = getConversationScopedSettings();
   if (scopedSettings) {
     return scopedSettings.currentAgent;
@@ -616,6 +631,12 @@ export function getCurrentAgent(): string | undefined {
 }
 
 export function setCurrentAgent(agentName: string): void {
+  if (isMainThreadGlobalDefaultScope()) {
+    currentSettings.currentAgent = agentName;
+    void writeSettingsFile(currentSettings);
+    return;
+  }
+
   const scopedSettings = getOrCreateConversationScopedSettings();
   if (scopedSettings) {
     scopedSettings.currentAgent = agentName;
@@ -627,6 +648,12 @@ export function setCurrentAgent(agentName: string): void {
 }
 
 export function clearCurrentAgent(): void {
+  if (isMainThreadGlobalDefaultScope()) {
+    currentSettings.currentAgent = undefined;
+    void writeSettingsFile(currentSettings);
+    return;
+  }
+
   const scopedSettings = getOrCreateConversationScopedSettings();
   if (scopedSettings) {
     scopedSettings.currentAgent = undefined;
@@ -639,6 +666,10 @@ export function clearCurrentAgent(): void {
 }
 
 export function getCurrentModel(): ModelInfo | undefined {
+  if (isMainThreadGlobalDefaultScope()) {
+    return cloneModelInfo(currentSettings.currentModel);
+  }
+
   const scopedSettings = getConversationScopedSettings();
   if (scopedSettings) {
     return cloneModelInfo(scopedSettings.currentModel);
@@ -652,6 +683,12 @@ export function getCurrentModel(): ModelInfo | undefined {
 }
 
 export function setCurrentModel(modelInfo: ModelInfo): void {
+  if (isMainThreadGlobalDefaultScope()) {
+    currentSettings.currentModel = cloneModelInfo(modelInfo);
+    void writeSettingsFile(currentSettings);
+    return;
+  }
+
   const scopedSettings = getOrCreateConversationScopedSettings();
   if (scopedSettings) {
     scopedSettings.currentModel = cloneModelInfo(modelInfo);
@@ -663,6 +700,12 @@ export function setCurrentModel(modelInfo: ModelInfo): void {
 }
 
 export function clearCurrentModel(): void {
+  if (isMainThreadGlobalDefaultScope()) {
+    currentSettings.currentModel = undefined;
+    void writeSettingsFile(currentSettings);
+    return;
+  }
+
   const scopedSettings = getOrCreateConversationScopedSettings();
   if (scopedSettings) {
     scopedSettings.currentModel = undefined;
@@ -752,9 +795,13 @@ export function getTenantRuntimes(): Record<string, TenantRuntimeInfo> {
   return cloneTenantRuntimesMap(currentSettings.tenantRuntimes) ?? {};
 }
 
-export function setTenantRuntimeInfo(userId: number, runtimeInfo: TenantRuntimeInfo): Promise<void> {
+export function setTenantRuntimeInfo(
+  userId: number,
+  runtimeInfo: TenantRuntimeInfo,
+): Promise<void> {
   currentSettings.tenantRuntimes ??= {};
-  currentSettings.tenantRuntimes[String(userId)] = cloneTenantRuntimeInfo(runtimeInfo) ?? runtimeInfo;
+  currentSettings.tenantRuntimes[String(userId)] =
+    cloneTenantRuntimeInfo(runtimeInfo) ?? runtimeInfo;
   return writeSettingsFile(currentSettings);
 }
 
@@ -784,7 +831,8 @@ export function setSessionDirectoryCache(cache: SessionDirectoryCacheInfo): Prom
   const userKey = getActiveUserScopeKey();
   if (userKey) {
     currentSettings.scopedSessionDirectoryCache ??= {};
-    currentSettings.scopedSessionDirectoryCache[userKey] = cloneSessionDirectoryCache(cache) ?? cache;
+    currentSettings.scopedSessionDirectoryCache[userKey] =
+      cloneSessionDirectoryCache(cache) ?? cache;
   } else {
     currentSettings.sessionDirectoryCache = cloneSessionDirectoryCache(cache);
   }
@@ -912,7 +960,6 @@ export async function loadSettings(): Promise<void> {
     threadContextBindings: cloneThreadContextBindings(loadedSettings.threadContextBindings) ?? [],
     attachedSessions: cloneAttachedSessionSettingsMap(loadedSettings.attachedSessions),
     approvedTelegramUserIds: normalizeTelegramUserIds(loadedSettings.approvedTelegramUserIds),
-    pendingAccessRequests:
-      cloneAccessApprovalRequests(loadedSettings.pendingAccessRequests) ?? [],
+    pendingAccessRequests: cloneAccessApprovalRequests(loadedSettings.pendingAccessRequests) ?? [],
   };
 }

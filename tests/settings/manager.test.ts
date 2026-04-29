@@ -58,6 +58,11 @@ describe("settings/manager scoped state", () => {
     chatId: 100,
     messageThreadId: 11,
   };
+  const scopeAMainThread: TelegramConversationScope = {
+    userId: 1,
+    chatId: 100,
+    messageThreadId: 0,
+  };
   const scopeB: TelegramConversationScope = { userId: 2, chatId: 100, messageThreadId: 10 };
 
   beforeEach(() => {
@@ -161,7 +166,9 @@ describe("settings/manager scoped state", () => {
     await runWithTelegramConversationScope(scopeB, () => setMessageStreamingEnabled(true));
 
     expect(runWithTelegramConversationScope(scopeA, () => getCurrentAgent())).toBe("build");
-    expect(runWithTelegramConversationScope(scopeAOtherTopic, () => getCurrentAgent())).toBe("plan");
+    expect(runWithTelegramConversationScope(scopeAOtherTopic, () => getCurrentAgent())).toBe(
+      "plan",
+    );
     expect(runWithTelegramConversationScope(scopeA, () => getCurrentModel())).toEqual({
       providerID: "openai",
       modelID: "gpt-5",
@@ -176,7 +183,9 @@ describe("settings/manager scoped state", () => {
     expect(runWithTelegramConversationScope(scopeAOtherTopic, () => getReasoningMode())).toBe(2);
     expect(runWithTelegramConversationScope(scopeB, () => getReasoningMode())).toBe(1);
     expect(runWithTelegramConversationScope(scopeA, () => isMessageStreamingEnabled())).toBe(false);
-    expect(runWithTelegramConversationScope(scopeAOtherTopic, () => isMessageStreamingEnabled())).toBe(false);
+    expect(
+      runWithTelegramConversationScope(scopeAOtherTopic, () => isMessageStreamingEnabled()),
+    ).toBe(false);
     expect(runWithTelegramConversationScope(scopeB, () => isMessageStreamingEnabled())).toBe(true);
   });
 
@@ -214,6 +223,30 @@ describe("settings/manager scoped state", () => {
     ).toEqual({
       agent: "plan",
       model: { providerID: "anthropic", modelID: "claude", variant: "fast" },
+    });
+  });
+
+  it("stores main-thread agent and model as global defaults for new topics", () => {
+    runWithTelegramConversationScope(scopeAMainThread, () => {
+      setCurrentAgent("build");
+      setCurrentModel({ providerID: "openai", modelID: "gpt-4.1", variant: "default" });
+    });
+
+    expect(getCurrentAgent()).toBe("build");
+    expect(getCurrentModel()).toEqual({
+      providerID: "openai",
+      modelID: "gpt-4.1",
+      variant: "default",
+    });
+
+    expect(
+      runWithTelegramConversationScope(scopeAOtherTopic, () => ({
+        agent: getCurrentAgent(),
+        model: getCurrentModel(),
+      })),
+    ).toEqual({
+      agent: undefined,
+      model: undefined,
     });
   });
 

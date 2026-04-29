@@ -96,7 +96,11 @@ describe("bot/handlers/inline-menu", () => {
   it("opens inline menu in forum main thread without sending message_thread_id", async () => {
     const ctx = {
       chat: { id: 100, type: "supergroup", is_forum: true },
-      message: { chat: { id: 100, type: "supergroup", is_forum: true } },
+      message: {
+        chat: { id: 100, type: "supergroup", is_forum: true },
+        is_topic_message: true,
+        message_thread_id: 42,
+      },
       reply: vi.fn().mockResolvedValue({ message_id: 55 }),
       answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
       deleteMessage: vi.fn().mockResolvedValue(undefined),

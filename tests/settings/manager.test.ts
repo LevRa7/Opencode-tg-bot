@@ -180,7 +180,7 @@ describe("settings/manager scoped state", () => {
     expect(runWithTelegramConversationScope(scopeB, () => isMessageStreamingEnabled())).toBe(true);
   });
 
-  it("keeps topic-local agent and model selections isolated for the same user", () => {
+  it("clears only the active topic-local agent and model for the same user", () => {
     runWithTelegramConversationScope(scopeA, () => {
       setCurrentAgent("build");
       setCurrentModel({ providerID: "openai", modelID: "gpt-5", variant: "default" });
@@ -191,14 +191,19 @@ describe("settings/manager scoped state", () => {
       setCurrentModel({ providerID: "anthropic", modelID: "claude", variant: "fast" });
     });
 
+    runWithTelegramConversationScope(scopeA, () => {
+      clearCurrentAgent();
+      clearCurrentModel();
+    });
+
     expect(
       runWithTelegramConversationScope(scopeA, () => ({
         agent: getCurrentAgent(),
         model: getCurrentModel(),
       })),
     ).toEqual({
-      agent: "build",
-      model: { providerID: "openai", modelID: "gpt-5", variant: "default" },
+      agent: undefined,
+      model: undefined,
     });
 
     expect(

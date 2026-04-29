@@ -4,3 +4,5 @@ opencode-client-src/.git
 opencode-client-src/node_modules
 opencode-client-src/.turbo
 *.log
+.env
+**/.env

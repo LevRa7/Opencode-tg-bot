@@ -32,6 +32,11 @@ RUN chmod +x /usr/local/bin/opencode-gemini-media
 
 COPY bin/gemini-media-proxy.mjs /usr/local/lib/opencode-gemini-media/gemini-media-proxy.mjs
 
+COPY bin/opencode-gpt-image /usr/local/bin/opencode-gpt-image
+RUN chmod +x /usr/local/bin/opencode-gpt-image
+
+COPY bin/gpt-image-proxy.mjs /usr/local/lib/opencode-gpt-image/gpt-image-proxy.mjs
+
 COPY bin/ensure-tenant-python-env.sh /usr/local/bin/ensure-tenant-python-env.sh
 RUN chmod +x /usr/local/bin/ensure-tenant-python-env.sh
 

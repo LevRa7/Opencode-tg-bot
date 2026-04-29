@@ -48,6 +48,7 @@ merge-agents
 ensure_tenant_python_env
 
 mkdir -p /run/opencode-gemini-media
+mkdir -p /run/opencode-gpt-image
 
 # Fix permissions for cliproxyapi.key if it exists
 if [ -f /workspace/.config/opencode/cliproxyapi.key ]; then
@@ -68,9 +69,20 @@ EOF
     node /usr/local/lib/opencode-gemini-media/gemini-media-proxy.mjs &
 fi
 
+if [ -n "${GPT_IMAGE_UPSTREAM_BASE_URL:-}" ] && [ -n "${GPT_IMAGE_UPSTREAM_API_KEY:-}" ]; then
+  umask 077
+  node -e 'const fs = require("node:fs"); fs.writeFileSync("/run/opencode-gpt-image/config.json", JSON.stringify({ baseUrl: process.env.GPT_IMAGE_UPSTREAM_BASE_URL, apiKey: process.env.GPT_IMAGE_UPSTREAM_API_KEY, model: process.env.GPT_IMAGE_MODEL || "gpt-image-2" }) + "\n", { mode: 0o600 });'
+  chown 2000:2000 /run/opencode-gpt-image/config.json
+  setpriv --reuid=2000 --regid=2000 --clear-groups --bounding-set=-all --nnp \
+    node /usr/local/lib/opencode-gpt-image/gpt-image-proxy.mjs &
+fi
+
 unset GEMINI_MEDIA_UPSTREAM_BASE_URL
 unset GEMINI_MEDIA_UPSTREAM_API_KEY
 unset GEMINI_MEDIA_MODEL
+unset GPT_IMAGE_UPSTREAM_BASE_URL
+unset GPT_IMAGE_UPSTREAM_API_KEY
+unset GPT_IMAGE_MODEL
 
 # Rootless Docker bind mounts expose the host user as container root, not uid 1000.
 # Keep uid/gid 0 for writable /workspace and /state, but drop all capabilities and

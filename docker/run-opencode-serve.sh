@@ -26,6 +26,40 @@ SERVER_USERNAME="${OPENCODE_SERVER_USERNAME:-opencode}"
 SERVER_PASSWORD="${OPENCODE_SERVER_PASSWORD:-change-me}"
 GEMINI_MEDIA_UPSTREAM_BASE_URL="${GEMINI_MEDIA_UPSTREAM_BASE_URL:-http://192.168.2.166:8124/v1}"
 GEMINI_MEDIA_MODEL="${GEMINI_MEDIA_MODEL:-gemini-3.1-flash-lite-preview}"
+GPT_IMAGE_ENV_FILE="${GPT_IMAGE_ENV_FILE:-${CONFIG_DIR}/gpt-image.env}"
+GPT_IMAGE_UPSTREAM_BASE_URL="${GPT_IMAGE_UPSTREAM_BASE_URL:-}"
+GPT_IMAGE_UPSTREAM_API_KEY="${GPT_IMAGE_UPSTREAM_API_KEY:-}"
+GPT_IMAGE_MODEL="${GPT_IMAGE_MODEL:-gpt-image-2}"
+
+read_env_value() {
+  local env_file="$1"
+  local wanted_key="$2"
+  if [[ ! -f "$env_file" ]]; then
+    return 1
+  fi
+
+  node -e '
+const fs = require("fs");
+const [file, wantedKey] = process.argv.slice(1);
+const content = fs.readFileSync(file, "utf8");
+for (const rawLine of content.split(/\r?\n/)) {
+  const line = rawLine.trim();
+  if (!line || line.startsWith("#")) continue;
+  const idx = line.indexOf("=");
+  if (idx === -1) continue;
+  const key = line.slice(0, idx).trim();
+  let value = line.slice(idx + 1).trim();
+  if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.slice(1, -1);
+  }
+  if (key === wantedKey) {
+    process.stdout.write(value);
+    process.exit(0);
+  }
+}
+process.exit(1);
+' "$env_file" "$wanted_key"
+}
 
 read_gemini_cli_server_token() {
   local env_file="${HOME}/.gemini/.env"
@@ -59,6 +93,14 @@ process.exit(1);
 GEMINI_MEDIA_UPSTREAM_API_KEY="${GEMINI_MEDIA_UPSTREAM_API_KEY:-}"
 if [[ -z "$GEMINI_MEDIA_UPSTREAM_API_KEY" ]]; then
   GEMINI_MEDIA_UPSTREAM_API_KEY="$(read_gemini_cli_server_token || true)"
+fi
+
+if [[ -z "$GPT_IMAGE_UPSTREAM_BASE_URL" ]]; then
+  GPT_IMAGE_UPSTREAM_BASE_URL="$(read_env_value "$GPT_IMAGE_ENV_FILE" OPENAI_BASE_URL || true)"
+fi
+
+if [[ -z "$GPT_IMAGE_UPSTREAM_API_KEY" ]]; then
+  GPT_IMAGE_UPSTREAM_API_KEY="$(read_env_value "$GPT_IMAGE_ENV_FILE" OPENAI_API_KEY || true)"
 fi
 
 if ! [[ "$HOST_PORT" =~ ^[0-9]+$ ]] || (( HOST_PORT < 49600 || HOST_PORT > 49999 )); then
@@ -147,6 +189,7 @@ mkdir -p "$OPENCODE_DATA_DIR"
 mkdir -p "$STATE_SKILLS_DIR/tg-cli"
 mkdir -p "$STATE_SKILLS_DIR/embedding-strategies"
 mkdir -p "$STATE_SKILLS_DIR/openai-media-transcriber"
+mkdir -p "$STATE_SKILLS_DIR/gpt-image-api"
 
 # OpenCode creates this ignore file for OPENCODE_CONFIG_DIR during bootstrap.
 # The container mounts this directory read-only, so prepare it on the writable host side.
@@ -264,6 +307,7 @@ cp "$SCRIPT_DIR/skills/embedding-strategies/SKILL.md" \
   "$STATE_SKILLS_DIR/embedding-strategies/SKILL.md"
 cp "$SCRIPT_DIR/skills/openai-media-transcriber/SKILL.md" \
   "$STATE_SKILLS_DIR/openai-media-transcriber/SKILL.md"
+cp -R "$SCRIPT_DIR/skills/gpt-image-api/." "$STATE_SKILLS_DIR/gpt-image-api/"
 
 cat > "$STATE_DIR/MAP.md" <<'EOF'
 # Tenant State Map
@@ -396,6 +440,9 @@ docker run --rm "${TTY_FLAGS[@]}" \
   -e GEMINI_MEDIA_UPSTREAM_BASE_URL="${GEMINI_MEDIA_UPSTREAM_BASE_URL}" \
   -e GEMINI_MEDIA_UPSTREAM_API_KEY="${GEMINI_MEDIA_UPSTREAM_API_KEY}" \
   -e GEMINI_MEDIA_MODEL="${GEMINI_MEDIA_MODEL}" \
+  -e GPT_IMAGE_UPSTREAM_BASE_URL="${GPT_IMAGE_UPSTREAM_BASE_URL}" \
+  -e GPT_IMAGE_UPSTREAM_API_KEY="${GPT_IMAGE_UPSTREAM_API_KEY}" \
+  -e GPT_IMAGE_MODEL="${GPT_IMAGE_MODEL}" \
   -e TG_CONFIG_DIR="/state/tg-cli" \
   -v "${XDG_CONFIG_DIR}:/bootstrap/opencode-config:ro" \
   -v "${HOST_AUTH_FILE}:/bootstrap/opencode-auth/auth.json:ro" \

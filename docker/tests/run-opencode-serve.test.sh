@@ -130,6 +130,8 @@ export TG_CHAT_ID="123456"
 export TG_TENANT_ID="tenant-alpha"
 export OPENCODE_SERVER_PASSWORD="test-password"
 export CLIPROXYAPI_BASE_URL="http://192.168.2.166:8317/v1"
+export GPT_IMAGE_UPSTREAM_BASE_URL="http://gpt-image.example.test/v1"
+export GPT_IMAGE_UPSTREAM_API_KEY="test-gpt-image-key"
 unset DOCKER_HOST
 unset DOCKER_CONFIG
 
@@ -204,12 +206,23 @@ fi
 test -f "${STATE_DIR}/skills/tg-cli/SKILL.md"
 test -f "${STATE_DIR}/skills/embedding-strategies/SKILL.md"
 test -f "${STATE_DIR}/skills/openai-media-transcriber/SKILL.md"
+test -f "${STATE_DIR}/skills/gpt-image-api/SKILL.md"
+test -f "${STATE_DIR}/skills/gpt-image-api/scripts/opencode-gpt-image"
+grep -Fq "/usr/local/bin/opencode-gpt-image" "${STATE_DIR}/skills/gpt-image-api/SKILL.md"
 if grep -Fq '192.168.2.166:8124' "${STATE_DIR}/config/opencode.json"; then
   echo "tenant config should not expose gemini media endpoint" >&2
   exit 1
 fi
 if grep -Fq 'GEMINI' "${STATE_DIR}/config/opencode.json"; then
   echo "tenant config should not expose gemini media secrets" >&2
+  exit 1
+fi
+if grep -Fq 'gpt-image.example.test' "${STATE_DIR}/config/opencode.json"; then
+  echo "tenant config should not expose GPT image endpoint" >&2
+  exit 1
+fi
+if grep -Fq 'test-gpt-image-key' "${STATE_DIR}/config/opencode.json"; then
+  echo "tenant config should not expose GPT image key" >&2
   exit 1
 fi
 grep -Fx -- "${STATE_DIR}:/state" "${DOCKER_ARGS_FILE}"

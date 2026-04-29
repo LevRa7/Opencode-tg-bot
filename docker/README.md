@@ -14,7 +14,7 @@ The setup provides:
 - shared global Telegram app credentials
 - access from the container to the host `cliproxyapi` endpoint
 - a minimal tenant-specific OpenCode config instead of inheriting the full host config
-- only the explicitly copied `tg-cli`, `embedding-strategies`, and `openai-media-transcriber` skills inside the isolated session
+- only the explicitly copied `tg-cli`, `embedding-strategies`, `openai-media-transcriber`, and `gpt-image-api` skills inside the isolated session
 - local-only publishing on `127.0.0.1`
 - local vendored build inputs so rebuilds do not need Docker Hub
 
@@ -43,6 +43,7 @@ So future rebuilds do not need Docker Hub as long as the base image remains cach
 - `Dockerfile` — builds the custom image from the locally cached OpenCode base image plus vendored tg-cli
 - `bin/tg-cli-wrapper.sh` — wrapper that forces isolated tg-cli config per workspace
 - `skills/tg-cli/SKILL.md` — project skill telling OpenCode how to use Telegram CLI
+- `skills/gpt-image-api/SKILL.md` — project skill telling OpenCode how to generate/edit images through the protected container helper
 - `tg-cli/` — local tg-cli source from `https://github.com/miolamio/tg-cli`
 - `vendor/python-tg-cli/` — vendored tg-cli source used during Docker build
 - `README.md` — English instructions
@@ -288,6 +289,7 @@ The launcher materializes tenant-visible skills under:
 /state/skills/tg-cli/SKILL.md
 /state/skills/embedding-strategies/SKILL.md
 /state/skills/openai-media-transcriber/SKILL.md
+/state/skills/gpt-image-api/SKILL.md
 ```
 
 The generated tenant config at `/state/config/opencode.json` points `skills.paths` only to:

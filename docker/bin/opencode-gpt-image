@@ -1,0 +1,121 @@
+#!/usr/bin/env node
+
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+const PROXY_BASE_URL = process.env.OPENCODE_GPT_IMAGE_PROXY_URL || 'http://127.0.0.1:18125';
+const OUTPUT_DIR = process.env.GPT_IMAGE_OUTPUT_DIR || '/workspace';
+
+function usage() {
+  console.error('Usage: opencode-gpt-image generate "prompt" output.png');
+  console.error('Usage: opencode-gpt-image edit input.png ref1.png [ref2.png ref3.png ref4.png ref5.png] -- "prompt" output.png');
+}
+
+function outputPathFromArgs(args, defaultName) {
+  const hasOutputPath = args.length > 1 && args[args.length - 1].toLowerCase().endsWith('.png');
+  const requestedPath = hasOutputPath ? args[args.length - 1] : defaultName;
+  return {
+    outputPath: path.isAbsolute(requestedPath) ? requestedPath : path.join(OUTPUT_DIR, requestedPath),
+    promptArgs: hasOutputPath ? args.slice(0, -1) : args,
+  };
+}
+
+async function postJson(route, payload) {
+  const response = await fetch(`${PROXY_BASE_URL}${route}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error || 'GPT image request failed');
+  }
+
+  if (!data?.imageBase64) {
+    throw new Error('GPT image proxy response did not include imageBase64');
+  }
+
+  return data.imageBase64;
+}
+
+async function writePng(outputPath, imageBase64) {
+  await fs.writeFile(outputPath, Buffer.from(imageBase64, 'base64'));
+  process.stdout.write(`${outputPath}\n`);
+}
+
+async function generate(args) {
+  const { outputPath, promptArgs } = outputPathFromArgs(args, 'output.png');
+  const prompt = promptArgs.join(' ');
+
+  if (!prompt) {
+    usage();
+    process.exit(1);
+  }
+
+  const imageBase64 = await postJson('/generate', { prompt });
+  await writePng(outputPath, imageBase64);
+}
+
+async function edit(args) {
+  const separatorIndex = args.indexOf('--');
+
+  if (separatorIndex === -1) {
+    usage();
+    process.exit(1);
+  }
+
+  const imagePaths = args.slice(0, separatorIndex);
+  const textArgs = args.slice(separatorIndex + 1);
+
+  if (imagePaths.length < 2 || imagePaths.length > 6) {
+    usage();
+    process.exit(1);
+  }
+
+  const { outputPath, promptArgs } = outputPathFromArgs(textArgs, 'edited-output.png');
+  const prompt = promptArgs.join(' ');
+
+  if (!prompt) {
+    usage();
+    process.exit(1);
+  }
+
+  const images = await Promise.all(
+    imagePaths.map(async (imagePath) => {
+      const resolvedPath = path.resolve(imagePath);
+      const data = await fs.readFile(resolvedPath);
+      return {
+        filename: path.basename(resolvedPath),
+        fileBase64: data.toString('base64'),
+      };
+    })
+  );
+
+  const imageBase64 = await postJson('/edit', { prompt, images });
+  await writePng(outputPath, imageBase64);
+}
+
+async function main() {
+  const [command, ...args] = process.argv.slice(2);
+
+  if (command === 'generate') {
+    await generate(args);
+    return;
+  }
+
+  if (command === 'edit') {
+    await edit(args);
+    return;
+  }
+
+  usage();
+  process.exit(1);
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

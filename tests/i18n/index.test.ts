@@ -11,6 +11,63 @@ import {
   t,
 } from "../../src/i18n/index.js";
 
+const COMMAND_LOCALIZATION_KEYS = [
+  "open.access_denied",
+  "open.back",
+  "open.next_page",
+  "open.no_subfolders",
+  "open.open_error",
+  "open.prev_page",
+  "open.roots",
+  "open.scan_error",
+  "open.select_current",
+  "open.select_error",
+  "open.select_root",
+  "open.selected",
+  "open.subfolder_count",
+  "open.subfolders_count",
+  "skills.arguments_empty",
+  "skills.button.cancel",
+  "skills.button.execute",
+  "skills.button.next_page",
+  "skills.button.prev_page",
+  "skills.cancelled_callback",
+  "skills.confirm",
+  "skills.empty",
+  "skills.execute_callback",
+  "skills.executing_prefix",
+  "skills.fetch_error",
+  "skills.inactive_callback",
+  "skills.no_description",
+  "skills.page_empty_callback",
+  "skills.page_load_error_callback",
+  "skills.select",
+  "skills.select_page",
+  "mcps.title",
+  "mcps.detail_title",
+  "mcps.detail_status",
+  "mcps.detail_enabled",
+  "mcps.detail_connection",
+  "mcps.detail_command",
+  "mcps.detail_url",
+  "mcps.detail_error",
+  "mcps.status.connected",
+  "mcps.status.disabled",
+  "mcps.status.failed",
+  "mcps.status.needs_auth",
+  "mcps.status.needs_client_registration",
+  "mcps.enabled.enabled",
+  "mcps.enabled.disabled",
+  "mcps.connection.connected",
+  "mcps.connection.disconnected",
+  "mcps.button.back",
+  "mcps.button.cancel",
+  "mcps.cancelled_callback",
+  "mcps.empty",
+  "mcps.fetch_error",
+  "mcps.inactive_callback",
+] as const;
+
 describe("i18n/index locale helpers", () => {
   afterEach(() => {
     resetRuntimeLocale();
@@ -44,8 +101,12 @@ describe("i18n/index locale helpers", () => {
   });
 
   it("does not expose removed export_data description keys", () => {
-    expect(t("cmd.description.export_data" as never, undefined, "en")).toBe("cmd.description.export_data");
-    expect(t("cmd.description.export_data" as never, undefined, "ru")).toBe("cmd.description.export_data");
+    expect(t("cmd.description.export_data" as never, undefined, "en")).toBe(
+      "cmd.description.export_data",
+    );
+    expect(t("cmd.description.export_data" as never, undefined, "ru")).toBe(
+      "cmd.description.export_data",
+    );
   });
 
   it("prefers runtime locale override over env locale", () => {
@@ -53,5 +114,14 @@ describe("i18n/index locale helpers", () => {
     setRuntimeLocale("ru");
 
     expect(getLocale()).toBe("ru");
+  });
+
+  it("keeps open, skills, and mcps localizations non-empty in every locale", () => {
+    for (const locale of SUPPORTED_LOCALES) {
+      for (const key of COMMAND_LOCALIZATION_KEYS) {
+        expect(t(key, undefined, locale)).not.toBe("");
+        expect(t(key, undefined, locale)).not.toBe(key);
+      }
+    }
   });
 });

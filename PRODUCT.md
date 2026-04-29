@@ -118,7 +118,7 @@ Current command set:
 - `/open` - browse project files and open them
 - `/help` - show command help
 
-Model, agent, variant, and context actions are available from the persistent bottom keyboard.
+Model, agent, variant, and context actions are available from the bottom reply keyboard, which users can hide manually and which the bot reattaches on later replies; in forum chats, main-thread reply-keyboard actions stay in the main thread while topic-local `agent`/`model`/`variant` behavior remains isolated.
 
 Text messages (non-commands) are treated as prompts for OpenCode only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured. When `/tts` is enabled globally, completed assistant replies also include a generated audio file if TTS is configured.
 

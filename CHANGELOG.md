@@ -110,6 +110,9 @@ Documentation rule:
 
 ### Fixed
 
+- Fixed forum main-thread reply-keyboard behavior so the bottom keyboard stays manually hideable, is reattached consistently on later bot replies, keeps reply-keyboard-triggered actions in the forum main thread instead of opening a new topic, and preserves topic-local `agent`/`model`/`variant` isolation.
+  - Why: the earlier flow mixed a persistent keyboard with incomplete forum main-thread routing, which made Telegram's native hide control unreliable and could route main-thread menu actions into a new topic instead of the current scope.
+  - Affects: `src/bot/utils/keyboard.ts`, `src/bot/utils/message-thread.ts`, `src/bot/handlers/inline-menu.ts`, `src/bot/commands/start.ts`, `src/bot/commands/status.ts`, `tests/bot/utils/keyboard.test.ts`, `tests/bot/utils/message-thread.test.ts`, `tests/bot/handlers/inline-menu.test.ts`, `tests/bot/handlers/agent.test.ts`, `tests/bot/handlers/model.test.ts`, `tests/bot/handlers/variant.test.ts`, `tests/settings/manager.test.ts`
 - Fixed duplicate or misleading subagent/tool-call presentation so repeated completion updates and overlapping tool-call streams do not spam Telegram with stale or duplicate progress summaries.
   - Why: concurrent subagent and tool activity could produce repeated completion lines or visually overlapping tool-call updates, making live progress harder to follow.
   - Affects: `src/summary/aggregator.ts`, `src/bot/streaming/tool-call-streamer.ts`, `tests/summary/aggregator.test.ts`, `tests/bot/streaming/tool-call-streamer.test.ts`

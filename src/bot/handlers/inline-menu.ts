@@ -98,7 +98,8 @@ export async function replyWithInlineMenu(
   }
 
   const threadTarget = extractThreadTargetFromContext(ctx);
-  const messageThreadId = options.messageThreadId ?? threadTarget?.messageThreadId;
+  const messageThreadId =
+    options.messageThreadId !== undefined ? options.messageThreadId : threadTarget?.messageThreadId;
   logger.info(
     `[InlineMenu] Sending menu: kind=${options.menuKind}, chatId=${ctx.chat?.id ?? "unknown"}, threadId=${messageThreadId ?? "none"}, parseMode=${options.parseMode ?? "raw"}, textLength=${options.text.length}`,
   );

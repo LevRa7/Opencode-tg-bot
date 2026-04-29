@@ -27,7 +27,6 @@ import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
 import {
   extractMessageThreadIdFromContext,
-  resolveReplyKeyboardActionThreadId,
   withMessageThreadId,
 } from "../utils/message-thread.js";
 
@@ -377,7 +376,7 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
     await ctx.answerCallbackQuery({ text: t("model.changed_callback", { name: displayName }) });
     await ctx.reply(
       t("model.changed_message", { name: displayName }),
-      withMessageThreadId({ reply_markup: keyboard }, resolveReplyKeyboardActionThreadId(ctx)),
+      withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
     );
     await ctx.deleteMessage().catch(() => {});
 
@@ -395,7 +394,6 @@ export async function showModelSelectionMenu(ctx: Context): Promise<void> {
     const currentModel = fetchCurrentModel();
     const catalog = await getRuntimeModelCatalog();
     const keyboard = buildProviderSelectionKeyboard(catalog, currentModel);
-    const actionThreadId = resolveReplyKeyboardActionThreadId(ctx);
 
     if (keyboard.inline_keyboard.length === 0) {
       await ctx.reply(t("model.menu.empty"));
@@ -406,7 +404,6 @@ export async function showModelSelectionMenu(ctx: Context): Promise<void> {
       menuKind: "model",
       text: buildProviderSelectionText(currentModel),
       keyboard,
-      messageThreadId: actionThreadId,
     });
   } catch (err) {
     logger.error("[ModelHandler] Error showing model menu:", err);

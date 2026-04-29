@@ -254,17 +254,6 @@ describe("bot/handlers/model", () => {
     expect(rows[2]?.[0]?.callback_data).toBe("model_provider:openai");
   });
 
-  it("opens the model menu in forum main thread without message_thread_id", async () => {
-    const ctx = createForumMainThreadCommandContext();
-
-    await showModelSelectionMenu(ctx);
-
-    expect(mocked.replyWithInlineMenuMock).toHaveBeenCalledWith(
-      ctx,
-      expect.objectContaining({ messageThreadId: 0 }),
-    );
-  });
-
   it("opens a provider with the first page of models", async () => {
     const ctx = createCallbackContext("model_provider:openai");
 

@@ -32,15 +32,13 @@ async function waitForServerReady(maxWaitMs: number = 10000): Promise<boolean> {
 export async function opencodeStartCommand(ctx: CommandContext<Context>) {
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
 
-  if (ctx.from?.id !== config.telegram.adminUserId) {
-    await ctx.reply(t("restart.admin_only"), withMessageThreadId(undefined, messageThreadId));
-    return;
-  }
-
   try {
     const localTarget = resolveLocalOpencodeTarget(config.opencode.apiUrl);
     if (!localTarget) {
-      await ctx.reply(t("opencode_start.remote_configured"), withMessageThreadId(undefined, messageThreadId));
+      await ctx.reply(
+        t("opencode_start.remote_configured"),
+        withMessageThreadId(undefined, messageThreadId),
+      );
       return;
     }
 
@@ -118,6 +116,9 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
     });
   } catch (err) {
     logger.error("[Bot] Error in /opencode-start command:", err);
-    await ctx.reply(t("opencode_start.error"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
+    await ctx.reply(
+      t("opencode_start.error"),
+      withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
+    );
   }
 }

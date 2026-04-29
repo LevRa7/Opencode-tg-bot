@@ -3,6 +3,12 @@ import type { ChildProcess } from "node:child_process";
 import type { Context } from "grammy";
 import { t } from "../../../src/i18n/index.js";
 
+type RuntimeInfo = {
+  managed: boolean;
+  pid: number | null;
+  uptimeMs: number | null;
+};
+
 const mocked = vi.hoisted(() => ({
   healthMock: vi.fn(),
   spawnMock: vi.fn(),
@@ -22,7 +28,9 @@ const mocked = vi.hoisted(() => ({
     isRunning: vi.fn(() => false),
     getPID: vi.fn(() => null),
     stop: vi.fn(),
-    getCurrentRuntimeInfo: vi.fn(() => ({ managed: false, pid: null, uptimeMs: null })),
+    getCurrentRuntimeInfo: vi.fn(
+      (): RuntimeInfo => ({ managed: false, pid: null, uptimeMs: null }),
+    ),
     ensureRuntime: vi.fn(() => Promise.resolve({ success: true, error: null })),
   },
 }));
@@ -101,7 +109,11 @@ describe("bot/commands/opencode-start", () => {
     mocked.resolveLocalOpencodeTargetMock.mockReturnValue({ host: "localhost", port: 4096 });
     mocked.editBotTextMock.mockResolvedValue(undefined);
     mocked.processManagerMock.isRunning.mockReturnValue(false);
-    mocked.processManagerMock.getCurrentRuntimeInfo.mockReturnValue({ managed: false, pid: null, uptimeMs: null });
+    mocked.processManagerMock.getCurrentRuntimeInfo.mockReturnValue({
+      managed: false,
+      pid: null,
+      uptimeMs: null,
+    });
     mocked.processManagerMock.ensureRuntime.mockResolvedValue({ success: true, error: null });
   });
 
@@ -116,18 +128,25 @@ describe("bot/commands/opencode-start", () => {
 
     await opencodeStartCommand(ctx as never);
 
-    expect(ctx.reply).toHaveBeenCalledWith(t("opencode_start.remote_configured"), expect.anything());
+    expect(ctx.reply).toHaveBeenCalledWith(
+      t("opencode_start.remote_configured"),
+      expect.anything(),
+    );
     expect(mocked.spawnMock).not.toHaveBeenCalled();
   });
 
-  it("rejects direct invocation from non-admin users", async () => {
+  it("allows direct invocation from non-admin users", async () => {
     const ctx = createContext(100);
+    mocked.healthMock.mockResolvedValue({ data: { healthy: true, version: "1.2.3" }, error: null });
 
     await opencodeStartCommand(ctx as never);
 
-    expect(ctx.reply).toHaveBeenCalledWith(t("restart.admin_only"), expect.anything());
-    expect(mocked.resolveLocalOpencodeTargetMock).not.toHaveBeenCalled();
-    expect(mocked.healthMock).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith(
+      t("opencode_start.already_running_external", { version: "1.2.3" }),
+      expect.anything(),
+    );
+    expect(mocked.resolveLocalOpencodeTargetMock).toHaveBeenCalledWith("http://localhost:4096");
+    expect(mocked.healthMock).toHaveBeenCalled();
     expect(mocked.processManagerMock.ensureRuntime).not.toHaveBeenCalled();
   });
 
@@ -146,7 +165,11 @@ describe("bot/commands/opencode-start", () => {
 
   it("starts the local server and reports success", async () => {
     const ctx = createContext();
-    mocked.processManagerMock.getCurrentRuntimeInfo.mockReturnValue({ managed: false, pid: 123, uptimeMs: null });
+    mocked.processManagerMock.getCurrentRuntimeInfo.mockReturnValue({
+      managed: false,
+      pid: 123,
+      uptimeMs: null,
+    } as RuntimeInfo);
     mocked.healthMock
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce({ data: { healthy: true, version: "1.2.3" }, error: null })
@@ -166,7 +189,11 @@ describe("bot/commands/opencode-start", () => {
     vi.useFakeTimers();
 
     const ctx = createContext();
-    mocked.processManagerMock.getCurrentRuntimeInfo.mockReturnValue({ managed: false, pid: 321, uptimeMs: null });
+    mocked.processManagerMock.getCurrentRuntimeInfo.mockReturnValue({
+      managed: false,
+      pid: 321,
+      uptimeMs: null,
+    } as RuntimeInfo);
     mocked.healthMock.mockRejectedValue(new Error("offline"));
 
     const commandPromise = opencodeStartCommand(ctx as never);

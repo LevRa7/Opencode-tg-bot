@@ -110,6 +110,10 @@ Documentation rule:
 
 ### Fixed
 
+- Fixed `/opencode_start` and `/opencode_stop` access control so they are available to all users while `/restart` remains admin-only.
+  - Why: the OpenCode runtime commands manage the per-user server and should not be blocked by the bot admin gate; only the host restart action should stay restricted.
+  - Affects: `src/bot/commands/definitions.ts`, `src/bot/commands/opencode-start.ts`, `src/bot/commands/opencode-stop.ts`, `tests/bot/commands/opencode-start.test.ts`, `tests/bot/commands/opencode-stop.test.ts`, `tests/bot/utils/command-sync.test.ts`
+
 - Fixed duplicate or misleading subagent/tool-call presentation so repeated completion updates and overlapping tool-call streams do not spam Telegram with stale or duplicate progress summaries.
   - Why: concurrent subagent and tool activity could produce repeated completion lines or visually overlapping tool-call updates, making live progress harder to follow.
   - Affects: `src/summary/aggregator.ts`, `src/bot/streaming/tool-call-streamer.ts`, `tests/summary/aggregator.test.ts`, `tests/bot/streaming/tool-call-streamer.test.ts`

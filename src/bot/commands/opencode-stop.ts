@@ -1,7 +1,11 @@
 import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { config } from "../../config.js";
-import { resolveLocalOpencodeTarget, findServerPid, killServerProcess } from "../../opencode/process.js";
+import {
+  resolveLocalOpencodeTarget,
+  findServerPid,
+  killServerProcess,
+} from "../../opencode/process.js";
 import { processManager } from "../../process/manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
@@ -11,15 +15,13 @@ import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils
 export async function opencodeStopCommand(ctx: CommandContext<Context>) {
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
 
-  if (ctx.from?.id !== config.telegram.adminUserId) {
-    await ctx.reply(t("restart.admin_only"), withMessageThreadId(undefined, messageThreadId));
-    return;
-  }
-
   try {
     const localTarget = resolveLocalOpencodeTarget(config.opencode.apiUrl);
     if (!localTarget) {
-      await ctx.reply(t("opencode_stop.remote_configured"), withMessageThreadId(undefined, messageThreadId));
+      await ctx.reply(
+        t("opencode_stop.remote_configured"),
+        withMessageThreadId(undefined, messageThreadId),
+      );
       return;
     }
 
@@ -63,7 +65,10 @@ export async function opencodeStopCommand(ctx: CommandContext<Context>) {
       healthError = String(err);
     }
     if (healthError || !isHealthy) {
-      await ctx.reply(t("opencode_stop.not_running"), withMessageThreadId(undefined, messageThreadId));
+      await ctx.reply(
+        t("opencode_stop.not_running"),
+        withMessageThreadId(undefined, messageThreadId),
+      );
       return;
     }
 

@@ -101,15 +101,15 @@ describe("bot/commands/opencode-stop", () => {
     expect(mocked.findServerPidMock).not.toHaveBeenCalled();
   });
 
-  it("rejects direct invocation from non-admin users", async () => {
+  it("allows direct invocation from non-admin users", async () => {
     const ctx = createContext(100);
+    mocked.healthMock.mockResolvedValue({ data: { healthy: true, version: "1.2.3" }, error: null });
 
     await opencodeStopCommand(ctx as never);
 
-    expect(ctx.reply).toHaveBeenCalledWith(t("restart.admin_only"), expect.anything());
-    expect(mocked.resolveLocalOpencodeTargetMock).not.toHaveBeenCalled();
-    expect(mocked.healthMock).not.toHaveBeenCalled();
-    expect(mocked.findServerPidMock).not.toHaveBeenCalled();
+    expect(mocked.resolveLocalOpencodeTargetMock).toHaveBeenCalledWith("http://localhost:4096");
+    expect(mocked.healthMock).toHaveBeenCalled();
+    expect(mocked.findServerPidMock).toHaveBeenCalled();
     expect(mocked.processManagerMock.stop).not.toHaveBeenCalled();
   });
 
@@ -147,7 +147,10 @@ describe("bot/commands/opencode-stop", () => {
 
     await opencodeStopCommand(ctx as never);
 
-    expect(ctx.reply).toHaveBeenCalledWith(t("opencode_stop.stopping", { pid: 456 }), expect.anything());
+    expect(ctx.reply).toHaveBeenCalledWith(
+      t("opencode_stop.stopping", { pid: 456 }),
+      expect.anything(),
+    );
     expect(mocked.killServerProcessMock).toHaveBeenCalledWith(456, 5000);
     expect(mocked.editBotTextMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ text: t("opencode_stop.success") }),

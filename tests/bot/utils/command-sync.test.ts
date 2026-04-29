@@ -69,12 +69,12 @@ describe("command sync helpers", () => {
     });
   });
 
-  it("includes all commands except admin-only for non-admin authorized users", async () => {
+  it("includes public commands for non-admin authorized users", async () => {
     const commands = getLocalizedBotCommands({ isAdmin: false });
 
     expect(commands.find((c) => c.command === "restart")).toBeUndefined();
-    expect(commands.find((c) => c.command === "opencode_start")).toBeUndefined();
-    expect(commands.find((c) => c.command === "opencode_stop")).toBeUndefined();
+    expect(commands.find((c) => c.command === "opencode_start")).toBeDefined();
+    expect(commands.find((c) => c.command === "opencode_stop")).toBeDefined();
     expect(commands.find((c) => c.command === "mcps")).toBeDefined();
     expect(commands.find((c) => c.command === "status")).toBeDefined();
     expect(commands.find((c) => c.command === "help")).toBeDefined();

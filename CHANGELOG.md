@@ -12,9 +12,6 @@ Documentation rule:
 
 ### Added
 
-- Added `/settings` with an inline Telegram menu for choosing language and toggling thinking, tool-call, and tool-file message visibility per user.
-  - Why: users need to adjust localized display preferences from Telegram without editing `settings.json` or environment variables.
-  - Affects: `src/bot/commands/settings.ts`, `src/bot/commands/definitions.ts`, `src/bot/index.ts`, `tests/bot/commands/settings.test.ts`, `tests/bot/index.callback-routing.test.ts`, `tests/bot/utils/command-sync.test.ts`
 - Added topic-scoped session attach/follow behavior for multi-user and forum-thread workflows, keeping attached-session restores, follow-up routing, and startup pinned status isolated per private chat or Telegram topic.
   - Why: one shared global route caused attached-session events and pinned state to bleed across users or topics, which made concurrent remote work hard to trust.
   - Affects: `src/attach/*`, `src/thread/*`, `src/pinned/manager.ts`, `src/bot/index.ts`, `tests/attach/*.test.ts`, `tests/pinned/manager.test.ts`

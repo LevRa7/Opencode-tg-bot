@@ -89,14 +89,14 @@ function buildSettingsRootKeyboard(state: SettingsRenderState): InlineKeyboard {
     .text(t("inline.button.cancel", undefined, state.locale), SETTINGS_CALLBACK_CANCEL);
 }
 
-function buildLanguageKeyboard(): InlineKeyboard {
+function buildLanguageKeyboard(locale: Locale): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   for (const option of getLocaleOptions()) {
     keyboard.text(option.label, `${SETTINGS_CALLBACK_LANGUAGE_PREFIX}${option.code}`).row();
   }
 
-  keyboard.text(t("inline.button.cancel"), SETTINGS_CALLBACK_CANCEL);
+  keyboard.text(t("inline.button.cancel", undefined, locale), SETTINGS_CALLBACK_CANCEL);
   return keyboard;
 }
 
@@ -146,9 +146,19 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
 
   try {
     if (data === SETTINGS_CALLBACK_LANGUAGE) {
-      await ctx.editMessageText(t("settings.language.title"), {
-        reply_markup: buildLanguageKeyboard(),
+      const locale = getActiveLocale();
+      await ctx.editMessageText(t("settings.language.title", undefined, locale), {
+        reply_markup: buildLanguageKeyboard(locale),
       });
+      return true;
+    }
+
+    if (data === SETTINGS_CALLBACK_CANCEL) {
+      const locale = getActiveLocale();
+      await ctx
+        .answerCallbackQuery({ text: t("inline.cancelled_callback", undefined, locale) })
+        .catch(() => {});
+      await ctx.deleteMessage().catch(() => {});
       return true;
     }
 

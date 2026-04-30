@@ -184,4 +184,4 @@ Optional or longer-term enhancements:
 
 - [ ] Create new OpenCode projects directly from Telegram
 - [x] Add project file browsing helpers (for example, `ls` and `open` flows)
-- [x] Add a bot settings command with in-chat UI
+- [ ] Add a bot settings command with in-chat UI

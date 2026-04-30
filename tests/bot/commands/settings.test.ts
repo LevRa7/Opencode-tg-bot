@@ -64,6 +64,7 @@ function createCallbackContext(data: string): Context {
       message: { message_id: 10 },
     } as Context["callbackQuery"],
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+    deleteMessage: vi.fn().mockResolvedValue(undefined),
     editMessageText: vi.fn().mockResolvedValue(undefined),
   } as unknown as Context;
 }
@@ -124,6 +125,24 @@ describe("bot/commands/settings", () => {
     expect(text).toBe(t("settings.language.title"));
     expect(rows[0]?.[0]).toMatchObject({ text: "English", callback_data: "settings:language:en" });
     expect(rows.some((row) => row[0]?.callback_data === "settings:language:ru")).toBe(true);
+    expect(rows[rows.length - 1]?.[0]?.callback_data).toBe("settings:cancel");
+  });
+
+  it("renders the language submenu title and cancel button with the stored locale", async () => {
+    mocked.userLocale = "ru";
+    const ctx = createCallbackContext("settings:language");
+
+    const handled = await handleSettingsCallback(ctx);
+
+    expect(handled).toBe(true);
+    const [text, options] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      unknown,
+    ];
+    const rows = getInlineRows(options);
+
+    expect(text).toBe(t("settings.language.title", undefined, "ru"));
+    expect(rows[rows.length - 1]?.[0]?.text).toBe(t("inline.button.cancel", undefined, "ru"));
     expect(rows[rows.length - 1]?.[0]?.callback_data).toBe("settings:cancel");
   });
 
@@ -204,6 +223,20 @@ describe("bot/commands/settings", () => {
   it("returns false for unknown and non-settings callbacks", async () => {
     expect(await handleSettingsCallback(createCallbackContext("model:select:0"))).toBe(false);
     expect(await handleSettingsCallback(createCallbackContext("settings:unknown"))).toBe(false);
+  });
+
+  it("handles cancel callbacks by closing the settings menu", async () => {
+    mocked.userLocale = "ru";
+    const ctx = createCallbackContext("settings:cancel");
+
+    const handled = await handleSettingsCallback(ctx);
+
+    expect(handled).toBe(true);
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: t("inline.cancelled_callback", undefined, "ru"),
+    });
+    expect(ctx.deleteMessage).toHaveBeenCalledTimes(1);
+    expect(ctx.editMessageText).not.toHaveBeenCalled();
   });
 
   it("answers with an error when settings storage throws", async () => {

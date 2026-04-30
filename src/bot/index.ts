@@ -129,6 +129,9 @@ import { threadContextManager } from "../thread/manager.js";
 import { withMessageThreadId } from "./utils/message-thread.js";
 import {
   getApprovedTelegramUserIds,
+  getHideThinkingMessages,
+  getHideToolCallMessages,
+  getHideToolFileMessages,
   getReasoningMode,
   getTenantRuntimeInfo,
   getThinkingClearMode,
@@ -349,6 +352,24 @@ function getReasoningModeForSession(sessionId: string) {
 function isMessageStreamingEnabledForSession(sessionId: string): boolean {
   return runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
     isMessageStreamingEnabled(),
+  );
+}
+
+async function getHideThinkingMessagesForSession(sessionId: string): Promise<boolean> {
+  return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
+    config.bot.hideThinkingMessages || getHideThinkingMessages(),
+  );
+}
+
+async function getHideToolCallMessagesForSession(sessionId: string): Promise<boolean> {
+  return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
+    config.bot.hideToolCallMessages || getHideToolCallMessages(),
+  );
+}
+
+async function getHideToolFileMessagesForSession(sessionId: string): Promise<boolean> {
+  return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
+    config.bot.hideToolFileMessages || getHideToolFileMessages(),
   );
 }
 
@@ -937,7 +958,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         return;
       }
 
-      if (mode > 0 && reasoningText?.trim() && !config.bot.hideThinkingMessages) {
+      if (mode > 0 && reasoningText?.trim() && !(await getHideThinkingMessagesForSession(sessionId))) {
         await streamThinkingBlocks({
           sessionId,
           sendApi: botApi,
@@ -1213,7 +1234,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       (toolInfo.tool === "write" || toolInfo.tool === "edit" || toolInfo.tool === "apply_patch");
 
     if (
-      config.bot.hideToolCallMessages ||
+      (await getHideToolCallMessagesForSession(toolInfo.sessionId)) ||
       shouldIncludeToolInfoInFileCaption ||
       toolInfo.tool === "task"
     ) {
@@ -1247,7 +1268,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       return;
     }
 
-    if (config.bot.hideToolCallMessages) {
+    if (await getHideToolCallMessagesForSession(sessionId)) {
       return;
     }
 
@@ -1273,6 +1294,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     syncSessionRoutingContext(fileInfo.sessionId);
     if (!isSessionCurrent(fileInfo.sessionId)) {
       logger.error("Bot or chat ID not available for sending file");
+      return;
+    }
+
+    if (await getHideToolFileMessagesForSession(fileInfo.sessionId)) {
       return;
     }
 
@@ -1377,9 +1402,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     await toolCallStreamer.breakSession(sessionId, "thinking_started");
 
     const reasoningMode = await getReasoningModeForSession(sessionId);
-    if (!config.bot.hideThinkingMessages && reasoningMode === 0) {
+    const hideThinkingMessages = await getHideThinkingMessagesForSession(sessionId);
+    if (!hideThinkingMessages && reasoningMode === 0) {
       deliverThinkingMessage(sessionId, toolMessageBatcher, {
-        hideThinkingMessages: config.bot.hideThinkingMessages,
+        hideThinkingMessages,
       });
     }
 

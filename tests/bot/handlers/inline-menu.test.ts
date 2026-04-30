@@ -93,6 +93,24 @@ describe("bot/handlers/inline-menu", () => {
     expect(typeof state?.expiresAt).toBe("number");
   });
 
+  it("uses the override label for the shared cancel row", async () => {
+    const ctx = createReplyContext(42);
+
+    await replyWithInlineMenu(ctx, {
+      menuKind: "settings",
+      text: "Settings",
+      keyboard: new InlineKeyboard().text("Language", "settings:language"),
+      cancelLabel: t("settings.close"),
+    });
+
+    const [, options] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0];
+    const replyMarkup = options.reply_markup as InlineKeyboard;
+    const lastRow = replyMarkup.inline_keyboard[replyMarkup.inline_keyboard.length - 1];
+
+    expect(lastRow[0]?.text).toBe(t("settings.close"));
+    expect(getCallbackData(lastRow[0])).toBe("inline:cancel:settings");
+  });
+
   it("opens inline menu in forum main thread without sending message_thread_id", async () => {
     const ctx = {
       chat: { id: 100, type: "supergroup", is_forum: true },

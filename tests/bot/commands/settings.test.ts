@@ -118,6 +118,7 @@ describe("bot/commands/settings", () => {
     ]);
     expect(rows[0]?.[0]?.text).toBe("🌐 🇬🇧 English");
     expect(rows[1]?.[0]?.text).toBe("✅ Thinking");
+    expect(rows[rows.length - 1]?.[0]?.text).toBe(t("settings.close"));
   });
 
   it("edits to the language submenu using locale options", async () => {
@@ -233,22 +234,8 @@ describe("bot/commands/settings", () => {
 
   it("returns false for unknown and non-settings callbacks", async () => {
     expect(await handleSettingsCallback(createCallbackContext("model:select:0"))).toBe(false);
+    expect(await handleSettingsCallback(createCallbackContext("inline:cancel:settings"))).toBe(false);
     expect(await handleSettingsCallback(createCallbackContext("settings:unknown"))).toBe(false);
-  });
-
-  it("handles cancel callbacks by closing the settings menu", async () => {
-    mocked.userLocale = "ru";
-    startActiveSettingsMenu();
-    const ctx = createCallbackContext("settings:cancel");
-
-    const handled = await handleSettingsCallback(ctx);
-
-    expect(handled).toBe(true);
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
-      text: t("inline.cancelled_callback", undefined, "ru"),
-    });
-    expect(ctx.deleteMessage).toHaveBeenCalledTimes(1);
-    expect(ctx.editMessageText).not.toHaveBeenCalled();
   });
 
   it("does not mutate language when the settings callback is stale", async () => {

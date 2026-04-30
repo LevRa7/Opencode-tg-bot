@@ -1,10 +1,9 @@
 import { InlineKeyboard, type CommandContext, type Context } from "grammy";
 import {
-  clearActiveInlineMenu,
+  appendInlineMenuCancelButton,
   ensureActiveInlineMenu,
+  replyWithInlineMenu,
 } from "../handlers/inline-menu.js";
-import { interactionManager } from "../../interaction/manager.js";
-import { extractThreadTargetFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import {
   getHideThinkingMessages,
   getHideToolCallMessages,
@@ -23,9 +22,6 @@ export const SETTINGS_CALLBACK_PREFIX = "settings:";
 const SETTINGS_CALLBACK_LANGUAGE = `${SETTINGS_CALLBACK_PREFIX}language`;
 const SETTINGS_CALLBACK_LANGUAGE_PREFIX = `${SETTINGS_CALLBACK_LANGUAGE}:`;
 const SETTINGS_CALLBACK_TOGGLE_PREFIX = `${SETTINGS_CALLBACK_PREFIX}toggle:`;
-const SETTINGS_CALLBACK_CANCEL = `${SETTINGS_CALLBACK_PREFIX}cancel`;
-const SETTINGS_CLOSE_CALLBACK = "inline:cancel:settings";
-const SETTINGS_MENU_TTL_MS = 5 * 60 * 1000;
 
 type ToggleSettingId = "hide_thinking" | "hide_tool_calls" | "hide_tool_files";
 
@@ -93,9 +89,7 @@ function buildSettingsRootKeyboard(state: SettingsRenderState): InlineKeyboard {
         state.locale,
       ),
       `${SETTINGS_CALLBACK_TOGGLE_PREFIX}hide_tool_files`,
-    )
-    .row()
-    .text(t("settings.close", undefined, state.locale), SETTINGS_CLOSE_CALLBACK);
+    );
 }
 
 function buildLanguageKeyboard(locale: Locale): InlineKeyboard {
@@ -105,34 +99,29 @@ function buildLanguageKeyboard(locale: Locale): InlineKeyboard {
     keyboard.text(`${option.flag} ${option.label}`, `${SETTINGS_CALLBACK_LANGUAGE_PREFIX}${option.code}`).row();
   }
 
-  return keyboard.text(t("settings.close", undefined, locale), SETTINGS_CLOSE_CALLBACK);
+  return keyboard;
+}
+
+function appendSettingsCloseButton(keyboard: InlineKeyboard, locale: Locale): InlineKeyboard {
+  return appendInlineMenuCancelButton(keyboard, "settings", t("settings.close", undefined, locale));
 }
 
 async function replyWithSettingsMenu(
   ctx: CommandContext<Context>,
   state: SettingsRenderState,
 ): Promise<void> {
-  const threadTarget = extractThreadTargetFromContext(ctx);
-  const messageThreadId = threadTarget?.messageThreadId;
-  const message = await ctx.reply(t("settings.title", undefined, state.locale), {
-    ...withMessageThreadId({ reply_markup: buildSettingsRootKeyboard(state) }, messageThreadId),
-  });
-
-  interactionManager.start({
-    kind: "inline",
-    expectedInput: "callback",
-    expiresInMs: SETTINGS_MENU_TTL_MS,
-    metadata: {
-      menuKind: "settings",
-      messageId: message.message_id,
-    },
+  await replyWithInlineMenu(ctx, {
+    menuKind: "settings",
+    text: t("settings.title", undefined, state.locale),
+    keyboard: buildSettingsRootKeyboard(state),
+    cancelLabel: t("settings.close", undefined, state.locale),
   });
 }
 
 async function redrawRootMenu(ctx: Context, localeOverride?: Locale): Promise<void> {
   const state = getSettingsRenderState(localeOverride);
   await ctx.editMessageText(t("settings.title", undefined, state.locale), {
-    reply_markup: buildSettingsRootKeyboard(state),
+    reply_markup: appendSettingsCloseButton(buildSettingsRootKeyboard(state), state.locale),
   });
 }
 
@@ -180,23 +169,8 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
 
       const locale = getActiveLocale();
       await ctx.editMessageText(t("settings.language.title", undefined, locale), {
-        reply_markup: buildLanguageKeyboard(locale),
+        reply_markup: appendSettingsCloseButton(buildLanguageKeyboard(locale), locale),
       });
-      return true;
-    }
-
-    if (data === SETTINGS_CALLBACK_CANCEL) {
-      const isActiveMenu = await ensureActiveInlineMenu(ctx, "settings");
-      if (!isActiveMenu) {
-        return true;
-      }
-
-      const locale = getActiveLocale();
-      await ctx
-        .answerCallbackQuery({ text: t("inline.cancelled_callback", undefined, locale) })
-        .catch(() => {});
-      clearActiveInlineMenu("settings_cancelled");
-      await ctx.deleteMessage().catch(() => {});
       return true;
     }
 

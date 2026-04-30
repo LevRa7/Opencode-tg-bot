@@ -1,15 +1,8 @@
 import type { CommandContext, Context } from "grammy";
-import { getStoredAgent } from "../../agent/manager.js";
-import { keyboardManager } from "../../keyboard/manager.js";
-import { getRuntimeModelCatalog, selectModel } from "../../model/manager.js";
-import { formatModelForDisplay, type ModelInfo } from "../../model/types.js";
-import { pinnedMessageManager } from "../../pinned/manager.js";
-import { threadContextManager } from "../../thread/manager.js";
-import { formatVariantForButton } from "../../variant/manager.js";
+import { getRuntimeModelCatalog } from "../../model/manager.js";
+import type { ModelInfo } from "../../model/types.js";
 import { t } from "../../i18n/index.js";
-import { showModelSelectionMenu } from "../handlers/model.js";
-import { createMainKeyboard } from "../utils/keyboard.js";
-import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import { applySelectedModel, showModelSelectionMenu } from "../handlers/model.js";
 
 function parseModelArgument(rawArgument: string): { providerID: string; modelID: string } | null {
   const separatorIndex = rawArgument.indexOf("/");
@@ -60,36 +53,5 @@ export async function modelCommand(ctx: CommandContext<Context>): Promise<void> 
     return;
   }
 
-  if (ctx.chat) {
-    keyboardManager.initialize(ctx.api, ctx.chat.id);
-  }
-
-  selectModel(modelInfo);
-  threadContextManager.bindModelToActiveContext(modelInfo);
-  keyboardManager.updateModel(modelInfo);
-  await pinnedMessageManager.refreshContextLimit();
-
-  const contextInfo =
-    pinnedMessageManager.getContextInfo() ??
-    (pinnedMessageManager.getContextLimit() > 0
-      ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() }
-      : null);
-
-  if (contextInfo) {
-    keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
-  }
-
-  const variantName = formatVariantForButton(modelInfo.variant || "default");
-  const keyboard = createMainKeyboard(
-    getStoredAgent(),
-    modelInfo,
-    contextInfo ?? undefined,
-    variantName,
-  );
-  const displayName = formatModelForDisplay(modelInfo.providerID, modelInfo.modelID);
-
-  await ctx.reply(
-    t("model.command.changed", { name: displayName }),
-    withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
-  );
+  await applySelectedModel(ctx, modelInfo, { replyTextKey: "model.command.changed" });
 }

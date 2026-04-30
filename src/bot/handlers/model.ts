@@ -29,6 +29,7 @@ import {
   extractMessageThreadIdFromContext,
   withMessageThreadId,
 } from "../utils/message-thread.js";
+import type { I18nKey } from "../../i18n/en.js";
 
 const MODELS_PER_PAGE = 10;
 const MODEL_CALLBACK_PREFIX = "model:";
@@ -257,6 +258,48 @@ async function renderProviderSelection(
   });
 }
 
+export async function applySelectedModel(
+  ctx: Context,
+  modelInfo: ModelInfo,
+  options: { replyTextKey: I18nKey },
+): Promise<{ displayName: string }> {
+  if (ctx.chat) {
+    keyboardManager.initialize(ctx.api, ctx.chat.id);
+  }
+
+  selectModel(modelInfo);
+  threadContextManager.bindModelToActiveContext(modelInfo);
+  keyboardManager.updateModel(modelInfo);
+  await pinnedMessageManager.refreshContextLimit();
+
+  const currentAgent = getStoredAgent();
+  const contextInfo =
+    pinnedMessageManager.getContextInfo() ??
+    (pinnedMessageManager.getContextLimit() > 0
+      ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() }
+      : null);
+
+  if (contextInfo) {
+    keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
+  }
+
+  const variantName = formatVariantForButton(modelInfo.variant || "default");
+  const keyboard = createMainKeyboard(
+    currentAgent,
+    modelInfo,
+    contextInfo ?? undefined,
+    variantName,
+  );
+  const displayName = formatModelForDisplay(modelInfo.providerID, modelInfo.modelID);
+
+  await ctx.reply(
+    t(options.replyTextKey, { name: displayName }),
+    withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+  );
+
+  return { displayName };
+}
+
 async function renderProviderModels(
   ctx: Context,
   provider: RuntimeModelCatalogProvider,
@@ -336,48 +379,19 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
       return true;
     }
 
-    if (ctx.chat) {
-      keyboardManager.initialize(ctx.api, ctx.chat.id);
-    }
-
     const modelInfo: ModelInfo = {
       providerID: parsedModel.providerID,
       modelID: parsedModel.modelID,
       variant: "default",
     };
 
-    selectModel(modelInfo);
-    threadContextManager.bindModelToActiveContext(modelInfo);
-    keyboardManager.updateModel(modelInfo);
-    await pinnedMessageManager.refreshContextLimit();
-
-    const currentAgent = getStoredAgent();
-    const contextInfo =
-      pinnedMessageManager.getContextInfo() ??
-      (pinnedMessageManager.getContextLimit() > 0
-        ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() }
-        : null);
-
-    if (contextInfo) {
-      keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
-    }
-
-    const variantName = formatVariantForButton(modelInfo.variant || "default");
-    const keyboard = createMainKeyboard(
-      currentAgent,
-      modelInfo,
-      contextInfo ?? undefined,
-      variantName,
-    );
-    const displayName = formatModelForDisplay(modelInfo.providerID, modelInfo.modelID);
+    const { displayName } = await applySelectedModel(ctx, modelInfo, {
+      replyTextKey: "model.changed_message",
+    });
 
     clearActiveInlineMenu("model_selected");
 
     await ctx.answerCallbackQuery({ text: t("model.changed_callback", { name: displayName }) });
-    await ctx.reply(
-      t("model.changed_message", { name: displayName }),
-      withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
-    );
     await ctx.deleteMessage().catch(() => {});
 
     return true;

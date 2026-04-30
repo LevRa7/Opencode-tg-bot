@@ -12,6 +12,7 @@ Documentation rule:
 
 ### Added
 
+- Added `/model`, `/variant`, and `/settings` commands for user-scoped defaults, direct model/variant updates, language selection, and message visibility preferences.
 - Added topic-scoped session attach/follow behavior for multi-user and forum-thread workflows, keeping attached-session restores, follow-up routing, and startup pinned status isolated per private chat or Telegram topic.
   - Why: one shared global route caused attached-session events and pinned state to bleed across users or topics, which made concurrent remote work hard to trust.
   - Affects: `src/attach/*`, `src/thread/*`, `src/pinned/manager.ts`, `src/bot/index.ts`, `tests/attach/*.test.ts`, `tests/pinned/manager.test.ts`

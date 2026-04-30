@@ -82,6 +82,7 @@ No public inbound ports are required for normal usage.
 - Telegram bot token
 - Admin Telegram user ID and optional allowed user IDs
 - Default model provider and model ID
+- User-scoped defaults for selected model, variant, locale, and service message visibility
 - Selected project persisted in `settings.json`
 - Configurable sessions list size (default: 10)
 - Configurable commands list size (default: 10)
@@ -105,6 +106,9 @@ Current command set:
 - `/sessions` - show and switch recent sessions
 - `/projects` - show and switch projects
 - `/models` - list available runtime-aware providers and models
+- `/model` - choose or update the current user's default model directly
+- `/variant` - choose or update the current user's default model variant directly
+- `/settings` - manage user-scoped defaults, language, and message visibility preferences
 - `/tts` - toggle global audio replies
 - `/task` - create a scheduled task
 - `/tasklist` - browse and delete scheduled tasks
@@ -118,7 +122,7 @@ Current command set:
 - `/open` - browse project files and open them
 - `/help` - show command help
 
-Model, agent, variant, and context actions are available from the bottom reply keyboard, which users can hide manually and which the bot reattaches on later replies; in forum chats, main-thread reply-keyboard actions stay in the main thread while topic-local `agent`/`model`/`variant` behavior remains isolated.
+Model, agent, variant, and context actions are available from the bottom reply keyboard, while `/model`, `/variant`, and `/settings` provide direct command access to user-scoped defaults, language selection, and message visibility preferences. Users can hide the keyboard manually and the bot reattaches it on later replies; in forum chats, main-thread reply-keyboard actions stay in the main thread while topic-local `agent`/`model`/`variant` behavior remains isolated.
 
 Text messages (non-commands) are treated as prompts for OpenCode only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured. When `/tts` is enabled globally, completed assistant replies also include a generated audio file if TTS is configured.
 
@@ -147,7 +151,7 @@ Model picker behavior:
 - [x] Telegram-friendly result delivery, including sending generated code/files when needed
 - [x] Interactive question and permission handling directly in chat (buttons + custom answers)
 - [x] Live pinned session status in chat (project, model, context usage, changed files)
-- [x] In-chat controls for model, agent, variant, and context
+- [x] In-chat controls for model, agent, variant, context, and user-scoped settings
 - [x] Built-in and custom command catalog access (`/commands`)
 - [x] Scheduled task creation flow (`/task`)
 - [x] Scheduled task runtime execution with deferred Telegram delivery
@@ -184,4 +188,4 @@ Optional or longer-term enhancements:
 
 - [ ] Create new OpenCode projects directly from Telegram
 - [x] Add project file browsing helpers (for example, `ls` and `open` flows)
-- [ ] Add a bot settings command with in-chat UI
+- [x] Add a bot settings command with in-chat UI

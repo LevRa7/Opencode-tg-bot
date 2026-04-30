@@ -42,6 +42,7 @@ const attachedScopesBySessionId = vi.hoisted(
   () => new Map<string, { userId: number; chatId: number; messageThreadId?: number }>(),
 );
 const sessionPromptMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ error: undefined })));
+const sessionPromptAsyncMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ error: undefined })));
 const sessionStatusMock = vi.hoisted(() => vi.fn().mockResolvedValue({ data: {}, error: undefined }));
 const sessionCreateMock = vi.hoisted(() =>
   vi.fn().mockResolvedValue({
@@ -163,6 +164,7 @@ vi.mock("../../src/opencode/client.js", () => ({
     session: {
       create: sessionCreateMock,
       prompt: sessionPromptMock,
+      promptAsync: sessionPromptAsyncMock,
       status: sessionStatusMock,
     },
   },
@@ -471,6 +473,7 @@ describe("bot/index local file follow-up orchestration", () => {
     runWithTelegramConversationScopeMock.mockClear();
     subscribeToEventsMock.mockClear();
     sessionPromptMock.mockClear();
+    sessionPromptAsyncMock.mockClear();
     sessionStatusMock.mockClear();
     statMock.mockClear();
     vi.spyOn(global, "setInterval").mockReturnValue(0 as unknown as NodeJS.Timeout);
@@ -1411,7 +1414,7 @@ describe("bot/index local file follow-up orchestration", () => {
     expect(replyMock).not.toHaveBeenCalledWith("error.generic");
     expect(replyMock).toHaveBeenCalledWith("bot.creating_session");
     expect(sessionCreateMock).toHaveBeenCalledWith({ directory: "/repo" });
-    expect(sessionPromptMock).toHaveBeenCalled();
+    expect(sessionPromptAsyncMock).toHaveBeenCalled();
   });
 
   it("keeps sending a long final response after a partial follow-up file starts sending", async () => {

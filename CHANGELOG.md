@@ -110,6 +110,9 @@ Documentation rule:
 
 ### Fixed
 
+- Fixed interactive Telegram prompt dispatch to use OpenCode's async prompt endpoint instead of waiting on the synchronous prompt response behind a local 60-second timeout.
+  - Why: long-running coding tasks could be accepted by OpenCode but still be reported as failed by the bot after the local timeout expired.
+  - Affects: `src/bot/handlers/prompt.ts`, `src/bot/index.ts`, `tests/bot/handlers/prompt-deferred-follow-up.test.ts`
 - Fixed `/opencode_start` and `/opencode_stop` access control so they are available to all users while `/restart` remains admin-only.
   - Why: the OpenCode runtime commands manage the per-user server and should not be blocked by the bot admin gate; only the host restart action should stay restricted.
   - Affects: `src/bot/commands/definitions.ts`, `src/bot/commands/opencode-start.ts`, `src/bot/commands/opencode-stop.ts`, `tests/bot/commands/opencode-start.test.ts`, `tests/bot/commands/opencode-stop.test.ts`, `tests/bot/utils/command-sync.test.ts`

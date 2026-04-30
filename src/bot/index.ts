@@ -1962,7 +1962,7 @@ export function createBot(): Bot<Context> {
 
       const session = getCurrentSession();
       if (!session) return;
-      await opencodeClient.session.prompt({
+      await opencodeClient.session.promptAsync({
         sessionID: session.id,
         directory: session.directory,
         parts: [{ type: "text", text }],

@@ -14,6 +14,7 @@ const sendVideoMock = vi.hoisted(() => vi.fn().mockResolvedValue({ message_id: 4
 const sendChatActionMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const editMessageTextMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const sessionPromptMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ error: undefined })));
+const sessionPromptAsyncMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ error: undefined })));
 const sessionStatusMock = vi.hoisted(() =>
   vi.fn().mockResolvedValue({ data: {}, error: undefined }),
 );
@@ -157,6 +158,7 @@ vi.mock("../../src/opencode/client.js", () => ({
   opencodeClient: {
     session: {
       prompt: sessionPromptMock,
+      promptAsync: sessionPromptAsyncMock,
       status: sessionStatusMock,
       create: vi.fn(),
     },
@@ -602,6 +604,7 @@ describe("bot/index deferred correlation", () => {
     sendChatActionMock.mockClear();
     editMessageTextMock.mockClear();
     sessionPromptMock.mockClear();
+    sessionPromptAsyncMock.mockClear();
     sessionStatusMock.mockClear();
     subscribeToEventsMock.mockClear();
     questionIsActiveMock.mockReset();
@@ -639,8 +642,8 @@ describe("bot/index deferred correlation", () => {
 
     // Wait for msg #1's 1-second batch window to expire and flush
     await vi.advanceTimersByTimeAsync(1100);
-    expect(sessionPromptMock).toHaveBeenCalledTimes(1);
-    const [firstPromptCall] = sessionPromptMock.mock.calls as unknown as Array<Array<any>>;
+    expect(sessionPromptAsyncMock).toHaveBeenCalledTimes(1);
+    const [firstPromptCall] = sessionPromptAsyncMock.mock.calls as unknown as Array<Array<any>>;
     expect(firstPromptCall?.[0]).toEqual(
       expect.objectContaining({
         sessionID: expect.any(String),
@@ -656,8 +659,8 @@ describe("bot/index deferred correlation", () => {
 
     // Wait for msgs #2+#3 batch window to fully expire
     await vi.advanceTimersByTimeAsync(5000);
-    expect(sessionPromptMock).toHaveBeenCalledTimes(2);
-    const [, secondPromptCall] = sessionPromptMock.mock.calls as unknown as Array<Array<any>>;
+    expect(sessionPromptAsyncMock).toHaveBeenCalledTimes(2);
+    const [, secondPromptCall] = sessionPromptAsyncMock.mock.calls as unknown as Array<Array<any>>;
     expect(secondPromptCall?.[0]).toEqual(
       expect.objectContaining({
         sessionID: "session-1",
@@ -673,11 +676,11 @@ describe("bot/index deferred correlation", () => {
     expect(secondPromptCall?.[0]?.parts?.[0]?.text).toContain("later direct text");
     expect(secondPromptCall?.[0]?.parts?.[0]?.text).toContain("Look at this screenshot");
 
-    sessionPromptMock.mockClear();
+    sessionPromptAsyncMock.mockClear();
     await summaryCallbacks.onSessionIdle?.("session-1");
     await photoHandler(createPhotoContext(4));
 
-    expect(sessionPromptMock).toHaveBeenCalledTimes(1);
+    expect(sessionPromptAsyncMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not release deferred follow-up when the primary direct prompt is blocked", async () => {
@@ -702,12 +705,12 @@ describe("bot/index deferred correlation", () => {
     ).resolves.toBeUndefined();
     await photoHandler(createPhotoContext(12));
 
-    expect(sessionPromptMock).not.toHaveBeenCalled();
+    expect(sessionPromptAsyncMock).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1000);
     await summaryCallbacks.onSessionIdle?.("session-1");
 
-    expect(sessionPromptMock).not.toHaveBeenCalled();
+    expect(sessionPromptAsyncMock).not.toHaveBeenCalled();
     expect(sendMessageMock).not.toHaveBeenCalledWith(
       123,
       expect.stringContaining("blocked direct text"),
@@ -729,7 +732,7 @@ describe("bot/index deferred correlation", () => {
     await textHandler(createTextContext("primary direct text", 31));
     await vi.advanceTimersByTimeAsync(1100);
 
-    await vi.waitFor(() => expect(sessionPromptMock).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(sessionPromptAsyncMock).toHaveBeenCalledTimes(1));
 
     await summaryCallbacks.onSessionIdle?.("session-1");
 
@@ -755,14 +758,14 @@ describe("bot/index deferred correlation", () => {
     // First message opens batch window with 1s initial expiry
     await textHandler(createTextContext("primary direct text", 21));
     await vi.advanceTimersByTimeAsync(1100);
-    expect(sessionPromptMock).toHaveBeenCalledTimes(1);
+    expect(sessionPromptAsyncMock).toHaveBeenCalledTimes(1);
 
     // Second message opens a new batch window (1s)
     await photoHandler(createPhotoContext(22));
     await vi.advanceTimersByTimeAsync(1100);
 
-    await vi.waitFor(() => expect(sessionPromptMock).toHaveBeenCalledTimes(2));
-    const [, deferredFollowUpCall] = sessionPromptMock.mock.calls as unknown as Array<Array<any>>;
+    await vi.waitFor(() => expect(sessionPromptAsyncMock).toHaveBeenCalledTimes(2));
+    const [, deferredFollowUpCall] = sessionPromptAsyncMock.mock.calls as unknown as Array<Array<any>>;
     expect(deferredFollowUpCall?.[0]?.parts?.[0]?.text).toContain("Look at this screenshot");
   });
 });

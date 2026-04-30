@@ -59,8 +59,16 @@ function isNetworkError(error: unknown): boolean {
   return errorText.includes("fetch failed") || errorText.includes("econnrefused");
 }
 
+function getSdkResponseError(result: unknown): unknown | null {
+  if (typeof result !== "object" || result === null || !("error" in result)) {
+    return null;
+  }
+
+  return (result as { error?: unknown }).error ?? null;
+}
+
 interface RetryPromptOptions {
-  promptOptions: Parameters<typeof opencodeClient.session.prompt>[0];
+  promptOptions: Parameters<typeof opencodeClient.session.promptAsync>[0];
   sessionId: string;
   logRetrySuccess: boolean;
   routingContext: PromptRoutingContext;
@@ -81,11 +89,12 @@ async function retryPromptWithTenantRestart({
       return { error: new Error(`tenant restart failed: ${restartResult.error}`) };
     }
 
-    logger.info(`[Bot] Tenant restarted, retrying session.prompt: sessionId=${sessionId}`);
-    const retryResult = await opencodeClient.session.prompt(promptOptions);
-    if (retryResult.error) {
-      logger.error("[Bot] session.prompt retry also returned an error", promptErrorLogContext);
-      return { error: retryResult.error };
+    logger.info(`[Bot] Tenant restarted, retrying session.promptAsync: sessionId=${sessionId}`);
+    const retryResult = await opencodeClient.session.promptAsync(promptOptions);
+    const retryError = getSdkResponseError(retryResult);
+    if (retryError) {
+      logger.error("[Bot] session.promptAsync retry also returned an error", promptErrorLogContext);
+      return { error: retryError };
     }
 
     if (logRetrySuccess) {
@@ -93,19 +102,27 @@ async function retryPromptWithTenantRestart({
     }
     return { error: null };
   } catch (retryError) {
-    logger.error("[Bot] session.prompt retry also threw:", retryError);
+    logger.error("[Bot] session.promptAsync retry also threw:", retryError);
     return { error: retryError };
   }
 }
 
-function wrapPromptWithTimeout<T>(promptPromise: Promise<T>): Promise<T> {
+async function wrapPromptDispatchWithTimeout<T>(promptPromise: Promise<T>): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(
-      () => reject(new Error(`session.prompt timed out after ${PROMPT_TIMEOUT_MS}ms`)),
+    timeoutHandle = setTimeout(
+      () => reject(new Error(`session.promptAsync timed out after ${PROMPT_TIMEOUT_MS}ms`)),
       PROMPT_TIMEOUT_MS,
     );
   });
-  return Promise.race([promptPromise, timeoutPromise]) as Promise<T>;
+
+  try {
+    return await Promise.race([promptPromise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }
 
 const promptResponseModes = new Map<string, PromptResponseMode>();
@@ -519,6 +536,13 @@ export async function processUserPrompt(
     return false;
   }
 
+  if (assistantRunState.isRunActive(currentSession.id)) {
+    foregroundSessionState.markIdle(currentSession.id, resolveBusyScopeForSession(currentSession.id, busyScope));
+    logger.info(`[Bot] Ignoring new prompt: session ${currentSession.id} has an active local run`);
+    await ctx.reply(t("bot.session_busy"));
+    return false;
+  }
+
   const activeScope = threadContextManager.getActiveScope();
   if (activeScope) {
     await attachSessionForScope({
@@ -601,7 +625,7 @@ export async function processUserPrompt(
     };
 
     logger.info(
-      `[Bot] Calling session.prompt (fire-and-forget) with agent=${currentAgent}, fileCount=${fileParts.length}...`,
+      `[Bot] Calling session.promptAsync (fire-and-forget) with agent=${currentAgent}, fileCount=${fileParts.length}...`,
     );
 
     assistantRunState.startRun(currentSession.id, {
@@ -626,14 +650,15 @@ export async function processUserPrompt(
       externalInputSuppression.rememberSelfInput(currentSession.id, scope, effectivePromptText);
     }
 
-    // CRITICAL: DO NOT wait for session.prompt to complete.
+    // CRITICAL: DO NOT wait for the full assistant turn to complete.
     // If we wait, the handler will not finish and grammY will not call getUpdates,
     // which blocks receiving button callback_query updates.
     // The processing result will arrive via SSE events.
     safeBackgroundTask({
-      taskName: "session.prompt",
-      task: () => wrapPromptWithTimeout(opencodeClient.session.prompt(promptOptions)),
-      onSuccess: async ({ error }) => {
+      taskName: "session.promptAsync",
+      task: () => wrapPromptDispatchWithTimeout(opencodeClient.session.promptAsync(promptOptions)),
+      onSuccess: async (result) => {
+        const error = getSdkResponseError(result);
         if (error) {
           if (isNetworkError(error)) {
             logger.warn(
@@ -677,7 +702,7 @@ export async function processUserPrompt(
           return;
         }
 
-        logger.info("[Bot] session.prompt completed");
+        logger.info("[Bot] session.promptAsync accepted");
       },
       onError: async (error) => {
         if (isNetworkError(error)) {

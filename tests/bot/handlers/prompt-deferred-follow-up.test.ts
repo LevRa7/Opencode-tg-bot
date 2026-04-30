@@ -4,6 +4,7 @@ import type { Context } from "grammy";
 const mocked = vi.hoisted(() => ({
   sessionStatusMock: vi.fn(),
   sessionPromptMock: vi.fn(),
+  sessionPromptAsyncMock: vi.fn(),
   getCurrentSessionMock: vi.fn(),
   setCurrentSessionMock: vi.fn(),
   clearSessionMock: vi.fn(),
@@ -50,6 +51,7 @@ const mocked = vi.hoisted(() => ({
   ensureRuntimeMock: vi.fn(),
   assistantStartRunMock: vi.fn(),
   assistantClearRunMock: vi.fn(),
+  assistantIsRunActiveMock: vi.fn(),
   extractTelegramConversationScopeFromContextMock: vi.fn(),
   getCurrentTelegramConversationScopeMock: vi.fn(),
   resolveTelegramConversationScopeKeyMock: vi.fn(),
@@ -62,6 +64,7 @@ vi.mock("../../../src/opencode/client.js", () => ({
     session: {
       status: mocked.sessionStatusMock,
       prompt: mocked.sessionPromptMock,
+      promptAsync: mocked.sessionPromptAsyncMock,
       create: vi.fn(),
     },
   },
@@ -205,13 +208,13 @@ vi.mock("../../../src/process/manager.js", () => ({
 
 vi.mock("../../../src/bot/assistant-run-state.js", () => ({
   assistantRunState: {
-    startRun: vi.fn(),
-    clearRun: vi.fn(),
+    startRun: mocked.assistantStartRunMock,
+    clearRun: mocked.assistantClearRunMock,
     clearAll: vi.fn(),
     markResponseCompleted: vi.fn(),
     finishRun: vi.fn(() => null),
     getCompletedRun: vi.fn(() => null),
-    isRunActive: vi.fn(() => false),
+    isRunActive: mocked.assistantIsRunActiveMock,
   },
 }));
 
@@ -262,6 +265,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
   beforeEach(() => {
     mocked.sessionStatusMock.mockReset();
     mocked.sessionPromptMock.mockReset();
+    mocked.sessionPromptAsyncMock.mockReset();
     mocked.getCurrentSessionMock.mockReset();
     mocked.setCurrentSessionMock.mockReset();
     mocked.clearSessionMock.mockReset();
@@ -308,6 +312,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     mocked.ensureRuntimeMock.mockReset();
     mocked.assistantStartRunMock.mockReset();
     mocked.assistantClearRunMock.mockReset();
+    mocked.assistantIsRunActiveMock.mockReset();
     mocked.extractTelegramConversationScopeFromContextMock.mockReset();
     mocked.getCurrentTelegramConversationScopeMock.mockReset();
     mocked.resolveTelegramConversationScopeKeyMock.mockReset();
@@ -338,6 +343,8 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     mocked.pinnedGetContextInfoMock.mockReturnValue(null);
     mocked.sessionStatusMock.mockResolvedValue({ data: { s1: { type: "busy" } }, error: null });
     mocked.sessionPromptMock.mockResolvedValue({ error: null });
+    mocked.sessionPromptAsyncMock.mockResolvedValue({ error: null });
+    mocked.assistantIsRunActiveMock.mockReturnValue(false);
     mocked.threadGetActiveScopeMock.mockReturnValue(null);
     mocked.attachSessionForScopeMock.mockResolvedValue(undefined);
     mocked.tMock.mockImplementation((key: string) => key);
@@ -446,6 +453,33 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     });
   });
 
+  it("dispatches interactive prompts through the async OpenCode endpoint", async () => {
+    mocked.sessionStatusMock.mockResolvedValueOnce({ data: { s1: { type: "idle" } }, error: null });
+
+    const { ctx } = createContext();
+    const deps = createDeps();
+
+    const dispatched = await processUserPrompt(ctx, "normal prompt", deps);
+
+    expect(dispatched).toBe(true);
+    expect(mocked.sessionPromptAsyncMock).toHaveBeenCalledTimes(1);
+    expect(mocked.sessionPromptMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks a new prompt while a local assistant run is still active", async () => {
+    mocked.sessionStatusMock.mockResolvedValueOnce({ data: { s1: { type: "idle" } }, error: null });
+    mocked.assistantIsRunActiveMock.mockReturnValue(true);
+
+    const { ctx, replyMock } = createContext();
+    const deps = createDeps();
+
+    const dispatched = await processUserPrompt(ctx, "second prompt", deps);
+
+    expect(dispatched).toBe(false);
+    expect(replyMock).toHaveBeenCalledWith("bot.session_busy");
+    expect(mocked.sessionPromptAsyncMock).not.toHaveBeenCalled();
+  });
+
   it("clears busy state for the actual mismatched session instead of using a broad reset", async () => {
     mocked.getCurrentProjectMock.mockReturnValue({ id: "p2", worktree: "/other-repo", name: "Other Repo" });
     mocked.getCurrentSessionMock.mockReturnValue({ id: "s1", title: "Session 1", directory: "/repo" });
@@ -472,7 +506,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
 
   it("sends prompt dispatch error message for normal text_only prompts", async () => {
     mocked.sessionStatusMock.mockResolvedValueOnce({ data: { s1: { type: "idle" } }, error: null });
-    mocked.sessionPromptMock.mockRejectedValueOnce(new Error("prompt dispatch failed"));
+    mocked.sessionPromptAsyncMock.mockRejectedValueOnce(new Error("prompt dispatch failed"));
 
     const sendMessageMock = vi.fn().mockResolvedValue({ message_id: 901 });
     const deps = {
@@ -496,7 +530,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
 
   it("keeps prompt dispatch error message in the originating topic", async () => {
     mocked.sessionStatusMock.mockResolvedValueOnce({ data: { s1: { type: "idle" } }, error: null });
-    mocked.sessionPromptMock.mockRejectedValueOnce(new Error("prompt dispatch failed"));
+    mocked.sessionPromptAsyncMock.mockRejectedValueOnce(new Error("prompt dispatch failed"));
 
     const sendMessageMock = vi.fn().mockResolvedValue({ message_id: 901 });
     const deps = {
@@ -521,7 +555,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
 
   it("suppresses prompt dispatch error message only when explicitly requested", async () => {
     mocked.sessionStatusMock.mockResolvedValueOnce({ data: { s1: { type: "idle" } }, error: null });
-    mocked.sessionPromptMock.mockRejectedValueOnce(new Error("prompt dispatch failed"));
+    mocked.sessionPromptAsyncMock.mockRejectedValueOnce(new Error("prompt dispatch failed"));
 
     const sendMessageMock = vi.fn().mockResolvedValue({ message_id: 901 });
     const deps = {
@@ -546,7 +580,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
 
   it("keeps lifecycle info logging when send error message suppression is enabled", async () => {
     mocked.sessionStatusMock.mockResolvedValueOnce({ data: { s1: { type: "idle" } }, error: null });
-    mocked.sessionPromptMock.mockRejectedValueOnce(new Error("prompt dispatch failed"));
+    mocked.sessionPromptAsyncMock.mockRejectedValueOnce(new Error("prompt dispatch failed"));
     mocked.formatErrorDetailsMock.mockReturnValue("formatted details");
 
     const sendMessageMock = vi.fn().mockResolvedValue({ message_id: 901 });
@@ -569,7 +603,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     expect(dispatched).toBe(true);
     expect(sendMessageMock).not.toHaveBeenCalled();
     expect(mocked.loggerInfoMock.mock.calls).toContainEqual([
-      "[Bot] Calling session.prompt (fire-and-forget) with agent=builder, fileCount=0...",
+      "[Bot] Calling session.promptAsync (fire-and-forget) with agent=builder, fileCount=0...",
     ]);
   });
 

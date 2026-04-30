@@ -158,7 +158,7 @@ describe("settings/manager scoped state", () => {
       setUserLocale("ru");
       setHideThinkingMessages(true);
       setHideToolCallMessages(true);
-      setHideToolFileMessages(false);
+      setHideToolFileMessages(true);
     });
 
     expect(
@@ -172,7 +172,7 @@ describe("settings/manager scoped state", () => {
       locale: "ru",
       hideThinking: true,
       hideToolCalls: true,
-      hideToolFiles: false,
+      hideToolFiles: true,
     });
 
     expect(

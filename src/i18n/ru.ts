@@ -14,6 +14,9 @@ export const ru: I18nDictionary = {
   "cmd.description.skills": "Список доступных skills",
   "cmd.description.mcps": "Просмотр MCP серверов",
   "cmd.description.open": "Открыть файлы в браузере директорий",
+  "cmd.description.model": "Выбрать или задать модель по умолчанию",
+  "cmd.description.variant": "Выбрать или задать вариант по умолчанию",
+  "cmd.description.settings": "Настройки пользователя",
   "cmd.description.stream": "Переключить стриминг сообщений",
   "cmd.description.restart": "Перезапустить процесс бота",
   "cmd.description.opencode_start": "Запустить OpenCode сервер",
@@ -52,6 +55,18 @@ export const ru: I18nDictionary = {
 
   "common.unknown": "неизвестна",
   "common.unknown_error": "неизвестная ошибка",
+
+  "settings.title": "⚙️ Настройки пользователя",
+  "settings.language": "Язык: {value}",
+  "settings.language.title": "🌐 Выберите язык",
+  "settings.hide_thinking_messages": "Скрывать сообщения размышлений: {state}",
+  "settings.hide_tool_call_messages": "Скрывать сообщения вызовов инструментов: {state}",
+  "settings.hide_tool_file_messages": "Скрывать сообщения о файлах инструментов: {state}",
+  "settings.state.on": "вкл",
+  "settings.state.off": "выкл",
+  "settings.updated_callback": "Обновлено",
+  "settings.language_updated_callback": "Язык обновлен",
+  "settings.error_callback": "Не удалось обновить настройки",
 
   "start.welcome":
     "👋 Добро пожаловать в OpenCode Telegram Bot!\n\nИспользуйте команды:\n/projects — выбрать проект\n/sessions — список сессий\n/new — новая сессия\n/task — задача по расписанию\n/tasklist — список задач по расписанию\n/status — статус\n/help — справка\n\nРежим, модель и вариант выбираются кнопками внизу.",
@@ -265,6 +280,9 @@ export const ru: I18nDictionary = {
   "model.menu.button.prev_page": "⬅️ Назад",
   "model.menu.button.next_page": "Вперёд ➡️",
   "model.menu.button.back_providers": "⬅️ К провайдерам",
+  "model.command.usage": "Использование: /model provider/model\nПример: /model cliproxyapi/gpt-5.5",
+  "model.command.not_found": "Модель не найдена: {name}",
+  "model.command.changed": "✅ Модель установлена: {name}",
 
   "variant.model_not_selected_callback": "Ошибка: модель не выбрана",
   "variant.changed_callback": "Вариант изменен: {name}",
@@ -274,6 +292,10 @@ export const ru: I18nDictionary = {
   "variant.menu.empty": "⚠️ Нет доступных вариантов",
   "variant.menu.current": "Текущий вариант: {name}\n\nВыберите вариант:",
   "variant.menu.error": "🔴 Не удалось получить список вариантов",
+  "variant.command.usage": "Использование: /variant variant-id\nПример: /variant high",
+  "variant.command.model_required": "Выберите модель перед сменой варианта.",
+  "variant.command.not_found": "Вариант не найден или отключен: {name}",
+  "variant.command.changed": "✅ Вариант установлен: {name}",
 
   "context.button.confirm": "✅ Да, сжать контекст",
   "context.no_active_session": "⚠️ Нет активной сессии. Создайте сессию командой /new",

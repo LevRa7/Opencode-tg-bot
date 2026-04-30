@@ -12,6 +12,9 @@ export const en = {
   "cmd.description.skills": "List available skills",
   "cmd.description.mcps": "Browse MCP servers",
   "cmd.description.open": "Open files in directory browser",
+  "cmd.description.model": "Select or set default model",
+  "cmd.description.variant": "Select or set default variant",
+  "cmd.description.settings": "User settings",
   "cmd.description.stream": "Toggle message streaming",
   "cmd.description.restart": "Restart bot process",
   "cmd.description.opencode_start": "Start OpenCode server",
@@ -52,6 +55,18 @@ export const en = {
 
   "common.unknown": "unknown",
   "common.unknown_error": "unknown error",
+
+  "settings.title": "⚙️ User settings",
+  "settings.language": "Language: {value}",
+  "settings.language.title": "🌐 Choose language",
+  "settings.hide_thinking_messages": "Hide thinking messages: {state}",
+  "settings.hide_tool_call_messages": "Hide tool call messages: {state}",
+  "settings.hide_tool_file_messages": "Hide tool file messages: {state}",
+  "settings.state.on": "on",
+  "settings.state.off": "off",
+  "settings.updated_callback": "Updated",
+  "settings.language_updated_callback": "Language updated",
+  "settings.error_callback": "Failed to update settings",
 
   "start.welcome":
     "👋 Welcome to OpenCode Telegram Bot!\n\nUse commands:\n/projects — select project\n/sessions — session list\n/new — new session\n/task — scheduled task\n/tasklist — scheduled tasks\n/status — status\n/help — help\n\nUse the bottom buttons to select agent mode, model, and variant.",
@@ -262,6 +277,9 @@ export const en = {
   "model.menu.button.prev_page": "⬅️ Prev",
   "model.menu.button.next_page": "Next ➡️",
   "model.menu.button.back_providers": "⬅️ Back to providers",
+  "model.command.usage": "Usage: /model provider/model\nExample: /model cliproxyapi/gpt-5.5",
+  "model.command.not_found": "Model not found: {name}",
+  "model.command.changed": "✅ Model set to {name}",
 
   "variant.model_not_selected_callback": "Error: model is not selected",
   "variant.changed_callback": "Variant changed: {name}",
@@ -271,6 +289,10 @@ export const en = {
   "variant.menu.empty": "⚠️ No available variants",
   "variant.menu.current": "Current variant: {name}\n\nSelect variant:",
   "variant.menu.error": "🔴 Failed to get variants list",
+  "variant.command.usage": "Usage: /variant variant-id\nExample: /variant high",
+  "variant.command.model_required": "Select a model before changing variant.",
+  "variant.command.not_found": "Variant not found or disabled: {name}",
+  "variant.command.changed": "✅ Variant set to {name}",
 
   "context.button.confirm": "✅ Yes, compact context",
   "context.no_active_session": "⚠️ No active session. Create a session with /new",

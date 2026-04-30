@@ -65,6 +65,11 @@ mkdir -p "${XDG_CACHE_HOME}/opencode"
 touch "${HOME}/.perm-check"
 
 if [ -f /run/opencode-gemini-media/config.json ]; then
+  if ! node -e 'const fs = require("node:fs"); const c = JSON.parse(fs.readFileSync("/run/opencode-gemini-media/config.json", "utf8")); if (!c.baseUrl || !c.apiKey) process.exit(1);'; then
+    echo "FAIL: gemini media proxy config should contain baseUrl and apiKey" >&2
+    exit 1
+  fi
+
   if cat /run/opencode-gemini-media/config.json >/dev/null 2>&1; then
     echo "FAIL: proxy config should not be readable by the tenant runtime" >&2
     exit 1
@@ -95,6 +100,18 @@ if [ -f /run/opencode-gemini-media/config.json ]; then
 
   if cat "/proc/${proxy_pid}/environ" >/dev/null 2>&1; then
     echo "FAIL: tenant runtime should not read proxy process environment" >&2
+    exit 1
+  fi
+fi
+
+if [ -f /run/opencode-gpt-image/config.json ]; then
+  if ! node -e 'const fs = require("node:fs"); const c = JSON.parse(fs.readFileSync("/run/opencode-gpt-image/config.json", "utf8")); if (!c.baseUrl || !c.apiKey) process.exit(1);'; then
+    echo "FAIL: GPT image proxy config should contain baseUrl and apiKey" >&2
+    exit 1
+  fi
+
+  if cat /run/opencode-gpt-image/config.json >/dev/null 2>&1; then
+    echo "FAIL: GPT image proxy config should not be readable by the tenant runtime" >&2
     exit 1
   fi
 fi

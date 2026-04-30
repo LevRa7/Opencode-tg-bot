@@ -77,7 +77,7 @@ GEMINI_MEDIA_UPSTREAM_API_KEY="$(read_env_value "$GEMINI_MEDIA_SECRET_FILE" GEMI
 
 if [ -n "${GEMINI_MEDIA_UPSTREAM_BASE_URL:-}" ] && [ -n "${GEMINI_MEDIA_UPSTREAM_API_KEY:-}" ]; then
   umask 077
-  node -e 'const fs = require("node:fs"); fs.writeFileSync("/run/opencode-gemini-media/config.json", JSON.stringify({ baseUrl: process.env.GEMINI_MEDIA_UPSTREAM_BASE_URL, apiKey: process.env.GEMINI_MEDIA_UPSTREAM_API_KEY, model: process.env.GEMINI_MEDIA_MODEL || "gemini-3.1-flash-lite-preview" }) + "\n", { mode: 0o600 });'
+  node -e 'const fs = require("node:fs"); const [baseUrl, apiKey, model] = process.argv.slice(1); fs.writeFileSync("/run/opencode-gemini-media/config.json", JSON.stringify({ baseUrl, apiKey, model: model || "gemini-3.1-flash-lite-preview" }) + "\n", { mode: 0o600 });' "$GEMINI_MEDIA_UPSTREAM_BASE_URL" "$GEMINI_MEDIA_UPSTREAM_API_KEY" "${GEMINI_MEDIA_MODEL:-gemini-3.1-flash-lite-preview}"
   chown 2000:2000 /run/opencode-gemini-media/config.json
   setpriv --reuid=2000 --regid=2000 --clear-groups --bounding-set=-all --nnp \
     node /usr/local/lib/opencode-gemini-media/gemini-media-proxy.mjs &
@@ -89,7 +89,7 @@ GPT_IMAGE_UPSTREAM_API_KEY="$(read_env_value "$GPT_IMAGE_SECRET_FILE" OPENAI_API
 
 if [ -n "${GPT_IMAGE_UPSTREAM_BASE_URL:-}" ] && [ -n "${GPT_IMAGE_UPSTREAM_API_KEY:-}" ]; then
   umask 077
-  node -e 'const fs = require("node:fs"); fs.writeFileSync("/run/opencode-gpt-image/config.json", JSON.stringify({ baseUrl: process.env.GPT_IMAGE_UPSTREAM_BASE_URL, apiKey: process.env.GPT_IMAGE_UPSTREAM_API_KEY, model: process.env.GPT_IMAGE_MODEL || "gpt-image-2" }) + "\n", { mode: 0o600 });'
+  node -e 'const fs = require("node:fs"); const [baseUrl, apiKey, model] = process.argv.slice(1); fs.writeFileSync("/run/opencode-gpt-image/config.json", JSON.stringify({ baseUrl, apiKey, model: model || "gpt-image-2" }) + "\n", { mode: 0o600 });' "$GPT_IMAGE_UPSTREAM_BASE_URL" "$GPT_IMAGE_UPSTREAM_API_KEY" "${GPT_IMAGE_MODEL:-gpt-image-2}"
   chown 2000:2000 /run/opencode-gpt-image/config.json
   setpriv --reuid=2000 --regid=2000 --clear-groups --bounding-set=-all --nnp \
     node /usr/local/lib/opencode-gpt-image/gpt-image-proxy.mjs &

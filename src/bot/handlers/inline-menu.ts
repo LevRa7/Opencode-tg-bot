@@ -37,6 +37,7 @@ interface InlineMenuReplyOptions {
   menuKind: InlineMenuKind;
   text: string;
   keyboard: InlineKeyboard;
+  cancelLabel?: string;
   parseMode?: "Markdown" | "HTML";
   messageThreadId?: number;
 }
@@ -76,6 +77,7 @@ function getInlineCancelCallbackData(menuKind: InlineMenuKind): string {
 export function appendInlineMenuCancelButton(
   keyboard: InlineKeyboard,
   menuKind: InlineMenuKind,
+  labelOverride?: string,
 ): InlineKeyboard {
   while (
     keyboard.inline_keyboard.length > 0 &&
@@ -88,7 +90,7 @@ export function appendInlineMenuCancelButton(
     keyboard.row();
   }
 
-  keyboard.text(t("inline.button.cancel"), getInlineCancelCallbackData(menuKind));
+  keyboard.text(labelOverride ?? t("inline.button.cancel"), getInlineCancelCallbackData(menuKind));
   return keyboard;
 }
 
@@ -96,7 +98,11 @@ export async function replyWithInlineMenu(
   ctx: Context,
   options: InlineMenuReplyOptions,
 ): Promise<number> {
-  const keyboard = appendInlineMenuCancelButton(options.keyboard, options.menuKind);
+  const keyboard = appendInlineMenuCancelButton(
+    options.keyboard,
+    options.menuKind,
+    options.cancelLabel,
+  );
   const replyOptions: {
     reply_markup: InlineKeyboard;
     parse_mode?: "Markdown" | "HTML";

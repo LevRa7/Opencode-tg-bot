@@ -93,6 +93,7 @@ const COMMAND_LOCALIZATION_KEYS = [
   "settings.hide_tool_file_messages",
   "settings.state.on",
   "settings.state.off",
+  "settings.close",
   "settings.updated_callback",
   "settings.language_updated_callback",
   "settings.error_callback",
@@ -127,8 +128,12 @@ describe("i18n/index locale helpers", () => {
   });
 
   it("returns locale options from a single registry", () => {
-    const optionCodes = getLocaleOptions().map((option) => option.code);
+    const options = getLocaleOptions();
+    const optionCodes = options.map((option) => option.code);
+
     expect(optionCodes).toEqual(SUPPORTED_LOCALES);
+    expect(options).toContainEqual({ code: "en", label: "English", flag: "🇬🇧" });
+    expect(options).toContainEqual({ code: "ru", label: "Русский", flag: "🇷🇺" });
   });
 
   it("does not expose removed export_data description keys", () => {

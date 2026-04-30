@@ -1,7 +1,6 @@
 import { InlineKeyboard, type CommandContext, type Context } from "grammy";
 import {
   appendInlineMenuCancelButton,
-  clearActiveInlineMenu,
   ensureActiveInlineMenu,
   replyWithInlineMenu,
 } from "../handlers/inline-menu.js";
@@ -23,7 +22,6 @@ export const SETTINGS_CALLBACK_PREFIX = "settings:";
 const SETTINGS_CALLBACK_LANGUAGE = `${SETTINGS_CALLBACK_PREFIX}language`;
 const SETTINGS_CALLBACK_LANGUAGE_PREFIX = `${SETTINGS_CALLBACK_LANGUAGE}:`;
 const SETTINGS_CALLBACK_TOGGLE_PREFIX = `${SETTINGS_CALLBACK_PREFIX}toggle:`;
-const SETTINGS_CALLBACK_CANCEL = `${SETTINGS_CALLBACK_PREFIX}cancel`;
 
 type ToggleSettingId = "hide_thinking" | "hide_tool_calls" | "hide_tool_files";
 
@@ -40,7 +38,8 @@ function getActiveLocale(): Locale {
 }
 
 function getLocaleLabel(locale: Locale): string {
-  return getLocaleOptions().find((option) => option.code === locale)?.label ?? locale;
+  const option = getLocaleOptions().find((entry) => entry.code === locale);
+  return option ? `${option.flag} ${option.label}` : locale;
 }
 
 function getSettingsRenderState(localeOverride?: Locale): SettingsRenderState {
@@ -55,7 +54,7 @@ function getSettingsRenderState(localeOverride?: Locale): SettingsRenderState {
 }
 
 function formatToggleState(enabled: boolean, locale: Locale): string {
-  return t(enabled ? "settings.state.on" : "settings.state.off", undefined, locale);
+  return t(enabled ? "settings.state.off" : "settings.state.on", undefined, locale);
 }
 
 function buildSettingsRootKeyboard(state: SettingsRenderState): InlineKeyboard {
@@ -93,20 +92,36 @@ function buildSettingsRootKeyboard(state: SettingsRenderState): InlineKeyboard {
     );
 }
 
-function buildLanguageKeyboard(): InlineKeyboard {
+function buildLanguageKeyboard(locale: Locale): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   for (const option of getLocaleOptions()) {
-    keyboard.text(option.label, `${SETTINGS_CALLBACK_LANGUAGE_PREFIX}${option.code}`).row();
+    keyboard.text(`${option.flag} ${option.label}`, `${SETTINGS_CALLBACK_LANGUAGE_PREFIX}${option.code}`).row();
   }
 
-  return appendInlineMenuCancelButton(keyboard, "settings");
+  return keyboard;
+}
+
+function appendSettingsCloseButton(keyboard: InlineKeyboard, locale: Locale): InlineKeyboard {
+  return appendInlineMenuCancelButton(keyboard, "settings", t("settings.close", undefined, locale));
+}
+
+async function replyWithSettingsMenu(
+  ctx: CommandContext<Context>,
+  state: SettingsRenderState,
+): Promise<void> {
+  await replyWithInlineMenu(ctx, {
+    menuKind: "settings",
+    text: t("settings.title", undefined, state.locale),
+    keyboard: buildSettingsRootKeyboard(state),
+    cancelLabel: t("settings.close", undefined, state.locale),
+  });
 }
 
 async function redrawRootMenu(ctx: Context, localeOverride?: Locale): Promise<void> {
   const state = getSettingsRenderState(localeOverride);
   await ctx.editMessageText(t("settings.title", undefined, state.locale), {
-    reply_markup: buildSettingsRootKeyboard(state),
+    reply_markup: appendSettingsCloseButton(buildSettingsRootKeyboard(state), state.locale),
   });
 }
 
@@ -136,11 +151,7 @@ async function handleSettingsError(ctx: Context, error: unknown): Promise<boolea
 
 export async function settingsCommand(ctx: CommandContext<Context>): Promise<void> {
   const state = getSettingsRenderState();
-  await replyWithInlineMenu(ctx, {
-    menuKind: "settings",
-    text: t("settings.title", undefined, state.locale),
-    keyboard: buildSettingsRootKeyboard(state),
-  });
+  await replyWithSettingsMenu(ctx, state);
 }
 
 export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
@@ -158,23 +169,8 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
 
       const locale = getActiveLocale();
       await ctx.editMessageText(t("settings.language.title", undefined, locale), {
-        reply_markup: buildLanguageKeyboard(),
+        reply_markup: appendSettingsCloseButton(buildLanguageKeyboard(locale), locale),
       });
-      return true;
-    }
-
-    if (data === SETTINGS_CALLBACK_CANCEL) {
-      const isActiveMenu = await ensureActiveInlineMenu(ctx, "settings");
-      if (!isActiveMenu) {
-        return true;
-      }
-
-      const locale = getActiveLocale();
-      await ctx
-        .answerCallbackQuery({ text: t("inline.cancelled_callback", undefined, locale) })
-        .catch(() => {});
-      clearActiveInlineMenu("settings_cancelled");
-      await ctx.deleteMessage().catch(() => {});
       return true;
     }
 

@@ -116,10 +116,8 @@ describe("bot/commands/settings", () => {
       "settings:toggle:hide_tool_files",
       "inline:cancel:settings",
     ]);
-    expect(rows[0]?.[0]?.text).toBe(t("settings.language", { value: "English" }));
-    expect(rows[1]?.[0]?.text).toBe(
-      t("settings.hide_thinking_messages", { state: t("settings.state.off") }),
-    );
+    expect(rows[0]?.[0]?.text).toBe("🌐 🇬🇧 English");
+    expect(rows[1]?.[0]?.text).toBe("✅ Thinking");
   });
 
   it("edits to the language submenu using locale options", async () => {
@@ -137,8 +135,8 @@ describe("bot/commands/settings", () => {
     const rows = getInlineRows(options);
 
     expect(text).toBe(t("settings.language.title"));
-    expect(rows[0]?.[0]).toMatchObject({ text: "English", callback_data: "settings:language:en" });
-    expect(rows.some((row) => row[0]?.callback_data === "settings:language:ru")).toBe(true);
+    expect(rows[0]?.[0]).toMatchObject({ text: "🇬🇧 English", callback_data: "settings:language:en" });
+    expect(rows.some((row) => row[0]?.text === "🇷🇺 Русский")).toBe(true);
     expect(rows[rows.length - 1]?.[0]?.callback_data).toBe("inline:cancel:settings");
   });
 
@@ -157,7 +155,7 @@ describe("bot/commands/settings", () => {
     const rows = getInlineRows(options);
 
     expect(text).toBe(t("settings.language.title", undefined, "ru"));
-    expect(rows[rows.length - 1]?.[0]?.text).toBe(t("inline.button.cancel"));
+    expect(rows[rows.length - 1]?.[0]?.text).toBe(t("settings.close", undefined, "ru"));
     expect(rows[rows.length - 1]?.[0]?.callback_data).toBe("inline:cancel:settings");
   });
 
@@ -181,7 +179,7 @@ describe("bot/commands/settings", () => {
     const rows = getInlineRows(options);
 
     expect(text).toBe(t("settings.title", undefined, "ru"));
-    expect(rows[0]?.[0]?.text).toBe(t("settings.language", { value: "Русский" }, "ru"));
+    expect(rows[0]?.[0]?.text).toBe("🌐 🇷🇺 Русский");
   });
 
   it("toggles hide thinking messages", async () => {
@@ -198,9 +196,7 @@ describe("bot/commands/settings", () => {
       string,
       unknown,
     ];
-    expect(getInlineRows(options)[1]?.[0]?.text).toBe(
-      t("settings.hide_thinking_messages", { state: t("settings.state.on") }),
-    );
+    expect(getInlineRows(options)[1]?.[0]?.text).toBe("X Thinking");
   });
 
   it("toggles hide tool call messages", async () => {
@@ -216,9 +212,7 @@ describe("bot/commands/settings", () => {
       string,
       unknown,
     ];
-    expect(getInlineRows(options)[2]?.[0]?.text).toBe(
-      t("settings.hide_tool_call_messages", { state: t("settings.state.on") }),
-    );
+    expect(getInlineRows(options)[2]?.[0]?.text).toBe("X Tools");
   });
 
   it("toggles hide tool file messages", async () => {
@@ -234,9 +228,7 @@ describe("bot/commands/settings", () => {
       string,
       unknown,
     ];
-    expect(getInlineRows(options)[3]?.[0]?.text).toBe(
-      t("settings.hide_tool_file_messages", { state: t("settings.state.on") }),
-    );
+    expect(getInlineRows(options)[3]?.[0]?.text).toBe("X File changes");
   });
 
   it("returns false for unknown and non-settings callbacks", async () => {

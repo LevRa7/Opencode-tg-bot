@@ -1,10 +1,10 @@
 import { InlineKeyboard, type CommandContext, type Context } from "grammy";
 import {
-  appendInlineMenuCancelButton,
   clearActiveInlineMenu,
   ensureActiveInlineMenu,
-  replyWithInlineMenu,
 } from "../handlers/inline-menu.js";
+import { interactionManager } from "../../interaction/manager.js";
+import { extractThreadTargetFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import {
   getHideThinkingMessages,
   getHideToolCallMessages,
@@ -24,6 +24,8 @@ const SETTINGS_CALLBACK_LANGUAGE = `${SETTINGS_CALLBACK_PREFIX}language`;
 const SETTINGS_CALLBACK_LANGUAGE_PREFIX = `${SETTINGS_CALLBACK_LANGUAGE}:`;
 const SETTINGS_CALLBACK_TOGGLE_PREFIX = `${SETTINGS_CALLBACK_PREFIX}toggle:`;
 const SETTINGS_CALLBACK_CANCEL = `${SETTINGS_CALLBACK_PREFIX}cancel`;
+const SETTINGS_CLOSE_CALLBACK = "inline:cancel:settings";
+const SETTINGS_MENU_TTL_MS = 5 * 60 * 1000;
 
 type ToggleSettingId = "hide_thinking" | "hide_tool_calls" | "hide_tool_files";
 
@@ -40,7 +42,8 @@ function getActiveLocale(): Locale {
 }
 
 function getLocaleLabel(locale: Locale): string {
-  return getLocaleOptions().find((option) => option.code === locale)?.label ?? locale;
+  const option = getLocaleOptions().find((entry) => entry.code === locale);
+  return option ? `${option.flag} ${option.label}` : locale;
 }
 
 function getSettingsRenderState(localeOverride?: Locale): SettingsRenderState {
@@ -55,7 +58,7 @@ function getSettingsRenderState(localeOverride?: Locale): SettingsRenderState {
 }
 
 function formatToggleState(enabled: boolean, locale: Locale): string {
-  return t(enabled ? "settings.state.on" : "settings.state.off", undefined, locale);
+  return t(enabled ? "settings.state.off" : "settings.state.on", undefined, locale);
 }
 
 function buildSettingsRootKeyboard(state: SettingsRenderState): InlineKeyboard {
@@ -90,17 +93,40 @@ function buildSettingsRootKeyboard(state: SettingsRenderState): InlineKeyboard {
         state.locale,
       ),
       `${SETTINGS_CALLBACK_TOGGLE_PREFIX}hide_tool_files`,
-    );
+    )
+    .row()
+    .text(t("settings.close", undefined, state.locale), SETTINGS_CLOSE_CALLBACK);
 }
 
-function buildLanguageKeyboard(): InlineKeyboard {
+function buildLanguageKeyboard(locale: Locale): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   for (const option of getLocaleOptions()) {
-    keyboard.text(option.label, `${SETTINGS_CALLBACK_LANGUAGE_PREFIX}${option.code}`).row();
+    keyboard.text(`${option.flag} ${option.label}`, `${SETTINGS_CALLBACK_LANGUAGE_PREFIX}${option.code}`).row();
   }
 
-  return appendInlineMenuCancelButton(keyboard, "settings");
+  return keyboard.text(t("settings.close", undefined, locale), SETTINGS_CLOSE_CALLBACK);
+}
+
+async function replyWithSettingsMenu(
+  ctx: CommandContext<Context>,
+  state: SettingsRenderState,
+): Promise<void> {
+  const threadTarget = extractThreadTargetFromContext(ctx);
+  const messageThreadId = threadTarget?.messageThreadId;
+  const message = await ctx.reply(t("settings.title", undefined, state.locale), {
+    ...withMessageThreadId({ reply_markup: buildSettingsRootKeyboard(state) }, messageThreadId),
+  });
+
+  interactionManager.start({
+    kind: "inline",
+    expectedInput: "callback",
+    expiresInMs: SETTINGS_MENU_TTL_MS,
+    metadata: {
+      menuKind: "settings",
+      messageId: message.message_id,
+    },
+  });
 }
 
 async function redrawRootMenu(ctx: Context, localeOverride?: Locale): Promise<void> {
@@ -136,11 +162,7 @@ async function handleSettingsError(ctx: Context, error: unknown): Promise<boolea
 
 export async function settingsCommand(ctx: CommandContext<Context>): Promise<void> {
   const state = getSettingsRenderState();
-  await replyWithInlineMenu(ctx, {
-    menuKind: "settings",
-    text: t("settings.title", undefined, state.locale),
-    keyboard: buildSettingsRootKeyboard(state),
-  });
+  await replyWithSettingsMenu(ctx, state);
 }
 
 export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
@@ -158,7 +180,7 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
 
       const locale = getActiveLocale();
       await ctx.editMessageText(t("settings.language.title", undefined, locale), {
-        reply_markup: buildLanguageKeyboard(),
+        reply_markup: buildLanguageKeyboard(locale),
       });
       return true;
     }

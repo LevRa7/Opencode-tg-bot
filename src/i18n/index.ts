@@ -8,6 +8,7 @@ import { zh } from "./zh.js";
 interface LocaleDefinition {
   code: string;
   label: string;
+  flag: string;
   dateLocale: string;
   dictionary: Record<I18nKey, string>;
 }
@@ -16,36 +17,42 @@ const LOCALE_DEFINITIONS = [
   {
     code: "en",
     label: "English",
+    flag: "🇬🇧",
     dateLocale: "en-US",
     dictionary: en,
   },
   {
     code: "de",
     label: "Deutsch",
+    flag: "🇩🇪",
     dateLocale: "de-DE",
     dictionary: de,
   },
   {
     code: "es",
     label: "Español",
+    flag: "🇪🇸",
     dateLocale: "es-ES",
     dictionary: es,
   },
   {
     code: "fr",
     label: "Français",
+    flag: "🇫🇷",
     dateLocale: "fr-FR",
     dictionary: fr,
   },
   {
     code: "ru",
     label: "Русский",
+    flag: "🇷🇺",
     dateLocale: "ru-RU",
     dictionary: ru,
   },
   {
     code: "zh",
     label: "简体中文",
+    flag: "🇨🇳",
     dateLocale: "zh-CN",
     dictionary: zh,
   },
@@ -56,6 +63,7 @@ export type Locale = (typeof LOCALE_DEFINITIONS)[number]["code"];
 export interface LocaleOption {
   code: Locale;
   label: string;
+  flag: string;
 }
 
 type TranslationParams = Record<string, string | number | boolean | null | undefined>;
@@ -104,7 +112,7 @@ export function isSupportedLocale(locale: string): locale is Locale {
 }
 
 export function getLocaleOptions(): LocaleOption[] {
-  return LOCALE_DEFINITIONS.map(({ code, label }) => ({ code, label }));
+  return LOCALE_DEFINITIONS.map(({ code, label, flag }) => ({ code, label, flag }));
 }
 
 export function getDateLocale(locale?: Locale): string {

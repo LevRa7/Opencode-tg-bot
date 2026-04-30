@@ -7,11 +7,18 @@ import {
   resetRuntimeLocale,
   resolveSupportedLocale,
   setRuntimeLocale,
+  setUserLocaleResolver,
   SUPPORTED_LOCALES,
   t,
 } from "../../src/i18n/index.js";
-import { __resetSettingsForTests, setUserLocale } from "../../src/settings/manager.js";
+import {
+  __resetSettingsForTests,
+  getUserLocale,
+  setUserLocale,
+} from "../../src/settings/manager.js";
 import { runWithTelegramConversationScope } from "../../src/telegram/scope.js";
+
+setUserLocaleResolver(getUserLocale);
 
 const COMMAND_LOCALIZATION_KEYS = [
   "open.access_denied",
@@ -73,6 +80,7 @@ const COMMAND_LOCALIZATION_KEYS = [
 describe("i18n/index locale helpers", () => {
   afterEach(() => {
     resetRuntimeLocale();
+    __resetSettingsForTests();
     vi.unstubAllEnvs();
   });
 

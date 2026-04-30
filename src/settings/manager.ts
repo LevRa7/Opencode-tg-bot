@@ -1,4 +1,4 @@
-import { setUserLocaleResolver, type Locale } from "../i18n/index.js";
+import type { Locale } from "../i18n/index.js";
 import type { ModelInfo } from "../model/types.js";
 import { cloneScheduledTask, type ScheduledTask } from "../scheduled-task/types.js";
 import {
@@ -633,8 +633,6 @@ export function setThinkingClearMode(enabled: boolean): void {
 export function getUserLocale(): Locale | undefined {
   return getUserScopedSettings()?.locale;
 }
-
-setUserLocaleResolver(getUserLocale);
 
 export function setUserLocale(locale: Locale): void {
   const scopedSettings = getOrCreateUserScopedSettings();

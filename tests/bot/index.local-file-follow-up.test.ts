@@ -43,7 +43,9 @@ const attachedScopesBySessionId = vi.hoisted(
 );
 const sessionPromptMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ error: undefined })));
 const sessionPromptAsyncMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ error: undefined })));
-const sessionStatusMock = vi.hoisted(() => vi.fn().mockResolvedValue({ data: {}, error: undefined }));
+const sessionStatusMock = vi.hoisted(() =>
+  vi.fn().mockResolvedValue({ data: {}, error: undefined }),
+);
 const sessionCreateMock = vi.hoisted(() =>
   vi.fn().mockResolvedValue({
     data: { id: "session-created-1", title: "Created Session", directory: "/repo" },
@@ -101,7 +103,10 @@ vi.mock("grammy", () => {
       editMessageText: editMessageTextMock,
     };
 
-    public readonly onHandlers: Array<{ event: string | string[]; handler: (...args: any[]) => any }> = [];
+    public readonly onHandlers: Array<{
+      event: string | string[];
+      handler: (...args: any[]) => any;
+    }> = [];
 
     constructor(
       public readonly token: string,
@@ -261,16 +266,16 @@ vi.mock("../../src/attach/manager.js", () => ({
         scope: { userId: number; chatId: number; messageThreadId?: number },
         session: { id: string },
       ) => {
-      attachManagerAttachMock(scope, session);
-      attachedTargetsBySessionId.set(session.id, {
-        chatId: scope.chatId,
-        messageThreadId: scope.messageThreadId,
-      });
-      attachedScopesBySessionId.set(session.id, {
-        userId: scope.userId,
-        chatId: scope.chatId,
-        messageThreadId: scope.messageThreadId,
-      });
+        attachManagerAttachMock(scope, session);
+        attachedTargetsBySessionId.set(session.id, {
+          chatId: scope.chatId,
+          messageThreadId: scope.messageThreadId,
+        });
+        attachedScopesBySessionId.set(session.id, {
+          userId: scope.userId,
+          chatId: scope.chatId,
+          messageThreadId: scope.messageThreadId,
+        });
       },
     ),
     detach: vi.fn((scope: { chatId: number; messageThreadId?: number }) => {
@@ -398,7 +403,12 @@ vi.mock("../../src/question/manager.js", () => ({
 vi.mock("../../src/permission/manager.js", () => ({
   permissionManager: {
     clearMismatchedTargetScopeRequests: vi.fn(),
-    previewSessionRestore: vi.fn(() => ({ sessionId: "", targetScopeKey: "", staleTargetMessageIds: [], entries: [] })),
+    previewSessionRestore: vi.fn(() => ({
+      sessionId: "",
+      targetScopeKey: "",
+      staleTargetMessageIds: [],
+      entries: [],
+    })),
     commitSessionRestore: vi.fn(),
     getMessageIds: vi.fn(() => []),
     getRequest: vi.fn(() => null),
@@ -1521,7 +1531,9 @@ describe("bot/index local file follow-up orchestration", () => {
 
     await vi.waitFor(() => expect(sendMessageMock.mock.calls.length).toBeGreaterThan(1));
     expect(sendDocumentMock).toHaveBeenCalledTimes(1);
-    expect(sendMessageMock.mock.calls.map((call) => String(call[1])).join("\n")).toContain(longTail.slice(0, 256));
+    expect(sendMessageMock.mock.calls.map((call) => String(call[1])).join("\n")).toContain(
+      longTail.slice(0, 256),
+    );
 
     deferredDocument.resolve({ message_id: 41 });
     await Promise.resolve();
@@ -1617,11 +1629,12 @@ describe("bot/index local file follow-up orchestration", () => {
       },
     } as unknown as Event);
 
-    await vi.waitFor(() => expect(sendMessageMock.mock.calls.length).toBeGreaterThan(0));
-    expect(sendDocumentMock).toHaveBeenCalledTimes(1);
-    expect(sendMessageMock.mock.calls.map((call) => String(call[1])).join("\n")).toContain(
-      "Final answer after reasoning.",
+    await vi.waitFor(() =>
+      expect(sendMessageMock.mock.calls.map((call) => String(call[1])).join("\n")).toContain(
+        "Final answer after reasoning.",
+      ),
     );
+    expect(sendDocumentMock).toHaveBeenCalledTimes(1);
 
     deferredDocument.resolve({ message_id: 41 });
     await Promise.resolve();
@@ -1728,7 +1741,11 @@ describe("bot/index local file follow-up orchestration", () => {
     } as unknown as Event);
 
     await vi.waitFor(() =>
-      expect(sendMessageMock.mock.calls.some((call) => String(call[1]).includes("Answer after tool output."))).toBe(true),
+      expect(
+        sendMessageMock.mock.calls.some((call) =>
+          String(call[1]).includes("Answer after tool output."),
+        ),
+      ).toBe(true),
     );
     expect(sendDocumentMock).toHaveBeenCalledTimes(1);
 
@@ -1828,7 +1845,11 @@ describe("bot/index local file follow-up orchestration", () => {
     } as unknown as Event);
 
     await vi.waitFor(() =>
-      expect(sendMessageMock.mock.calls.some((call) => String(call[1]).includes("Answer after subagent output."))).toBe(true),
+      expect(
+        sendMessageMock.mock.calls.some((call) =>
+          String(call[1]).includes("Answer after subagent output."),
+        ),
+      ).toBe(true),
     );
     expect(sendDocumentMock).toHaveBeenCalledTimes(1);
 
@@ -1906,7 +1927,9 @@ describe("bot/index local file follow-up orchestration", () => {
         message_thread_id: 1,
       }),
     );
-    expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).toContain("Planning the response carefully.");
+    expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).toContain(
+      "Planning the response carefully.",
+    );
 
     emit({
       type: "message.part.updated",
@@ -2012,7 +2035,8 @@ describe("bot/index local file follow-up orchestration", () => {
       "Сначала проверю замечания review по коду и решу, что реально стоит чинить сейчас.",
       {},
     );
-    const latestEditCall = editMessageTextMock.mock.calls[editMessageTextMock.mock.calls.length - 1];
+    const latestEditCall =
+      editMessageTextMock.mock.calls[editMessageTextMock.mock.calls.length - 1];
     const latestEditedText = String(latestEditCall?.[2] ?? "");
     expect(latestEditedText).not.toContain("<blockquote expandable>");
     expect(deleteMessageMock).not.toHaveBeenCalled();
@@ -2154,9 +2178,9 @@ describe("bot/index local file follow-up orchestration", () => {
     }));
 
     vi.doMock("../../src/bot/utils/thinking-block-stream.js", async () => {
-      const actual = await vi.importActual<typeof import("../../src/bot/utils/thinking-block-stream.js")>(
-        "../../src/bot/utils/thinking-block-stream.js",
-      );
+      const actual = await vi.importActual<
+        typeof import("../../src/bot/utils/thinking-block-stream.js")
+      >("../../src/bot/utils/thinking-block-stream.js");
 
       return {
         ...actual,
@@ -2166,7 +2190,9 @@ describe("bot/index local file follow-up orchestration", () => {
 
     const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
     const bot = createIsolatedBot() as any;
-    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
 
     expect(promptHandler).toBeTypeOf("function");
@@ -2217,7 +2243,9 @@ describe("bot/index local file follow-up orchestration", () => {
 
     await vi.waitFor(() => expect(streamThinkingBlocksSpy).toHaveBeenCalledTimes(1));
 
-    const thinkingCall = streamThinkingBlocksSpy.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    const thinkingCall = streamThinkingBlocksSpy.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
     expect(thinkingCall).toBeDefined();
     expect(thinkingCall?.sendApi).toBe(bot.api);
     expect(thinkingCall?.target).toEqual({ chatId: 123, messageThreadId: 1 });
@@ -2297,7 +2325,11 @@ describe("bot/index local file follow-up orchestration", () => {
     } as unknown as Event);
 
     await vi.waitFor(() =>
-      expect(sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("bot.session_error"))).toBe(true),
+      expect(
+        sendMessageMock.mock.calls.some((call) =>
+          String(call[1] ?? "").includes("bot.session_error"),
+        ),
+      ).toBe(true),
     );
     expect(deleteMessageMock).not.toHaveBeenCalled();
 
@@ -2364,7 +2396,9 @@ describe("bot/index local file follow-up orchestration", () => {
     await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
     const placeholderMessage = String(sendMessageMock.mock.calls[0]?.[1] ?? "");
     expect(placeholderMessage).toContain("bot.thinking");
-    expect(placeholderMessage).not.toContain("Reasoning text should not replace the placeholder in mode 0.");
+    expect(placeholderMessage).not.toContain(
+      "Reasoning text should not replace the placeholder in mode 0.",
+    );
 
     config.bot.hideThinkingMessages = originalHideThinkingMessages;
   });
@@ -2685,7 +2719,9 @@ describe("bot/index local file follow-up orchestration", () => {
 
     const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
     const bot = createIsolatedBot() as any;
-    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
 
     expect(promptHandler).toBeTypeOf("function");
@@ -2829,7 +2865,9 @@ describe("bot/index local file follow-up orchestration", () => {
     const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
     const bot = createIsolatedBot() as any;
     sendMessageMock.mockResolvedValue({ message_id: 42 });
-    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
 
     expect(promptHandler).toBeTypeOf("function");
@@ -2889,13 +2927,19 @@ describe("bot/index local file follow-up orchestration", () => {
     } as unknown as Event);
 
     await vi.waitFor(() =>
-      expect(sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("bot.session_error"))).toBe(true),
+      expect(
+        sendMessageMock.mock.calls.some((call) =>
+          String(call[1] ?? "").includes("bot.session_error"),
+        ),
+      ).toBe(true),
     );
 
     await new Promise((resolve) => setTimeout(resolve, 120));
 
     expect(
-      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("Queued assistant text after error.")),
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("Queued assistant text after error."),
+      ),
     ).toBe(false);
   });
 
@@ -2943,7 +2987,11 @@ describe("bot/index local file follow-up orchestration", () => {
         clearSessionForActiveContext: vi.fn(),
         getActiveScope: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
         isActiveScope: vi.fn(() => true),
@@ -2960,7 +3008,11 @@ describe("bot/index local file follow-up orchestration", () => {
         getTargetForSession: vi.fn(() => currentTarget ?? null),
         getScopeForSession: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
       },
@@ -2973,7 +3025,11 @@ describe("bot/index local file follow-up orchestration", () => {
         getTargetForSession: vi.fn(() => currentTarget ?? null),
         getScopeForSession: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
       },
@@ -2992,12 +3048,16 @@ describe("bot/index local file follow-up orchestration", () => {
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
-    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { createBot: createIsolatedBot, routingBySessionId } =
+      await import("../../src/bot/index.js");
     const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
-    const { summaryAggregator: isolatedSummaryAggregator } = await import("../../src/summary/aggregator.js");
+    const { summaryAggregator: isolatedSummaryAggregator } =
+      await import("../../src/summary/aggregator.js");
     const bot = createIsolatedBot() as any;
     sendMessageMock.mockResolvedValue({ message_id: 42 });
-    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
 
     expect(promptHandler).toBeTypeOf("function");
@@ -3079,7 +3139,11 @@ describe("bot/index local file follow-up orchestration", () => {
         String(call[1] ?? "").includes("Queued assistant text after missing-routing error."),
       ),
     ).toBe(false);
-    expect(sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("bot.session_error"))).toBe(false);
+    expect(
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("bot.session_error"),
+      ),
+    ).toBe(false);
 
     currentTarget = { chatId: 123, messageThreadId: 1 };
     isolatedSummaryAggregator.setSession("session-1");
@@ -3092,11 +3156,13 @@ describe("bot/index local file follow-up orchestration", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
+    expect(sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("📋 "))).toBe(
+      false,
+    );
     expect(
-      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("📋 ")),
-    ).toBe(false);
-    expect(
-      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("retry after missing routing")),
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("retry after missing routing"),
+      ),
     ).toBe(false);
   });
 
@@ -3144,7 +3210,11 @@ describe("bot/index local file follow-up orchestration", () => {
         clearSessionForActiveContext: vi.fn(),
         getActiveScope: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
         isActiveScope: vi.fn(() => true),
@@ -3161,7 +3231,11 @@ describe("bot/index local file follow-up orchestration", () => {
         getTargetForSession: vi.fn(() => currentTarget ?? null),
         getScopeForSession: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
       },
@@ -3180,12 +3254,16 @@ describe("bot/index local file follow-up orchestration", () => {
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
-    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { createBot: createIsolatedBot, routingBySessionId } =
+      await import("../../src/bot/index.js");
     const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
-    const { summaryAggregator: isolatedSummaryAggregator } = await import("../../src/summary/aggregator.js");
+    const { summaryAggregator: isolatedSummaryAggregator } =
+      await import("../../src/summary/aggregator.js");
     const bot = createIsolatedBot() as any;
     sendMessageMock.mockResolvedValue({ message_id: 42 });
-    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
 
     expect(promptHandler).toBeTypeOf("function");
@@ -3265,7 +3343,9 @@ describe("bot/index local file follow-up orchestration", () => {
       },
     } as unknown as Event);
 
-    await vi.waitFor(() => expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1),
+    );
 
     await new Promise((resolve) => setTimeout(resolve, 1200));
 
@@ -3282,7 +3362,9 @@ describe("bot/index local file follow-up orchestration", () => {
 
     expect(
       sendMessageMock.mock.calls.some((call) =>
-        String(call[1] ?? "").includes("Final answer that should be dropped after routing disappears."),
+        String(call[1] ?? "").includes(
+          "Final answer that should be dropped after routing disappears.",
+        ),
       ),
     ).toBe(false);
     expect(
@@ -3336,7 +3418,11 @@ describe("bot/index local file follow-up orchestration", () => {
         clearSessionForActiveContext: vi.fn(),
         getActiveScope: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
         isActiveScope: vi.fn(() => true),
@@ -3353,7 +3439,11 @@ describe("bot/index local file follow-up orchestration", () => {
         getTargetForSession: vi.fn(() => currentTarget ?? null),
         getScopeForSession: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
       },
@@ -3372,12 +3462,16 @@ describe("bot/index local file follow-up orchestration", () => {
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
-    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { createBot: createIsolatedBot, routingBySessionId } =
+      await import("../../src/bot/index.js");
     const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
-    const { summaryAggregator: isolatedSummaryAggregator } = await import("../../src/summary/aggregator.js");
+    const { summaryAggregator: isolatedSummaryAggregator } =
+      await import("../../src/summary/aggregator.js");
     const bot = createIsolatedBot() as any;
     sendMessageMock.mockResolvedValue({ message_id: 42 });
-    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
 
     expect(promptHandler).toBeTypeOf("function");
@@ -3475,7 +3569,9 @@ describe("bot/index local file follow-up orchestration", () => {
       },
     } as unknown as Event);
 
-    await vi.waitFor(() => expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1),
+    );
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -3496,7 +3592,9 @@ describe("bot/index local file follow-up orchestration", () => {
       ),
     ).toBe(false);
     expect(
-      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("📋 Plan Mode · 🤖 openai/gpt-5.4 · 🕒 ")),
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("📋 Plan Mode · 🤖 openai/gpt-5.4 · 🕒 "),
+      ),
     ).toBe(false);
   });
 
@@ -3544,7 +3642,11 @@ describe("bot/index local file follow-up orchestration", () => {
         clearSessionForActiveContext: vi.fn(),
         getActiveScope: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
         isActiveScope: vi.fn(() => true),
@@ -3561,7 +3663,11 @@ describe("bot/index local file follow-up orchestration", () => {
         getTargetForSession: vi.fn(() => currentTarget ?? null),
         getScopeForSession: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
       },
@@ -3580,10 +3686,13 @@ describe("bot/index local file follow-up orchestration", () => {
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
-    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { createBot: createIsolatedBot, routingBySessionId } =
+      await import("../../src/bot/index.js");
     const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
     const bot = createIsolatedBot() as any;
-    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
 
     expect(promptHandler).toBeTypeOf("function");
@@ -3702,7 +3811,11 @@ describe("bot/index local file follow-up orchestration", () => {
           clearSessionForActiveContext: vi.fn(),
           getActiveScope: vi.fn(() =>
             currentTarget
-              ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+              ? {
+                  userId: 777,
+                  chatId: currentTarget.chatId,
+                  messageThreadId: currentTarget.messageThreadId,
+                }
               : null,
           ),
           isActiveScope: vi.fn(() => true),
@@ -3726,9 +3839,9 @@ describe("bot/index local file follow-up orchestration", () => {
       }));
 
       vi.doMock("../../src/bot/utils/thinking-block-stream.js", async () => {
-        const actual = await vi.importActual<typeof import("../../src/bot/utils/thinking-block-stream.js")>(
-          "../../src/bot/utils/thinking-block-stream.js",
-        );
+        const actual = await vi.importActual<
+          typeof import("../../src/bot/utils/thinking-block-stream.js")
+        >("../../src/bot/utils/thinking-block-stream.js");
 
         return {
           ...actual,
@@ -3752,12 +3865,15 @@ describe("bot/index local file follow-up orchestration", () => {
         };
       });
 
-      const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+      const { createBot: createIsolatedBot, routingBySessionId } =
+        await import("../../src/bot/index.js");
       const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
       const bot = createIsolatedBot() as any;
 
       const getLatestPromptHandler = () => {
-        const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+        const textHandlers = bot.onHandlers.filter(
+          (entry: { event: string | string[] }) => entry.event === "message:text",
+        );
         return textHandlers[textHandlers.length - 1]?.handler;
       };
       const getLatestEmit = () => {
@@ -3828,7 +3944,9 @@ describe("bot/index local file follow-up orchestration", () => {
       expect(scheduledTaskRuntime.flushDeferredDeliveries).not.toHaveBeenCalled();
 
       cleanupDeferred.resolve();
-      await vi.waitFor(() => expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1),
+      );
 
       currentTarget = { chatId: 123, messageThreadId: 1 };
 
@@ -3914,7 +4032,11 @@ describe("bot/index local file follow-up orchestration", () => {
         clearSessionForActiveContext: vi.fn(),
         getActiveScope: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
         isActiveScope: vi.fn(() => true),
@@ -3931,7 +4053,11 @@ describe("bot/index local file follow-up orchestration", () => {
         getTargetForSession: vi.fn(() => currentTarget ?? null),
         getScopeForSession: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
       },
@@ -3950,11 +4076,14 @@ describe("bot/index local file follow-up orchestration", () => {
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
-    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { createBot: createIsolatedBot, routingBySessionId } =
+      await import("../../src/bot/index.js");
     const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
     const bot = createIsolatedBot() as any;
     sendMessageMock.mockResolvedValue({ message_id: 42 });
-    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
 
     expect(promptHandler).toBeTypeOf("function");
@@ -4028,7 +4157,9 @@ describe("bot/index local file follow-up orchestration", () => {
       },
     } as unknown as Event);
 
-    await vi.waitFor(() => expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1),
+    );
 
     currentTarget = { chatId: 123, messageThreadId: 1 };
     await new Promise((resolve) => setTimeout(resolve, 1200));
@@ -4037,7 +4168,9 @@ describe("bot/index local file follow-up orchestration", () => {
       sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("bot.thinking")),
     ).toBe(false);
     expect(
-      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("retry after missing-routing idle")),
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("retry after missing-routing idle"),
+      ),
     ).toBe(false);
   });
 
@@ -4085,7 +4218,11 @@ describe("bot/index local file follow-up orchestration", () => {
         clearSessionForActiveContext: vi.fn(),
         getActiveScope: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
         isActiveScope: vi.fn(() => true),
@@ -4102,7 +4239,11 @@ describe("bot/index local file follow-up orchestration", () => {
         getTargetForSession: vi.fn(() => currentTarget ?? null),
         getScopeForSession: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
       },
@@ -4121,11 +4262,14 @@ describe("bot/index local file follow-up orchestration", () => {
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
-    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { createBot: createIsolatedBot, routingBySessionId } =
+      await import("../../src/bot/index.js");
     const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
     const bot = createIsolatedBot() as any;
     sendMessageMock.mockResolvedValue({ message_id: 42 });
-    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
 
     expect(promptHandler).toBeTypeOf("function");
@@ -4185,13 +4329,17 @@ describe("bot/index local file follow-up orchestration", () => {
       },
     } as unknown as Event);
 
-    await vi.waitFor(() => expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalledTimes(1),
+    );
 
     currentTarget = { chatId: 123, messageThreadId: 1 };
     await new Promise((resolve) => setTimeout(resolve, 120));
 
     expect(
-      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("Queued assistant text after missing-routing idle.")),
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("Queued assistant text after missing-routing idle."),
+      ),
     ).toBe(false);
   });
 
@@ -4240,7 +4388,11 @@ describe("bot/index local file follow-up orchestration", () => {
         clearSessionForActiveContext: vi.fn(),
         getActiveScope: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
         isActiveScope: vi.fn(() => true),
@@ -4257,7 +4409,11 @@ describe("bot/index local file follow-up orchestration", () => {
         getTargetForSession: vi.fn(() => currentTarget ?? null),
         getScopeForSession: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
       },
@@ -4276,13 +4432,16 @@ describe("bot/index local file follow-up orchestration", () => {
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
-    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { createBot: createIsolatedBot, routingBySessionId } =
+      await import("../../src/bot/index.js");
     const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
     const bot = createIsolatedBot() as any;
     sendMessageMock.mockImplementation(async () => ({ message_id: ++nextMessageId }));
 
     const getLatestPromptHandler = () => {
-      const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+      const textHandlers = bot.onHandlers.filter(
+        (entry: { event: string | string[] }) => entry.event === "message:text",
+      );
       return textHandlers[textHandlers.length - 1]?.handler;
     };
     const getLatestEmit = () => {
@@ -4357,7 +4516,9 @@ describe("bot/index local file follow-up orchestration", () => {
       },
     } as unknown as Event);
 
-    await vi.waitFor(() => expect(deleteMessageMock).toHaveBeenCalledWith(123, firstThinkingDraftId));
+    await vi.waitFor(() =>
+      expect(deleteMessageMock).toHaveBeenCalledWith(123, firstThinkingDraftId),
+    );
     await vi.waitFor(() => expect(scheduledTaskRuntime.flushDeferredDeliveries).toHaveBeenCalled());
 
     sendMessageMock.mockClear();
@@ -4453,7 +4614,11 @@ describe("bot/index local file follow-up orchestration", () => {
         clearSessionForActiveContext: vi.fn(),
         getActiveScope: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
         isActiveScope: vi.fn(() => true),
@@ -4470,7 +4635,11 @@ describe("bot/index local file follow-up orchestration", () => {
         getTargetForSession: vi.fn(() => currentTarget ?? null),
         getScopeForSession: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
       },
@@ -4486,12 +4655,15 @@ describe("bot/index local file follow-up orchestration", () => {
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
-    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { createBot: createIsolatedBot, routingBySessionId } =
+      await import("../../src/bot/index.js");
     const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
     const bot = createIsolatedBot() as any;
     sendMessageMock.mockResolvedValue({ message_id: 42 });
 
-    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
 
     expect(promptHandler).toBeTypeOf("function");
@@ -4621,7 +4793,11 @@ describe("bot/index local file follow-up orchestration", () => {
     } as unknown as Event);
 
     await vi.waitFor(() =>
-      expect(sendMessageMock.mock.calls.some((call) => String(call[1]).includes("Completed final answer."))).toBe(true),
+      expect(
+        sendMessageMock.mock.calls.some((call) =>
+          String(call[1]).includes("Completed final answer."),
+        ),
+      ).toBe(true),
     );
     await vi.waitFor(() => expect(sendDocumentMock).toHaveBeenCalledTimes(1));
   });
@@ -4644,7 +4820,9 @@ describe("bot/index local file follow-up orchestration", () => {
     getSessionTargetMock.mockImplementation(() => currentTarget);
     getAttachedTargetForSessionMock.mockImplementation(() => currentTarget);
     const bot = createBot() as any;
-    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
 
     expect(promptHandler).toBeTypeOf("function");
@@ -4820,7 +4998,10 @@ describe("bot/index local file follow-up orchestration", () => {
     });
 
     statMock.mockImplementation(async (filePath: string) => {
-      if (filePath === "/home/me/Workspaces/tg-777/state/tg-cli/data/tg_cli.session.string.login.qr.png") {
+      if (
+        filePath ===
+        "/home/me/Workspaces/tg-777/state/tg-cli/data/tg_cli.session.string.login.qr.png"
+      ) {
         return { isFile: () => true, size: 1024 };
       }
 
@@ -5116,18 +5297,20 @@ describe("bot/index local file follow-up orchestration", () => {
     const originalMessageFormatMode = config.bot.messageFormatMode;
     config.bot.messageFormatMode = "markdown";
 
-    const renderAssistantFinalPartsSafeSpy = vi.spyOn(assistantRendering, 'renderAssistantFinalPartsSafe')
-      .mockReturnValue([
-        { text: "**formatted**", fallbackText: "formatted", source: "entities" },
-      ]);
-    const prepareAssistantFinalStreamingPayloadSpy = vi.spyOn(assistantRendering, 'prepareAssistantFinalStreamingPayload')
+    const renderAssistantFinalPartsSafeSpy = vi
+      .spyOn(assistantRendering, "renderAssistantFinalPartsSafe")
+      .mockReturnValue([{ text: "**formatted**", fallbackText: "formatted", source: "entities" }]);
+    const prepareAssistantFinalStreamingPayloadSpy = vi
+      .spyOn(assistantRendering, "prepareAssistantFinalStreamingPayload")
       .mockReturnValue({
         parts: ["**formatted**"],
         format: "markdown_v2",
       });
-    const prepareAssistantStreamingPayloadSpy = vi.spyOn(assistantRendering, 'prepareAssistantStreamingPayload')
+    const prepareAssistantStreamingPayloadSpy = vi
+      .spyOn(assistantRendering, "prepareAssistantStreamingPayload")
       .mockReturnValue(null);
-    const createPlainRenderedPartsSpy = vi.spyOn(assistantRendering, 'createPlainRenderedParts')
+    const createPlainRenderedPartsSpy = vi
+      .spyOn(assistantRendering, "createPlainRenderedParts")
       .mockReturnValue([]);
 
     const bot = createBot() as unknown as FakeBot;
@@ -5231,7 +5414,8 @@ describe("bot/index local file follow-up orchestration", () => {
     const originalGetReasoningMode = vi.mocked(getReasoningMode);
     vi.mocked(getReasoningMode).mockReturnValue(1);
 
-    const prepareAssistantStreamingPayloadSpy = vi.spyOn(assistantRendering, 'prepareAssistantStreamingPayload')
+    const prepareAssistantStreamingPayloadSpy = vi
+      .spyOn(assistantRendering, "prepareAssistantStreamingPayload")
       .mockReturnValue({
         parts: ["**streaming**"],
         format: "markdown_v2",
@@ -5346,7 +5530,11 @@ describe("bot/index local file follow-up orchestration", () => {
         clearSessionForActiveContext: vi.fn(),
         getActiveScope: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
         isActiveScope: vi.fn(() => true),
@@ -5363,7 +5551,11 @@ describe("bot/index local file follow-up orchestration", () => {
         getTargetForSession: vi.fn(() => currentTarget ?? null),
         getScopeForSession: vi.fn(() =>
           currentTarget
-            ? { userId: 777, chatId: currentTarget.chatId, messageThreadId: currentTarget.messageThreadId }
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
             : null,
         ),
       },
@@ -5379,10 +5571,13 @@ describe("bot/index local file follow-up orchestration", () => {
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
-    const { createBot: createIsolatedBot, routingBySessionId } = await import("../../src/bot/index.js");
+    const { createBot: createIsolatedBot, routingBySessionId } =
+      await import("../../src/bot/index.js");
     const bot = createIsolatedBot() as any;
     sendMessageMock.mockResolvedValue({ message_id: 42 });
-    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
     const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
 
     expect(promptHandler).toBeTypeOf("function");
@@ -5425,7 +5620,9 @@ describe("bot/index local file follow-up orchestration", () => {
     await new Promise((resolve) => setTimeout(resolve, 120));
 
     expect(
-      sendMessageMock.mock.calls.some((call) => String(call[1] ?? "").includes("bot.session_error")),
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("bot.session_error"),
+      ),
     ).toBe(false);
   });
 });

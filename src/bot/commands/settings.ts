@@ -92,11 +92,13 @@ function buildSettingsRootKeyboard(state: SettingsRenderState): InlineKeyboard {
     );
 }
 
-function buildLanguageKeyboard(locale: Locale): InlineKeyboard {
+function buildLanguageKeyboard(_locale: Locale): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   for (const option of getLocaleOptions()) {
-    keyboard.text(`${option.flag} ${option.label}`, `${SETTINGS_CALLBACK_LANGUAGE_PREFIX}${option.code}`).row();
+    keyboard
+      .text(`${option.flag} ${option.label}`, `${SETTINGS_CALLBACK_LANGUAGE_PREFIX}${option.code}`)
+      .row();
   }
 
   return keyboard;
@@ -186,7 +188,9 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       }
 
       setUserLocale(locale);
-      await ctx.answerCallbackQuery({ text: t("settings.language_updated_callback", undefined, locale) });
+      await ctx.answerCallbackQuery({
+        text: t("settings.language_updated_callback", undefined, locale),
+      });
       await redrawRootMenu(ctx, locale);
       return true;
     }

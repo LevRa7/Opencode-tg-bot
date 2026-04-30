@@ -111,6 +111,9 @@ Documentation rule:
 
 ### Fixed
 
+- Fixed user-scoped defaults from `/model`, `/variant`, and `/settings` so selected agent/model/variant and message visibility preferences override `.env` defaults for new sessions in the same user's new topics.
+  - Why: only locale was effectively user-scoped; model/variant still fell back to `OPENCODE_MODEL_PROVIDER`/`OPENCODE_MODEL_ID`, and global hide-message env flags could not be turned off per user.
+  - Affects: `src/settings/manager.ts`, `src/bot/index.ts`, `tests/settings/manager.test.ts`
 - Fixed automatic local-file follow-ups for Docker tenant users so assistant-mentioned host paths are ignored before filesystem checks, while container-visible `/workspace/...` and `/state/...` paths still resolve to the user's own Workspaces tenant directory.
   - Why: a non-admin user could ask the assistant to mention an arbitrary host absolute path and the bot could send that file if it existed and was under the size limit.
   - Affects: `src/bot/index.ts`, `src/bot/utils/telegram-local-file-follow-up.ts`, `tests/bot/index.local-file-follow-up.test.ts`

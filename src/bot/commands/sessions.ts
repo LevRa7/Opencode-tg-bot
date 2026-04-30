@@ -33,10 +33,7 @@ const TELEGRAM_TOPIC_NAME_MAX_LENGTH = 128;
  * Only applies when the current chat is a forum (message_thread_id present).
  * Silently ignores errors since topic renaming is non-critical.
  */
-async function syncThreadTopicName(
-  ctx: Context,
-  sessionTitle: string,
-): Promise<void> {
+async function syncThreadTopicName(ctx: Context, sessionTitle: string): Promise<void> {
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
   if (!messageThreadId || !ctx.chat) {
     return;
@@ -46,9 +43,10 @@ async function syncThreadTopicName(
     return;
   }
 
-  const truncatedTitle = sessionTitle.length > TELEGRAM_TOPIC_NAME_MAX_LENGTH
-    ? sessionTitle.slice(0, TELEGRAM_TOPIC_NAME_MAX_LENGTH - 1)
-    : sessionTitle;
+  const truncatedTitle =
+    sessionTitle.length > TELEGRAM_TOPIC_NAME_MAX_LENGTH
+      ? sessionTitle.slice(0, TELEGRAM_TOPIC_NAME_MAX_LENGTH - 1)
+      : sessionTitle;
 
   try {
     await ctx.api.editForumTopic(ctx.chat.id, messageThreadId, {
@@ -191,7 +189,10 @@ export async function sessionsCommand(ctx: CommandContext<Context>) {
     const currentProject = getCurrentProject();
 
     if (!currentProject) {
-      await ctx.reply(t("sessions.project_not_selected"), withMessageThreadId(undefined, messageThreadId));
+      await ctx.reply(
+        t("sessions.project_not_selected"),
+        withMessageThreadId(undefined, messageThreadId),
+      );
       return;
     }
 
@@ -218,7 +219,10 @@ export async function sessionsCommand(ctx: CommandContext<Context>) {
     });
   } catch (error) {
     logger.error("[Sessions] Error fetching sessions:", error);
-    await ctx.reply(t("sessions.fetch_error"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
+    await ctx.reply(
+      t("sessions.fetch_error"),
+      withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
+    );
   }
 }
 
@@ -247,7 +251,10 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
     if (!currentProject) {
       clearAllInteractionState("session_select_project_missing");
       await ctx.answerCallbackQuery();
-      await ctx.reply(t("sessions.select_project_first"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
+      await ctx.reply(
+        t("sessions.select_project_first"),
+        withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
+      );
       return true;
     }
 
@@ -307,12 +314,7 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
         restoreQuestion: () =>
           showCurrentQuestion(ctx.api, activeScope.chatId, activeScope.messageThreadId),
         restorePermission: (request) =>
-          showPermissionRequest(
-            ctx.api,
-            activeScope.chatId,
-            request,
-            activeScope.messageThreadId,
-          ),
+          showPermissionRequest(ctx.api, activeScope.chatId, request, activeScope.messageThreadId),
       });
     }
     summaryAggregator.clear();
@@ -375,8 +377,7 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
         }
       }
 
-      // Send session selection confirmation with updated keyboard
-      const keyboard = keyboardManager.getKeyboard();
+      // Send session selection confirmation with updated keyboard state.
       try {
         await ctx.api.sendMessage(
           chatId,
@@ -408,7 +409,10 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
     clearAllInteractionState("session_select_error");
     logger.error("[Sessions] Error selecting session:", error);
     await ctx.answerCallbackQuery();
-    await ctx.reply(t("sessions.select_error"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
+    await ctx.reply(
+      t("sessions.select_error"),
+      withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
+    );
   }
 
   return true;

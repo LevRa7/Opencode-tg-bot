@@ -8,9 +8,19 @@ vi.mock("../../src/config.js", async () => {
     ...actual,
     config: {
       ...actual.config,
+      opencode: {
+        ...actual.config.opencode,
+        model: {
+          provider: "test-provider",
+          modelId: "test-model",
+        },
+      },
       bot: {
         ...actual.config.bot,
         responseStreaming: false,
+        hideThinkingMessages: true,
+        hideToolCallMessages: true,
+        hideToolFileMessages: true,
       },
     },
   };
@@ -33,6 +43,8 @@ import {
   clearPinnedMessageId,
   clearProject,
   clearSession,
+  setConversationCurrentAgent,
+  setConversationCurrentModel,
   getCurrentAgent,
   getCurrentModel,
   getCurrentProject,
@@ -58,6 +70,7 @@ import {
   setPinnedMessageId,
   setMessageStreamingEnabled,
 } from "../../src/settings/manager.js";
+import { getStoredModel } from "../../src/model/manager.js";
 
 describe("settings/manager scoped state", () => {
   const scopeA: TelegramConversationScope = { userId: 1, chatId: 100, messageThreadId: 10 };
@@ -184,9 +197,107 @@ describe("settings/manager scoped state", () => {
       })),
     ).toEqual({
       locale: undefined,
+      hideThinking: true,
+      hideToolCalls: true,
+      hideToolFiles: true,
+    });
+  });
+
+  it("lets user visibility settings override env defaults", () => {
+    runWithTelegramConversationScope(scopeA, () => {
+      setHideThinkingMessages(false);
+      setHideToolCallMessages(false);
+      setHideToolFileMessages(false);
+    });
+
+    expect(
+      runWithTelegramConversationScope(scopeA, () => ({
+        hideThinking: getHideThinkingMessages(),
+        hideToolCalls: getHideToolCallMessages(),
+        hideToolFiles: getHideToolFileMessages(),
+      })),
+    ).toEqual({
       hideThinking: false,
       hideToolCalls: false,
       hideToolFiles: false,
+    });
+  });
+
+  it("uses user default agent and model across new topics without leaking across users", () => {
+    runWithTelegramConversationScope(scopeA, () => {
+      setCurrentAgent("plan");
+      setCurrentModel({ providerID: "openai", modelID: "gpt-5", variant: "high" });
+    });
+
+    expect(
+      runWithTelegramConversationScope(scopeAOtherTopic, () => ({
+        agent: getCurrentAgent(),
+        model: getCurrentModel(),
+        storedModel: getStoredModel(),
+      })),
+    ).toEqual({
+      agent: "plan",
+      model: { providerID: "openai", modelID: "gpt-5", variant: "high" },
+      storedModel: { providerID: "openai", modelID: "gpt-5", variant: "high" },
+    });
+
+    expect(
+      runWithTelegramConversationScope(scopeB, () => ({
+        agent: getCurrentAgent(),
+        model: getCurrentModel(),
+      })),
+    ).toEqual({
+      agent: undefined,
+      model: undefined,
+    });
+  });
+
+  it("does not leak main-thread global fallback selections across users", () => {
+    runWithTelegramConversationScope(scopeAMainThread, () => {
+      setCurrentAgent("plan");
+      setCurrentModel({ providerID: "openai", modelID: "gpt-5", variant: "high" });
+    });
+
+    expect(
+      runWithTelegramConversationScope({ userId: 2, chatId: 100, messageThreadId: 0 }, () => ({
+        agent: getCurrentAgent(),
+        model: getCurrentModel(),
+        storedModel: getStoredModel(),
+      })),
+    ).toEqual({
+      agent: undefined,
+      model: undefined,
+      storedModel: {
+        providerID: "test-provider",
+        modelID: "test-model",
+        variant: "default",
+      },
+    });
+  });
+
+  it("keeps user defaults unchanged when restoring conversation-local selections", () => {
+    runWithTelegramConversationScope(scopeA, () => {
+      setCurrentAgent("build");
+      setCurrentModel({ providerID: "openai", modelID: "gpt-5", variant: "high" });
+    });
+
+    runWithTelegramConversationScope(scopeAOtherTopic, () => {
+      setConversationCurrentAgent("plan");
+      setConversationCurrentModel({
+        providerID: "anthropic",
+        modelID: "claude-sonnet",
+        variant: "fast",
+      });
+    });
+
+    expect(
+      runWithTelegramConversationScope({ userId: 1, chatId: 100, messageThreadId: 12 }, () => ({
+        agent: getCurrentAgent(),
+        model: getCurrentModel(),
+      })),
+    ).toEqual({
+      agent: "build",
+      model: { providerID: "openai", modelID: "gpt-5", variant: "high" },
     });
   });
 
@@ -271,7 +382,7 @@ describe("settings/manager scoped state", () => {
     });
   });
 
-  it("stores main-thread agent and model as global defaults for new topics", () => {
+  it("stores main-thread agent and model as user defaults for new topics", () => {
     runWithTelegramConversationScope(scopeAMainThread, () => {
       setCurrentAgent("build");
       setCurrentModel({ providerID: "openai", modelID: "gpt-4.1", variant: "default" });
@@ -290,8 +401,12 @@ describe("settings/manager scoped state", () => {
         model: getCurrentModel(),
       })),
     ).toEqual({
-      agent: undefined,
-      model: undefined,
+      agent: "build",
+      model: {
+        providerID: "openai",
+        modelID: "gpt-4.1",
+        variant: "default",
+      },
     });
   });
 

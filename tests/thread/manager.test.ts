@@ -44,7 +44,15 @@ vi.mock("../../src/settings/manager.js", () => ({
     mocked.currentAgent = agent;
     mocked.setCurrentAgentMock(agent);
   }),
+  setConversationCurrentAgent: vi.fn((agent) => {
+    mocked.currentAgent = agent;
+    mocked.setCurrentAgentMock(agent);
+  }),
   setCurrentModel: vi.fn((model) => {
+    mocked.currentModel = model;
+    mocked.setCurrentModelMock(model);
+  }),
+  setConversationCurrentModel: vi.fn((model) => {
     mocked.currentModel = model;
     mocked.setCurrentModelMock(model);
   }),

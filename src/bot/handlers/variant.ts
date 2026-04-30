@@ -4,14 +4,11 @@ import {
   getCurrentVariant,
   setCurrentVariant,
   formatVariantForDisplay,
-  formatVariantForButton,
 } from "../../variant/manager.js";
 import { getStoredModel } from "../../model/manager.js";
-import { getStoredAgent } from "../../agent/manager.js";
 import { logger } from "../../utils/logger.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
-import { createMainKeyboard } from "../utils/keyboard.js";
 import {
   clearActiveInlineMenu,
   ensureActiveInlineMenu,
@@ -38,7 +35,9 @@ export async function applySelectedVariant(
   }
 
   const variants = await getAvailableVariants(currentModel.providerID, currentModel.modelID);
-  const requestedVariant = variants.find((variant) => variant.id === variantId && !variant.disabled);
+  const requestedVariant = variants.find(
+    (variant) => variant.id === variantId && !variant.disabled,
+  );
 
   if (!requestedVariant) {
     return { applied: false, reason: "not_found", variantId };
@@ -59,7 +58,6 @@ export async function applySelectedVariant(
   keyboardManager.updateModel(updatedModel);
   keyboardManager.updateVariant(variantId);
 
-  const currentAgent = getStoredAgent();
   const contextInfo =
     pinnedMessageManager.getContextInfo() ??
     (pinnedMessageManager.getContextLimit() > 0
@@ -70,13 +68,6 @@ export async function applySelectedVariant(
     keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
   }
 
-  const variantName = formatVariantForButton(variantId);
-  const keyboard = createMainKeyboard(
-    currentAgent,
-    updatedModel,
-    contextInfo ?? undefined,
-    variantName,
-  );
   const displayName = formatVariantForDisplay(variantId);
 
   await ctx.reply(
@@ -129,7 +120,9 @@ export async function handleVariantSelect(ctx: Context): Promise<boolean> {
 
     clearActiveInlineMenu("variant_selected");
 
-    await ctx.answerCallbackQuery({ text: t("variant.changed_callback", { name: result.displayName }) });
+    await ctx.answerCallbackQuery({
+      text: t("variant.changed_callback", { name: result.displayName }),
+    });
 
     // Delete the inline menu message
     await ctx.deleteMessage().catch(() => {});

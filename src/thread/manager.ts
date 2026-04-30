@@ -4,8 +4,8 @@ import {
   getCurrentModel,
   getCurrentProject,
   getThreadContextBindings,
-  setCurrentAgent,
-  setCurrentModel,
+  setConversationCurrentAgent,
+  setConversationCurrentModel,
   setCurrentProject,
   setThreadContextBindings,
   type ProjectInfo as SettingsProjectInfo,
@@ -266,7 +266,7 @@ class ThreadContextManager {
     const currentModel = getCurrentModel();
 
     if (boundAgent && currentAgent !== boundAgent) {
-      setCurrentAgent(boundAgent);
+      setConversationCurrentAgent(boundAgent);
     }
 
     if (!boundAgent && currentAgent) {
@@ -281,7 +281,7 @@ class ThreadContextManager {
         currentModel.modelID !== boundModel.modelID ||
         currentModel.variant !== boundModel.variant)
     ) {
-      setCurrentModel(cloneModel(boundModel));
+      setConversationCurrentModel(cloneModel(boundModel));
     }
 
     if (!boundModel && currentModel) {

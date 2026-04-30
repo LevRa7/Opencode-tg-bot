@@ -44,14 +44,16 @@ export async function finalizeAssistantResponse({
     messageText,
   );
 
-  const keyboard = shouldAutoExpandReplyKeyboard(sourceCommand) ? await getReplyKeyboard() : undefined;
+  const keyboard = await getReplyKeyboard();
   const replyOptions = keyboard ? { reply_markup: keyboard } : undefined;
   const silentReplyOptions = {
     disable_notification: true,
     ...(replyOptions ?? {}),
   };
   const streamSendOptions = {
-    ...silentReplyOptions,
+    ...(shouldAutoExpandReplyKeyboard(sourceCommand)
+      ? silentReplyOptions
+      : { disable_notification: true }),
   } as StreamingMessagePayload["sendOptions"];
 
   const preparedStreamPayload = prepareStreamingPayload(messageText);

@@ -275,7 +275,9 @@ function getCurrentReplyKeyboard() {
 }
 
 function resolveAttachedSessionTarget(sessionId: string) {
-  return attachManager.getTargetForSession(sessionId) ?? threadContextManager.getSessionTarget(sessionId);
+  return (
+    attachManager.getTargetForSession(sessionId) ?? threadContextManager.getSessionTarget(sessionId)
+  );
 }
 
 function hasLiveSessionTarget(sessionId: string): boolean {
@@ -301,7 +303,9 @@ function getSessionRoutingScope(sessionId: string): TelegramConversationScope | 
     return routing.scope;
   }
 
-  return attachManager.getScopeForSession(sessionId) ?? threadContextManager.getSessionScope(sessionId);
+  return (
+    attachManager.getScopeForSession(sessionId) ?? threadContextManager.getSessionScope(sessionId)
+  );
 }
 
 function getSessionRoutingScopeKey(sessionId: string): string {
@@ -360,19 +364,19 @@ function isMessageStreamingEnabledForSession(sessionId: string): boolean {
 
 async function getHideThinkingMessagesForSession(sessionId: string): Promise<boolean> {
   return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
-    config.bot.hideThinkingMessages || getHideThinkingMessages(),
+    getHideThinkingMessages(),
   );
 }
 
 async function getHideToolCallMessagesForSession(sessionId: string): Promise<boolean> {
   return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
-    config.bot.hideToolCallMessages || getHideToolCallMessages(),
+    getHideToolCallMessages(),
   );
 }
 
 async function getHideToolFileMessagesForSession(sessionId: string): Promise<boolean> {
   return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
-    config.bot.hideToolFileMessages || getHideToolFileMessages(),
+    getHideToolFileMessages(),
   );
 }
 
@@ -432,7 +436,10 @@ function resolveTenantContainerPath(params: {
   containerRoot: string;
   hostRoot: string;
 }): string | null {
-  if (params.filePath !== params.containerRoot && !params.filePath.startsWith(`${params.containerRoot}/`)) {
+  if (
+    params.filePath !== params.containerRoot &&
+    !params.filePath.startsWith(`${params.containerRoot}/`)
+  ) {
     return null;
   }
 
@@ -597,12 +604,9 @@ async function enqueueLocalFileFollowUpsFromText(sessionId: string, text: string
           const lostAttachedRoute =
             isSessionRoutingLiveAttached(sessionId) && currentRoutingIdentity === null;
           const switchedLiveRoute =
-            currentRoutingIdentity !== null && currentRoutingIdentity !== deliveryRoute.routingIdentity;
-          if (
-            !isSessionCurrent(sessionId) ||
-            lostAttachedRoute ||
-            switchedLiveRoute
-          ) {
+            currentRoutingIdentity !== null &&
+            currentRoutingIdentity !== deliveryRoute.routingIdentity;
+          if (!isSessionCurrent(sessionId) || lostAttachedRoute || switchedLiveRoute) {
             break;
           }
 
@@ -998,7 +1002,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         return;
       }
 
-      if (mode > 0 && reasoningText?.trim() && !(await getHideThinkingMessagesForSession(sessionId))) {
+      if (
+        mode > 0 &&
+        reasoningText?.trim() &&
+        !(await getHideThinkingMessagesForSession(sessionId))
+      ) {
         await streamThinkingBlocks({
           sessionId,
           sendApi: botApi,
@@ -1212,7 +1220,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       messageDraftStreamManager.clearSession(sessionId);
       responseStreamer.clearSession(sessionId, "session_idle_missing_routing");
       await clearThinkingBlockStream(sessionId, false);
-       foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
+      foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
       await scheduledTaskRuntime.flushDeferredDeliveries();
       return;
     }
@@ -1257,7 +1265,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       clearSessionRoutingContext(sessionId);
       localFileFollowUpTracker.clearSession(sessionId);
       messageDraftStreamManager.clearSession(sessionId);
-       foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
+      foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
       await scheduledTaskRuntime.flushDeferredDeliveries();
     }
   });
@@ -1535,7 +1543,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       toolCallStreamer.clearSession(sessionId, "session_error_missing_routing");
       assistantRunState.clearRun(sessionId, "session_error_missing_routing");
       await clearThinkingBlockStream(sessionId, shouldClearThinkingBlock);
-       foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
+      foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
       await scheduledTaskRuntime.flushDeferredDeliveries();
       return;
     }
@@ -1676,7 +1684,9 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       if (sessionId && messageId && info?.role === "user") {
         const scope = attachManager.getScopeForSession(sessionId);
         const target = scope ? attachManager.getTargetForSession(sessionId) : null;
-        const text = extractExternalUserInputText(event as { properties?: { info?: { parts?: Array<{ type?: string; text?: string }> } } });
+        const text = extractExternalUserInputText(
+          event as { properties?: { info?: { parts?: Array<{ type?: string; text?: string }> } } },
+        );
 
         if (
           scope &&

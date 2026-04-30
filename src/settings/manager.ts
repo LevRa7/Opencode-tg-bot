@@ -101,6 +101,12 @@ export interface ScopedUserSettings {
   hideThinkingMessages?: boolean;
   hideToolCallMessages?: boolean;
   hideToolFileMessages?: boolean;
+  defaultAgent?: string;
+  defaultModel?: ModelInfo;
+}
+
+interface DefaultSelectionOptions {
+  persistAsUserDefault?: boolean;
 }
 
 export interface Settings {
@@ -304,6 +310,8 @@ function cloneScopedUserSettings(
     hideThinkingMessages: settings.hideThinkingMessages,
     hideToolCallMessages: settings.hideToolCallMessages,
     hideToolFileMessages: settings.hideToolFileMessages,
+    defaultAgent: settings.defaultAgent,
+    defaultModel: cloneModelInfo(settings.defaultModel),
   };
 }
 
@@ -345,8 +353,56 @@ function isScopedUserSettingsEmpty(settings: ScopedUserSettings | undefined): bo
       settings.locale === undefined &&
       settings.hideThinkingMessages === undefined &&
       settings.hideToolCallMessages === undefined &&
-      settings.hideToolFileMessages === undefined)
+      settings.hideToolFileMessages === undefined &&
+      settings.defaultAgent === undefined &&
+      settings.defaultModel === undefined)
   );
+}
+
+function getUserDefaultAgent(): string | undefined {
+  return getUserScopedSettings()?.defaultAgent;
+}
+
+function setUserDefaultAgent(agentName: string): void {
+  const scopedSettings = getOrCreateUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.defaultAgent = agentName;
+}
+
+function clearUserDefaultAgent(): void {
+  const scopedSettings = getUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.defaultAgent = undefined;
+  pruneUserScopedSettings();
+}
+
+function getUserDefaultModel(): ModelInfo | undefined {
+  return cloneModelInfo(getUserScopedSettings()?.defaultModel);
+}
+
+function setUserDefaultModel(modelInfo: ModelInfo): void {
+  const scopedSettings = getOrCreateUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.defaultModel = cloneModelInfo(modelInfo);
+}
+
+function clearUserDefaultModel(): void {
+  const scopedSettings = getUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.defaultModel = undefined;
+  pruneUserScopedSettings();
 }
 
 function getSettingsFilePath(): string {
@@ -647,7 +703,7 @@ export function setUserLocale(locale: Locale): void {
 }
 
 export function getHideThinkingMessages(): boolean {
-  return getUserScopedSettings()?.hideThinkingMessages ?? false;
+  return getUserScopedSettings()?.hideThinkingMessages ?? config.bot.hideThinkingMessages;
 }
 
 export function setHideThinkingMessages(enabled: boolean): void {
@@ -663,7 +719,7 @@ export function setHideThinkingMessages(enabled: boolean): void {
 }
 
 export function getHideToolCallMessages(): boolean {
-  return getUserScopedSettings()?.hideToolCallMessages ?? false;
+  return getUserScopedSettings()?.hideToolCallMessages ?? config.bot.hideToolCallMessages;
 }
 
 export function setHideToolCallMessages(enabled: boolean): void {
@@ -679,7 +735,7 @@ export function setHideToolCallMessages(enabled: boolean): void {
 }
 
 export function getHideToolFileMessages(): boolean {
-  return getUserScopedSettings()?.hideToolFileMessages ?? false;
+  return getUserScopedSettings()?.hideToolFileMessages ?? config.bot.hideToolFileMessages;
 }
 
 export function setHideToolFileMessages(enabled: boolean): void {
@@ -696,19 +752,35 @@ export function setHideToolFileMessages(enabled: boolean): void {
 
 export function getCurrentAgent(): string | undefined {
   if (isMainThreadGlobalDefaultScope()) {
-    return currentSettings.currentAgent;
+    return getUserDefaultAgent();
   }
 
   const scopedSettings = getConversationScopedSettings();
-  if (scopedSettings) {
+  if (scopedSettings?.currentAgent) {
     return scopedSettings.currentAgent;
+  }
+
+  const userDefaultAgent = getUserDefaultAgent();
+  if (userDefaultAgent) {
+    return userDefaultAgent;
   }
 
   return getActiveConversationScopeKey() ? undefined : currentSettings.currentAgent;
 }
 
 export function setCurrentAgent(agentName: string): void {
+  setCurrentAgentSelection(agentName, { persistAsUserDefault: true });
+}
+
+export function setConversationCurrentAgent(agentName: string): void {
+  setCurrentAgentSelection(agentName, { persistAsUserDefault: false });
+}
+
+function setCurrentAgentSelection(agentName: string, options: DefaultSelectionOptions): void {
   if (isMainThreadGlobalDefaultScope()) {
+    if (options.persistAsUserDefault) {
+      setUserDefaultAgent(agentName);
+    }
     currentSettings.currentAgent = agentName;
     void writeSettingsFile(currentSettings);
     return;
@@ -717,6 +789,9 @@ export function setCurrentAgent(agentName: string): void {
   const scopedSettings = getOrCreateConversationScopedSettings();
   if (scopedSettings) {
     scopedSettings.currentAgent = agentName;
+    if (options.persistAsUserDefault) {
+      setUserDefaultAgent(agentName);
+    }
   } else {
     currentSettings.currentAgent = agentName;
   }
@@ -726,6 +801,7 @@ export function setCurrentAgent(agentName: string): void {
 
 export function clearCurrentAgent(): void {
   if (isMainThreadGlobalDefaultScope()) {
+    clearUserDefaultAgent();
     currentSettings.currentAgent = undefined;
     void writeSettingsFile(currentSettings);
     return;
@@ -734,6 +810,7 @@ export function clearCurrentAgent(): void {
   const scopedSettings = getOrCreateConversationScopedSettings();
   if (scopedSettings) {
     scopedSettings.currentAgent = undefined;
+    clearUserDefaultAgent();
     pruneConversationScopedSettings();
   } else {
     currentSettings.currentAgent = undefined;
@@ -744,12 +821,17 @@ export function clearCurrentAgent(): void {
 
 export function getCurrentModel(): ModelInfo | undefined {
   if (isMainThreadGlobalDefaultScope()) {
-    return cloneModelInfo(currentSettings.currentModel);
+    return getUserDefaultModel();
   }
 
   const scopedSettings = getConversationScopedSettings();
-  if (scopedSettings) {
+  if (scopedSettings?.currentModel) {
     return cloneModelInfo(scopedSettings.currentModel);
+  }
+
+  const userDefaultModel = getUserDefaultModel();
+  if (userDefaultModel) {
+    return userDefaultModel;
   }
 
   if (getActiveConversationScopeKey()) {
@@ -760,7 +842,18 @@ export function getCurrentModel(): ModelInfo | undefined {
 }
 
 export function setCurrentModel(modelInfo: ModelInfo): void {
+  setCurrentModelSelection(modelInfo, { persistAsUserDefault: true });
+}
+
+export function setConversationCurrentModel(modelInfo: ModelInfo): void {
+  setCurrentModelSelection(modelInfo, { persistAsUserDefault: false });
+}
+
+function setCurrentModelSelection(modelInfo: ModelInfo, options: DefaultSelectionOptions): void {
   if (isMainThreadGlobalDefaultScope()) {
+    if (options.persistAsUserDefault) {
+      setUserDefaultModel(modelInfo);
+    }
     currentSettings.currentModel = cloneModelInfo(modelInfo);
     void writeSettingsFile(currentSettings);
     return;
@@ -769,6 +862,9 @@ export function setCurrentModel(modelInfo: ModelInfo): void {
   const scopedSettings = getOrCreateConversationScopedSettings();
   if (scopedSettings) {
     scopedSettings.currentModel = cloneModelInfo(modelInfo);
+    if (options.persistAsUserDefault) {
+      setUserDefaultModel(modelInfo);
+    }
   } else {
     currentSettings.currentModel = cloneModelInfo(modelInfo);
   }
@@ -778,6 +874,7 @@ export function setCurrentModel(modelInfo: ModelInfo): void {
 
 export function clearCurrentModel(): void {
   if (isMainThreadGlobalDefaultScope()) {
+    clearUserDefaultModel();
     currentSettings.currentModel = undefined;
     void writeSettingsFile(currentSettings);
     return;
@@ -786,6 +883,7 @@ export function clearCurrentModel(): void {
   const scopedSettings = getOrCreateConversationScopedSettings();
   if (scopedSettings) {
     scopedSettings.currentModel = undefined;
+    clearUserDefaultModel();
     pruneConversationScopedSettings();
   } else {
     currentSettings.currentModel = undefined;

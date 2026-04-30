@@ -1,9 +1,5 @@
 import { Context, InlineKeyboard } from "grammy";
-import {
-  fetchCurrentModel,
-  getRuntimeModelCatalog,
-  selectModel,
-} from "../../model/manager.js";
+import { fetchCurrentModel, getRuntimeModelCatalog, selectModel } from "../../model/manager.js";
 import {
   formatModelForButton,
   formatModelForDisplay,
@@ -11,10 +7,7 @@ import {
   type RuntimeModelCatalog,
   type RuntimeModelCatalogProvider,
 } from "../../model/types.js";
-import { formatVariantForButton } from "../../variant/manager.js";
 import { logger } from "../../utils/logger.js";
-import { createMainKeyboard } from "../utils/keyboard.js";
-import { getStoredAgent } from "../../agent/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import {
@@ -25,10 +18,7 @@ import {
 } from "./inline-menu.js";
 import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
-import {
-  extractMessageThreadIdFromContext,
-  withMessageThreadId,
-} from "../utils/message-thread.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import type { I18nKey } from "../../i18n/en.js";
 
 const MODELS_PER_PAGE = 10;
@@ -167,7 +157,10 @@ function buildProviderSelectionText(currentModel: ModelInfo): string {
   });
 }
 
-function normalizePage(requestedPage: number, itemCount: number): { page: number; totalPages: number } {
+function normalizePage(
+  requestedPage: number,
+  itemCount: number,
+): { page: number; totalPages: number } {
   const totalPages = Math.max(1, Math.ceil(itemCount / MODELS_PER_PAGE));
   return {
     page: Math.min(requestedPage, totalPages - 1),
@@ -206,11 +199,17 @@ function buildProviderModelsKeyboard(
   });
 
   if (page > 0) {
-    keyboard.text(t("model.menu.button.prev_page"), buildProviderPageCallback(provider.providerID, page - 1));
+    keyboard.text(
+      t("model.menu.button.prev_page"),
+      buildProviderPageCallback(provider.providerID, page - 1),
+    );
   }
 
   if (page < totalPages - 1) {
-    keyboard.text(t("model.menu.button.next_page"), buildProviderPageCallback(provider.providerID, page + 1));
+    keyboard.text(
+      t("model.menu.button.next_page"),
+      buildProviderPageCallback(provider.providerID, page + 1),
+    );
   }
 
   if (page > 0 || page < totalPages - 1) {
@@ -272,7 +271,6 @@ export async function applySelectedModel(
   keyboardManager.updateModel(modelInfo);
   await pinnedMessageManager.refreshContextLimit();
 
-  const currentAgent = getStoredAgent();
   const contextInfo =
     pinnedMessageManager.getContextInfo() ??
     (pinnedMessageManager.getContextLimit() > 0
@@ -283,13 +281,7 @@ export async function applySelectedModel(
     keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
   }
 
-  const variantName = formatVariantForButton(modelInfo.variant || "default");
-  const keyboard = createMainKeyboard(
-    currentAgent,
-    modelInfo,
-    contextInfo ?? undefined,
-    variantName,
-  );
+  keyboardManager.getKeyboard();
   const displayName = formatModelForDisplay(modelInfo.providerID, modelInfo.modelID);
 
   await ctx.reply(
@@ -367,7 +359,8 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
 
     const catalog = await getRuntimeModelCatalog();
     const provider = findProvider(catalog, parsedModel.providerID);
-    const modelExists = provider?.models.some((model) => model.modelID === parsedModel.modelID) ?? false;
+    const modelExists =
+      provider?.models.some((model) => model.modelID === parsedModel.modelID) ?? false;
 
     if (!provider || !modelExists) {
       await ctx

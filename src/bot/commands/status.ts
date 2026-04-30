@@ -56,7 +56,9 @@ export async function statusCommand(ctx: CommandContext<Context>) {
     }
 
     const currentAgent = await fetchCurrentAgent();
-    const agentDisplay = currentAgent ? getAgentDisplayName(currentAgent) : t("status.agent_not_set");
+    const agentDisplay = currentAgent
+      ? getAgentDisplayName(currentAgent)
+      : t("status.agent_not_set");
     message += `${t("status.line.mode", { mode: agentDisplay })}\n`;
 
     const currentModel = fetchCurrentModel();
@@ -102,7 +104,6 @@ export async function statusCommand(ctx: CommandContext<Context>) {
     if (contextInfo) {
       keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
     }
-    const keyboard = keyboardManager.getKeyboard();
     if (ctx.chat) {
       await sendBotText({
         api: ctx.api,
@@ -115,6 +116,9 @@ export async function statusCommand(ctx: CommandContext<Context>) {
     }
   } catch (error) {
     logger.error("[Bot] Error checking server status:", error);
-    await ctx.reply(t("status.server_unavailable"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
+    await ctx.reply(
+      t("status.server_unavailable"),
+      withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
+    );
   }
 }

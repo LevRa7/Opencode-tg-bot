@@ -60,6 +60,7 @@ vi.mock("../../../src/keyboard/manager.js", () => ({
     initialize: mocked.keyboardInitializeMock,
     updateModel: mocked.keyboardUpdateModelMock,
     updateContext: mocked.keyboardUpdateContextMock,
+    getKeyboard: mocked.createMainKeyboardMock,
   },
 }));
 
@@ -195,7 +196,9 @@ function createForumMainThreadCallbackContext(data: string): Context {
   } as unknown as Context;
 }
 
-function getInlineKeyboardRows(keyboard: InlineKeyboard): Array<Array<{ text: string; callback_data?: string }>> {
+function getInlineKeyboardRows(
+  keyboard: InlineKeyboard,
+): Array<Array<{ text: string; callback_data?: string }>> {
   return keyboard.inline_keyboard as Array<Array<{ text: string; callback_data?: string }>>;
 }
 
@@ -418,7 +421,9 @@ describe("bot/handlers/model", () => {
     const handled = await handleModelSelect(ctx);
 
     expect(handled).toBe(true);
-    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: t("model.change_error_callback") });
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: t("model.change_error_callback"),
+    });
     expect(mocked.clearActiveInlineMenuMock).toHaveBeenCalledWith("model_select_invalid_callback");
     expect(mocked.selectModelMock).not.toHaveBeenCalled();
     expect(ctx.reply).not.toHaveBeenCalled();

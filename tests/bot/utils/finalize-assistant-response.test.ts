@@ -40,17 +40,13 @@ describe("bot/utils/finalize-assistant-response", () => {
 
     expect(streamed).toBe(true);
     expect(callOrder).toEqual(["flush_services", "complete"]);
-    expect(responseStreamer.complete).toHaveBeenCalledWith(
-      "s1",
-      "m1",
-      {
-        parts: [createRenderedPart("final reply")],
-        sendOptions: {
-          disable_notification: true,
-        },
-        editOptions: undefined,
+    expect(responseStreamer.complete).toHaveBeenCalledWith("s1", "m1", {
+      parts: [createRenderedPart("final reply")],
+      sendOptions: {
+        disable_notification: true,
       },
-    );
+      editOptions: undefined,
+    });
     expect(sendRenderedPart).not.toHaveBeenCalled();
   });
 
@@ -179,6 +175,7 @@ describe("bot/utils/finalize-assistant-response", () => {
 
     expect(sendRenderedPart).toHaveBeenCalledWith(createRenderedPart("final reply"), {
       disable_notification: true,
+      reply_markup: { keyboard: [[{ text: "A" }]] },
     });
   });
 
@@ -203,16 +200,12 @@ describe("bot/utils/finalize-assistant-response", () => {
       sourceCommand: undefined,
     });
 
-    expect(responseStreamer.complete).toHaveBeenCalledWith(
-      "s1",
-      "m1",
-      {
-        parts: [{ text: "<code>tg-cli</code>" }],
-        format: "html",
-        sendOptions: { disable_notification: true },
-        editOptions: undefined,
-      },
-    );
+    expect(responseStreamer.complete).toHaveBeenCalledWith("s1", "m1", {
+      parts: [{ text: "<code>tg-cli</code>" }],
+      format: "html",
+      sendOptions: { disable_notification: true },
+      editOptions: undefined,
+    });
   });
 
   it("keeps reply keyboard for /help and /new triggers", async () => {
@@ -261,6 +254,7 @@ describe("bot/utils/finalize-assistant-response", () => {
 
     expect(sendRenderedPart).toHaveBeenCalledWith(createRenderedPart("final reply"), {
       disable_notification: true,
+      reply_markup: { keyboard: [[{ text: "A" }]] },
     });
   });
 });

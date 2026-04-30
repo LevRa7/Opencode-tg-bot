@@ -226,4 +226,50 @@ describe("bot/handlers/variant", () => {
     expect(ctx.deleteMessage).toHaveBeenCalledTimes(1);
     expect(interactionManager.getSnapshot()).toBeNull();
   });
+
+  it("rejects a forged unknown variant callback without mutating state", async () => {
+    const ctx = createForumMainThreadCallbackContext("variant:forged");
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+      metadata: {
+        menuKind: "variant",
+        messageId: 500,
+      },
+    });
+
+    const handled = await handleVariantSelect(ctx);
+
+    expect(handled).toBe(true);
+    expect(mocked.getAvailableVariantsMock).toHaveBeenCalledWith("openai", "gpt-5");
+    expect(mocked.setCurrentVariantMock).not.toHaveBeenCalled();
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: t("variant.command.not_found", { name: "forged" }),
+    });
+    expect(ctx.reply).not.toHaveBeenCalled();
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects a disabled variant callback without mutating state", async () => {
+    const ctx = createForumMainThreadCallbackContext("variant:slow");
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+      metadata: {
+        menuKind: "variant",
+        messageId: 500,
+      },
+    });
+
+    const handled = await handleVariantSelect(ctx);
+
+    expect(handled).toBe(true);
+    expect(mocked.getAvailableVariantsMock).toHaveBeenCalledWith("openai", "gpt-5");
+    expect(mocked.setCurrentVariantMock).not.toHaveBeenCalled();
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: t("variant.command.not_found", { name: "slow" }),
+    });
+    expect(ctx.reply).not.toHaveBeenCalled();
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+  });
 });

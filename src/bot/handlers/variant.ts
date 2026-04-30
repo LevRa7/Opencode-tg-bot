@@ -22,11 +22,28 @@ import type { I18nKey } from "../../i18n/en.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 
+type ApplySelectedVariantResult =
+  | { applied: true; displayName: string }
+  | { applied: false; reason: "model_required" | "not_found"; variantId: string };
+
 export async function applySelectedVariant(
   ctx: Context,
   variantId: string,
   options: { replyTextKey: I18nKey },
-): Promise<{ displayName: string }> {
+): Promise<ApplySelectedVariantResult> {
+  const currentModel = getStoredModel();
+
+  if (!currentModel.providerID || !currentModel.modelID) {
+    return { applied: false, reason: "model_required", variantId };
+  }
+
+  const variants = await getAvailableVariants(currentModel.providerID, currentModel.modelID);
+  const requestedVariant = variants.find((variant) => variant.id === variantId && !variant.disabled);
+
+  if (!requestedVariant) {
+    return { applied: false, reason: "not_found", variantId };
+  }
+
   if (ctx.chat) {
     keyboardManager.initialize(ctx.api, ctx.chat.id);
   }
@@ -67,7 +84,7 @@ export async function applySelectedVariant(
     withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
   );
 
-  return { displayName };
+  return { applied: true, displayName };
 }
 
 /**
@@ -93,22 +110,26 @@ export async function handleVariantSelect(ctx: Context): Promise<boolean> {
     // Parse callback data: "variant:variantId"
     const variantId = callbackQuery.data.replace("variant:", "");
 
-    // Get current model
-    const currentModel = getStoredModel();
-
-    if (!currentModel.providerID || !currentModel.modelID) {
-      logger.error("[VariantHandler] No model selected");
-      await ctx.answerCallbackQuery({ text: t("variant.model_not_selected_callback") });
-      return false;
-    }
-
-    const { displayName } = await applySelectedVariant(ctx, variantId, {
+    const result = await applySelectedVariant(ctx, variantId, {
       replyTextKey: "variant.changed_message",
     });
 
+    if (!result.applied) {
+      if (result.reason === "model_required") {
+        logger.error("[VariantHandler] No model selected");
+        await ctx.answerCallbackQuery({ text: t("variant.model_not_selected_callback") });
+        return false;
+      }
+
+      await ctx.answerCallbackQuery({
+        text: t("variant.command.not_found", { name: result.variantId }),
+      });
+      return true;
+    }
+
     clearActiveInlineMenu("variant_selected");
 
-    await ctx.answerCallbackQuery({ text: t("variant.changed_callback", { name: displayName }) });
+    await ctx.answerCallbackQuery({ text: t("variant.changed_callback", { name: result.displayName }) });
 
     // Delete the inline menu message
     await ctx.deleteMessage().catch(() => {});

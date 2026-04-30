@@ -17,6 +17,7 @@ const handleTaskCallbackMock = vi.hoisted(() => vi.fn(async () => false));
 const handleTaskListCallbackMock = vi.hoisted(() => vi.fn(async () => false));
 const handleRenameCancelMock = vi.hoisted(() => vi.fn(async () => false));
 const handleCommandsCallbackMock = vi.hoisted(() => vi.fn(async () => false));
+const handleSettingsCallbackMock = vi.hoisted(() => vi.fn(async () => false));
 const syncAuthorizedChatCommandsMock = vi.hoisted(() => vi.fn(async () => undefined));
 const getApprovedTelegramUserIdsMock = vi.hoisted(() => vi.fn(() => [1]));
 const attachTargetBySessionId = vi.hoisted(() => new Map<string, { chatId: number; messageThreadId?: number }>());
@@ -190,6 +191,11 @@ vi.mock("../../src/bot/commands/commands.js", () => ({
   commandsCommand: vi.fn(),
   handleCommandsCallback: handleCommandsCallbackMock,
   handleCommandTextArguments: vi.fn(async () => false),
+}));
+
+vi.mock("../../src/bot/commands/settings.js", () => ({
+  settingsCommand: vi.fn(),
+  handleSettingsCallback: handleSettingsCallbackMock,
 }));
 
 vi.mock("../../src/bot/commands/start.js", () => ({ startCommand: vi.fn() }));
@@ -584,6 +590,7 @@ describe("bot/index callback routing", () => {
     handleTaskListCallbackMock.mockReset().mockResolvedValue(false);
     handleRenameCancelMock.mockReset().mockResolvedValue(false);
     handleCommandsCallbackMock.mockReset().mockResolvedValue(false);
+    handleSettingsCallbackMock.mockReset().mockResolvedValue(false);
     syncAuthorizedChatCommandsMock.mockReset().mockResolvedValue(undefined);
     getApprovedTelegramUserIdsMock.mockReset().mockReturnValue([1]);
   });
@@ -649,6 +656,24 @@ describe("bot/index callback routing", () => {
 
     expect(handleTaskListCallbackMock).toHaveBeenCalledTimes(1);
     expect(handleTaskListCallbackMock).toHaveBeenCalledWith(ctx);
+    expect(ctx.answerCallbackQuery).not.toHaveBeenCalledWith({ text: "callback.unknown_command" });
+  });
+
+  it("routes settings callbacks through the callback dispatcher", async () => {
+    const bot = createBot() as unknown as { onHandlers: typeof onHandlers };
+    const callbackHandler = bot.onHandlers.find(
+      (entry) => entry.event === "callback_query:data",
+    )?.handler;
+    const ctx = createCallbackContext("settings:toggle:hide_thinking");
+
+    handleSettingsCallbackMock.mockResolvedValue(true);
+
+    expect(callbackHandler).toBeTypeOf("function");
+
+    await callbackHandler?.(ctx);
+
+    expect(handleSettingsCallbackMock).toHaveBeenCalledTimes(1);
+    expect(handleSettingsCallbackMock).toHaveBeenCalledWith(ctx);
     expect(ctx.answerCallbackQuery).not.toHaveBeenCalledWith({ text: "callback.unknown_command" });
   });
 

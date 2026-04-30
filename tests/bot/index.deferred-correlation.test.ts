@@ -183,6 +183,7 @@ vi.mock("../../src/settings/manager.js", () => ({
   setCurrentProject: vi.fn(),
   getReasoningMode: vi.fn(() => 0),
   getTenantRuntimeInfo: vi.fn(() => undefined),
+  getUserLocale: vi.fn(() => "en"),
   isMessageStreamingEnabled: vi.fn(() => true),
   getApprovedTelegramUserIds: vi.fn(() => [777]),
 }));
@@ -257,7 +258,10 @@ vi.mock("../../src/telegram/scope.js", () => ({
   buildTelegramConversationScopeKey: vi.fn(() => "scope"),
   runWithTelegramConversationScope: runWithTelegramConversationScopeMock,
 }));
-vi.mock("../../src/i18n/index.js", () => ({ t: vi.fn((key: string) => key) }));
+vi.mock("../../src/i18n/index.js", () => ({
+  t: vi.fn((key: string) => key),
+  setUserLocaleResolver: vi.fn(),
+}));
 vi.mock("../../src/scheduled-task/foreground-state.js", () => ({
   foregroundSessionState: {
     markBusy: vi.fn(),

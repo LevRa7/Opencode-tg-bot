@@ -187,6 +187,7 @@ vi.mock("../../src/settings/manager.js", () => ({
   getHideThinkingMessages: getHideThinkingMessagesMock,
   getHideToolCallMessages: getHideToolCallMessagesMock,
   getHideToolFileMessages: getHideToolFileMessagesMock,
+  getUserLocale: vi.fn(() => "en"),
   isMessageStreamingEnabled: vi.fn(() => true),
 }));
 
@@ -316,6 +317,7 @@ vi.mock("../../src/i18n/index.js", () => ({
 
     return key;
   }),
+  setUserLocaleResolver: vi.fn(),
 }));
 
 vi.mock("../../src/scheduled-task/foreground-state.js", () => ({
@@ -2135,6 +2137,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
       getHideThinkingMessages: vi.fn(() => false),
       getHideToolCallMessages: vi.fn(() => false),
@@ -2664,6 +2667,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 0),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
       getHideThinkingMessages: vi.fn(() => false),
       getHideToolCallMessages: vi.fn(() => false),
@@ -2806,6 +2810,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => true),
       getHideThinkingMessages: vi.fn(() => false),
       getHideToolCallMessages: vi.fn(() => false),
@@ -2971,6 +2976,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => true),
       getHideThinkingMessages: vi.fn(() => false),
       getHideToolCallMessages: vi.fn(() => false),
@@ -3158,6 +3164,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 0),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
       getHideThinkingMessages: vi.fn(() => false),
       getHideToolCallMessages: vi.fn(() => false),
@@ -3349,6 +3356,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 0),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
       getHideThinkingMessages: vi.fn(() => false),
       getHideToolCallMessages: vi.fn(() => false),
@@ -3556,6 +3564,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => true),
       getHideThinkingMessages: vi.fn(() => false),
       getHideToolCallMessages: vi.fn(() => false),
@@ -3700,6 +3709,7 @@ describe("bot/index local file follow-up orchestration", () => {
         setCurrentProject: vi.fn(),
         getReasoningMode: vi.fn(() => 1),
         getTenantRuntimeInfo: vi.fn(() => undefined),
+        getUserLocale: vi.fn(() => "en"),
         getThinkingClearMode: vi.fn(() => false),
         getHideThinkingMessages: vi.fn(() => false),
         getHideToolCallMessages: vi.fn(() => false),
@@ -3924,6 +3934,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 0),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
       getHideThinkingMessages: vi.fn(() => false),
       getHideToolCallMessages: vi.fn(() => false),
@@ -4094,6 +4105,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
       getHideThinkingMessages: vi.fn(() => false),
       getHideToolCallMessages: vi.fn(() => false),
@@ -4248,6 +4260,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
       getHideThinkingMessages: vi.fn(() => false),
       getHideToolCallMessages: vi.fn(() => false),
@@ -4460,6 +4473,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 0),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
@@ -5134,6 +5148,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => true),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));

@@ -76,6 +76,7 @@ describe("command sync helpers", () => {
     expect(commands.find((c) => c.command === "opencode_start")).toBeDefined();
     expect(commands.find((c) => c.command === "opencode_stop")).toBeDefined();
     expect(commands.find((c) => c.command === "mcps")).toBeDefined();
+    expect(commands.find((c) => c.command === "variant")).toBeDefined();
     expect(commands.find((c) => c.command === "status")).toBeDefined();
     expect(commands.find((c) => c.command === "help")).toBeDefined();
   });

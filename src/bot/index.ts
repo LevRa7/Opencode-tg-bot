@@ -24,6 +24,7 @@ import {
 import { sessionsCommand, handleSessionSelect } from "./commands/sessions.js";
 import { newCommand } from "./commands/new.js";
 import { modelCommand } from "./commands/model.js";
+import { variantCommand } from "./commands/variant.js";
 import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand } from "./commands/abort.js";
 import { opencodeStartCommand } from "./commands/opencode-start.js";
@@ -1752,6 +1753,7 @@ export function createBot(): Bot<Context> {
   bot.command("projects", projectsCommand);
   bot.command("sessions", sessionsCommand);
   bot.command("model", modelCommand);
+  bot.command("variant", variantCommand);
   bot.command("new", newCommand);
   bot.command("abort", abortCommand);
   bot.command("task", taskCommand);

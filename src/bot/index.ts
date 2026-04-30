@@ -23,6 +23,7 @@ import {
 } from "./message-patterns.js";
 import { sessionsCommand, handleSessionSelect } from "./commands/sessions.js";
 import { newCommand } from "./commands/new.js";
+import { modelCommand } from "./commands/model.js";
 import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand } from "./commands/abort.js";
 import { opencodeStartCommand } from "./commands/opencode-start.js";
@@ -1750,6 +1751,7 @@ export function createBot(): Bot<Context> {
   bot.command("opencode_stop", opencodeStopCommand);
   bot.command("projects", projectsCommand);
   bot.command("sessions", sessionsCommand);
+  bot.command("model", modelCommand);
   bot.command("new", newCommand);
   bot.command("abort", abortCommand);
   bot.command("task", taskCommand);

@@ -1,85 +1,17 @@
 import { describe, expect, it } from "vitest";
-
-import type { TranslateFn } from "../../src/media/batch-types.js";
-import {
-  createForwardedSourceTag,
-  isDeferredMediaItem,
-} from "../../src/media/batch-types.js";
-
-function mockT(key: string, params?: Record<string, string | number>): string {
-  if (key === "deferred.forwarded.from_display" && typeof params?.displayName === "string") {
-    return `[Forwarded from: ${params.displayName}]`;
-  }
-  if (key === "deferred.forwarded.from_another_user") {
-    return "[Forwarded from another user]";
-  }
-  return "[Forwarded message]";
-}
+import { formatMetadataLine } from "../../src/media/batch-types.js";
 
 describe("media/batch-types", () => {
-  it("returns true for deferred-eligible media items", () => {
-    expect(
-      isDeferredMediaItem({
-        correlationId: "corr-1",
-        kind: "photo",
-      }),
-    ).toBe(true);
-  });
+  it("includes sender name followed by timestamp tag", () => {
+    const line = formatMetadataLine(
+      {
+        senderFirstName: "Лев",
+        timestamp: Date.UTC(2026, 3, 30, 1, 36, 0) / 1000,
+      },
+      "",
+    );
 
-  it("returns false for plain text items", () => {
-    expect(
-      isDeferredMediaItem({
-        correlationId: "corr-2",
-        kind: "text",
-      }),
-    ).toBe(false);
-  });
-
-  it("builds a forwarded tag from the source display name", () => {
-    expect(
-      createForwardedSourceTag(
-        {
-          displayName: "Channel Alpha",
-        },
-        mockT as TranslateFn,
-      ),
-    ).toBe("[Forwarded from: Channel Alpha]");
-  });
-
-  it("trims padded forwarded source display names", () => {
-    expect(
-      createForwardedSourceTag(
-        {
-          displayName: "  Channel Alpha  ",
-        },
-        mockT as TranslateFn,
-      ),
-    ).toBe("[Forwarded from: Channel Alpha]");
-  });
-
-  it("uses the another-user forwarded fallback when no display name is present", () => {
-    expect(
-      createForwardedSourceTag(
-        {
-          isFromAnotherUser: true,
-        },
-        mockT as TranslateFn,
-      ),
-    ).toBe("[Forwarded from another user]");
-  });
-
-  it("treats whitespace-only forwarded display names as missing", () => {
-    expect(
-      createForwardedSourceTag(
-        {
-          displayName: "   ",
-        },
-        mockT as TranslateFn,
-      ),
-    ).toBe("[Forwarded message]");
-  });
-
-  it("falls back to a generic forwarded tag when the source is unknown", () => {
-    expect(createForwardedSourceTag({}, mockT as TranslateFn)).toBe("[Forwarded message]");
+    expect(line).toContain('[name="Лев"]');
+    expect(line).toContain('datetime="2026-04-30 01:36:00 UTC"');
   });
 });

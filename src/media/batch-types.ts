@@ -83,20 +83,29 @@ export function createForwardedSourceTag(
 export function formatMetadataLine(m: MessageMetadata | undefined, label: string): string {
   if (!m) return label;
 
-  const parts: string[] = [];
+  const tags: string[] = [];
 
   const quoted = (value: string): string => JSON.stringify(value);
+  const formatTimestampTag = (timestamp: number): string => {
+    const date = new Date(timestamp * 1000);
+    const iso = date.toISOString().replace("T", " ").slice(0, 19);
+    return `[datetime=${quoted(`${iso} UTC`)}]`;
+  };
 
   const name = [m.senderFirstName, m.senderLastName].filter(Boolean).join(" ").trim();
   if (name) {
-    parts.push(`name=${quoted(name)}`);
+    tags.push(`[name=${quoted(name)}]`);
+  }
+
+  if (typeof m.timestamp === "number" && Number.isFinite(m.timestamp)) {
+    tags.push(formatTimestampTag(m.timestamp));
   }
 
   if (m.forwardFromName) {
-    parts.push(`forwarded_at_name=${quoted(m.forwardFromName)}`);
+    tags.push(`[forwarded_at_name=${quoted(m.forwardFromName)}]`);
   }
 
-  const metaStr = parts.length > 0 ? `[${parts.join(" ")}]` : "";
+  const metaStr = tags.join(" ");
   return label ? `${label}${metaStr ? ` ${metaStr}` : ""}` : metaStr;
 }
 

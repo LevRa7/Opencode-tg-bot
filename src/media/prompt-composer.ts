@@ -164,7 +164,11 @@ function buildPreviewText(items: DeferredPromptItem[], t: TranslateFn): string |
 
 function buildPrefixedContext(prefix: string, blocks: string[]): string {
   if (blocks.length === 0) {
-    return prefix;
+    return "";
+  }
+
+  if (blocks.length === 1) {
+    return blocks[0] ?? prefix;
   }
 
   return `${prefix}\n\n${blocks.join("\n\n")}`;
@@ -193,10 +197,9 @@ export function composeDeferredMediaPrompt(
     return {
       directText: directTextWithMeta,
       previewText,
-      contextText: buildPrefixedContext(
-        "Additional context for the user's previous request:",
-        contextBlocks,
-      ),
+      contextText:
+        buildPrefixedContext("Additional context for the user's previous request:", contextBlocks) ||
+        undefined,
     };
   }
 
@@ -210,10 +213,9 @@ export function composeDeferredMediaPrompt(
     return {
       directText,
       previewText,
-      contextText: buildPrefixedContext(
-        `User request from transcribed audio:\n${directText}`,
-        contextBlocks,
-      ),
+      contextText:
+        buildPrefixedContext(`User request from transcribed audio:\n${directText}`, contextBlocks) ||
+        undefined,
     };
   }
 
@@ -223,6 +225,6 @@ export function composeDeferredMediaPrompt(
 
   return {
     previewText,
-    contextText: buildPrefixedContext("Analyze the extracted context below.", contextBlocks),
+    contextText: buildPrefixedContext("Analyze the extracted context below.", contextBlocks) || undefined,
   };
 }

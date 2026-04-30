@@ -681,6 +681,15 @@ describe("bot/index deferred correlation", () => {
     expect(secondPromptCall?.[0]?.parts?.[0]?.text).toContain("Look at this screenshot");
 
     sessionPromptAsyncMock.mockClear();
+    await textHandler(createTextContext("single follow-up text", 10));
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(sessionPromptAsyncMock).toHaveBeenCalledTimes(1);
+    const [singleFollowUpCall] = sessionPromptAsyncMock.mock.calls as unknown as Array<Array<any>>;
+    expect(singleFollowUpCall?.[0]?.parts?.[0]?.text).not.toContain(
+      "Additional context for the user's previous request:",
+    );
+
+    sessionPromptAsyncMock.mockClear();
     await summaryCallbacks.onSessionIdle?.("session-1");
     await photoHandler(createPhotoContext(4));
 

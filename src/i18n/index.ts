@@ -59,6 +59,7 @@ export interface LocaleOption {
 }
 
 type TranslationParams = Record<string, string | number | boolean | null | undefined>;
+type UserLocaleResolver = () => Locale | undefined;
 
 const DEFAULT_LOCALE: Locale = "en";
 
@@ -71,6 +72,7 @@ const localeDefinitionByCode = Object.fromEntries(
 ) as Record<Locale, (typeof LOCALE_DEFINITIONS)[number]>;
 
 let runtimeLocaleOverride: Locale | null = null;
+let userLocaleResolver: UserLocaleResolver | null = null;
 
 export function resolveSupportedLocale(locale: string | null | undefined): Locale | null {
   const normalized = locale?.trim().toLowerCase();
@@ -130,8 +132,17 @@ export function getLocale(): Locale {
     return runtimeLocaleOverride;
   }
 
+  const localeFromUserScope = userLocaleResolver?.();
+  if (localeFromUserScope) {
+    return localeFromUserScope;
+  }
+
   const localeFromEnv = process.env.BOT_LOCALE;
   return normalizeLocale(localeFromEnv, DEFAULT_LOCALE);
+}
+
+export function setUserLocaleResolver(resolver: UserLocaleResolver): void {
+  userLocaleResolver = resolver;
 }
 
 export function setRuntimeLocale(locale: Locale): void {

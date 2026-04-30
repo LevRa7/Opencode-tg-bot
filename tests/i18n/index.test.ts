@@ -10,6 +10,8 @@ import {
   SUPPORTED_LOCALES,
   t,
 } from "../../src/i18n/index.js";
+import { __resetSettingsForTests, setUserLocale } from "../../src/settings/manager.js";
+import { runWithTelegramConversationScope } from "../../src/telegram/scope.js";
 
 const COMMAND_LOCALIZATION_KEYS = [
   "open.access_denied",
@@ -114,6 +116,21 @@ describe("i18n/index locale helpers", () => {
     setRuntimeLocale("ru");
 
     expect(getLocale()).toBe("ru");
+  });
+
+  it("uses scoped user locale before env locale", () => {
+    vi.stubEnv("BOT_LOCALE", "en");
+    __resetSettingsForTests();
+
+    const locale = runWithTelegramConversationScope(
+      { userId: 777, chatId: 123, messageThreadId: 1 },
+      () => {
+        setUserLocale("ru");
+        return getLocale();
+      },
+    );
+
+    expect(locale).toBe("ru");
   });
 
   it("keeps open, skills, and mcps localizations non-empty in every locale", () => {

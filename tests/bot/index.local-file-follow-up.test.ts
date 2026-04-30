@@ -2626,6 +2626,150 @@ describe("bot/index local file follow-up orchestration", () => {
     vi.mocked(getHideToolFileMessages).mockReturnValue(false);
   });
 
+  it("flushes queued tool calls at a hidden tool-file boundary without sending the file", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendDocumentMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 5000,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          hideToolFileMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 0),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => true),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+    const bot = createIsolatedBot() as any;
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "hidden file should preserve tool boundary",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-visible-before-hidden-file-part-1",
+          sessionID: "session-1",
+          messageID: "message-hidden-file-boundary-1",
+          type: "tool",
+          callID: "call-bash-before-hidden-file-1",
+          tool: "bash",
+          state: {
+            status: "completed",
+            title: "Check directory before file",
+            input: {
+              command: "pwd",
+              description: "Check directory before file",
+            },
+            metadata: {},
+            time: { start: Date.now(), end: Date.now() },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sendMessageMock).not.toHaveBeenCalled();
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-hidden-file-boundary-part-1",
+          sessionID: "session-1",
+          messageID: "message-hidden-file-boundary-1",
+          type: "tool",
+          callID: "call-apply-patch-hidden-boundary-1",
+          tool: "apply_patch",
+          state: {
+            status: "completed",
+            title: "Updated /tmp/report.txt",
+            input: {
+              patchText: [
+                "--- a/tmp/report.txt",
+                "+++ b/tmp/report.txt",
+                "@@ -1 +1 @@",
+                "-before",
+                "+after",
+              ].join("\n"),
+            },
+            metadata: {
+              filediff: {
+                file: "/tmp/report.txt",
+                additions: 1,
+                deletions: 1,
+              },
+            },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(
+      () =>
+        expect(sendMessageMock).toHaveBeenCalledWith(
+          123,
+          expect.stringContaining("Check directory before file"),
+          expect.objectContaining({
+            parse_mode: "HTML",
+            message_thread_id: 1,
+          }),
+        ),
+      { timeout: 300 },
+    );
+    expect(sendDocumentMock).not.toHaveBeenCalled();
+  });
+
   it("drops queued reasoning-mode assistant text when session error fires before the stream flush", async () => {
     vi.resetModules();
     capturedEventCallbacksByDirectory.clear();

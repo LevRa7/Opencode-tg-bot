@@ -1297,12 +1297,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       return;
     }
 
-    if (await getHideToolFileMessagesForSession(fileInfo.sessionId)) {
-      return;
-    }
-
     try {
       await toolCallStreamer.breakSession(fileInfo.sessionId, "tool_file_boundary");
+
+      if (await getHideToolFileMessagesForSession(fileInfo.sessionId)) {
+        return;
+      }
 
       const toolMessage = formatToolInfo(fileInfo);
       const caption = prepareDocumentCaption(toolMessage || fileInfo.fileData.caption);

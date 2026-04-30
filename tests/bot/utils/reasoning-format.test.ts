@@ -233,6 +233,12 @@ describe("bot/utils/reasoning-format", () => {
 
       expect(result).toBe("<blockquote expandable>some tool</blockquote>");
     });
+
+    it("passes through already-formatted open blockquotes for subagent activity", () => {
+      const html = "<blockquote>🧩 Task: test\n\n⚙️ Working...</blockquote>";
+
+      expect(formatToolCallAsSpoiler(html)).toBe(html);
+    });
   });
 
   describe("markdownToHtml", () => {

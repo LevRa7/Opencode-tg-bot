@@ -328,6 +328,10 @@ export function formatToolCallAsSpoiler(text: string): string {
     return "";
   }
 
+  if (trimmed.startsWith("<blockquote>")) {
+    return trimmed;
+  }
+
   return `<blockquote expandable>${escapeHtml(trimmed)}</blockquote>`;
 }
 

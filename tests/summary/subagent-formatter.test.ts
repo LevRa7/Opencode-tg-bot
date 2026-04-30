@@ -40,6 +40,8 @@ describe("summary/subagent-formatter", () => {
       },
     ]);
 
+    expect(text.startsWith("<blockquote>")).toBe(true);
+    expect(text.endsWith("</blockquote>")).toBe(true);
     expect(text).toContain("🧩 Task: task description");
     expect(text).toContain("Agent: explore");
     expect(text).toContain("Model: openai/gpt-5.4");
@@ -76,6 +78,7 @@ describe("summary/subagent-formatter", () => {
       },
     ]);
 
+    expect(text.startsWith("<blockquote>")).toBe(true);
     expect(text).toContain("🧩 Задача: описание");
     expect(text).toContain("Агент: explore");
     expect(text).toContain("Модель: openai/gpt-5.4");
@@ -109,6 +112,7 @@ describe("summary/subagent-formatter", () => {
       },
     ]);
 
+    expect(text.startsWith("<blockquote>")).toBe(true);
     expect(text).toContain("❌ Permission denied");
   });
 

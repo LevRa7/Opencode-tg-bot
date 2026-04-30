@@ -97,5 +97,6 @@ export async function renderSubagentCards(subagents: SubagentInfo[]): Promise<st
   }
 
   const parts = await Promise.all(subagents.map((subagent) => formatSubagentCard(subagent)));
-  return parts.filter(Boolean).join("\n\n");
+  const body = parts.filter(Boolean).join("\n\n");
+  return body ? `<blockquote>${body}</blockquote>` : "";
 }

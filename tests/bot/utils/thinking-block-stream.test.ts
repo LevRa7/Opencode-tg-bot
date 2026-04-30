@@ -56,7 +56,7 @@ describe("bot/utils/thinking-block-stream", () => {
     mocked.formatThinkingMessageWithReasoningMock
       .mockReset()
       .mockImplementation((title: string, reasoning: string) => ({
-        text: `<blockquote><b>${title}</b></blockquote>\n\n<blockquote expandable>${reasoning}</blockquote>`,
+        text: `<b>${title}</b>\n\n<blockquote expandable>${reasoning}</blockquote>`,
         format: "html",
       }));
     clearAllThinkingBlockStreams();
@@ -86,7 +86,7 @@ describe("bot/utils/thinking-block-stream", () => {
     expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(1);
     expect(mocked.renderActiveDraftMock).toHaveBeenCalledWith(
       "s1",
-      "<blockquote><b>Thinking</b></blockquote>\n\n<blockquote expandable>Step 1</blockquote>",
+      "<b>Thinking</b>\n\n<blockquote expandable>Step 1</blockquote>",
       expect.objectContaining({
         chatId: 1,
         draftId: 1,
@@ -96,7 +96,7 @@ describe("bot/utils/thinking-block-stream", () => {
     expect(sendApi.sendMessageDraft).toHaveBeenCalledWith(
       1,
       1,
-      "<blockquote><b>Thinking</b></blockquote>\n\n<blockquote expandable>Step 1</blockquote>",
+      "<b>Thinking</b>\n\n<blockquote expandable>Step 1</blockquote>",
       {
         parse_mode: "HTML",
         disable_notification: true,

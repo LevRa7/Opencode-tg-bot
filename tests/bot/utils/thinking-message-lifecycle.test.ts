@@ -8,14 +8,14 @@ describe("bot/utils/thinking-message-lifecycle", () => {
     const editText = vi.fn().mockResolvedValue(undefined);
     const deleteText = vi.fn().mockResolvedValue(undefined);
 
-    await manager.render("s1", "<blockquote><b>Thinking</b></blockquote>", {
+    await manager.render("s1", "<b>Thinking</b>", {
       sendText,
       editText,
       deleteText,
     });
     await manager.render(
       "s1",
-      "<blockquote><b>Thinking</b></blockquote>\n\n<blockquote expandable>Body</blockquote>",
+      "<b>Thinking</b>\n\n<blockquote expandable>Body</blockquote>",
       {
         sendText,
         editText,
@@ -27,7 +27,7 @@ describe("bot/utils/thinking-message-lifecycle", () => {
     expect(editText).toHaveBeenCalledTimes(1);
     expect(editText).toHaveBeenCalledWith(
       101,
-      "<blockquote><b>Thinking</b></blockquote>\n\n<blockquote expandable>Body</blockquote>",
+      "<b>Thinking</b>\n\n<blockquote expandable>Body</blockquote>",
     );
   });
 
@@ -37,7 +37,7 @@ describe("bot/utils/thinking-message-lifecycle", () => {
     const editText = vi.fn().mockResolvedValue(undefined);
     const deleteText = vi.fn().mockResolvedValue(undefined);
 
-    await manager.render("s1", "<blockquote><b>Thinking</b></blockquote>", {
+    await manager.render("s1", "<b>Thinking</b>", {
       sendText,
       editText,
       deleteText,
@@ -96,7 +96,7 @@ describe("bot/utils/thinking-message-lifecycle", () => {
     const sendText = vi.fn().mockResolvedValue(101);
     const editText = vi.fn().mockResolvedValue(undefined);
     const deleteText = vi.fn().mockResolvedValue(undefined);
-    const text = "<blockquote><b>Thinking</b></blockquote>\n\n<blockquote expandable>Step 1</blockquote>";
+    const text = "<b>Thinking</b>\n\n<blockquote expandable>Step 1</blockquote>";
 
     await manager.render("s1", text, {
       sendText,

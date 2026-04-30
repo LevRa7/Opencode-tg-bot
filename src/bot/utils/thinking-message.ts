@@ -13,10 +13,10 @@ type ThinkingBatcher = Pick<ToolMessageBatcher, "enqueue" | "sendTextNow">;
 export function buildThinkingMessageHtml(title: string, reasoningText: string): string {
   const renderedReasoning = formatReasoningBlock(reasoningText);
   if (!renderedReasoning) {
-    return `<blockquote><b>${escapeHtml(title)}</b></blockquote>`;
+    return `<b>${escapeHtml(title)}</b>`;
   }
 
-  return `<blockquote><b>${escapeHtml(title)}</b></blockquote>\n\n<blockquote expandable>${renderedReasoning}</blockquote>`;
+  return `<b>${escapeHtml(title)}</b>\n\n<blockquote expandable>${renderedReasoning}</blockquote>`;
 }
 
 /**

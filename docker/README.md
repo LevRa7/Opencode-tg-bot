@@ -15,7 +15,7 @@ The setup provides:
 - access from the container to the host `cliproxyapi` endpoint
 - a minimal tenant-specific OpenCode config instead of inheriting the full host config
 - only the explicitly copied `tg-cli`, `embedding-strategies`, `openai-media-transcriber`, and `gpt-image-api` skills inside the isolated session
-- local-only publishing on `127.0.0.1`
+- host-accessible publishing on `0.0.0.0`
 - local vendored build inputs so rebuilds do not need Docker Hub
 
 ## Important directory separation
@@ -379,7 +379,7 @@ docker exec -it opencode-serve-49601 sh
 ## Connect from the OpenCode client
 
 ```bash
-opencode attach http://127.0.0.1:49602
+opencode attach http://<host-ip>:49602
 ```
 
 ## Troubleshooting

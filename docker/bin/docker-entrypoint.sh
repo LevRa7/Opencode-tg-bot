@@ -4,6 +4,17 @@ set -eu
 PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 export PATH
 
+read_env_value() {
+  env_file="$1"
+  wanted_key="$2"
+
+  if [ ! -f "$env_file" ]; then
+    return 1
+  fi
+
+  node -e 'const fs = require("node:fs"); const [file, wantedKey] = process.argv.slice(1); const content = fs.readFileSync(file, "utf8"); for (const rawLine of content.split(/\r?\n/)) { const line = rawLine.trim(); if (!line || line.startsWith("#")) continue; const idx = line.indexOf("="); if (idx === -1) continue; const key = line.slice(0, idx).trim(); let value = line.slice(idx + 1).trim(); if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1); if (key === wantedKey) { process.stdout.write(value); process.exit(0); } } process.exit(1);' "$env_file" "$wanted_key"
+}
+
 home_path="${HOME}"
 
 # 2026-04: Resolve HOME through the filesystem before using it so tenant-controlled
@@ -49,6 +60,7 @@ ensure_tenant_python_env
 
 mkdir -p /run/opencode-gemini-media
 mkdir -p /run/opencode-gpt-image
+mkdir -p /run/opencode-secrets
 
 # Fix permissions for cliproxyapi.key if it exists
 if [ -f /workspace/.config/opencode/cliproxyapi.key ]; then
@@ -59,6 +71,10 @@ else
   echo "WARNING: cliproxyapi.key not found at /workspace/.config/opencode/cliproxyapi.key"
 fi
 
+GEMINI_MEDIA_SECRET_FILE="/run/opencode-secrets/gemini-media.env"
+GEMINI_MEDIA_UPSTREAM_BASE_URL="$(read_env_value "$GEMINI_MEDIA_SECRET_FILE" GEMINI_MEDIA_BASE_URL || true)"
+GEMINI_MEDIA_UPSTREAM_API_KEY="$(read_env_value "$GEMINI_MEDIA_SECRET_FILE" GEMINI_MEDIA_API_KEY || true)"
+
 if [ -n "${GEMINI_MEDIA_UPSTREAM_BASE_URL:-}" ] && [ -n "${GEMINI_MEDIA_UPSTREAM_API_KEY:-}" ]; then
   umask 077
   node -e 'const fs = require("node:fs"); fs.writeFileSync("/run/opencode-gemini-media/config.json", JSON.stringify({ baseUrl: process.env.GEMINI_MEDIA_UPSTREAM_BASE_URL, apiKey: process.env.GEMINI_MEDIA_UPSTREAM_API_KEY, model: process.env.GEMINI_MEDIA_MODEL || "gemini-3.1-flash-lite-preview" }) + "\n", { mode: 0o600 });'
@@ -66,6 +82,10 @@ if [ -n "${GEMINI_MEDIA_UPSTREAM_BASE_URL:-}" ] && [ -n "${GEMINI_MEDIA_UPSTREAM
   setpriv --reuid=2000 --regid=2000 --clear-groups --bounding-set=-all --nnp \
     node /usr/local/lib/opencode-gemini-media/gemini-media-proxy.mjs &
 fi
+
+GPT_IMAGE_SECRET_FILE="/run/opencode-secrets/gpt-image.env"
+GPT_IMAGE_UPSTREAM_BASE_URL="$(read_env_value "$GPT_IMAGE_SECRET_FILE" OPENAI_BASE_URL || true)"
+GPT_IMAGE_UPSTREAM_API_KEY="$(read_env_value "$GPT_IMAGE_SECRET_FILE" OPENAI_API_KEY || true)"
 
 if [ -n "${GPT_IMAGE_UPSTREAM_BASE_URL:-}" ] && [ -n "${GPT_IMAGE_UPSTREAM_API_KEY:-}" ]; then
   umask 077

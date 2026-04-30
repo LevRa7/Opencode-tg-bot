@@ -25,11 +25,8 @@ TG_EMBEDDING_DIMENSIONS="${TG_EMBEDDING_DIMENSIONS:-768}"
 SERVER_USERNAME="${OPENCODE_SERVER_USERNAME:-opencode}"
 SERVER_PASSWORD="${OPENCODE_SERVER_PASSWORD:-change-me}"
 GEMINI_MEDIA_ENV_FILE="${GEMINI_MEDIA_ENV_FILE:-${CONFIG_DIR}/gemini-media.env}"
-GEMINI_MEDIA_UPSTREAM_BASE_URL="${GEMINI_MEDIA_UPSTREAM_BASE_URL:-http://192.168.2.166:8124/v1}"
 GEMINI_MEDIA_MODEL="${GEMINI_MEDIA_MODEL:-gemini-3.1-flash-lite-preview}"
 GPT_IMAGE_ENV_FILE="${GPT_IMAGE_ENV_FILE:-${CONFIG_DIR}/gpt-image.env}"
-GPT_IMAGE_UPSTREAM_BASE_URL="${GPT_IMAGE_UPSTREAM_BASE_URL:-}"
-GPT_IMAGE_UPSTREAM_API_KEY="${GPT_IMAGE_UPSTREAM_API_KEY:-}"
 GPT_IMAGE_MODEL="${GPT_IMAGE_MODEL:-gpt-image-2}"
 
 read_env_value() {
@@ -91,25 +88,12 @@ process.exit(1);
 ' "$env_file"
 }
 
-GEMINI_MEDIA_UPSTREAM_API_KEY="${GEMINI_MEDIA_UPSTREAM_API_KEY:-}"
-if [[ -f "$GEMINI_MEDIA_ENV_FILE" ]]; then
-  GEMINI_MEDIA_UPSTREAM_BASE_URL="$(read_env_value "$GEMINI_MEDIA_ENV_FILE" GEMINI_MEDIA_BASE_URL || printf '%s' "$GEMINI_MEDIA_UPSTREAM_BASE_URL")"
-fi
-
-if [[ -z "$GEMINI_MEDIA_UPSTREAM_API_KEY" ]]; then
-  GEMINI_MEDIA_UPSTREAM_API_KEY="$(read_env_value "$GEMINI_MEDIA_ENV_FILE" GEMINI_MEDIA_API_KEY || true)"
-fi
-
-if [[ -z "$GEMINI_MEDIA_UPSTREAM_API_KEY" ]]; then
-  GEMINI_MEDIA_UPSTREAM_API_KEY="$(read_gemini_cli_server_token || true)"
-fi
-
-if [[ -z "$GPT_IMAGE_UPSTREAM_BASE_URL" ]]; then
-  GPT_IMAGE_UPSTREAM_BASE_URL="$(read_env_value "$GPT_IMAGE_ENV_FILE" OPENAI_BASE_URL || true)"
-fi
-
-if [[ -z "$GPT_IMAGE_UPSTREAM_API_KEY" ]]; then
-  GPT_IMAGE_UPSTREAM_API_KEY="$(read_env_value "$GPT_IMAGE_ENV_FILE" OPENAI_API_KEY || true)"
+if [[ ! -f "$GEMINI_MEDIA_ENV_FILE" && -f "${HOME}/.gemini/.env" ]]; then
+  token_from_gemini="$(read_gemini_cli_server_token || true)"
+  if [[ -n "$token_from_gemini" ]]; then
+    printf 'GEMINI_MEDIA_BASE_URL=%s\nGEMINI_MEDIA_API_KEY=%s\n' 'http://192.168.2.166:8124/v1' "$token_from_gemini" > "$GEMINI_MEDIA_ENV_FILE"
+    chmod 600 "$GEMINI_MEDIA_ENV_FILE"
+  fi
 fi
 
 if ! [[ "$HOST_PORT" =~ ^[0-9]+$ ]] || (( HOST_PORT < 49600 || HOST_PORT > 49999 )); then
@@ -415,7 +399,7 @@ fi
 
 HOST_PORT="$SELECTED_HOST_PORT"
 
-echo "Starting opencode serve on 127.0.0.1:${HOST_PORT}"
+echo "Starting opencode serve on 0.0.0.0:${HOST_PORT}"
 echo "Tenant root: ${TENANT_ROOT}"
 echo "Workspace: ${WORKSPACE}"
 echo "State dir: ${STATE_DIR}"
@@ -433,7 +417,7 @@ if [[ -t 0 && -t 1 ]]; then
 fi
 
 docker run --rm "${TTY_FLAGS[@]}" \
-  -p "127.0.0.1:${HOST_PORT}:${CONTAINER_PORT}" \
+  -p "0.0.0.0:${HOST_PORT}:${CONTAINER_PORT}" \
   --add-host host.docker.internal:host-gateway \
   -e HOME=/workspace \
   -e XDG_CONFIG_HOME=/state/config \
@@ -446,15 +430,13 @@ docker run --rm "${TTY_FLAGS[@]}" \
   -e OPENCODE_SERVER_PASSWORD="${SERVER_PASSWORD}" \
   -e TG_API_ID="${TG_API_ID}" \
   -e TG_API_HASH="${TG_API_HASH}" \
-  -e GEMINI_MEDIA_UPSTREAM_BASE_URL="${GEMINI_MEDIA_UPSTREAM_BASE_URL}" \
-  -e GEMINI_MEDIA_UPSTREAM_API_KEY="${GEMINI_MEDIA_UPSTREAM_API_KEY}" \
   -e GEMINI_MEDIA_MODEL="${GEMINI_MEDIA_MODEL}" \
-  -e GPT_IMAGE_UPSTREAM_BASE_URL="${GPT_IMAGE_UPSTREAM_BASE_URL}" \
-  -e GPT_IMAGE_UPSTREAM_API_KEY="${GPT_IMAGE_UPSTREAM_API_KEY}" \
   -e GPT_IMAGE_MODEL="${GPT_IMAGE_MODEL}" \
   -e TG_CONFIG_DIR="/state/tg-cli" \
   -v "${XDG_CONFIG_DIR}:/bootstrap/opencode-config:ro" \
   -v "${HOST_AUTH_FILE}:/bootstrap/opencode-auth/auth.json:ro" \
+  -v "${GEMINI_MEDIA_ENV_FILE}:/run/opencode-secrets/gemini-media.env:ro" \
+  -v "${GPT_IMAGE_ENV_FILE}:/run/opencode-secrets/gpt-image.env:ro" \
   -v "${WORKSPACE}:/workspace" \
   -v "${STATE_DIR}:/state" \
   -v "${GLOBAL_AGENTS_FILE}:/etc/opencode/AGENTS.md:ro" \

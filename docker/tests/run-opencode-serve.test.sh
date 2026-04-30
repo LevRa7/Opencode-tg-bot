@@ -30,6 +30,14 @@ mkdir -p \
   "${FAKE_BIN}" \
   "${FAKE_RUNTIME_DIR}"
 touch "${FAKE_HOME}/.local/share/opencode/auth.json"
+cat > "${FAKE_HOME}/.config/opencode/gemini-media.env" <<'EOF'
+GEMINI_MEDIA_BASE_URL=http://gemini-media.example.test/v1
+GEMINI_MEDIA_API_KEY=test-gemini-media-key
+EOF
+cat > "${FAKE_HOME}/.config/opencode/gpt-image.env" <<'EOF'
+OPENAI_BASE_URL=http://gpt-image.example.test/v1
+OPENAI_API_KEY=test-gpt-image-key
+EOF
 cat > "${FAKE_HOME}/.config/opencode/AGENTS.md" <<'EOF'
 # User global instructions
 
@@ -130,10 +138,6 @@ export TG_CHAT_ID="123456"
 export TG_TENANT_ID="tenant-alpha"
 export OPENCODE_SERVER_PASSWORD="test-password"
 export CLIPROXYAPI_BASE_URL="http://192.168.2.166:8317/v1"
-export GEMINI_MEDIA_UPSTREAM_BASE_URL="http://gemini-media.example.test/v1"
-export GEMINI_MEDIA_UPSTREAM_API_KEY="test-gemini-media-key"
-export GPT_IMAGE_UPSTREAM_BASE_URL="http://gpt-image.example.test/v1"
-export GPT_IMAGE_UPSTREAM_API_KEY="test-gpt-image-key"
 unset DOCKER_HOST
 unset DOCKER_CONFIG
 
@@ -231,9 +235,27 @@ if grep -Fq 'test-gpt-image-key' "${STATE_DIR}/config/opencode.json"; then
   echo "tenant config should not expose GPT image key" >&2
   exit 1
 fi
+if grep -Fq 'GEMINI_MEDIA_UPSTREAM_BASE_URL=http://gemini-media.example.test/v1' "${DOCKER_ARGS_FILE}"; then
+  echo "launcher should not pass gemini media endpoint as container env" >&2
+  exit 1
+fi
+if grep -Fq 'GEMINI_MEDIA_UPSTREAM_API_KEY=test-gemini-media-key' "${DOCKER_ARGS_FILE}"; then
+  echo "launcher should not pass gemini media key as container env" >&2
+  exit 1
+fi
+if grep -Fq 'GPT_IMAGE_UPSTREAM_BASE_URL=http://gpt-image.example.test/v1' "${DOCKER_ARGS_FILE}"; then
+  echo "launcher should not pass GPT image endpoint as container env" >&2
+  exit 1
+fi
+if grep -Fq 'GPT_IMAGE_UPSTREAM_API_KEY=test-gpt-image-key' "${DOCKER_ARGS_FILE}"; then
+  echo "launcher should not pass GPT image key as container env" >&2
+  exit 1
+fi
+grep -Fx -- "${FAKE_HOME}/.config/opencode/gemini-media.env:/run/opencode-secrets/gemini-media.env:ro" "${DOCKER_ARGS_FILE}"
+grep -Fx -- "${FAKE_HOME}/.config/opencode/gpt-image.env:/run/opencode-secrets/gpt-image.env:ro" "${DOCKER_ARGS_FILE}"
 grep -Fx -- "${STATE_DIR}:/state" "${DOCKER_ARGS_FILE}"
 grep -Fx -- "-p" "${DOCKER_ARGS_FILE}"
-grep -Fx -- "127.0.0.1:49601:4096" "${DOCKER_ARGS_FILE}"
+grep -Fx -- "0.0.0.0:49601:4096" "${DOCKER_ARGS_FILE}"
 if grep -Fq 'cliproxyapi' "${DOCKER_ARGS_FILE}"; then
   echo "launcher should not hardcode cliproxyapi config" >&2
   exit 1

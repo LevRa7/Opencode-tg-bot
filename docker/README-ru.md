@@ -15,7 +15,7 @@
 - доступ из контейнера к хостовому `cliproxyapi`
 - минимальный tenant-specific OpenCode config вместо наследования полной host-конфигурации
 - только явно скопированные skills `tg-cli`, `embedding-strategies`, `openai-media-transcriber` и `gpt-image-api` внутри изолированной сессии
-- публикация только на `127.0.0.1`
+- публикация на `0.0.0.0` для внешнего доступа к web UI
 - локально завендоренные build inputs, чтобы пересборка не требовала Docker Hub
 
 ## Важное разделение директорий
@@ -379,7 +379,7 @@ docker exec -it opencode-serve-49601 sh
 ## Подключение из клиента OpenCode
 
 ```bash
-opencode attach http://127.0.0.1:49602
+opencode attach http://<host-ip>:49602
 ```
 
 ## Решение проблем

@@ -8,7 +8,7 @@ import { t } from "../../../src/i18n/index.js";
 import { escapeHtml } from "../../../src/bot/utils/reasoning-format.js";
 
 describe("bot/utils/thinking-message", () => {
-  it("sends thinking immediately as a separate bold quote title when visible", () => {
+  it("sends thinking immediately as a separate bold title when visible", () => {
     const batcher = {
       enqueue: vi.fn(),
       sendTextNow: vi.fn(),
@@ -20,7 +20,7 @@ describe("bot/utils/thinking-message", () => {
 
     expect(batcher.sendTextNow).toHaveBeenCalledWith(
       "s1",
-      `<blockquote><b>${escapeHtml(t("bot.thinking"))}</b></blockquote>`,
+      `<b>${escapeHtml(t("bot.thinking"))}</b>`,
       "thinking_started",
       "html",
     );
@@ -41,7 +41,7 @@ describe("bot/utils/thinking-message", () => {
     expect(batcher.sendTextNow).not.toHaveBeenCalled();
   });
 
-  it("escapes html-sensitive thinking text before wrapping it in quote", () => {
+  it("escapes html-sensitive thinking text before sending it", () => {
     const batcher = {
       enqueue: vi.fn(),
       sendTextNow: vi.fn(),
@@ -54,17 +54,17 @@ describe("bot/utils/thinking-message", () => {
 
     expect(batcher.sendTextNow).toHaveBeenCalledWith(
       "s1",
-      '<blockquote><b>think &lt;fast&gt; &amp; &quot;safe&quot;</b></blockquote>',
+      '<b>think &lt;fast&gt; &amp; &quot;safe&quot;</b>',
       "thinking_started",
       "html",
     );
   });
 
-  it("builds a full thinking html payload with separate title and expandable body quotes", () => {
+  it("builds a full thinking html payload with plain title and expandable body quote", () => {
     const html = buildThinkingMessageHtml("Thinking...", "**Plan**\n\nNeed to verify formatting.");
 
     expect(html).toBe(
-      "<blockquote><b>Thinking...</b></blockquote>\n\n<blockquote expandable><b>Plan</b>\n\n<i><b>Need to verify formatting.</b></i></blockquote>",
+      "<b>Thinking...</b>\n\n<blockquote expandable><b>Plan</b>\n\n<i><b>Need to verify formatting.</b></i></blockquote>",
     );
   });
 
@@ -72,7 +72,7 @@ describe("bot/utils/thinking-message", () => {
     const result = formatThinkingMessageWithReasoning("Думаю...", "First step\n\nSecond step");
 
     expect(result.format).toBe("html");
-    expect(result.text).toContain("<blockquote><b>Думаю...</b></blockquote>");
+    expect(result.text).toContain("<b>Думаю...</b>");
     expect(result.text).toContain("<blockquote expandable>");
     expect(result.text).toContain("First step");
     expect(result.text).toContain("Second step");
@@ -82,7 +82,7 @@ describe("bot/utils/thinking-message", () => {
     const result = formatThinkingMessageWithReasoning("Думаю...", "");
 
     expect(result.format).toBe("html");
-    expect(result.text).toBe("<blockquote><b>Думаю...</b></blockquote>");
+    expect(result.text).toBe("<b>Думаю...</b>");
   });
 
   it("escapes html in reasoning content", () => {

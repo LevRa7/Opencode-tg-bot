@@ -3,6 +3,7 @@ import { t } from "../i18n/index.js";
 import { formatCompactToolInfo } from "./formatter.js";
 import type { SubagentInfo } from "./aggregator.js";
 import type { ToolInfo } from "./aggregator.js";
+import { escapeHtml } from "../bot/utils/reasoning-format.js";
 
 function formatToolStep(subagent: SubagentInfo): string {
   if (!subagent.currentTool) {
@@ -66,23 +67,23 @@ function formatSubagentActivity(subagent: SubagentInfo): string {
   }
 
   if (subagent.status === "error") {
-    const message = subagent.terminalMessage?.trim() || t("subagent.failed");
+    const message = escapeHtml(subagent.terminalMessage?.trim() || t("subagent.failed"));
     return `❌ ${message}`;
   }
 
   const toolStep = formatToolStep(subagent);
   if (toolStep) {
-    return toolStep;
+    return escapeHtml(toolStep);
   }
 
   return `⚙️ ${t("subagent.working")}`;
 }
 
 async function formatSubagentCard(subagent: SubagentInfo): Promise<string> {
-  const modelName = formatModelDisplayName(subagent.providerID, subagent.modelID);
+  const modelName = escapeHtml(formatModelDisplayName(subagent.providerID, subagent.modelID));
   const lines = [
-    `🧩 ${t("subagent.line.task", { task: subagent.description })}`,
-    t("subagent.line.agent", { agent: subagent.agent }),
+    `🧩 ${t("subagent.line.task", { task: escapeHtml(subagent.description) })}`,
+    t("subagent.line.agent", { agent: escapeHtml(subagent.agent) }),
     t("pinned.line.model", { model: modelName }),
     "",
     formatSubagentActivity(subagent),

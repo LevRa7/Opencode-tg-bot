@@ -741,6 +741,37 @@ describe("bot/index callback routing", () => {
     );
   });
 
+  it("does not send a visible final message for empty completion payloads", async () => {
+    attachTargetBySessionId.set("session-a", { chatId: 123, messageThreadId: 11 });
+    attachScopeBySessionId.set("session-a", { userId: 1, chatId: 123, messageThreadId: 11 });
+
+    const bot = createBot() as unknown as { onHandlers: typeof onHandlers };
+    const textHandler = bot.onHandlers
+      .filter((entry) => entry.event === "message:text")
+      .at(-1)?.handler;
+
+    expect(textHandler).toBeTypeOf("function");
+
+    await textHandler?.(createTextContext("prime subscription", 1));
+
+    const onComplete = summaryAggregator.setOnComplete.mock.calls[0]?.[0];
+    expect(onComplete).toBeTypeOf("function");
+
+    await onComplete?.(
+      "session-a",
+      "msg-empty",
+      "",
+      "",
+      [],
+      {
+        logicalMessageId: "msg-empty",
+        completedAt: Date.now(),
+      },
+    );
+
+    expect(sendBotTextMock).not.toHaveBeenCalled();
+  });
+
   it("starts question state with the current session id for later attach restoration", async () => {
     attachTargetBySessionId.set("session-a", { chatId: 123, messageThreadId: 11 });
     attachScopeBySessionId.set("session-a", { userId: 1, chatId: 123, messageThreadId: 11 });

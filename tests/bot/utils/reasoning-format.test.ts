@@ -5,6 +5,12 @@ import {
   markdownToHtml,
 } from "../../../src/bot/utils/reasoning-format.js";
 
+function extractExpandableBlockquoteInnerHtml(text: string): string {
+  const match = text.match(/^<blockquote expandable>([\s\S]*)<\/blockquote>$/);
+  expect(match).not.toBeNull();
+  return match?.[1] ?? "";
+}
+
 describe("bot/utils/reasoning-format", () => {
   describe("formatReasoningForTelegramHtml", () => {
     it("places answer text BEFORE the expandable spoiler block", () => {
@@ -107,15 +113,67 @@ describe("bot/utils/reasoning-format", () => {
       expect(result).not.toContain("**Heading Two**");
     });
 
-    it("always uses expandable blockquote when reasoning is shown", () => {
-      const [result] = formatReasoningForTelegramHtml(1, "Short reasoning", [], "Answer");
+      it("always uses expandable blockquote when reasoning is shown", () => {
+        const [result] = formatReasoningForTelegramHtml(1, "Short reasoning", [], "Answer");
 
-      expect(result).toContain("<blockquote expandable>");
-      expect(result).not.toContain("<blockquote>Short reasoning");
-    });
+        expect(result).toContain("<blockquote expandable>");
+        expect(result).not.toContain("<blockquote>Short reasoning");
+      });
 
-    it("keeps thinking text as visible answer outside the spoiler", () => {
-      const [result] = formatReasoningForTelegramHtml(2, "Reasoning body", [], "💭 Thinking...");
+      it("canonicalizes ordered lists into a Telegram-friendly wrapped layout", () => {
+        const [result] = formatReasoningForTelegramHtml(
+          1,
+          [
+            "1. Prepare the release notes",
+            "   collect the user-visible changes before sending the update",
+            "2. Publish the announcement",
+            "   1. Keep the nested order stable",
+            "      add the nested follow-up under the same item",
+          ].join("\n"),
+          [],
+          "",
+        );
+
+        const innerHtml = extractExpandableBlockquoteInnerHtml(result);
+
+        expect(innerHtml).toContain(
+          "1. Prepare the release notes\n   collect the user-visible changes before sending the update\n2. Publish the announcement\n   1. Keep the nested order stable\n      add the nested follow-up under the same item",
+        );
+      });
+
+      it("keeps blank-line-separated ordered items as one stable list block", () => {
+        const [result] = formatReasoningForTelegramHtml(
+          1,
+          ["1. Capture the current status", "", "2. Send the Telegram update"].join("\n"),
+          [],
+          "",
+        );
+
+        const innerHtml = extractExpandableBlockquoteInnerHtml(result);
+
+        expect(innerHtml).toContain("1. Capture the current status\n2. Send the Telegram update");
+        expect(innerHtml).not.toContain("<b>1. Capture the current status</b>");
+      });
+
+      it("keeps list followed by a heading as a separate block", () => {
+        const [result] = formatReasoningForTelegramHtml(
+          1,
+          ["1. Capture the current status", "2. Send the Telegram update", "Release Summary"].join(
+            "\n",
+          ),
+          [],
+          "",
+        );
+
+        const innerHtml = extractExpandableBlockquoteInnerHtml(result);
+
+        expect(innerHtml).toContain("1. Capture the current status\n2. Send the Telegram update");
+        expect(innerHtml).toContain("<b>Release Summary</b>");
+        expect(innerHtml).not.toContain("2. Send the Telegram update\n   Release Summary");
+      });
+
+      it("keeps thinking text as visible answer outside the spoiler", () => {
+        const [result] = formatReasoningForTelegramHtml(2, "Reasoning body", [], "💭 Thinking...");
 
       // textPrefix is the visible answer, NOT inside the spoiler
       expect(result.startsWith("💭 Thinking...")).toBe(true);

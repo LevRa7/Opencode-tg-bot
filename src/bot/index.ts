@@ -123,6 +123,7 @@ import {
 import { scheduledTaskRuntime } from "../scheduled-task/runtime.js";
 import { ResponseStreamer } from "./streaming/response-streamer.js";
 import { ToolCallStreamer } from "./streaming/tool-call-streamer.js";
+import { SessionDeliveryOrchestrator } from "./delivery/session-delivery-orchestrator.js";
 import {
   editMessageWithMarkdownFallback,
   sendMessageWithMarkdownFallback,
@@ -186,6 +187,14 @@ const __dirname = path.dirname(__filename);
 const TEMP_DIR = path.join(__dirname, "..", ".tmp");
 const sessionCompletionTasks = new Map<string, Promise<void>>();
 const externalInputNotificationExpiresAtByKey = new Map<string, number>();
+const finalAssistantDeliveryOrchestrator = new SessionDeliveryOrchestrator({
+  onError: async (error, item) => {
+    logger.warn(
+      `[Bot] Durable delivery failed: session=${item.sessionId}, channel=${item.channel}`,
+      error,
+    );
+  },
+});
 
 function clearExpiredExternalInputNotificationDedupe(now = Date.now()): void {
   for (const [key, expiresAt] of externalInputNotificationExpiresAtByKey.entries()) {
@@ -222,6 +231,17 @@ interface SessionRoutingContext {
   scope: TelegramConversationScope | null;
   targetSource: "attached" | "prompt";
   sourceMessageId?: number;
+}
+
+interface OrderedPublicationInfo {
+  eventTimeMs?: number;
+  logicalMessageId: string;
+}
+
+interface DeferredValue<T> {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
 }
 
 const routingBySessionId = new Map<string, SessionRoutingContext>();
@@ -321,6 +341,59 @@ function buildThinkingRoutingIdentity(target: {
   messageThreadId?: number;
 }): string {
   return `${target.chatId}:${target.messageThreadId ?? "main"}`;
+}
+
+function createDeferredValue<T>(): DeferredValue<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return { promise, resolve, reject };
+}
+
+function buildToolPublicationLogicalMessageId(toolInfo: {
+  messageId: string;
+  callId: string;
+}): string {
+  return `tool:${toolInfo.messageId}:${toolInfo.callId}`;
+}
+
+function buildSubagentPublicationLogicalMessageId(sessionId: string): string {
+  return `subagent:${sessionId}`;
+}
+
+function queueOrderedPublication(
+  sessionId: string,
+  publication: OrderedPublicationInfo,
+  deliver: () => Promise<void>,
+): Promise<void> {
+  return finalAssistantDeliveryOrchestrator.enqueue({
+    sessionId,
+    channel: "durable",
+    eventTimeMs: publication.eventTimeMs,
+    logicalMessageId: publication.logicalMessageId,
+    deliver,
+  });
+}
+
+function scheduleOrderedPublication(
+  sessionId: string,
+  publication: OrderedPublicationInfo,
+): DeferredValue<(() => Promise<void>) | null> {
+  const deferredDelivery = createDeferredValue<(() => Promise<void>) | null>();
+  void queueOrderedPublication(sessionId, publication, async () => {
+    const deliver = await deferredDelivery.promise;
+    if (deliver) {
+      await deliver();
+    }
+  }).catch(() => undefined);
+  void finalAssistantDeliveryOrchestrator.flushSession(sessionId).catch((error) => {
+    logger.warn(`[Bot] Ordered publication flush failed: session=${sessionId}`, error);
+  });
+  return deferredDelivery;
 }
 
 function isSessionRoutingLiveAttached(sessionId: string): boolean {
@@ -979,6 +1052,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     toolCallStreamer.clearAll("summary_aggregator_clear");
     responseStreamer.clearAll("summary_aggregator_clear");
     messageDraftStreamManager.clearAll();
+    finalAssistantDeliveryOrchestrator.clearAll();
     clearAllThinkingBlockStreams();
     localFileFollowUpTracker.clearAll();
     assistantRunState.clearAll("summary_aggregator_clear");
@@ -1007,13 +1081,21 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         reasoningText?.trim() &&
         !(await getHideThinkingMessagesForSession(sessionId))
       ) {
-        await streamThinkingBlocks({
-          sessionId,
-          sendApi: botApi,
-          target,
-          title: t("bot.thinking"),
-          reasoningText,
-        });
+        try {
+          await streamThinkingBlocks({
+            sessionId,
+            logicalMessageId: messageId,
+            sendApi: botApi,
+            target,
+            title: t("bot.thinking"),
+            reasoningText,
+          });
+        } catch (error) {
+          logger.warn(
+            `[Bot] Thinking stream failed during partial delivery: session=${sessionId}, message=${messageId}`,
+            error,
+          );
+        }
       }
 
       const assistantFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
@@ -1050,7 +1132,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   summaryAggregator.setOnComplete(
     async (sessionId, messageId, messageText, reasoningText, toolCalls, completionInfo) => {
       await enqueueSessionCompletionTask(sessionId, async () => {
+        assistantRunState.markResponseCompleted(sessionId, completionInfo);
+
         if (!isSessionCurrent(sessionId)) {
+          finalAssistantDeliveryOrchestrator.clearSession(sessionId);
           localFileFollowUpTracker.clearSession(sessionId);
           clearPromptResponseMode(sessionId);
           clearSessionRoutingContext(sessionId);
@@ -1068,6 +1153,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         const target = getSessionRoutingTarget(sessionId);
         if (!botApi || !target) {
           logger.error("Bot or chat ID not available for sending message");
+          finalAssistantDeliveryOrchestrator.clearSession(sessionId);
           localFileFollowUpTracker.clearSession(sessionId);
           clearPromptResponseMode(sessionId);
           clearSessionRoutingContext(sessionId);
@@ -1083,17 +1169,40 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         }
 
         const chatId = target.chatId;
-        assistantRunState.markResponseCompleted(sessionId, completionInfo);
         const mode = await getReasoningModeForSession(sessionId);
+        const hasVisibleFinalContent = Boolean(
+          messageText.trim() || reasoningText?.trim() || toolCalls?.length,
+        );
+        const completionLogicalMessageId = completionInfo?.logicalMessageId ?? messageId;
+        const completionEventTimeMs = completionInfo?.completedAt;
+
+        if (!hasVisibleFinalContent) {
+          await Promise.all([
+            messageDraftStreamManager.flushSession(sessionId),
+            toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
+            toolCallStreamer.breakSession(sessionId, "assistant_message_completed"),
+          ]);
+          return;
+        }
 
         if (mode > 0) {
-          await finalizeThinkingBlockStream({
+          const thinkingFinalizeOutcome = await finalizeThinkingBlockStream({
             sessionId,
+            logicalMessageId: completionInfo?.logicalMessageId ?? messageId,
             sendApi: botApi,
             target,
             title: t("bot.thinking"),
           });
+          if (thinkingFinalizeOutcome === "failed") {
+            logger.warn(
+              `[Bot] Final thinking publication degraded: session=${sessionId}, message=${messageId}`,
+            );
+          }
         }
+
+        assistantRunState.markVisibleFinalResponse(sessionId, {
+          logicalMessageId: completionLogicalMessageId,
+        });
 
         const formattedTechnicals = (toolCalls || []).map((t) => ({
           description: t.title || t.tool,
@@ -1124,55 +1233,69 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         }
 
         try {
-          await finalizeAssistantResponse({
+          const finalizeAssistantDelivery = finalAssistantDeliveryOrchestrator.enqueue({
             sessionId,
-            messageId: `${messageId}:assistant`,
-            messageText: finalText,
-            sourceCommand: undefined,
-            responseStreamer,
-            flushPendingServiceMessages: () =>
-              Promise.all([
-                messageDraftStreamManager.flushSession(sessionId),
-                toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
-                toolCallStreamer.breakSession(sessionId, "assistant_message_completed"),
-              ]).then(() => undefined),
-            prepareStreamingPayload: () => {
-              if (finalParseMode === "markdown_v2") {
-                const payload = prepareFinalStreamingPayload(finalText);
-                if (payload) return payload;
-              }
-              if (finalParseMode === "html") {
-                return {
-                  parts: [{ text: finalText }],
-                  format: "html" as const,
-                };
-              }
-              return {
-                parts: [{ text: finalText }],
-                format: finalParseMode === "markdown_v2" ? "markdown_v2" : "raw",
-              };
+            channel: "durable",
+            eventTimeMs: completionEventTimeMs,
+            logicalMessageId: completionLogicalMessageId,
+            deliver: async () => {
+              await finalizeAssistantResponse({
+                sessionId,
+                messageId: `${messageId}:assistant`,
+                messageText: finalText,
+                sourceCommand: undefined,
+                responseStreamer,
+                flushPendingServiceMessages: () =>
+                  Promise.all([
+                    messageDraftStreamManager.flushSession(sessionId),
+                    toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
+                    toolCallStreamer.breakSession(sessionId, "assistant_message_completed"),
+                  ]).then(() => undefined),
+                prepareStreamingPayload: () => {
+                  if (finalParseMode === "markdown_v2") {
+                    const payload = prepareFinalStreamingPayload(finalText);
+                    if (payload) return payload;
+                  }
+                  if (finalParseMode === "html") {
+                    return {
+                      parts: [{ text: finalText }],
+                      format: "html" as const,
+                    };
+                  }
+                  return {
+                    parts: [{ text: finalText }],
+                    format: finalParseMode === "markdown_v2" ? "markdown_v2" : "raw",
+                  };
+                },
+                renderFinalParts: (text) => {
+                  const summaryMode: MessageFormatMode =
+                    finalParseMode === "markdown_v2"
+                      ? "markdown"
+                      : finalParseMode === "html"
+                        ? "raw"
+                        : finalParseMode;
+                  if (summaryMode === "markdown" && config.bot.messageFormatMode === "markdown") {
+                    return renderAssistantFinalPartsSafe(text, RESPONSE_STREAM_TEXT_LIMIT);
+                  }
+                  return createPlainRenderedParts(text, RESPONSE_STREAM_TEXT_LIMIT);
+                },
+                getReplyKeyboard: async () => await getReplyKeyboardForSession(sessionId),
+                sendRenderedPart: createSendRenderedPart({
+                  botApi,
+                  chatId,
+                  sessionId,
+                  finalParseMode,
+                  messageThreadId: target.messageThreadId,
+                }),
+              });
+              assistantRunState.markFinalResponsePublished(sessionId, {
+                logicalMessageId: completionLogicalMessageId,
+              });
             },
-            renderFinalParts: (text) => {
-              const summaryMode: MessageFormatMode =
-                finalParseMode === "markdown_v2"
-                  ? "markdown"
-                  : finalParseMode === "html"
-                    ? "raw"
-                    : finalParseMode;
-              if (summaryMode === "markdown" && config.bot.messageFormatMode === "markdown") {
-                return renderAssistantFinalPartsSafe(text, RESPONSE_STREAM_TEXT_LIMIT);
-              }
-              return createPlainRenderedParts(text, RESPONSE_STREAM_TEXT_LIMIT);
-            },
-            getReplyKeyboard: async () => await getReplyKeyboardForSession(sessionId),
-            sendRenderedPart: createSendRenderedPart({
-              botApi,
-              chatId,
-              sessionId,
-              finalParseMode,
-              messageThreadId: target.messageThreadId,
-            }),
           });
+
+          await finalAssistantDeliveryOrchestrator.flushSession(sessionId);
+          await finalizeAssistantDelivery;
 
           await sendTtsResponseForSession({
             api: botApi,
@@ -1182,6 +1305,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             messageThreadId: target.messageThreadId,
           });
         } catch (err) {
+          finalAssistantDeliveryOrchestrator.clearSession(sessionId);
           localFileFollowUpTracker.clearSession(sessionId);
           clearPromptResponseMode(sessionId);
           messageDraftStreamManager.clearSession(sessionId);
@@ -1212,6 +1336,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     const botApi = getSessionRoutingApi(sessionId);
     const target = getSessionRoutingTarget(sessionId);
     if (!botApi || !target || !hasLiveSessionTarget(sessionId)) {
+      finalAssistantDeliveryOrchestrator.clearSession(sessionId);
       toolMessageBatcher.clearSession(sessionId, "session_idle_missing_routing");
       toolCallStreamer.clearSession(sessionId, "session_idle_missing_routing");
       assistantRunState.clearRun(sessionId, "session_idle_missing_routing");
@@ -1231,28 +1356,39 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         toolCallStreamer.flushSession(sessionId, "session_idle"),
       ]);
 
-      if (completedRun?.hasCompletedResponse) {
+      if (completedRun?.hasPublishedFinalResponse) {
         const agent = completedRun.actualAgent || completedRun.configuredAgent;
         const providerID = completedRun.actualProviderID || completedRun.configuredProviderID;
         const modelID = completedRun.actualModelID || completedRun.configuredModelID;
 
         if (agent && providerID && modelID) {
-          const keyboard = await getReplyKeyboardForSession(sessionId);
-          await botApi.sendMessage(
-            target.chatId,
-            formatAssistantRunFooter({
-              agent,
-              providerID,
-              modelID,
-              elapsedMs: Date.now() - completedRun.startedAt,
-            }),
-            withMessageThreadId(
-              {
-                ...(keyboard ? { reply_markup: keyboard } : {}),
-              },
-              target.messageThreadId,
-            ),
-          );
+          const footerDelivery = finalAssistantDeliveryOrchestrator.enqueue({
+            sessionId,
+            channel: "durable",
+            eventTimeMs: completedRun.completedAt,
+            waitForLogicalMessageDurable: completedRun.publishedFinalLogicalMessageId,
+            deliver: async () => {
+              const keyboard = await getReplyKeyboardForSession(sessionId);
+              await botApi.sendMessage(
+                target.chatId,
+                formatAssistantRunFooter({
+                  agent,
+                  providerID,
+                  modelID,
+                  elapsedMs: (completedRun.completedAt ?? Date.now()) - completedRun.startedAt,
+                }),
+                withMessageThreadId(
+                  {
+                    ...(keyboard ? { reply_markup: keyboard } : {}),
+                  },
+                  target.messageThreadId,
+                ),
+              );
+            },
+          });
+
+          await finalAssistantDeliveryOrchestrator.flushSession(sessionId);
+          await footerDelivery;
         }
       }
 
@@ -1261,6 +1397,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     } catch (err) {
       logger.error("[Bot] Failed to send session idle footer:", err);
     } finally {
+      finalAssistantDeliveryOrchestrator.clearSession(sessionId);
       await clearThinkingBlockStream(sessionId, false);
       clearSessionRoutingContext(sessionId);
       localFileFollowUpTracker.clearSession(sessionId);
@@ -1271,8 +1408,14 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   });
 
   summaryAggregator.setOnTool(async (toolInfo) => {
+    const orderedPublication = scheduleOrderedPublication(toolInfo.sessionId, {
+      eventTimeMs: toolInfo.eventTimeMs,
+      logicalMessageId: buildToolPublicationLogicalMessageId(toolInfo),
+    });
+
     syncSessionRoutingContext(toolInfo.sessionId);
     if (!isSessionCurrent(toolInfo.sessionId)) {
+      orderedPublication.resolve(null);
       toolCallStreamer.clearSession(toolInfo.sessionId, "tool_missing_live_routing");
       logger.error("Bot or chat ID not available for sending tool notification");
       return;
@@ -1282,59 +1425,79 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       toolInfo.hasFileAttachment &&
       (toolInfo.tool === "write" || toolInfo.tool === "edit" || toolInfo.tool === "apply_patch");
 
-    if (
-      (await getHideToolCallMessagesForSession(toolInfo.sessionId)) ||
-      shouldIncludeToolInfoInFileCaption ||
-      toolInfo.tool === "task"
-    ) {
-      return;
-    }
-
     try {
+      if (
+        (await getHideToolCallMessagesForSession(toolInfo.sessionId)) ||
+        shouldIncludeToolInfoInFileCaption ||
+        toolInfo.tool === "task"
+      ) {
+        orderedPublication.resolve(null);
+        return;
+      }
+
       const message = formatToolInfo(toolInfo);
       if (message) {
         if (!isSessionCurrent(toolInfo.sessionId)) {
+          orderedPublication.resolve(null);
           toolCallStreamer.clearSession(toolInfo.sessionId, "tool_lost_live_routing_before_queue");
           return;
         }
 
         const spoilerMessage = formatToolCallAsSpoiler(message);
-        toolCallStreamer.replaceByPrefix(
-          toolInfo.sessionId,
-          `tool:${toolInfo.callId}`,
-          spoilerMessage,
-        );
-        void enqueueLocalFileFollowUpsFromText(toolInfo.sessionId, spoilerMessage);
+        orderedPublication.resolve(async () => {
+          toolCallStreamer.replaceByPrefix(
+            toolInfo.sessionId,
+            `tool:${toolInfo.callId}`,
+            spoilerMessage,
+          );
+          await enqueueLocalFileFollowUpsFromText(toolInfo.sessionId, spoilerMessage);
+        });
+        return;
       }
+
+      orderedPublication.resolve(null);
     } catch (err) {
+      orderedPublication.resolve(null);
       logger.error("Failed to send tool notification to Telegram:", err);
     }
   });
 
-  summaryAggregator.setOnSubagent(async (sessionId, subagents) => {
+  summaryAggregator.setOnSubagent(async (sessionId, subagents, eventTimeMs) => {
+    const orderedPublication = scheduleOrderedPublication(sessionId, {
+      eventTimeMs,
+      logicalMessageId: buildSubagentPublicationLogicalMessageId(sessionId),
+    });
+
     syncSessionRoutingContext(sessionId);
     if (!isSessionCurrent(sessionId)) {
-      return;
-    }
-
-    if (await getHideToolCallMessagesForSession(sessionId)) {
+      orderedPublication.resolve(null);
       return;
     }
 
     try {
+      if (await getHideToolCallMessagesForSession(sessionId)) {
+        orderedPublication.resolve(null);
+        return;
+      }
+
       const renderedCards = await renderSubagentCards(subagents);
       if (!renderedCards) {
+        orderedPublication.resolve(null);
         return;
       }
 
       if (!isSessionCurrent(sessionId)) {
+        orderedPublication.resolve(null);
         return;
       }
 
       const spoilerCards = formatToolCallAsSpoiler(renderedCards);
-      toolCallStreamer.replaceByPrefix(sessionId, SUBAGENT_STREAM_PREFIX, spoilerCards);
-      void enqueueLocalFileFollowUpsFromText(sessionId, spoilerCards);
+      orderedPublication.resolve(async () => {
+        toolCallStreamer.replaceByPrefix(sessionId, SUBAGENT_STREAM_PREFIX, spoilerCards);
+        await enqueueLocalFileFollowUpsFromText(sessionId, spoilerCards);
+      });
     } catch (err) {
+      orderedPublication.resolve(null);
       logger.error("Failed to render subagent activity for Telegram:", err);
     }
   });
@@ -1534,6 +1697,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       getThinkingClearMode(),
     );
     if (!routing || !target || !hasLiveTarget) {
+      finalAssistantDeliveryOrchestrator.clearSession(sessionId);
       clearPromptResponseMode(sessionId);
       localFileFollowUpTracker.clearSession(sessionId);
       clearSessionRoutingContext(sessionId);
@@ -1550,6 +1714,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     messageDraftStreamManager.clearSession(sessionId);
     responseStreamer.clearSession(sessionId, "session_error");
+    finalAssistantDeliveryOrchestrator.clearSession(sessionId);
     localFileFollowUpTracker.clearSession(sessionId);
     assistantRunState.clearRun(sessionId, "session_error");
     clearPromptResponseMode(sessionId);

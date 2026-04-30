@@ -1858,6 +1858,437 @@ describe("bot/index local file follow-up orchestration", () => {
     await Promise.resolve();
   });
 
+  it("holds the final answer behind durable tool publication ordering when tool visibility resolves late", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    const toolVisibilityDeferred = createDeferred<boolean>();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 0,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          hideToolFileMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 0),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => toolVisibilityDeferred.promise as unknown as boolean),
+      getHideToolFileMessages: vi.fn(() => false),
+      getUserLocale: vi.fn(() => "en"),
+      isMessageStreamingEnabled: vi.fn(() => false),
+    }));
+
+    const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+    const bot = createIsolatedBot() as any;
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "tool durable ordering",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-tool-durable-order-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: 1_000 },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-durable-order-part-1",
+          sessionID: "session-1",
+          messageID: "message-tool-durable-order-1",
+          type: "tool",
+          callID: "call-bash-durable-order-1",
+          tool: "bash",
+          state: {
+            status: "completed",
+            title: "Check tool ordering",
+            input: {
+              command: "pwd",
+              description: "Check tool ordering",
+            },
+            metadata: {},
+            time: { start: 1_100, end: 1_200 },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-tool-durable-order-part-1",
+          sessionID: "session-1",
+          messageID: "message-tool-durable-order-1",
+          type: "text",
+          text: "Final answer should wait for the tool publication.",
+          time: { start: 1_300 },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-tool-durable-order-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: 1_000, completed: 1_400 },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sendMessageMock).not.toHaveBeenCalled();
+
+    toolVisibilityDeferred.resolve(false);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(2));
+    expect(String(sendMessageMock.mock.calls[0]?.[1] ?? "")).toContain("Check tool ordering");
+    expect(String(sendMessageMock.mock.calls[1]?.[1] ?? "")).toContain(
+      "Final answer should wait for the tool publication.",
+    );
+  });
+
+  it("does not block final answer delivery when tool visibility lookup rejects", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 0,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          hideToolFileMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 0),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(async () => {
+        throw new Error("tool visibility unavailable");
+      }),
+      getHideToolFileMessages: vi.fn(() => false),
+      getUserLocale: vi.fn(() => "en"),
+      isMessageStreamingEnabled: vi.fn(() => false),
+    }));
+
+    const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+    const bot = createIsolatedBot() as any;
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "tool visibility rejection should not block final delivery",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-tool-visibility-rejection-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: 1_000 },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-visibility-rejection-part-1",
+          sessionID: "session-1",
+          messageID: "message-tool-visibility-rejection-1",
+          type: "tool",
+          callID: "call-bash-visibility-rejection-1",
+          tool: "bash",
+          state: {
+            status: "completed",
+            title: "Check tool visibility failure handling",
+            input: {
+              command: "pwd",
+              description: "Check tool visibility failure handling",
+            },
+            metadata: {},
+            time: { start: 1_100, end: 1_200 },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-tool-visibility-rejection-part-1",
+          sessionID: "session-1",
+          messageID: "message-tool-visibility-rejection-1",
+          type: "text",
+          text: "Final answer should still be delivered.",
+          time: { start: 1_300 },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-tool-visibility-rejection-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: 1_000, completed: 1_400 },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    expect(String(sendMessageMock.mock.calls[0]?.[1] ?? "")).toContain(
+      "Final answer should still be delivered.",
+    );
+  });
+
+  it("holds the final answer behind durable subagent publication ordering when card rendering resolves late", async () => {
+    try {
+      vi.resetModules();
+      capturedEventCallbacksByDirectory.clear();
+      sendMessageMock.mockClear();
+      sendMessageDraftMock.mockClear();
+      deleteMessageMock.mockClear();
+      editMessageTextMock.mockClear();
+
+      const renderedCardsDeferred = createDeferred<string>();
+
+      vi.doMock("../../src/config.js", () => ({
+        config: {
+          telegram: {
+            token: "test-token",
+            adminUserId: 777,
+            allowedUserIds: [777, 888],
+            proxyUrl: "",
+          },
+          bot: {
+            responseStreamThrottleMs: 0,
+            serviceMessagesIntervalSec: 0,
+            hideToolCallMessages: false,
+            hideThinkingMessages: false,
+            hideToolFileMessages: false,
+            bashToolDisplayMaxLength: 120,
+            messageFormatMode: "raw",
+          },
+          files: {
+            maxFileSizeKb: 1024,
+            maxFileLines: 400,
+          },
+        },
+      }));
+
+      vi.doMock("../../src/settings/manager.js", () => ({
+        getCurrentProject: getCurrentProjectMock,
+        setCurrentProject: vi.fn(),
+        getReasoningMode: vi.fn(() => 0),
+        getTenantRuntimeInfo: vi.fn(() => undefined),
+        getThinkingClearMode: vi.fn(() => false),
+        getHideThinkingMessages: vi.fn(() => false),
+        getHideToolCallMessages: vi.fn(() => false),
+        getHideToolFileMessages: vi.fn(() => false),
+        getUserLocale: vi.fn(() => "en"),
+        isMessageStreamingEnabled: vi.fn(() => false),
+      }));
+
+      vi.doMock("../../src/summary/subagent-formatter.js", () => ({
+        renderSubagentCards: vi.fn(() => renderedCardsDeferred.promise),
+      }));
+
+      const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+      const bot = createIsolatedBot() as any;
+      const textHandlers = bot.onHandlers.filter(
+        (entry: { event: string | string[] }) => entry.event === "message:text",
+      );
+      const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+      expect(promptHandler).toBeTypeOf("function");
+
+      await promptHandler({
+        message: {
+          text: "subagent durable ordering",
+          chat: { id: 123 },
+          message_thread_id: 1,
+        },
+        chat: { id: 123, type: "private" },
+        from: { id: 777 },
+        api: bot.api,
+        reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+      });
+
+      const emit = (event: Event) => {
+        capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+      };
+
+      emit({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "subtask-durable-order-1",
+            sessionID: "session-1",
+            messageID: "root-message-durable-order-1",
+            type: "subtask",
+            prompt: "Inspect artifact",
+            description: "Inspect /tmp/report.txt",
+            agent: "explore",
+          },
+        },
+      } as unknown as Event);
+
+      emit({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-subagent-durable-order-1",
+            sessionID: "session-1",
+            role: "assistant",
+            time: { created: 2_000 },
+          },
+        },
+      } as unknown as Event);
+
+      emit({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "text-subagent-durable-order-part-1",
+            sessionID: "session-1",
+            messageID: "message-subagent-durable-order-1",
+            type: "text",
+            text: "Final answer should wait for the subagent publication.",
+            time: { start: 2_100 },
+          },
+        },
+      } as unknown as Event);
+
+      emit({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-subagent-durable-order-1",
+            sessionID: "session-1",
+            role: "assistant",
+            time: { created: 2_000, completed: 2_200 },
+          },
+        },
+      } as unknown as Event);
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(sendMessageMock).not.toHaveBeenCalled();
+
+      renderedCardsDeferred.resolve("Task: Inspect artifact\nAgent: explore");
+
+      await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(2));
+      expect(String(sendMessageMock.mock.calls[0]?.[1] ?? "")).toContain("Task: Inspect artifact");
+      expect(String(sendMessageMock.mock.calls[1]?.[1] ?? "")).toContain(
+        "Final answer should wait for the subagent publication.",
+      );
+    } finally {
+      vi.doUnmock("../../src/summary/subagent-formatter.js");
+    }
+  });
+
   it("streams assistant text in one evolving message during reasoning mode and sends the final answer last", async () => {
     let nextMessageId = 100;
     sendMessageMock.mockImplementation(async () => ({ message_id: ++nextMessageId }));
@@ -2043,6 +2474,158 @@ describe("bot/index local file follow-up orchestration", () => {
 
     config.bot.hideThinkingMessages = originalHideThinkingMessages;
     vi.mocked(getReasoningMode).mockReturnValue(0);
+  });
+
+  it("waits to send the footer until the durable final answer materializes and uses completion time for elapsed", async () => {
+    vi.mocked(isMessageStreamingEnabled).mockReturnValue(false);
+
+    const deferredFinalMessage = createDeferred<{ message_id: number }>();
+    sendMessageMock
+      .mockImplementationOnce(() => deferredFinalMessage.promise)
+      .mockResolvedValue({ message_id: 43 });
+
+    let currentNow = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => currentNow);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "durable footer ordering",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-durable-footer-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: currentNow },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-durable-footer-1",
+          sessionID: "session-1",
+          messageID: "message-durable-footer-1",
+          type: "text",
+          text: "Durable final answer.",
+          time: { start: currentNow },
+        },
+      },
+    } as unknown as Event);
+
+    currentNow = 2_500;
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-durable-footer-1",
+          sessionID: "session-1",
+          role: "assistant",
+          agent: "plan",
+          modelID: "gpt-5.4",
+          providerID: "openai",
+          time: { created: 1_000, completed: currentNow },
+        },
+      },
+    } as unknown as Event);
+
+    currentNow = 5_000;
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+    expect(String(sendMessageMock.mock.calls[0]?.[1] ?? "")).toContain("Durable final answer.");
+    expect(
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("📋 Plan Mode · 🤖 openai/gpt-5.4 · 🕒 "),
+      ),
+    ).toBe(false);
+
+    deferredFinalMessage.resolve({ message_id: 42 });
+
+    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(2));
+    expect(sendMessageMock).toHaveBeenNthCalledWith(
+      2,
+      123,
+      expect.stringContaining("📋 Plan Mode · 🤖 openai/gpt-5.4 · 🕒 1.5s"),
+      expect.objectContaining({ message_thread_id: 1 }),
+    );
+  });
+
+  it("does not enqueue a footer for an empty completion with no visible final answer", async () => {
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "empty completion should not produce footer",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-empty-footer-1",
+          sessionID: "session-1",
+          role: "assistant",
+          agent: "plan",
+          modelID: "gpt-5.4",
+          providerID: "openai",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
   it("deletes the active unfinished thinking block on session error", async () => {
@@ -2248,7 +2831,277 @@ describe("bot/index local file follow-up orchestration", () => {
       | undefined;
     expect(thinkingCall).toBeDefined();
     expect(thinkingCall?.sendApi).toBe(bot.api);
+    expect(thinkingCall?.logicalMessageId).toBe("message-reasoning-draft-api-1");
     expect(thinkingCall?.target).toEqual({ chatId: 123, messageThreadId: 1 });
+
+    vi.doUnmock("../../src/bot/utils/thinking-block-stream.js");
+  });
+
+  it("keeps the final assistant completion path alive when final thinking publication fails", async () => {
+    let nextMessageId = 100;
+    let sendMessageCallCount = 0;
+    sendMessageMock.mockImplementation(async () => {
+      sendMessageCallCount += 1;
+      if (sendMessageCallCount === 2) {
+        throw new Error("thinking final publish failed");
+      }
+
+      return { message_id: ++nextMessageId };
+    });
+
+    const originalHideThinkingMessages = config.bot.hideThinkingMessages;
+    config.bot.hideThinkingMessages = false;
+    vi.mocked(getReasoningMode).mockReturnValue(1);
+
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandledRejections.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      const bot = createBot() as unknown as FakeBot;
+      const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+      const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+      expect(promptHandler).toBeTypeOf("function");
+
+      const ctx = {
+        message: {
+          text: "reasoning final publish failure should not stop completion",
+          chat: { id: 123 },
+          message_thread_id: 1,
+        },
+        chat: { id: 123, type: "private" },
+        from: { id: 777 },
+        api: bot.api,
+        reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+      };
+
+      await promptHandler(ctx);
+
+      const emit = (event: Event) => {
+        capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+      };
+
+      emit({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-reasoning-final-failure-1",
+            sessionID: "session-1",
+            role: "assistant",
+            time: { created: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      emit({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "reasoning-final-failure-part-1",
+            sessionID: "session-1",
+            messageID: "message-reasoning-final-failure-1",
+            type: "reasoning",
+            text: "Planning the answer before the final publication fails.",
+            time: { start: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      await vi.waitFor(() => expect(sendMessageDraftMock).toHaveBeenCalledTimes(1));
+
+      emit({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "text-final-failure-part-1",
+            sessionID: "session-1",
+            messageID: "message-reasoning-final-failure-1",
+            type: "text",
+            text: "The assistant answer still needs to complete.",
+            time: { start: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+
+      emit({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-reasoning-final-failure-1",
+            sessionID: "session-1",
+            role: "assistant",
+            agent: "plan",
+            modelID: "gpt-5.4",
+            providerID: "openai",
+            time: { created: Date.now(), completed: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      const hasFooterMessage = () =>
+        sendMessageMock.mock.calls.some((call) =>
+          String(call[1] ?? "").includes("📋 Plan Mode · 🤖 openai/gpt-5.4 · 🕒 "),
+        );
+
+      emit({
+        type: "session.idle",
+        properties: {
+          sessionID: "session-1",
+        },
+      } as unknown as Event);
+
+      await vi.waitFor(() =>
+        expect(hasFooterMessage()).toBe(true),
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+      config.bot.hideThinkingMessages = originalHideThinkingMessages;
+      vi.mocked(getReasoningMode).mockReturnValue(0);
+    }
+  });
+
+  it("continues assistant partial streaming when live thinking delivery fails", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    const streamThinkingBlocksSpy = vi.fn(async () => {
+      throw new Error("thinking live failed");
+    });
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 0,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 1),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
+      getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    vi.doMock("../../src/bot/utils/thinking-block-stream.js", async () => {
+      const actual = await vi.importActual<
+        typeof import("../../src/bot/utils/thinking-block-stream.js")
+      >("../../src/bot/utils/thinking-block-stream.js");
+
+      return {
+        ...actual,
+        streamThinkingBlocks: streamThinkingBlocksSpy,
+      };
+    });
+
+    const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+    const bot = createIsolatedBot() as any;
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    const ctx = {
+      message: {
+        text: "thinking live failure should not block assistant streaming",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    };
+
+    await promptHandler(ctx);
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-reasoning-live-failure-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-live-failure-part-1",
+          sessionID: "session-1",
+          messageID: "message-reasoning-live-failure-1",
+          type: "reasoning",
+          text: "Thinking live delivery fails here.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-live-failure-part-1",
+          sessionID: "session-1",
+          messageID: "message-reasoning-live-failure-1",
+          type: "text",
+          text: "Assistant text still streams.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    const hasStreamedAssistantText = () =>
+      sendMessageMock.mock.calls.some((call) =>
+        String(call[1] ?? "").includes("Assistant text still streams."),
+      );
+
+    await vi.waitFor(() => expect(streamThinkingBlocksSpy).toHaveBeenCalled());
+    await vi.waitFor(() => expect(hasStreamedAssistantText()).toBe(true));
 
     vi.doUnmock("../../src/bot/utils/thinking-block-stream.js");
   });
@@ -5624,5 +6477,170 @@ describe("bot/index local file follow-up orchestration", () => {
         String(call[1] ?? "").includes("bot.session_error"),
       ),
     ).toBe(false);
+  });
+
+  it("clears durable final ordering state when session error loses routing", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    const clearDurableOrderingSessionSpies: Array<ReturnType<typeof vi.fn>> = [];
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 50,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    let currentTarget: { chatId: number; messageThreadId: number } | undefined = {
+      chatId: 123,
+      messageThreadId: 1,
+    };
+
+    vi.doMock("../../src/thread/manager.js", () => ({
+      threadContextManager: {
+        activateFromContext: vi.fn(),
+        bindProjectToActiveContext: vi.fn(),
+        bindSessionToActiveContext: vi.fn(),
+        clearSessionForActiveContext: vi.fn(),
+        getActiveScope: vi.fn(() =>
+          currentTarget
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
+            : null,
+        ),
+        isActiveScope: vi.fn(() => true),
+        getSessionTarget: vi.fn(() => currentTarget),
+        getSessionScope: vi.fn(() => null),
+        getSessionDirectory: vi.fn(() => "/repo"),
+      },
+    }));
+
+    vi.doMock("../../src/attach/manager.js", () => ({
+      attachManager: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        getTargetForSession: vi.fn(() => currentTarget ?? null),
+        getScopeForSession: vi.fn(() =>
+          currentTarget
+            ? {
+                userId: 777,
+                chatId: currentTarget.chatId,
+                messageThreadId: currentTarget.messageThreadId,
+              }
+            : null,
+        ),
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 1),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
+      getThinkingClearMode: vi.fn(() => true),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    vi.doMock("../../src/bot/delivery/session-delivery-orchestrator.js", () => ({
+      SessionDeliveryOrchestrator: class {
+        private readonly clearSessionSpy = vi.fn();
+
+        constructor(_options?: unknown) {
+          clearDurableOrderingSessionSpies.push(this.clearSessionSpy);
+        }
+
+        enqueue(): Promise<void> {
+          return Promise.resolve();
+        }
+
+        flushSession(): Promise<void> {
+          return Promise.resolve();
+        }
+
+        clearSession(sessionId: string): void {
+          this.clearSessionSpy(sessionId);
+        }
+
+        clearAll(): void {}
+      },
+    }));
+
+    const { createBot: createIsolatedBot, routingBySessionId } =
+      await import("../../src/bot/index.js");
+    expect(clearDurableOrderingSessionSpies).toHaveLength(2);
+    const bot = createIsolatedBot() as any;
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "clear durable ordering on missing-routing session error",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    currentTarget = undefined;
+    routingBySessionId.set("session-1", {
+      bot,
+      target: { chatId: 123, messageThreadId: 1 },
+      scope: null,
+    });
+
+    expect(clearDurableOrderingSessionSpies[1]).not.toHaveBeenCalled();
+
+    emit({
+      type: "session.error",
+      properties: {
+        sessionID: "session-1",
+        error: {
+          message: "agent failed after routing disappeared",
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(clearDurableOrderingSessionSpies[1]).toHaveBeenCalledWith("session-1"),
+    );
   });
 });

@@ -47,7 +47,7 @@ describe("summary/subagent-formatter", () => {
     expect(text).toContain("Model: openai/gpt-5.4");
     expect(text).not.toContain("Context:");
     expect(text).not.toContain("Cost:");
-    expect(text).toContain('📖 "read" `src/pinned/manager.ts`');
+    expect(text).toContain('📖 &quot;read&quot; `src/pinned/manager.ts`');
     expect(text).not.toContain("Reading pinned manager");
     expect(text).not.toContain("Working:");
   });
@@ -173,7 +173,7 @@ describe("summary/subagent-formatter", () => {
       },
     ]);
 
-    expect(text).toContain('📖 "read"');
+    expect(text).toContain('📖 &quot;read&quot;');
     expect(text).not.toContain("⚙️ Working...");
   });
 
@@ -210,5 +210,77 @@ describe("summary/subagent-formatter", () => {
 
     expect(text).toContain("src/summary/subagent-formatter.ts");
     expect(text).not.toContain("Reading subagent formatter");
+  });
+
+  it("escapes dynamic subagent fields before composing Telegram HTML", async () => {
+    setRuntimeLocale("en");
+
+    const text = await renderSubagentCards([
+      {
+        cardId: "card-1",
+        sessionId: "child-1",
+        parentSessionId: "root-1",
+        agent: '<b>explore</b>',
+        description: '<a href="https://evil.example">task</a>',
+        prompt: "inspect formatter",
+        status: "error",
+        providerID: "openai",
+        modelID: 'gpt-5.4</blockquote><b>boom</b>',
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        cost: 0,
+        terminalMessage: '<i>Permission denied</i>',
+        updatedAt: Date.now(),
+      },
+    ]);
+
+    expect(text).toContain('&lt;a href=&quot;https://evil.example&quot;&gt;task&lt;/a&gt;');
+    expect(text).toContain('Agent: &lt;b&gt;explore&lt;/b&gt;');
+    expect(text).toContain('Model: openai/gpt-5.4&lt;/blockquote&gt;&lt;b&gt;boom&lt;/b&gt;');
+    expect(text).toContain('❌ &lt;i&gt;Permission denied&lt;/i&gt;');
+    expect(text).not.toContain('<a href="https://evil.example">task</a>');
+    expect(text).not.toContain('<i>Permission denied</i>');
+  });
+
+  it("escapes tool-step details before inserting them into Telegram HTML", async () => {
+    setRuntimeLocale("en");
+
+    const text = await renderSubagentCards([
+      {
+        cardId: "card-1",
+        sessionId: "child-1",
+        parentSessionId: "root-1",
+        agent: "explore",
+        description: "task description",
+        prompt: "task description",
+        status: "running",
+        providerID: "openai",
+        modelID: "gpt-5.4",
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        cost: 0,
+        currentTool: "bash",
+        currentToolInput: {
+          command: '<b>npm test</b>',
+          description: '<a href="https://evil.example">Run tests</a>',
+        },
+        updatedAt: Date.now(),
+      },
+    ]);
+
+    expect(text).toContain('&lt;a href=&quot;https://evil.example&quot;&gt;Run tests&lt;/a&gt;');
+    expect(text).toContain('&lt;b&gt;npm test&lt;/b&gt;');
+    expect(text).not.toContain('<a href="https://evil.example">Run tests</a>');
+    expect(text).not.toContain('<b>npm test</b>');
   });
 });

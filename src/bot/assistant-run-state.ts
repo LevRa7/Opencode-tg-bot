@@ -1,3 +1,4 @@
+import type { AssistantCompletionMetadata } from "../assistant-completion-metadata.js";
 import { logger } from "../utils/logger.js";
 
 export interface AssistantRunStartInfo {
@@ -7,11 +8,7 @@ export interface AssistantRunStartInfo {
   configuredModelID?: string;
 }
 
-export interface AssistantRunResolvedInfo {
-  agent?: string;
-  providerID?: string;
-  modelID?: string;
-}
+export type AssistantRunResolvedInfo = AssistantCompletionMetadata;
 
 export interface AssistantRunInfo extends AssistantRunStartInfo {
   sessionId: string;
@@ -19,6 +16,11 @@ export interface AssistantRunInfo extends AssistantRunStartInfo {
   actualProviderID?: string;
   actualModelID?: string;
   hasCompletedResponse: boolean;
+  completionRecorded: boolean;
+  hasPublishedFinalResponse: boolean;
+  completedLogicalMessageId?: string;
+  publishedFinalLogicalMessageId?: string;
+  completedAt?: number;
 }
 
 class AssistantRunState {
@@ -36,6 +38,8 @@ class AssistantRunState {
       configuredProviderID: info.configuredProviderID,
       configuredModelID: info.configuredModelID,
       hasCompletedResponse: false,
+      completionRecorded: false,
+      hasPublishedFinalResponse: false,
     });
 
     logger.debug(
@@ -54,7 +58,7 @@ class AssistantRunState {
       return;
     }
 
-    run.hasCompletedResponse = true;
+    run.completionRecorded = true;
     if (info?.agent) {
       run.actualAgent = info.agent;
     }
@@ -64,7 +68,41 @@ class AssistantRunState {
     if (info?.modelID) {
       run.actualModelID = info.modelID;
     }
+    if (info?.logicalMessageId) {
+      run.completedLogicalMessageId = info.logicalMessageId;
+    }
+    if (typeof info?.completedAt === "number") {
+      run.completedAt = info.completedAt;
+    }
     logger.debug(`[AssistantRunState] markResponseCompleted: session=${sessionId}, hasCompletedResponse=${run.hasCompletedResponse}`);
+  }
+
+  markVisibleFinalResponse(sessionId: string, info?: { logicalMessageId?: string }): void {
+    const run = this.runs.get(sessionId);
+    if (!run) {
+      logger.debug(`[AssistantRunState] markVisibleFinalResponse no run: session=${sessionId}`);
+      return;
+    }
+
+    run.hasCompletedResponse = true;
+    if (info?.logicalMessageId) {
+      run.completedLogicalMessageId = info.logicalMessageId;
+    }
+    logger.debug(`[AssistantRunState] markVisibleFinalResponse: session=${sessionId}, hasCompletedResponse=${run.hasCompletedResponse}`);
+  }
+
+  markFinalResponsePublished(sessionId: string, info?: { logicalMessageId?: string }): void {
+    const run = this.runs.get(sessionId);
+    if (!run) {
+      logger.debug(`[AssistantRunState] markFinalResponsePublished no run: session=${sessionId}`);
+      return;
+    }
+
+    run.hasPublishedFinalResponse = true;
+    if (info?.logicalMessageId) {
+      run.publishedFinalLogicalMessageId = info.logicalMessageId;
+    }
+    logger.debug(`[AssistantRunState] markFinalResponsePublished: session=${sessionId}, hasPublishedFinalResponse=${run.hasPublishedFinalResponse}`);
   }
 
   finishRun(sessionId: string, reason: string): AssistantRunInfo | null {

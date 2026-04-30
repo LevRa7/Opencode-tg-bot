@@ -118,6 +118,14 @@ type ReasoningBlock =
       text: string;
     };
 
+type OrderedListLine = {
+  indent: string;
+  marker: string;
+  content: string;
+};
+
+const ORDERED_LIST_LINE_PATTERN = /^(\s*)(\d+\.\s+)(.*\S.*)$/;
+
 export function escapeHtml(text: string): string {
   return text
     .replaceAll("&", "&amp;")
@@ -232,6 +240,10 @@ function isHeadingLine(line: string, nextLine: string | undefined): boolean {
     return false;
   }
 
+  if (parseOrderedListLine(line)) {
+    return false;
+  }
+
   if (/^#{1,6}\s+/.test(trimmed)) {
     return true;
   }
@@ -244,6 +256,75 @@ function isHeadingLine(line: string, nextLine: string | undefined): boolean {
   }
 
   return isLikelyTitle(trimmed, nextLine);
+}
+
+function parseOrderedListLine(line: string): OrderedListLine | null {
+  const match = ORDERED_LIST_LINE_PATTERN.exec(line);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    indent: match[1] ?? "",
+    marker: match[2] ?? "",
+    content: (match[3] ?? "").trim(),
+  };
+}
+
+function getLeadingWhitespace(line: string): string {
+  const match = line.match(/^\s*/);
+  return match?.[0] ?? "";
+}
+
+function collectOrderedListBlock(
+  lines: string[],
+  startIndex: number,
+): { text: string; nextIndex: number } {
+  const orderedLines: string[] = [];
+  let continuationIndent = "";
+  let itemBaseIndentLength = 0;
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    const trimmedRightLine = line.trimEnd();
+    const trimmedLine = trimmedRightLine.trim();
+
+    if (!trimmedLine) {
+      let nextIndex = index + 1;
+      while (nextIndex < lines.length && !(lines[nextIndex] ?? "").trim()) {
+        nextIndex += 1;
+      }
+
+      if (nextIndex >= lines.length || !parseOrderedListLine(lines[nextIndex] ?? "")) {
+        break;
+      }
+
+      index = nextIndex;
+      continue;
+    }
+
+    const orderedLine = parseOrderedListLine(trimmedRightLine);
+    if (orderedLine) {
+      orderedLines.push(`${orderedLine.indent}${orderedLine.marker}${orderedLine.content}`);
+      continuationIndent = `${orderedLine.indent}${" ".repeat(orderedLine.marker.length)}`;
+      itemBaseIndentLength = orderedLine.indent.length;
+      index += 1;
+      continue;
+    }
+
+    if (getLeadingWhitespace(trimmedRightLine).length <= itemBaseIndentLength) {
+      break;
+    }
+
+    orderedLines.push(`${continuationIndent}${trimmedLine}`);
+    index += 1;
+  }
+
+  return {
+    text: orderedLines.join("\n"),
+    nextIndex: index,
+  };
 }
 
 function parseReasoningBlocks(text: string): ReasoningBlock[] {
@@ -259,13 +340,24 @@ function parseReasoningBlocks(text: string): ReasoningBlock[] {
     paragraphLines = [];
   };
 
-  for (let index = 0; index < lines.length; index += 1) {
+  for (let index = 0; index < lines.length; ) {
     const line = lines[index] ?? "";
     const trimmed = line.trim();
     const nextLine = lines[index + 1]?.trim();
 
     if (!trimmed) {
       flushParagraph();
+      index += 1;
+      continue;
+    }
+
+    if (parseOrderedListLine(line)) {
+      flushParagraph();
+      const orderedListBlock = collectOrderedListBlock(lines, index);
+      if (orderedListBlock.text) {
+        blocks.push({ kind: "paragraph", text: orderedListBlock.text });
+      }
+      index = orderedListBlock.nextIndex;
       continue;
     }
 
@@ -275,10 +367,12 @@ function parseReasoningBlocks(text: string): ReasoningBlock[] {
       if (headingText) {
         blocks.push({ kind: "heading", text: headingText });
       }
+      index += 1;
       continue;
     }
 
     paragraphLines.push(trimmed);
+    index += 1;
   }
 
   flushParagraph();

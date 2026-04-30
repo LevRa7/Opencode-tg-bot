@@ -124,6 +124,39 @@ describe("bot/utils/thinking-draft-lifecycle", () => {
     expect(foreignTransport.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("keeps cross-route finalize retries pinned to the stored active transport after a publish failure", async () => {
+    const lifecycle = new ThinkingDraftLifecycle();
+    const activeTransport = createTransport({
+      sendMessage: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("publish failed"))
+        .mockResolvedValueOnce({ message_id: 901 }),
+    });
+    const foreignTransport = createTransport({
+      chatId: 999,
+      messageThreadId: 777,
+      draftId: 2,
+      routingIdentity: "chat:999:thread:777",
+    });
+
+    await lifecycle.renderActiveDraft("s1", "final-draft", activeTransport);
+    await expect(lifecycle.finalizeDraft("s1", foreignTransport)).rejects.toThrow("publish failed");
+    await expect(lifecycle.finalizeDraft("s1", foreignTransport)).resolves.toBeUndefined();
+
+    expect(activeTransport.sendMessage).toHaveBeenCalledTimes(2);
+    expect(activeTransport.sendMessage).toHaveBeenNthCalledWith(1, 123, "final-draft", {
+      parse_mode: "HTML",
+      message_thread_id: 456,
+      disable_notification: true,
+    });
+    expect(activeTransport.sendMessage).toHaveBeenNthCalledWith(2, 123, "final-draft", {
+      parse_mode: "HTML",
+      message_thread_id: 456,
+      disable_notification: true,
+    });
+    expect(foreignTransport.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("starts a fresh draft after finalize instead of reusing the previous one", async () => {
     const lifecycle = new ThinkingDraftLifecycle();
     const firstTransport = createTransport();
@@ -139,6 +172,66 @@ describe("bot/utils/thinking-draft-lifecycle", () => {
       message_thread_id: 456,
       disable_notification: true,
     });
+  });
+
+  it("renders only the first safe html chunk for oversized drafts and publishes all chunks on finalize", async () => {
+    const lifecycle = new ThinkingDraftLifecycle();
+    const sendMessageDraft = vi.fn().mockResolvedValue(true);
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 900 });
+    const transport = createTransport({ sendMessageDraft, sendMessage });
+    const oversizedText =
+      "<b>Thinking</b>\n\n<blockquote expandable><i>" +
+      "Body section ".repeat(900) +
+      "</i></blockquote>";
+
+    await lifecycle.renderActiveDraft("s1", oversizedText, transport);
+
+    expect(sendMessageDraft).toHaveBeenCalledTimes(1);
+
+    const draftText = sendMessageDraft.mock.calls[0][2] as string;
+    expect(draftText.length).toBeLessThanOrEqual(4096);
+    expect(draftText).toContain("<blockquote expandable>");
+    expect(draftText).toContain("</blockquote>");
+    expect(draftText).toContain("</i>");
+
+    await lifecycle.finalizeDraft("s1", transport);
+
+    expect(sendMessage.mock.calls.length).toBeGreaterThan(1);
+    for (const call of sendMessage.mock.calls) {
+      const publishedText = call[1] as string;
+      expect(publishedText.length).toBeLessThanOrEqual(4096);
+      expect(publishedText).toContain("</blockquote>");
+    }
+  });
+
+  it("resumes finalize from the first unsent chunk after a later chunk send fails", async () => {
+    const lifecycle = new ThinkingDraftLifecycle();
+    const sendMessageDraft = vi.fn().mockResolvedValue(true);
+    const sendMessage = vi
+      .fn()
+      .mockResolvedValueOnce({ message_id: 901 })
+      .mockRejectedValueOnce(new Error("chunk send failed"))
+      .mockResolvedValueOnce({ message_id: 902 });
+    const transport = createTransport({ sendMessageDraft, sendMessage });
+    const oversizedText =
+      "<b>Thinking</b>\n\n<blockquote expandable><i>" +
+      "Body section ".repeat(900) +
+      "</i></blockquote>";
+
+    await lifecycle.renderActiveDraft("s1", oversizedText, transport);
+    await expect(lifecycle.finalizeDraft("s1", transport)).rejects.toThrow("chunk send failed");
+    await expect(lifecycle.finalizeDraft("s1", transport)).resolves.toBeUndefined();
+
+    expect(sendMessage).toHaveBeenCalledTimes(4);
+
+    const firstAttemptChunk = sendMessage.mock.calls[0][1] as string;
+    const failedChunk = sendMessage.mock.calls[1][1] as string;
+    const retriedChunk = sendMessage.mock.calls[2][1] as string;
+    const finalChunk = sendMessage.mock.calls[3][1] as string;
+
+    expect(retriedChunk).toBe(failedChunk);
+    expect(retriedChunk).not.toBe(firstAttemptChunk);
+    expect(finalChunk).not.toBe(firstAttemptChunk);
   });
 
   it("clears only the active unfinished draft when forced cleanup is requested", async () => {

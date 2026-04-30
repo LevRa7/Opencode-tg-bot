@@ -61,8 +61,12 @@ No public inbound ports are required for normal usage.
 
 - Send each completed assistant response after completion signal from SSE
 - Keep thinking output in a dedicated `Думаю...` message and stream the expandable reasoning trace there instead of repeating it in the final answer; each reasoning block is rendered as a Telegram draft while active, then published as a normal chat message when the block completes, and the next reasoning block starts a fresh draft lifecycle
+- Keep live thinking updates responsive while durable assistant/tool/subagent/footer publications follow OpenCode event ordering per session
 - Split long responses into multiple Telegram messages
 - Split long HTML assistant replies into multiple Telegram messages without overwriting already delivered chunks
+- Chunk long Telegram HTML safely so tag structure survives splitting and active thinking drafts stay within Telegram limits
+- Preserve readable numbered lists in Telegram replies instead of collapsing ordered items into repeated `1.` lines
+- Keep assistant-output delivery resilient to Telegram `429 retry_after` and other per-message send failures without crashing the bot process
 - Send code updates as files (size-limited)
 - Send assistant-mentioned local files as follow-up attachments only from the admin host runtime or from tenant-visible `/workspace/...` and `/state/...` paths that map to the current Docker user's Workspaces directory
 

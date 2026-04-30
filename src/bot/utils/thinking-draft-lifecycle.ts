@@ -1,4 +1,5 @@
 import { logger } from "../../utils/logger.js";
+import { chunkTelegramHtml, getFirstTelegramHtmlChunk } from "./telegram-html-chunker.js";
 
 interface ThinkingDraftTransportOptions {
   parse_mode: "HTML";
@@ -33,6 +34,8 @@ interface ActiveDraftState {
   routingIdentity: string;
   transport: ThinkingDraftTransport;
   failedRenderError: Error | null;
+  finalizedText: string | null;
+  nextFinalizeChunkIndex: number;
   task: Promise<void>;
 }
 
@@ -72,7 +75,7 @@ export class ThinkingDraftLifecycle {
         await transport.sendMessageDraft(
           transport.chatId,
           transport.draftId,
-          text,
+          getFirstTelegramHtmlChunk(text),
           buildOptions(transport.messageThreadId),
         );
 
@@ -81,6 +84,8 @@ export class ThinkingDraftLifecycle {
         state.routingIdentity = transport.routingIdentity;
         state.transport = transport;
         state.failedRenderError = null;
+        state.finalizedText = null;
+        state.nextFinalizeChunkIndex = 0;
       })
       .catch((error) => {
         state.failedRenderError = error instanceof Error ? error : new Error(String(error));
@@ -111,11 +116,21 @@ export class ThinkingDraftLifecycle {
     }
 
     const activeTransport = state.transport;
-    await activeTransport.sendMessage(
-      activeTransport.chatId,
-      state.lastText,
-      buildOptions(activeTransport.messageThreadId),
-    );
+    if (state.finalizedText !== state.lastText) {
+      state.finalizedText = state.lastText;
+      state.nextFinalizeChunkIndex = 0;
+    }
+
+    const chunks = chunkTelegramHtml(state.lastText);
+    for (let index = state.nextFinalizeChunkIndex; index < chunks.length; index += 1) {
+      const chunk = chunks[index];
+      await activeTransport.sendMessage(
+        activeTransport.chatId,
+        chunk,
+        buildOptions(activeTransport.messageThreadId),
+      );
+      state.nextFinalizeChunkIndex = index + 1;
+    }
     this.states.delete(sessionId);
   }
 
@@ -172,6 +187,8 @@ export class ThinkingDraftLifecycle {
       routingIdentity: transport.routingIdentity,
       transport,
       failedRenderError: null,
+      finalizedText: null,
+      nextFinalizeChunkIndex: 0,
       task: Promise.resolve(),
     };
     this.states.set(sessionId, created);

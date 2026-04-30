@@ -10,6 +10,7 @@ import {
 import type { Question } from "../question/types.js";
 import type { PermissionRequest } from "../permission/types.js";
 import type { FileChange } from "../pinned/types.js";
+import type { AssistantCompletionMetadata } from "../assistant-completion-metadata.js";
 import { logger } from "../utils/logger.js";
 import { getCurrentProject } from "../settings/manager.js";
 import { getCurrentSession } from "../session/manager.js";
@@ -27,19 +28,13 @@ type AggregatedToolCall = {
   input?: { [key: string]: unknown };
 };
 
-export interface AssistantCompletionInfo {
-  agent?: string;
-  providerID?: string;
-  modelID?: string;
-}
-
 type MessageCompleteCallback = (
   sessionId: string,
   messageId: string,
   messageText: string,
   reasoningText?: string,
   toolCalls?: AggregatedToolCall[],
-  completionInfo?: AssistantCompletionInfo,
+  completionInfo?: AssistantCompletionMetadata,
 ) => void;
 
 type MessagePartialCallback = (
@@ -78,6 +73,7 @@ export interface ToolInfo {
   title?: string;
   metadata?: { [key: string]: unknown };
   hasFileAttachment?: boolean;
+  eventTimeMs?: number;
 }
 
 export interface ToolFileInfo extends ToolInfo {
@@ -131,7 +127,11 @@ export interface SubagentInfo {
   updatedAt: number;
 }
 
-type SubagentCallback = (sessionId: string, subagents: SubagentInfo[]) => void;
+type SubagentCallback = (
+  sessionId: string,
+  subagents: SubagentInfo[],
+  eventTimeMs?: number,
+) => void;
 
 type SessionCompactedCallback = (sessionId: string, directory: string) => void;
 
@@ -517,7 +517,7 @@ class SummaryAggregator {
     }
   }
 
-  private emitSubagentState(parentSessionId: string): void {
+  private emitSubagentState(parentSessionId: string, eventTimeMs?: number): void {
     if (!this.onSubagentCallback || this.subagentOrder.length === 0) {
       return;
     }
@@ -550,7 +550,20 @@ class SummaryAggregator {
       return;
     }
 
-    this.onSubagentCallback(parentSessionId, subagents);
+    this.onSubagentCallback(parentSessionId, subagents, eventTimeMs);
+  }
+
+  private getToolEventTimeMs(state: ToolState): number | undefined {
+    const time = (state as { time?: { start?: number; end?: number } }).time;
+    if (typeof time?.end === "number") {
+      return time.end;
+    }
+
+    if (typeof time?.start === "number") {
+      return time.start;
+    }
+
+    return undefined;
   }
 
   private createSubagentState(
@@ -829,7 +842,10 @@ class SummaryAggregator {
 
     const subagent = this.getOrCreateSubagentForSession(info.id);
     this.enrichSubagentFromSessionTitle(subagent, info.title);
-    this.emitSubagentState(subagent.parentSessionId);
+    this.emitSubagentState(
+      subagent.parentSessionId,
+      typeof info.time?.updated === "number" ? info.time.updated : info.time?.created,
+    );
   }
 
   private updateSubagentFromAssistantMessage(info: {
@@ -895,7 +911,7 @@ class SummaryAggregator {
     subagent.currentToolInput = input ? { ...input } : undefined;
     subagent.currentToolTitle = title;
     subagent.updatedAt = Date.now();
-    this.emitSubagentState(subagent.parentSessionId);
+    this.emitSubagentState(subagent.parentSessionId, this.getToolEventTimeMs(state));
   }
 
   private updateSubagentStepStart(sessionId: string, snapshot?: string): void {
@@ -1030,10 +1046,8 @@ class SummaryAggregator {
       const isCompleted = Boolean(time?.completed);
       const messageText = this.getCombinedMessageText(messageID);
       const reasoningText = this.getCombinedReasoningText(messageID);
-      const hasFinalContent =
-        messageText.trim().length > 0 || reasoningText.trim().length > 0 || textState.toolCalls.length > 0;
 
-      if (isCompleted && this.onCompleteCallback && hasFinalContent) {
+      if (isCompleted && this.onCompleteCallback) {
         this.onCompleteCallback(
           info.sessionID,
           messageID,
@@ -1044,6 +1058,8 @@ class SummaryAggregator {
             agent: (info as { agent?: string }).agent,
             providerID: (info as { providerID?: string }).providerID,
             modelID: (info as { modelID?: string }).modelID,
+            logicalMessageId: messageID,
+            completedAt: typeof time?.completed === "number" ? time.completed : undefined,
           },
         );
       }
@@ -1267,6 +1283,7 @@ class SummaryAggregator {
             title,
             metadata: state.metadata as { [key: string]: unknown },
             hasFileAttachment: false,
+            eventTimeMs: this.getToolEventTimeMs(state),
           });
         }
       }
@@ -1327,6 +1344,7 @@ class SummaryAggregator {
             title,
             metadata: state.metadata as { [key: string]: unknown },
             hasFileAttachment: !!preparedFileContext.fileData,
+            eventTimeMs: this.getToolEventTimeMs(state),
           };
 
           logger.debug(

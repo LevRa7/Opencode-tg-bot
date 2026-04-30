@@ -32,6 +32,7 @@ import {
   clearAllThinkingBlockStreams,
   clearThinkingBlockStream,
   configureThinkingBlockDraftIdAllocator,
+  configureThinkingBlockDeliveryOrchestratorForTests,
   finalizeThinkingBlockStream,
   streamThinkingBlocks,
 } from "../../../src/bot/utils/thinking-block-stream.js";
@@ -60,6 +61,7 @@ describe("bot/utils/thinking-block-stream", () => {
         format: "html",
       }));
     clearAllThinkingBlockStreams();
+    configureThinkingBlockDeliveryOrchestratorForTests(null);
     configureThinkingBlockDraftIdAllocator({
       next: () => 1,
     });
@@ -244,7 +246,11 @@ describe("bot/utils/thinking-block-stream", () => {
       expect(resolveRender).not.toBeNull();
     });
 
-    resolveRender?.();
+    if (!resolveRender) {
+      throw new Error("expected in-flight render resolver");
+    }
+
+    (resolveRender as () => void)();
     await first;
     await second;
 
@@ -263,6 +269,7 @@ describe("bot/utils/thinking-block-stream", () => {
     mocked.renderActiveDraftMock.mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce(undefined);
 
     await expect(streamThinkingBlocks(payload)).rejects.toThrow("boom");
+    await Promise.resolve();
     await streamThinkingBlocks(payload);
 
     expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(2);
@@ -296,6 +303,7 @@ describe("bot/utils/thinking-block-stream", () => {
         reasoningText: "Step 2",
       }),
     ).rejects.toThrow("boom");
+    await Promise.resolve();
 
     await streamThinkingBlocks({
       sessionId: "s1",
@@ -312,18 +320,20 @@ describe("bot/utils/thinking-block-stream", () => {
         sendApi: createSendApi(),
         title: "Thinking",
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe("finalized");
 
     expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(3);
   });
 
   it("finalizes through the draft lifecycle even when coordinator state is missing", async () => {
-    await finalizeThinkingBlockStream({
-      sessionId: "missing-session",
-      target: { chatId: 1 },
-      sendApi: createSendApi(),
-      title: "Thinking",
-    });
+    await expect(
+      finalizeThinkingBlockStream({
+        sessionId: "missing-session",
+        target: { chatId: 1 },
+        sendApi: createSendApi(),
+        title: "Thinking",
+      }),
+    ).resolves.toBe("finalized");
 
     expect(mocked.finalizeDraftMock).toHaveBeenCalledWith(
       "missing-session",
@@ -332,6 +342,104 @@ describe("bot/utils/thinking-block-stream", () => {
         routingIdentity: "1:main",
       }),
     );
+  });
+
+  it("uses the same fallback logical message id for live and final thinking when callers omit one", async () => {
+    vi.resetModules();
+
+    const deliveryItems: Array<Record<string, unknown>> = [];
+    vi.doMock("../../../src/bot/delivery/session-delivery-orchestrator.js", () => ({
+      SessionDeliveryOrchestrator: class {
+        enqueue(item: Record<string, unknown>) {
+          deliveryItems.push(item);
+          return Promise.resolve();
+        }
+
+        flushSession() {
+          return Promise.resolve();
+        }
+
+        clearSession() {
+          return undefined;
+        }
+
+        clearAll() {
+          return undefined;
+        }
+      },
+    }));
+
+    vi.doMock("../../../src/bot/utils/thinking-draft-lifecycle.js", () => ({
+      ThinkingDraftLifecycle: class {
+        renderActiveDraft = vi.fn().mockResolvedValue(undefined);
+        finalizeDraft = vi.fn().mockResolvedValue(undefined);
+        clearActiveDraft = vi.fn().mockResolvedValue(undefined);
+        clearSession = vi.fn();
+        clearAll = vi.fn();
+      },
+    }));
+
+    vi.doMock("../../../src/bot/utils/thinking-message.js", () => ({
+      formatThinkingMessageWithReasoning: (title: string, reasoning: string) => ({
+        text: `<b>${title}</b>\n\n<blockquote expandable>${reasoning}</blockquote>`,
+        format: "html",
+      }),
+    }));
+
+    vi.doMock("../../../src/bot/utils/send-message-draft-effect-context.js", () => ({
+      sendMessageWithoutDraftEffect: vi.fn().mockResolvedValue({ message_id: 101 }),
+    }));
+
+    const isolated = await import("../../../src/bot/utils/thinking-block-stream.js");
+
+    isolated.configureThinkingBlockDraftIdAllocator({ next: () => 1 });
+    await isolated.streamThinkingBlocks({
+      sessionId: "s1",
+      target: { chatId: 1 },
+      sendApi: createSendApi(),
+      title: "Thinking",
+      reasoningText: "Step 1",
+    });
+
+    await expect(
+      isolated.finalizeThinkingBlockStream({
+        sessionId: "s1",
+        target: { chatId: 1 },
+        sendApi: createSendApi(),
+        title: "Thinking",
+      }),
+    ).resolves.toBe("finalized");
+
+    expect(deliveryItems.slice(0, 3)).toEqual([
+      expect.objectContaining({
+        sessionId: "s1",
+        channel: "live",
+        logicalMessageId: "thinking:s1",
+      }),
+      expect.objectContaining({
+        sessionId: "s1",
+        channel: "live",
+        logicalMessageId: "thinking:s1",
+        isTerminal: true,
+      }),
+      expect.objectContaining({
+        sessionId: "s1",
+        channel: "durable",
+        waitForLogicalMessageLiveTerminal: "thinking:s1",
+      }),
+    ]);
+    expect(deliveryItems[0]).toMatchObject({ channel: "live" });
+    expect(deliveryItems[1]).toMatchObject({ channel: "live", isTerminal: true });
+    expect(deliveryItems[2]).toMatchObject({ channel: "durable" });
+    expect(deliveryItems[0]?.logicalMessageId).toBe(deliveryItems[1]?.logicalMessageId);
+    expect(deliveryItems[1]?.logicalMessageId).toBe(
+      deliveryItems[2]?.waitForLogicalMessageLiveTerminal,
+    );
+
+    vi.doUnmock("../../../src/bot/delivery/session-delivery-orchestrator.js");
+    vi.doUnmock("../../../src/bot/utils/thinking-draft-lifecycle.js");
+    vi.doUnmock("../../../src/bot/utils/thinking-message.js");
+    vi.doUnmock("../../../src/bot/utils/send-message-draft-effect-context.js");
   });
 
   it("keeps coordinator state for later missing-routing cleanup when finalize cannot clear the old route", async () => {
@@ -355,12 +463,14 @@ describe("bot/utils/thinking-block-stream", () => {
       reasoningText: "Step 1",
     });
 
-    await finalizeThinkingBlockStream({
-      sessionId: "s1",
-      target: { chatId: 2 },
-      sendApi: routeBSendApi,
-      title: "Thinking",
-    });
+    await expect(
+      finalizeThinkingBlockStream({
+        sessionId: "s1",
+        target: { chatId: 2 },
+        sendApi: routeBSendApi,
+        title: "Thinking",
+      }),
+    ).resolves.toBe("cleared");
 
     await clearThinkingBlockStream("s1", true, missingRoutingCleanup);
 
@@ -409,12 +519,14 @@ describe("bot/utils/thinking-block-stream", () => {
     };
 
     await streamThinkingBlocks(payload);
-    await finalizeThinkingBlockStream({
-      sessionId: "s1",
-      target: { chatId: 1 },
-      sendApi,
-      title: "Thinking",
-    });
+    await expect(
+      finalizeThinkingBlockStream({
+        sessionId: "s1",
+        target: { chatId: 1 },
+        sendApi,
+        title: "Thinking",
+      }),
+    ).resolves.toBe("finalized");
     await streamThinkingBlocks(payload);
 
     expect(mocked.finalizeDraftMock).toHaveBeenCalledWith(
@@ -425,7 +537,9 @@ describe("bot/utils/thinking-block-stream", () => {
       }),
     );
     expect(mocked.sendMessageWithoutDraftEffectMock).toHaveBeenCalledWith(
-      sendApi,
+      expect.objectContaining({
+        sendMessage: expect.any(Function),
+      }),
       1,
       "published thinking",
       {
@@ -434,6 +548,59 @@ describe("bot/utils/thinking-block-stream", () => {
       },
     );
     expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a failed outcome when durable finalization cannot be published", async () => {
+    mocked.finalizeDraftMock.mockRejectedValueOnce(new Error("publish failed"));
+
+    await streamThinkingBlocks({
+      sessionId: "s1",
+      target: { chatId: 1 },
+      sendApi: createSendApi(),
+      title: "Thinking",
+      reasoningText: "Step 1",
+    });
+
+    await expect(
+      finalizeThinkingBlockStream({
+        sessionId: "s1",
+        target: { chatId: 1 },
+        sendApi: createSendApi(),
+        title: "Thinking",
+      }),
+    ).resolves.toBe("failed");
+  });
+
+  it("uses a configured delivery orchestrator override when provided", async () => {
+    const enqueue = vi.fn(async () => undefined);
+    const flushSession = vi.fn(async () => undefined);
+    const clearSession = vi.fn();
+    const clearAll = vi.fn();
+
+    configureThinkingBlockDeliveryOrchestratorForTests({
+      enqueue,
+      flushSession,
+      clearSession,
+      clearAll,
+    });
+
+    await streamThinkingBlocks({
+      sessionId: "s1",
+      target: { chatId: 1 },
+      sendApi: createSendApi(),
+      title: "Thinking",
+      reasoningText: "Step 1",
+    });
+
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "s1",
+        channel: "live",
+      }),
+    );
+
+    clearAllThinkingBlockStreams();
+    expect(clearAll).toHaveBeenCalledTimes(1);
   });
 
   it("forced clear requests deletion only for the active unfinished block", async () => {

@@ -111,6 +111,9 @@ Documentation rule:
 
 ### Fixed
 
+- Fixed Telegram assistant delivery ordering and resilience so durable assistant outputs now follow OpenCode event timing, active thinking and final reasoning survive Telegram `429 retry_after` without crashing the bot, long thinking HTML is chunked safely, and ordered lists stay readable instead of collapsing into repeated `1.` items.
+  - Why: assistant replies, tool/subagent publications, and session footers could race each other, long/active thinking updates could break on Telegram limits or parse edges, ordered lists could render incorrectly in Telegram, and unhandled Telegram delivery failures could terminate the bot process.
+  - Affects: `src/bot/index.ts`, `src/bot/delivery/*`, `src/bot/utils/thinking-block-stream.ts`, `src/bot/utils/thinking-draft-lifecycle.ts`, `src/bot/utils/telegram-html-chunker.ts`, `src/bot/utils/reasoning-format.ts`, `src/summary/aggregator.ts`, `src/bot/assistant-run-state.ts`, `tests/bot/index.local-file-follow-up.test.ts`, `tests/bot/delivery/*.test.ts`, `tests/bot/utils/*.test.ts`, `tests/summary/aggregator.test.ts`
 - Fixed user-scoped defaults from `/model`, `/variant`, and `/settings` so selected agent/model/variant and message visibility preferences override `.env` defaults for new sessions in the same user's new topics.
   - Why: only locale was effectively user-scoped; model/variant still fell back to `OPENCODE_MODEL_PROVIDER`/`OPENCODE_MODEL_ID`, and global hide-message env flags could not be turned off per user.
   - Affects: `src/settings/manager.ts`, `src/bot/index.ts`, `tests/settings/manager.test.ts`

@@ -1,4 +1,7 @@
 import type { Api, RawApi } from "grammy";
+import { SessionDeliveryOrchestrator } from "../delivery/session-delivery-orchestrator.js";
+import { createSafeTelegramSender } from "../delivery/safe-telegram-sender.js";
+import { logger } from "../../utils/logger.js";
 import type { MessageDraftIdAllocator } from "./message-draft-id.js";
 import { withMessageThreadId, type TelegramThreadTarget } from "./message-thread.js";
 import { sendMessageWithoutDraftEffect } from "./send-message-draft-effect-context.js";
@@ -33,6 +36,7 @@ interface SessionStreamTaskState {
 
 interface StreamThinkingBlocksOptions {
   sessionId: string;
+  logicalMessageId?: string;
   sendApi: SendApi;
   target: TelegramThreadTarget;
   title: string;
@@ -41,12 +45,32 @@ interface StreamThinkingBlocksOptions {
 
 interface FinalizeThinkingBlockStreamOptions {
   sessionId: string;
+  logicalMessageId?: string;
   sendApi: SendApi;
   target: TelegramThreadTarget;
   title: string;
 }
 
+export type ThinkingBlockFinalizeOutcome = "finalized" | "failed" | "cleared";
+
+type ThinkingBlockDeliveryOrchestrator = Pick<
+  SessionDeliveryOrchestrator,
+  "enqueue" | "flushSession" | "clearSession" | "clearAll"
+>;
+
+function createDeliveryOrchestrator(): ThinkingBlockDeliveryOrchestrator {
+  return new SessionDeliveryOrchestrator({
+    onError: async (error, item) => {
+      logger.warn(
+        `[ThinkingBlockStream] Delivery failed: session=${item.sessionId}, channel=${item.channel}`,
+        error,
+      );
+    },
+  });
+}
+
 const lifecycleManager = new ThinkingDraftLifecycle();
+let deliveryOrchestrator: ThinkingBlockDeliveryOrchestrator = createDeliveryOrchestrator();
 const activeThinkingBlocks = new Map<string, ActiveThinkingBlockState>();
 const sessionTasks = new Map<string, SessionStreamTaskState>();
 
@@ -58,6 +82,12 @@ function buildRoutingIdentity(target: TelegramThreadTarget): string {
 
 export function configureThinkingBlockDraftIdAllocator(allocator: MessageDraftIdAllocator): void {
   thinkingBlockDraftIdAllocator = allocator;
+}
+
+export function configureThinkingBlockDeliveryOrchestratorForTests(
+  orchestrator: ThinkingBlockDeliveryOrchestrator | null,
+): void {
+  deliveryOrchestrator = orchestrator ?? createDeliveryOrchestrator();
 }
 
 function reserveThinkingDraftId(): number {
@@ -74,26 +104,34 @@ function createTransport(
   draftId: number,
   routingIdentity = buildRoutingIdentity(target),
 ): ThinkingDraftTransport {
+  const safeSender = createSafeTelegramSender(sendApi as Parameters<typeof createSafeTelegramSender>[0]);
+
   return {
     chatId: target.chatId,
     messageThreadId: target.messageThreadId,
     draftId,
     routingIdentity,
     sendMessageDraft: async (chatId: number, nextDraftId: number, text: string, options) => {
-      await sendApi.sendMessageDraft(chatId, nextDraftId, text, options);
+      await safeSender.sendMessageDraft(chatId, nextDraftId, text, options);
     },
     sendMessage: async (chatId: number, text: string, options) => {
       return sendMessageWithoutDraftEffect(
-        sendApi,
+        {
+          sendMessage: safeSender.sendMessage,
+        },
         chatId,
         text,
         withMessageThreadId(options, target.messageThreadId),
       );
     },
     deleteMessage: async (chatId: number, messageId: number) => {
-      await sendApi.deleteMessage(chatId, messageId).catch(() => undefined);
+      await safeSender.deleteMessage(chatId, messageId).catch(() => undefined);
     },
   };
+}
+
+function resolveThinkingLogicalMessageId(sessionId: string, logicalMessageId?: string): string {
+  return logicalMessageId?.trim() || `thinking:${sessionId}`;
 }
 
 function createCleanupTransport(
@@ -160,11 +198,11 @@ function createCleanupTransport(
   };
 }
 
-async function runSessionTask(sessionId: string, task: () => Promise<void>): Promise<void> {
+async function runSessionTask<T>(sessionId: string, task: () => Promise<T>): Promise<T> {
   const state = sessionTasks.get(sessionId) ?? { task: Promise.resolve() };
-  const nextTask = state.task
-    .catch(() => undefined)
-    .then(task)
+  const resultPromise = state.task.catch(() => undefined).then(task);
+  const nextTask: Promise<void> = resultPromise
+    .then(() => undefined, () => undefined)
     .finally(() => {
       if (sessionTasks.get(sessionId)?.task === nextTask) {
         sessionTasks.delete(sessionId);
@@ -173,7 +211,7 @@ async function runSessionTask(sessionId: string, task: () => Promise<void>): Pro
 
   state.task = nextTask;
   sessionTasks.set(sessionId, state);
-  await nextTask;
+  return await resultPromise;
 }
 
 export async function streamThinkingBlocks(options: StreamThinkingBlocksOptions): Promise<void> {
@@ -221,7 +259,17 @@ export async function streamThinkingBlocks(options: StreamThinkingBlocksOptions)
     });
 
     try {
-      await lifecycleManager.renderActiveDraft(options.sessionId, rendered.text, transport);
+      await deliveryOrchestrator.enqueue({
+        sessionId: options.sessionId,
+        channel: "live",
+        logicalMessageId: resolveThinkingLogicalMessageId(
+          options.sessionId,
+          options.logicalMessageId,
+        ),
+        deliver: async () => {
+          await lifecycleManager.renderActiveDraft(options.sessionId, rendered.text, transport);
+        },
+      });
     } catch (error) {
       if (previousState) {
         activeThinkingBlocks.set(options.sessionId, {
@@ -238,8 +286,8 @@ export async function streamThinkingBlocks(options: StreamThinkingBlocksOptions)
 
 export async function finalizeThinkingBlockStream(
   options: FinalizeThinkingBlockStreamOptions,
-): Promise<void> {
-  await runSessionTask(options.sessionId, async () => {
+): Promise<ThinkingBlockFinalizeOutcome> {
+  return await runSessionTask(options.sessionId, async () => {
     const activeState = activeThinkingBlocks.get(options.sessionId);
     const currentRoutingIdentity = buildRoutingIdentity(options.target);
     if (activeState && activeState.routingIdentity !== currentRoutingIdentity) {
@@ -258,18 +306,48 @@ export async function finalizeThinkingBlockStream(
       if (shouldDropCoordinatorState(clearOutcome)) {
         activeThinkingBlocks.delete(options.sessionId);
       }
-      return;
+      return "cleared";
     }
 
     const sendApi = activeState?.sendApi ?? options.sendApi;
     const target = activeState?.target ?? options.target;
     const draftId = activeState?.draftId ?? 0;
     const routingIdentity = activeState?.routingIdentity ?? currentRoutingIdentity;
-    await lifecycleManager.finalizeDraft(
+    const transport = createTransport(sendApi, target, draftId, routingIdentity);
+    const logicalMessageId = resolveThinkingLogicalMessageId(
       options.sessionId,
-      createTransport(sendApi, target, draftId, routingIdentity),
+      options.logicalMessageId,
     );
-    activeThinkingBlocks.delete(options.sessionId);
+
+    await deliveryOrchestrator.enqueue({
+      sessionId: options.sessionId,
+      channel: "live",
+      logicalMessageId,
+      isTerminal: true,
+      deliver: async () => undefined,
+    });
+
+    try {
+      const finalizeDelivery = deliveryOrchestrator.enqueue({
+        sessionId: options.sessionId,
+        channel: "durable",
+        waitForLogicalMessageLiveTerminal: logicalMessageId,
+        deliver: async () => {
+          await lifecycleManager.finalizeDraft(options.sessionId, transport);
+        },
+      });
+
+      await deliveryOrchestrator.flushSession(options.sessionId);
+      await finalizeDelivery;
+      activeThinkingBlocks.delete(options.sessionId);
+      return "finalized";
+    } catch (error) {
+      logger.warn(
+        `[ThinkingBlockStream] Final thinking delivery failed: session=${options.sessionId}`,
+        error,
+      );
+      return "failed";
+    }
   });
 }
 
@@ -279,6 +357,7 @@ export async function clearThinkingBlockStream(
   transport?: LegacyThinkingCleanupTransport,
 ): Promise<void> {
   await runSessionTask(sessionId, async () => {
+    deliveryOrchestrator.clearSession(sessionId);
     const activeState = activeThinkingBlocks.get(sessionId);
     const cleanupTransport = createCleanupTransport(sessionId, transport);
     if (cleanupTransport) {
@@ -302,5 +381,6 @@ export async function clearThinkingBlockStream(
 export function clearAllThinkingBlockStreams(): void {
   activeThinkingBlocks.clear();
   sessionTasks.clear();
+  deliveryOrchestrator.clearAll();
   lifecycleManager.clearAll();
 }

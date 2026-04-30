@@ -482,10 +482,14 @@ vi.mock("../../src/bot/assistant-run-state.js", () => ({
     markResponseCompleted: vi.fn(),
     finishRun: vi.fn(() => ({
       hasCompletedResponse: true,
+      completionRecorded: true,
+      hasPublishedFinalResponse: true,
+      publishedFinalLogicalMessageId: "message-1",
       actualAgent: "planner",
       actualProviderID: "openai",
       actualModelID: "gpt-5.4",
       startedAt: Date.now() - 1000,
+      completedAt: Date.now(),
     })),
     getCompletedRun: vi.fn(() => null),
     isRunActive: vi.fn(() => false),
@@ -537,6 +541,19 @@ vi.mock("../../src/bot/utils/reasoning-format.js", () => ({
   formatReasoningForTelegramHtml: vi.fn((value: string) => value),
   formatToolCallAsSpoiler: vi.fn((value: string) => value),
   markdownToHtml: vi.fn((value: string) => value),
+}));
+
+vi.mock("../../src/bot/delivery/session-delivery-orchestrator.js", () => ({
+  SessionDeliveryOrchestrator: vi.fn().mockImplementation(() => ({
+    enqueue: vi.fn((item: { deliver?: () => Promise<void> | void }) =>
+      Promise.resolve().then(async () => {
+        await item.deliver?.();
+      }),
+    ),
+    flushSession: vi.fn(async () => undefined),
+    clearSession: vi.fn(),
+    clearAll: vi.fn(),
+  })),
 }));
 
 import { createBot } from "../../src/bot/index.js";

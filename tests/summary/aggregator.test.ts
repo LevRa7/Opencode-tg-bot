@@ -1309,6 +1309,8 @@ describe("summary/aggregator", () => {
       },
     } as unknown as Event);
 
+    const completedAt = Date.now();
+
     summaryAggregator.processEvent({
       type: "message.updated",
       properties: {
@@ -1316,7 +1318,7 @@ describe("summary/aggregator", () => {
           id: "message-stream-1",
           sessionID: "session-1",
           role: "assistant",
-          time: { created: Date.now(), completed: Date.now() },
+          time: { created: Date.now(), completed: completedAt },
         },
       },
     } as unknown as Event);
@@ -1334,9 +1336,17 @@ describe("summary/aggregator", () => {
       "Partial answer",
       "",
       [],
-      { agent: undefined, providerID: undefined, modelID: undefined },
+      {
+        agent: undefined,
+        providerID: undefined,
+        modelID: undefined,
+        logicalMessageId: "message-stream-1",
+        completedAt,
+      },
     );
   });
+
+
 
   it("combines multiple text parts into a single final message", () => {
     const onPartial = vi.fn();
@@ -1411,7 +1421,13 @@ describe("summary/aggregator", () => {
       "Hello world",
       "",
       [],
-      { agent: undefined, providerID: undefined, modelID: undefined },
+      {
+        agent: undefined,
+        providerID: undefined,
+        modelID: undefined,
+        logicalMessageId: "message-multipart-1",
+        completedAt: expect.any(Number),
+      },
     );
   });
 
@@ -1581,7 +1597,13 @@ describe("summary/aggregator", () => {
       "Final text",
       "",
       [],
-      { agent: undefined, providerID: undefined, modelID: undefined },
+      {
+        agent: undefined,
+        providerID: undefined,
+        modelID: undefined,
+        logicalMessageId: "message-pending-complete",
+        completedAt: expect.any(Number),
+      },
     );
   });
 
@@ -2130,7 +2152,48 @@ describe("summary/aggregator", () => {
       "Only once",
       "",
       [],
-      { agent: undefined, providerID: undefined, modelID: undefined },
+      {
+        agent: undefined,
+        providerID: undefined,
+        modelID: undefined,
+        logicalMessageId: "message-complete-once",
+        completedAt: expect.any(Number),
+      },
+    );
+  });
+
+  it("emits completion metadata even when the assistant message has no visible content", () => {
+    const onComplete = vi.fn();
+    summaryAggregator.setOnComplete(onComplete);
+    summaryAggregator.setSession("session-1");
+    const completedAt = Date.now();
+
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-empty-complete",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now(), completed: completedAt },
+        },
+      },
+    } as unknown as Event);
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith(
+      "session-1",
+      "message-empty-complete",
+      "",
+      "",
+      [],
+      {
+        agent: undefined,
+        providerID: undefined,
+        modelID: undefined,
+        logicalMessageId: "message-empty-complete",
+        completedAt,
+      },
     );
   });
 

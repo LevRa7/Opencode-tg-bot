@@ -54,6 +54,9 @@ const getCurrentSessionMock = vi.hoisted(() =>
   vi.fn(() => ({ id: "session-1", title: "Session 1", directory: "/repo" })),
 );
 const getCurrentProjectMock = vi.hoisted(() => vi.fn(() => ({ id: "p1", worktree: "/repo" })));
+const getHideThinkingMessagesMock = vi.hoisted(() => vi.fn(() => false));
+const getHideToolCallMessagesMock = vi.hoisted(() => vi.fn(() => false));
+const getHideToolFileMessagesMock = vi.hoisted(() => vi.fn(() => false));
 const statMock = vi.hoisted(() =>
   vi.fn(async (filePath: string) => {
     if (filePath === "/tmp/report.txt") {
@@ -151,6 +154,7 @@ vi.mock("../../src/config.js", () => ({
       serviceMessagesIntervalSec: 0,
       hideToolCallMessages: false,
       hideThinkingMessages: true,
+      hideToolFileMessages: false,
       bashToolDisplayMaxLength: 120,
       messageFormatMode: "raw",
     },
@@ -184,6 +188,10 @@ vi.mock("../../src/settings/manager.js", () => ({
   getReasoningMode: vi.fn(() => 0),
   getTenantRuntimeInfo: vi.fn(() => undefined),
   getThinkingClearMode: vi.fn(() => false),
+  getHideThinkingMessages: getHideThinkingMessagesMock,
+  getHideToolCallMessages: getHideToolCallMessagesMock,
+  getHideToolFileMessages: getHideToolFileMessagesMock,
+  getUserLocale: vi.fn(() => "en"),
   isMessageStreamingEnabled: vi.fn(() => true),
 }));
 
@@ -313,6 +321,7 @@ vi.mock("../../src/i18n/index.js", () => ({
 
     return key;
   }),
+  setUserLocaleResolver: vi.fn(),
 }));
 
 vi.mock("../../src/scheduled-task/foreground-state.js", () => ({
@@ -431,6 +440,9 @@ vi.mock("../../src/bot/handlers/question.js", () => ({
 import { config } from "../../src/config.js";
 import {
   getReasoningMode,
+  getHideThinkingMessages,
+  getHideToolCallMessages,
+  getHideToolFileMessages,
   getTenantRuntimeInfo,
   getThinkingClearMode,
   isMessageStreamingEnabled,
@@ -471,6 +483,12 @@ describe("bot/index local file follow-up orchestration", () => {
     getSessionTargetMock.mockReturnValue({ chatId: 123, messageThreadId: 1 });
     getActiveScopeMock.mockReset();
     getActiveScopeMock.mockReturnValue({ userId: 777, chatId: 123, messageThreadId: 1 });
+    getHideThinkingMessagesMock.mockReset();
+    getHideThinkingMessagesMock.mockReturnValue(false);
+    getHideToolCallMessagesMock.mockReset();
+    getHideToolCallMessagesMock.mockReturnValue(false);
+    getHideToolFileMessagesMock.mockReset();
+    getHideToolFileMessagesMock.mockReturnValue(false);
     isActiveScopeMock.mockReset();
     isActiveScopeMock.mockReturnValue(true);
     runWithTelegramConversationScopeMock.mockClear();
@@ -2127,7 +2145,11 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
@@ -2347,6 +2369,419 @@ describe("bot/index local file follow-up orchestration", () => {
     config.bot.hideThinkingMessages = originalHideThinkingMessages;
   });
 
+  it("suppresses placeholder thinking when user-scoped thinking visibility is hidden", async () => {
+    const originalHideThinkingMessages = config.bot.hideThinkingMessages;
+    config.bot.hideThinkingMessages = false;
+    vi.mocked(getReasoningMode).mockReturnValue(0);
+    vi.mocked(getHideThinkingMessages).mockReturnValue(true);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "hidden placeholder thinking",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-hidden-thinking-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-hidden-thinking-part-1",
+          sessionID: "session-1",
+          messageID: "message-hidden-thinking-1",
+          type: "reasoning",
+          text: "This should not trigger a thinking placeholder.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(sendMessageMock).not.toHaveBeenCalledWith(
+      123,
+      expect.stringContaining("bot.thinking"),
+      expect.any(Object),
+    );
+
+    config.bot.hideThinkingMessages = originalHideThinkingMessages;
+    vi.mocked(getHideThinkingMessages).mockReturnValue(false);
+  });
+
+  it("suppresses active reasoning thinking stream when user-scoped thinking visibility is hidden", async () => {
+    const originalHideThinkingMessages = config.bot.hideThinkingMessages;
+    config.bot.hideThinkingMessages = false;
+    vi.mocked(getReasoningMode).mockReturnValue(1);
+    vi.mocked(getHideThinkingMessages).mockReturnValue(true);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "hidden active reasoning",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-hidden-active-thinking-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-hidden-active-thinking-part-1",
+          sessionID: "session-1",
+          messageID: "message-hidden-active-thinking-1",
+          type: "reasoning",
+          text: "This reasoning should not stream.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(sendMessageDraftMock).not.toHaveBeenCalled();
+    expect(sendMessageMock).not.toHaveBeenCalledWith(
+      123,
+      expect.stringContaining("This reasoning should not stream."),
+      expect.any(Object),
+    );
+
+    config.bot.hideThinkingMessages = originalHideThinkingMessages;
+    vi.mocked(getReasoningMode).mockReturnValue(0);
+    vi.mocked(getHideThinkingMessages).mockReturnValue(false);
+  });
+
+  it("suppresses tool call notifications when user-scoped tool call visibility is hidden", async () => {
+    vi.mocked(getHideToolCallMessages).mockReturnValue(true);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "hidden tool call notification",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-hidden-call-part-1",
+          sessionID: "session-1",
+          messageID: "message-hidden-tool-call-1",
+          type: "tool",
+          callID: "call-bash-hidden-1",
+          tool: "bash",
+          state: {
+            status: "completed",
+            title: "Ran hidden command",
+            input: {
+              command: "pwd",
+              description: "Check directory",
+            },
+            metadata: {},
+            time: { start: Date.now(), end: Date.now() },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(sendMessageMock).not.toHaveBeenCalled();
+
+    vi.mocked(getHideToolCallMessages).mockReturnValue(false);
+  });
+
+  it("suppresses tool file delivery when user-scoped tool file visibility is hidden", async () => {
+    vi.mocked(getHideToolFileMessages).mockReturnValue(true);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "hidden tool file delivery",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-hidden-tool-file-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-hidden-file-part-1",
+          sessionID: "session-1",
+          messageID: "message-hidden-tool-file-1",
+          type: "tool",
+          callID: "call-apply-patch-hidden-1",
+          tool: "apply_patch",
+          state: {
+            status: "completed",
+            title: "Updated /tmp/report.txt",
+            input: {
+              patchText: [
+                "--- a/tmp/report.txt",
+                "+++ b/tmp/report.txt",
+                "@@ -1 +1 @@",
+                "-before",
+                "+after",
+              ].join("\n"),
+            },
+            metadata: {
+              filediff: {
+                file: "/tmp/report.txt",
+                additions: 1,
+                deletions: 1,
+              },
+            },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(sendDocumentMock).not.toHaveBeenCalled();
+
+    vi.mocked(getHideToolFileMessages).mockReturnValue(false);
+  });
+
+  it("flushes queued tool calls at a hidden tool-file boundary without sending the file", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    sendDocumentMock.mockClear();
+    sendMessageDraftMock.mockClear();
+    deleteMessageMock.mockClear();
+    editMessageTextMock.mockClear();
+
+    vi.doMock("../../src/config.js", () => ({
+      config: {
+        telegram: {
+          token: "test-token",
+          adminUserId: 777,
+          allowedUserIds: [777, 888],
+          proxyUrl: "",
+        },
+        bot: {
+          responseStreamThrottleMs: 5000,
+          serviceMessagesIntervalSec: 0,
+          hideToolCallMessages: false,
+          hideThinkingMessages: false,
+          hideToolFileMessages: false,
+          bashToolDisplayMaxLength: 120,
+          messageFormatMode: "raw",
+        },
+        files: {
+          maxFileSizeKb: 1024,
+          maxFileLines: 400,
+        },
+      },
+    }));
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 0),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
+      getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => true),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+    const bot = createIsolatedBot() as any;
+    const textHandlers = bot.onHandlers.filter((entry: { event: string | string[] }) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "hidden file should preserve tool boundary",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-visible-before-hidden-file-part-1",
+          sessionID: "session-1",
+          messageID: "message-hidden-file-boundary-1",
+          type: "tool",
+          callID: "call-bash-before-hidden-file-1",
+          tool: "bash",
+          state: {
+            status: "completed",
+            title: "Check directory before file",
+            input: {
+              command: "pwd",
+              description: "Check directory before file",
+            },
+            metadata: {},
+            time: { start: Date.now(), end: Date.now() },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sendMessageMock).not.toHaveBeenCalled();
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-hidden-file-boundary-part-1",
+          sessionID: "session-1",
+          messageID: "message-hidden-file-boundary-1",
+          type: "tool",
+          callID: "call-apply-patch-hidden-boundary-1",
+          tool: "apply_patch",
+          state: {
+            status: "completed",
+            title: "Updated /tmp/report.txt",
+            input: {
+              patchText: [
+                "--- a/tmp/report.txt",
+                "+++ b/tmp/report.txt",
+                "@@ -1 +1 @@",
+                "-before",
+                "+after",
+              ].join("\n"),
+            },
+            metadata: {
+              filediff: {
+                file: "/tmp/report.txt",
+                additions: 1,
+                deletions: 1,
+              },
+            },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(
+      () =>
+        expect(sendMessageMock).toHaveBeenCalledWith(
+          123,
+          expect.stringContaining("Check directory before file"),
+          expect.objectContaining({
+            parse_mode: "HTML",
+            message_thread_id: 1,
+          }),
+        ),
+      { timeout: 300 },
+    );
+    expect(sendDocumentMock).not.toHaveBeenCalled();
+  });
+
   it("drops queued reasoning-mode assistant text when session error fires before the stream flush", async () => {
     vi.resetModules();
     capturedEventCallbacksByDirectory.clear();
@@ -2383,7 +2818,11 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => true),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
@@ -2545,7 +2984,11 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => true),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
@@ -2729,7 +3172,11 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 0),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
@@ -2917,7 +3364,11 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 0),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
@@ -3121,7 +3572,11 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => true),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
@@ -3262,7 +3717,11 @@ describe("bot/index local file follow-up orchestration", () => {
         setCurrentProject: vi.fn(),
         getReasoningMode: vi.fn(() => 1),
         getTenantRuntimeInfo: vi.fn(() => undefined),
+        getUserLocale: vi.fn(() => "en"),
         getThinkingClearMode: vi.fn(() => false),
+        getHideThinkingMessages: vi.fn(() => false),
+        getHideToolCallMessages: vi.fn(() => false),
+        getHideToolFileMessages: vi.fn(() => false),
         isMessageStreamingEnabled: vi.fn(() => true),
       }));
 
@@ -3483,7 +3942,11 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 0),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
@@ -3650,7 +4113,11 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
@@ -3801,7 +4268,11 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
 
@@ -4010,6 +4481,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 0),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => false),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));
@@ -4902,6 +5374,7 @@ describe("bot/index local file follow-up orchestration", () => {
       setCurrentProject: vi.fn(),
       getReasoningMode: vi.fn(() => 1),
       getTenantRuntimeInfo: vi.fn(() => undefined),
+      getUserLocale: vi.fn(() => "en"),
       getThinkingClearMode: vi.fn(() => true),
       isMessageStreamingEnabled: vi.fn(() => true),
     }));

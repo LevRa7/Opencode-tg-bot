@@ -37,16 +37,24 @@ import {
   getCurrentModel,
   getCurrentProject,
   getCurrentSession,
+  getHideThinkingMessages,
+  getHideToolCallMessages,
+  getHideToolFileMessages,
   getReasoningMode,
   getThinkingClearMode,
+  getUserLocale,
   getPinnedMessageId,
   isMessageStreamingEnabled,
   setCurrentAgent,
   setCurrentModel,
   setCurrentProject,
   setCurrentSession,
+  setHideThinkingMessages,
+  setHideToolCallMessages,
+  setHideToolFileMessages,
   setReasoningMode,
   setThinkingClearMode,
+  setUserLocale,
   setPinnedMessageId,
   setMessageStreamingEnabled,
 } from "../../src/settings/manager.js";
@@ -143,6 +151,43 @@ describe("settings/manager scoped state", () => {
 
   it("defaults streaming to env-configured value when settings are unset", () => {
     expect(runWithTelegramConversationScope(scopeA, () => isMessageStreamingEnabled())).toBe(false);
+  });
+
+  it("stores user settings independently from topic-scoped state", () => {
+    runWithTelegramConversationScope(scopeA, () => {
+      setUserLocale("ru");
+      setHideThinkingMessages(true);
+      setHideToolCallMessages(true);
+      setHideToolFileMessages(true);
+    });
+
+    expect(
+      runWithTelegramConversationScope(scopeAOtherTopic, () => ({
+        locale: getUserLocale(),
+        hideThinking: getHideThinkingMessages(),
+        hideToolCalls: getHideToolCallMessages(),
+        hideToolFiles: getHideToolFileMessages(),
+      })),
+    ).toEqual({
+      locale: "ru",
+      hideThinking: true,
+      hideToolCalls: true,
+      hideToolFiles: true,
+    });
+
+    expect(
+      runWithTelegramConversationScope(scopeB, () => ({
+        locale: getUserLocale(),
+        hideThinking: getHideThinkingMessages(),
+        hideToolCalls: getHideToolCallMessages(),
+        hideToolFiles: getHideToolFileMessages(),
+      })),
+    ).toEqual({
+      locale: undefined,
+      hideThinking: false,
+      hideToolCalls: false,
+      hideToolFiles: false,
+    });
   });
 
   it("isolates agent, model, and reasoning mode by topic while keeping streaming per user", async () => {

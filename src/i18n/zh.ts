@@ -14,6 +14,9 @@ export const zh: I18nDictionary = {
   "cmd.description.skills": "列出可用技能",
   "cmd.description.mcps": "浏览 MCP 服务器",
   "cmd.description.open": "在目录浏览器中打开文件",
+  "cmd.description.model": "选择或设置默认模型",
+  "cmd.description.variant": "选择或设置默认变体",
+  "cmd.description.settings": "用户设置",
   "cmd.description.stream": "切换消息流式输出",
   "cmd.description.restart": "重启机器人进程",
   "cmd.description.opencode_start": "启动 OpenCode 服务器",
@@ -48,6 +51,18 @@ export const zh: I18nDictionary = {
 
   "common.unknown": "未知",
   "common.unknown_error": "未知错误",
+
+  "settings.title": "⚙️ 用户设置",
+  "settings.language": "语言：{value}",
+  "settings.language.title": "🌐 选择语言",
+  "settings.hide_thinking_messages": "隐藏思考消息：{state}",
+  "settings.hide_tool_call_messages": "隐藏工具调用消息：{state}",
+  "settings.hide_tool_file_messages": "隐藏工具文件消息：{state}",
+  "settings.state.on": "开启",
+  "settings.state.off": "关闭",
+  "settings.updated_callback": "已更新",
+  "settings.language_updated_callback": "语言已更新",
+  "settings.error_callback": "更新设置失败",
 
   "start.welcome":
     "👋 欢迎使用 OpenCode Telegram Bot！\n\n可用命令：\n/projects — 选择项目\n/sessions — 会话列表\n/new — 新建会话\n/task — 定时任务\n/tasklist — 定时任务列表\n/status — 状态\n/help — 帮助\n\n请使用底部按钮选择模式、模型和变体。",
@@ -236,6 +251,9 @@ export const zh: I18nDictionary = {
   "model.menu.button.prev_page": "⬅️ 上一页",
   "model.menu.button.next_page": "下一页 ➡️",
   "model.menu.button.back_providers": "⬅️ 返回提供方列表",
+  "model.command.usage": "用法：/model provider/model\n示例：/model cliproxyapi/gpt-5.5",
+  "model.command.not_found": "未找到模型：{name}",
+  "model.command.changed": "✅ 模型已设置为 {name}",
 
   "variant.model_not_selected_callback": "错误：未选择模型",
   "variant.changed_callback": "变体已更改：{name}",
@@ -245,6 +263,10 @@ export const zh: I18nDictionary = {
   "variant.menu.empty": "⚠️ 没有可用变体",
   "variant.menu.current": "当前变体：{name}\n\n请选择变体：",
   "variant.menu.error": "🔴 获取变体列表失败",
+  "variant.command.usage": "用法：/variant variant-id\n示例：/variant high",
+  "variant.command.model_required": "请先选择模型，再更改变体。",
+  "variant.command.not_found": "未找到变体或变体已禁用：{name}",
+  "variant.command.changed": "✅ 变体已设置为 {name}",
 
   "context.button.confirm": "✅ 是的，压缩上下文",
   "context.no_active_session": "⚠️ 没有活动会话。使用 /new 创建会话",

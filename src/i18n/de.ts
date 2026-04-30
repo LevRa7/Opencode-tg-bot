@@ -14,6 +14,9 @@ export const de: I18nDictionary = {
   "cmd.description.skills": "Verfugbare Skills anzeigen",
   "cmd.description.mcps": "MCP-Server durchsuchen",
   "cmd.description.open": "Dateien im Verzeichnis-Browser offnen",
+  "cmd.description.model": "Standardmodell auswählen oder setzen",
+  "cmd.description.variant": "Standardvariante auswählen oder setzen",
+  "cmd.description.settings": "Benutzereinstellungen",
   "cmd.description.stream": "Nachrichten-Streaming umschalten",
   "cmd.description.restart": "Bot-Prozess neu starten",
   "cmd.description.opencode_start": "OpenCode-Server starten",
@@ -55,6 +58,18 @@ export const de: I18nDictionary = {
 
   "common.unknown": "unbekannt",
   "common.unknown_error": "unbekannter Fehler",
+
+  "settings.title": "⚙️ Benutzereinstellungen",
+  "settings.language": "Sprache: {value}",
+  "settings.language.title": "🌐 Sprache auswählen",
+  "settings.hide_thinking_messages": "Denk-Nachrichten ausblenden: {state}",
+  "settings.hide_tool_call_messages": "Tool-Aufruf-Nachrichten ausblenden: {state}",
+  "settings.hide_tool_file_messages": "Tool-Datei-Nachrichten ausblenden: {state}",
+  "settings.state.on": "ein",
+  "settings.state.off": "aus",
+  "settings.updated_callback": "Aktualisiert",
+  "settings.language_updated_callback": "Sprache aktualisiert",
+  "settings.error_callback": "Einstellungen konnten nicht aktualisiert werden",
 
   "start.welcome":
     "👋 Willkommen beim OpenCode Telegram Bot!\n\nNutze Befehle:\n/projects — Projekt auswählen\n/sessions — Sitzungsliste\n/new — neue Sitzung\n/task — geplante Aufgabe\n/tasklist — geplante Aufgaben\n/status — Status\n/help — Hilfe\n\nNutze die unteren Buttons, um Modus, Modell und Variante zu wählen.",
@@ -276,6 +291,9 @@ export const de: I18nDictionary = {
   "model.menu.button.prev_page": "⬅️ Zurück",
   "model.menu.button.next_page": "Weiter ➡️",
   "model.menu.button.back_providers": "⬅️ Zurück zu Providern",
+  "model.command.usage": "Nutzung: /model provider/model\nBeispiel: /model cliproxyapi/gpt-5.5",
+  "model.command.not_found": "Modell nicht gefunden: {name}",
+  "model.command.changed": "✅ Modell auf {name} gesetzt",
 
   "variant.model_not_selected_callback": "Fehler: Modell ist nicht ausgewählt",
   "variant.changed_callback": "Variante geändert: {name}",
@@ -285,6 +303,10 @@ export const de: I18nDictionary = {
   "variant.menu.empty": "⚠️ Keine verfügbaren Varianten",
   "variant.menu.current": "Aktuelle Variante: {name}\n\nVariante auswählen:",
   "variant.menu.error": "🔴 Variantenliste konnte nicht geladen werden",
+  "variant.command.usage": "Nutzung: /variant variant-id\nBeispiel: /variant high",
+  "variant.command.model_required": "Wähle ein Modell aus, bevor du die Variante änderst.",
+  "variant.command.not_found": "Variante nicht gefunden oder deaktiviert: {name}",
+  "variant.command.changed": "✅ Variante auf {name} gesetzt",
 
   "context.button.confirm": "✅ Ja, Kontext komprimieren",
   "context.no_active_session": "⚠️ Keine aktive Sitzung. Erstelle eine Sitzung mit /new",

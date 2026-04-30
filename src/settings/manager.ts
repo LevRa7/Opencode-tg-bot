@@ -1,3 +1,4 @@
+import type { Locale } from "../i18n/index.js";
 import type { ModelInfo } from "../model/types.js";
 import { cloneScheduledTask, type ScheduledTask } from "../scheduled-task/types.js";
 import {
@@ -96,6 +97,10 @@ export interface ScopedUserSettings {
   ttsEnabled?: boolean;
   messageStreamingEnabled?: boolean;
   thinkingClearMode?: boolean;
+  locale?: Locale;
+  hideThinkingMessages?: boolean;
+  hideToolCallMessages?: boolean;
+  hideToolFileMessages?: boolean;
 }
 
 export interface Settings {
@@ -295,6 +300,10 @@ function cloneScopedUserSettings(
     ttsEnabled: settings.ttsEnabled,
     messageStreamingEnabled: settings.messageStreamingEnabled,
     thinkingClearMode: settings.thinkingClearMode,
+    locale: settings.locale,
+    hideThinkingMessages: settings.hideThinkingMessages,
+    hideToolCallMessages: settings.hideToolCallMessages,
+    hideToolFileMessages: settings.hideToolFileMessages,
   };
 }
 
@@ -332,7 +341,11 @@ function isScopedUserSettingsEmpty(settings: ScopedUserSettings | undefined): bo
     !settings ||
     (settings.ttsEnabled === undefined &&
       settings.messageStreamingEnabled === undefined &&
-      settings.thinkingClearMode === undefined)
+      settings.thinkingClearMode === undefined &&
+      settings.locale === undefined &&
+      settings.hideThinkingMessages === undefined &&
+      settings.hideToolCallMessages === undefined &&
+      settings.hideToolFileMessages === undefined)
   );
 }
 
@@ -612,6 +625,70 @@ export function setThinkingClearMode(enabled: boolean): void {
   }
 
   scopedSettings.thinkingClearMode = enabled;
+  pruneUserScopedSettings();
+
+  void writeSettingsFile(currentSettings);
+}
+
+export function getUserLocale(): Locale | undefined {
+  return getUserScopedSettings()?.locale;
+}
+
+export function setUserLocale(locale: Locale): void {
+  const scopedSettings = getOrCreateUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.locale = locale;
+  pruneUserScopedSettings();
+
+  void writeSettingsFile(currentSettings);
+}
+
+export function getHideThinkingMessages(): boolean {
+  return getUserScopedSettings()?.hideThinkingMessages ?? false;
+}
+
+export function setHideThinkingMessages(enabled: boolean): void {
+  const scopedSettings = getOrCreateUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.hideThinkingMessages = enabled;
+  pruneUserScopedSettings();
+
+  void writeSettingsFile(currentSettings);
+}
+
+export function getHideToolCallMessages(): boolean {
+  return getUserScopedSettings()?.hideToolCallMessages ?? false;
+}
+
+export function setHideToolCallMessages(enabled: boolean): void {
+  const scopedSettings = getOrCreateUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.hideToolCallMessages = enabled;
+  pruneUserScopedSettings();
+
+  void writeSettingsFile(currentSettings);
+}
+
+export function getHideToolFileMessages(): boolean {
+  return getUserScopedSettings()?.hideToolFileMessages ?? false;
+}
+
+export function setHideToolFileMessages(enabled: boolean): void {
+  const scopedSettings = getOrCreateUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.hideToolFileMessages = enabled;
   pruneUserScopedSettings();
 
   void writeSettingsFile(currentSettings);

@@ -17,8 +17,11 @@ const handleTaskCallbackMock = vi.hoisted(() => vi.fn(async () => false));
 const handleTaskListCallbackMock = vi.hoisted(() => vi.fn(async () => false));
 const handleRenameCancelMock = vi.hoisted(() => vi.fn(async () => false));
 const handleCommandsCallbackMock = vi.hoisted(() => vi.fn(async () => false));
+const handleSettingsCallbackMock = vi.hoisted(() => vi.fn(async () => false));
 const syncAuthorizedChatCommandsMock = vi.hoisted(() => vi.fn(async () => undefined));
 const getApprovedTelegramUserIdsMock = vi.hoisted(() => vi.fn(() => [1]));
+const getUserLocaleMock = vi.hoisted(() => vi.fn(() => undefined));
+const setUserLocaleResolverMock = vi.hoisted(() => vi.fn());
 const attachTargetBySessionId = vi.hoisted(() => new Map<string, { chatId: number; messageThreadId?: number }>());
 const attachScopeBySessionId = vi.hoisted(
   () => new Map<string, { userId: number; chatId: number; messageThreadId?: number }>(),
@@ -190,6 +193,11 @@ vi.mock("../../src/bot/commands/commands.js", () => ({
   commandsCommand: vi.fn(),
   handleCommandsCallback: handleCommandsCallbackMock,
   handleCommandTextArguments: vi.fn(async () => false),
+}));
+
+vi.mock("../../src/bot/commands/settings.js", () => ({
+  settingsCommand: vi.fn(),
+  handleSettingsCallback: handleSettingsCallbackMock,
 }));
 
 vi.mock("../../src/bot/commands/start.js", () => ({ startCommand: vi.fn() }));
@@ -367,6 +375,7 @@ vi.mock("../../src/pinned/manager.js", () => ({
 
 vi.mock("../../src/i18n/index.js", () => ({
   t: vi.fn((key: string) => key),
+  setUserLocaleResolver: setUserLocaleResolverMock,
 }));
 
 vi.mock("../../src/bot/handlers/prompt.js", () => ({
@@ -505,6 +514,7 @@ vi.mock("../../src/bot/utils/message-thread.js", () => ({
 }));
 vi.mock("../../src/settings/manager.js", () => ({
   getApprovedTelegramUserIds: getApprovedTelegramUserIdsMock,
+  getUserLocale: getUserLocaleMock,
   getReasoningMode: vi.fn(() => 0),
   getTenantRuntimeInfo: vi.fn(() => undefined),
   getThinkingClearMode: vi.fn(() => false),
@@ -584,8 +594,11 @@ describe("bot/index callback routing", () => {
     handleTaskListCallbackMock.mockReset().mockResolvedValue(false);
     handleRenameCancelMock.mockReset().mockResolvedValue(false);
     handleCommandsCallbackMock.mockReset().mockResolvedValue(false);
+    handleSettingsCallbackMock.mockReset().mockResolvedValue(false);
     syncAuthorizedChatCommandsMock.mockReset().mockResolvedValue(undefined);
     getApprovedTelegramUserIdsMock.mockReset().mockReturnValue([1]);
+    getUserLocaleMock.mockReset().mockReturnValue(undefined);
+    setUserLocaleResolverMock.mockClear();
   });
 
   it("registers a single callback_query:data dispatcher", () => {
@@ -596,6 +609,13 @@ describe("bot/index callback routing", () => {
     );
 
     expect(callbackHandlers).toHaveLength(1);
+  });
+
+  it("registers the selected user locale resolver during bot setup", () => {
+    createBot();
+
+    expect(setUserLocaleResolverMock).toHaveBeenCalledTimes(1);
+    expect(setUserLocaleResolverMock).toHaveBeenCalledWith(getUserLocaleMock);
   });
 
   it("preserves the current grammY middleware registration order", async () => {
@@ -649,6 +669,24 @@ describe("bot/index callback routing", () => {
 
     expect(handleTaskListCallbackMock).toHaveBeenCalledTimes(1);
     expect(handleTaskListCallbackMock).toHaveBeenCalledWith(ctx);
+    expect(ctx.answerCallbackQuery).not.toHaveBeenCalledWith({ text: "callback.unknown_command" });
+  });
+
+  it("routes settings callbacks through the callback dispatcher", async () => {
+    const bot = createBot() as unknown as { onHandlers: typeof onHandlers };
+    const callbackHandler = bot.onHandlers.find(
+      (entry) => entry.event === "callback_query:data",
+    )?.handler;
+    const ctx = createCallbackContext("settings:toggle:hide_thinking");
+
+    handleSettingsCallbackMock.mockResolvedValue(true);
+
+    expect(callbackHandler).toBeTypeOf("function");
+
+    await callbackHandler?.(ctx);
+
+    expect(handleSettingsCallbackMock).toHaveBeenCalledTimes(1);
+    expect(handleSettingsCallbackMock).toHaveBeenCalledWith(ctx);
     expect(ctx.answerCallbackQuery).not.toHaveBeenCalledWith({ text: "callback.unknown_command" });
   });
 

@@ -18,8 +18,74 @@ import {
   replyWithInlineMenu,
 } from "./inline-menu.js";
 import { t } from "../../i18n/index.js";
+import type { I18nKey } from "../../i18n/en.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+
+type ApplySelectedVariantResult =
+  | { applied: true; displayName: string }
+  | { applied: false; reason: "model_required" | "not_found"; variantId: string };
+
+export async function applySelectedVariant(
+  ctx: Context,
+  variantId: string,
+  options: { replyTextKey: I18nKey },
+): Promise<ApplySelectedVariantResult> {
+  const currentModel = getStoredModel();
+
+  if (!currentModel.providerID || !currentModel.modelID) {
+    return { applied: false, reason: "model_required", variantId };
+  }
+
+  const variants = await getAvailableVariants(currentModel.providerID, currentModel.modelID);
+  const requestedVariant = variants.find((variant) => variant.id === variantId && !variant.disabled);
+
+  if (!requestedVariant) {
+    return { applied: false, reason: "not_found", variantId };
+  }
+
+  if (ctx.chat) {
+    keyboardManager.initialize(ctx.api, ctx.chat.id);
+  }
+
+  if (pinnedMessageManager.getContextLimit() === 0) {
+    await pinnedMessageManager.refreshContextLimit();
+  }
+
+  setCurrentVariant(variantId);
+
+  const updatedModel = getStoredModel();
+  threadContextManager.bindModelToActiveContext(updatedModel);
+  keyboardManager.updateModel(updatedModel);
+  keyboardManager.updateVariant(variantId);
+
+  const currentAgent = getStoredAgent();
+  const contextInfo =
+    pinnedMessageManager.getContextInfo() ??
+    (pinnedMessageManager.getContextLimit() > 0
+      ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() }
+      : null);
+
+  if (contextInfo) {
+    keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
+  }
+
+  const variantName = formatVariantForButton(variantId);
+  const keyboard = createMainKeyboard(
+    currentAgent,
+    updatedModel,
+    contextInfo ?? undefined,
+    variantName,
+  );
+  const displayName = formatVariantForDisplay(variantId);
+
+  await ctx.reply(
+    t(options.replyTextKey, { name: displayName }),
+    withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+  );
+
+  return { applied: true, displayName };
+}
 
 /**
  * Handle variant selection callback
@@ -41,67 +107,29 @@ export async function handleVariantSelect(ctx: Context): Promise<boolean> {
   logger.debug(`[VariantHandler] Received callback: ${callbackQuery.data}`);
 
   try {
-    if (ctx.chat) {
-      keyboardManager.initialize(ctx.api, ctx.chat.id);
-    }
-
-    if (pinnedMessageManager.getContextLimit() === 0) {
-      await pinnedMessageManager.refreshContextLimit();
-    }
-
     // Parse callback data: "variant:variantId"
     const variantId = callbackQuery.data.replace("variant:", "");
 
-    // Get current model
-    const currentModel = getStoredModel();
+    const result = await applySelectedVariant(ctx, variantId, {
+      replyTextKey: "variant.changed_message",
+    });
 
-    if (!currentModel.providerID || !currentModel.modelID) {
-      logger.error("[VariantHandler] No model selected");
-      await ctx.answerCallbackQuery({ text: t("variant.model_not_selected_callback") });
-      return false;
+    if (!result.applied) {
+      if (result.reason === "model_required") {
+        logger.error("[VariantHandler] No model selected");
+        await ctx.answerCallbackQuery({ text: t("variant.model_not_selected_callback") });
+        return false;
+      }
+
+      await ctx.answerCallbackQuery({
+        text: t("variant.command.not_found", { name: result.variantId }),
+      });
+      return true;
     }
-
-    // Set variant
-    setCurrentVariant(variantId);
-
-    // Re-read model after variant update
-    const updatedModel = getStoredModel();
-    threadContextManager.bindModelToActiveContext(updatedModel);
-
-    // Update keyboard manager state
-    keyboardManager.updateModel(updatedModel);
-    keyboardManager.updateVariant(variantId);
-
-    // Build keyboard with correct context info
-    const currentAgent = getStoredAgent();
-    const contextInfo =
-      pinnedMessageManager.getContextInfo() ??
-      (pinnedMessageManager.getContextLimit() > 0
-        ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() }
-        : null);
-
-    if (contextInfo) {
-      keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
-    }
-
-    const variantName = formatVariantForButton(variantId);
-    const keyboard = createMainKeyboard(
-      currentAgent,
-      updatedModel,
-      contextInfo ?? undefined,
-      variantName,
-    );
-
-    // Send confirmation message with updated keyboard
-    const displayName = formatVariantForDisplay(variantId);
 
     clearActiveInlineMenu("variant_selected");
 
-    await ctx.answerCallbackQuery({ text: t("variant.changed_callback", { name: displayName }) });
-    await ctx.reply(
-      t("variant.changed_message", { name: displayName }),
-      withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
-    );
+    await ctx.answerCallbackQuery({ text: t("variant.changed_callback", { name: result.displayName }) });
 
     // Delete the inline menu message
     await ctx.deleteMessage().catch(() => {});

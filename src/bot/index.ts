@@ -23,6 +23,9 @@ import {
 } from "./message-patterns.js";
 import { sessionsCommand, handleSessionSelect } from "./commands/sessions.js";
 import { newCommand } from "./commands/new.js";
+import { modelCommand } from "./commands/model.js";
+import { variantCommand } from "./commands/variant.js";
+import { handleSettingsCallback, settingsCommand } from "./commands/settings.js";
 import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand } from "./commands/abort.js";
 import { opencodeStartCommand } from "./commands/opencode-start.js";
@@ -76,7 +79,7 @@ import { logger } from "../utils/logger.js";
 import { safeBackgroundTask } from "../utils/safe-background-task.js";
 import { withTelegramRateLimitRetry } from "../utils/telegram-rate-limit-retry.js";
 import { pinnedMessageManager } from "../pinned/manager.js";
-import { t } from "../i18n/index.js";
+import { setUserLocaleResolver, t } from "../i18n/index.js";
 import {
   clearPromptResponseMode,
   clearPromptRouting,
@@ -128,9 +131,13 @@ import { threadContextManager } from "../thread/manager.js";
 import { withMessageThreadId } from "./utils/message-thread.js";
 import {
   getApprovedTelegramUserIds,
+  getHideThinkingMessages,
+  getHideToolCallMessages,
+  getHideToolFileMessages,
   getReasoningMode,
   getTenantRuntimeInfo,
   getThinkingClearMode,
+  getUserLocale,
   isMessageStreamingEnabled,
 } from "../settings/manager.js";
 import {
@@ -348,6 +355,24 @@ function getReasoningModeForSession(sessionId: string) {
 function isMessageStreamingEnabledForSession(sessionId: string): boolean {
   return runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
     isMessageStreamingEnabled(),
+  );
+}
+
+async function getHideThinkingMessagesForSession(sessionId: string): Promise<boolean> {
+  return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
+    config.bot.hideThinkingMessages || getHideThinkingMessages(),
+  );
+}
+
+async function getHideToolCallMessagesForSession(sessionId: string): Promise<boolean> {
+  return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
+    config.bot.hideToolCallMessages || getHideToolCallMessages(),
+  );
+}
+
+async function getHideToolFileMessagesForSession(sessionId: string): Promise<boolean> {
+  return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
+    config.bot.hideToolFileMessages || getHideToolFileMessages(),
   );
 }
 
@@ -973,7 +998,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         return;
       }
 
-      if (mode > 0 && reasoningText?.trim() && !config.bot.hideThinkingMessages) {
+      if (mode > 0 && reasoningText?.trim() && !(await getHideThinkingMessagesForSession(sessionId))) {
         await streamThinkingBlocks({
           sessionId,
           sendApi: botApi,
@@ -1249,7 +1274,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       (toolInfo.tool === "write" || toolInfo.tool === "edit" || toolInfo.tool === "apply_patch");
 
     if (
-      config.bot.hideToolCallMessages ||
+      (await getHideToolCallMessagesForSession(toolInfo.sessionId)) ||
       shouldIncludeToolInfoInFileCaption ||
       toolInfo.tool === "task"
     ) {
@@ -1283,7 +1308,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       return;
     }
 
-    if (config.bot.hideToolCallMessages) {
+    if (await getHideToolCallMessagesForSession(sessionId)) {
       return;
     }
 
@@ -1314,6 +1339,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     try {
       await toolCallStreamer.breakSession(fileInfo.sessionId, "tool_file_boundary");
+
+      if (await getHideToolFileMessagesForSession(fileInfo.sessionId)) {
+        return;
+      }
 
       const toolMessage = formatToolInfo(fileInfo);
       const caption = prepareDocumentCaption(toolMessage || fileInfo.fileData.caption);
@@ -1413,9 +1442,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     await toolCallStreamer.breakSession(sessionId, "thinking_started");
 
     const reasoningMode = await getReasoningModeForSession(sessionId);
-    if (!config.bot.hideThinkingMessages && reasoningMode === 0) {
+    const hideThinkingMessages = await getHideThinkingMessagesForSession(sessionId);
+    if (!hideThinkingMessages && reasoningMode === 0) {
       deliverThinkingMessage(sessionId, toolMessageBatcher, {
-        hideThinkingMessages: config.bot.hideThinkingMessages,
+        hideThinkingMessages,
       });
     }
 
@@ -1675,6 +1705,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
 export function createBot(): Bot<Context> {
   clearAllInteractionState("bot_startup");
+  setUserLocaleResolver(getUserLocale);
 
   const botOptions: ConstructorParameters<typeof Bot<Context>>[1] = {};
 
@@ -1789,6 +1820,9 @@ export function createBot(): Bot<Context> {
   bot.command("opencode_stop", opencodeStopCommand);
   bot.command("projects", projectsCommand);
   bot.command("sessions", sessionsCommand);
+  bot.command("model", modelCommand);
+  bot.command("variant", variantCommand);
+  bot.command("settings", settingsCommand);
   bot.command("new", newCommand);
   bot.command("abort", abortCommand);
   bot.command("task", taskCommand);
@@ -1824,13 +1858,14 @@ export function createBot(): Bot<Context> {
       const handledTaskList = await handleTaskListCallback(ctx);
       const handledRenameCancel = await handleRenameCancel(ctx);
       const handledCommands = await handleCommandsCallback(ctx, { bot, ensureEventSubscription });
+      const handledSettings = await handleSettingsCallback(ctx);
       const handledWorktree = await handleWorktreeCallback(ctx);
       const handledOpen = await handleOpenCallback(ctx);
       const handledSkills = await handleSkillsCallback(ctx, { bot, ensureEventSubscription });
       const handledMcps = await handleMcpsCallback(ctx);
 
       logger.debug(
-        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, worktree=${handledWorktree}, open=${handledOpen}, skills=${handledSkills}, mcps=${handledMcps}`,
+        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, settings=${handledSettings}, worktree=${handledWorktree}, open=${handledOpen}, skills=${handledSkills}, mcps=${handledMcps}`,
       );
 
       if (
@@ -1848,6 +1883,7 @@ export function createBot(): Bot<Context> {
         !handledTaskList &&
         !handledRenameCancel &&
         !handledCommands &&
+        !handledSettings &&
         !handledWorktree &&
         !handledOpen &&
         !handledSkills &&

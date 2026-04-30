@@ -7,9 +7,18 @@ import {
   resetRuntimeLocale,
   resolveSupportedLocale,
   setRuntimeLocale,
+  setUserLocaleResolver,
   SUPPORTED_LOCALES,
   t,
 } from "../../src/i18n/index.js";
+import {
+  __resetSettingsForTests,
+  getUserLocale,
+  setUserLocale,
+} from "../../src/settings/manager.js";
+import { runWithTelegramConversationScope } from "../../src/telegram/scope.js";
+
+setUserLocaleResolver(getUserLocale);
 
 const COMMAND_LOCALIZATION_KEYS = [
   "open.access_denied",
@@ -66,11 +75,33 @@ const COMMAND_LOCALIZATION_KEYS = [
   "mcps.empty",
   "mcps.fetch_error",
   "mcps.inactive_callback",
+  "cmd.description.model",
+  "cmd.description.variant",
+  "cmd.description.settings",
+  "model.command.usage",
+  "model.command.not_found",
+  "model.command.changed",
+  "variant.command.usage",
+  "variant.command.model_required",
+  "variant.command.not_found",
+  "variant.command.changed",
+  "settings.title",
+  "settings.language",
+  "settings.language.title",
+  "settings.hide_thinking_messages",
+  "settings.hide_tool_call_messages",
+  "settings.hide_tool_file_messages",
+  "settings.state.on",
+  "settings.state.off",
+  "settings.updated_callback",
+  "settings.language_updated_callback",
+  "settings.error_callback",
 ] as const;
 
 describe("i18n/index locale helpers", () => {
   afterEach(() => {
     resetRuntimeLocale();
+    __resetSettingsForTests();
     vi.unstubAllEnvs();
   });
 
@@ -114,6 +145,21 @@ describe("i18n/index locale helpers", () => {
     setRuntimeLocale("ru");
 
     expect(getLocale()).toBe("ru");
+  });
+
+  it("uses scoped user locale before env locale", () => {
+    vi.stubEnv("BOT_LOCALE", "en");
+    __resetSettingsForTests();
+
+    const locale = runWithTelegramConversationScope(
+      { userId: 777, chatId: 123, messageThreadId: 1 },
+      () => {
+        setUserLocale("ru");
+        return getLocale();
+      },
+    );
+
+    expect(locale).toBe("ru");
   });
 
   it("keeps open, skills, and mcps localizations non-empty in every locale", () => {

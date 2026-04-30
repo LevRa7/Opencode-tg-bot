@@ -1,5 +1,11 @@
 import { InlineKeyboard, type CommandContext, type Context } from "grammy";
 import {
+  appendInlineMenuCancelButton,
+  clearActiveInlineMenu,
+  ensureActiveInlineMenu,
+  replyWithInlineMenu,
+} from "../handlers/inline-menu.js";
+import {
   getHideThinkingMessages,
   getHideToolCallMessages,
   getHideToolFileMessages,
@@ -84,20 +90,17 @@ function buildSettingsRootKeyboard(state: SettingsRenderState): InlineKeyboard {
         state.locale,
       ),
       `${SETTINGS_CALLBACK_TOGGLE_PREFIX}hide_tool_files`,
-    )
-    .row()
-    .text(t("inline.button.cancel", undefined, state.locale), SETTINGS_CALLBACK_CANCEL);
+    );
 }
 
-function buildLanguageKeyboard(locale: Locale): InlineKeyboard {
+function buildLanguageKeyboard(): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
   for (const option of getLocaleOptions()) {
     keyboard.text(option.label, `${SETTINGS_CALLBACK_LANGUAGE_PREFIX}${option.code}`).row();
   }
 
-  keyboard.text(t("inline.button.cancel", undefined, locale), SETTINGS_CALLBACK_CANCEL);
-  return keyboard;
+  return appendInlineMenuCancelButton(keyboard, "settings");
 }
 
 async function redrawRootMenu(ctx: Context, localeOverride?: Locale): Promise<void> {
@@ -133,8 +136,10 @@ async function handleSettingsError(ctx: Context, error: unknown): Promise<boolea
 
 export async function settingsCommand(ctx: CommandContext<Context>): Promise<void> {
   const state = getSettingsRenderState();
-  await ctx.reply(t("settings.title", undefined, state.locale), {
-    reply_markup: buildSettingsRootKeyboard(state),
+  await replyWithInlineMenu(ctx, {
+    menuKind: "settings",
+    text: t("settings.title", undefined, state.locale),
+    keyboard: buildSettingsRootKeyboard(state),
   });
 }
 
@@ -146,18 +151,29 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
 
   try {
     if (data === SETTINGS_CALLBACK_LANGUAGE) {
+      const isActiveMenu = await ensureActiveInlineMenu(ctx, "settings");
+      if (!isActiveMenu) {
+        return true;
+      }
+
       const locale = getActiveLocale();
       await ctx.editMessageText(t("settings.language.title", undefined, locale), {
-        reply_markup: buildLanguageKeyboard(locale),
+        reply_markup: buildLanguageKeyboard(),
       });
       return true;
     }
 
     if (data === SETTINGS_CALLBACK_CANCEL) {
+      const isActiveMenu = await ensureActiveInlineMenu(ctx, "settings");
+      if (!isActiveMenu) {
+        return true;
+      }
+
       const locale = getActiveLocale();
       await ctx
         .answerCallbackQuery({ text: t("inline.cancelled_callback", undefined, locale) })
         .catch(() => {});
+      clearActiveInlineMenu("settings_cancelled");
       await ctx.deleteMessage().catch(() => {});
       return true;
     }
@@ -166,6 +182,11 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       const locale = resolveSupportedLocale(data.slice(SETTINGS_CALLBACK_LANGUAGE_PREFIX.length));
       if (!locale) {
         return false;
+      }
+
+      const isActiveMenu = await ensureActiveInlineMenu(ctx, "settings");
+      if (!isActiveMenu) {
+        return true;
       }
 
       setUserLocale(locale);
@@ -178,6 +199,11 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
       const settingId = data.slice(SETTINGS_CALLBACK_TOGGLE_PREFIX.length);
       if (!isToggleSettingId(settingId)) {
         return false;
+      }
+
+      const isActiveMenu = await ensureActiveInlineMenu(ctx, "settings");
+      if (!isActiveMenu) {
+        return true;
       }
 
       toggleSetting(settingId);

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 import { t } from "../../../src/i18n/index.js";
+import { interactionManager } from "../../../src/interaction/manager.js";
 
 const mocked = vi.hoisted(() => ({
   userLocale: undefined as "en" | "ru" | undefined,
@@ -69,6 +70,17 @@ function createCallbackContext(data: string): Context {
   } as unknown as Context;
 }
 
+function startActiveSettingsMenu(messageId = 10): void {
+  interactionManager.start({
+    kind: "inline",
+    expectedInput: "callback",
+    metadata: {
+      menuKind: "settings",
+      messageId,
+    },
+  });
+}
+
 function getInlineRows(options: unknown): Array<Array<{ text: string; callback_data?: string }>> {
   return (options as { reply_markup: { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> } })
     .reply_markup.inline_keyboard;
@@ -76,6 +88,7 @@ function getInlineRows(options: unknown): Array<Array<{ text: string; callback_d
 
 describe("bot/commands/settings", () => {
   beforeEach(() => {
+    interactionManager.__resetForTests();
     mocked.userLocale = undefined;
     mocked.hideThinkingMessages = false;
     mocked.hideToolCallMessages = false;
@@ -101,7 +114,7 @@ describe("bot/commands/settings", () => {
       "settings:toggle:hide_thinking",
       "settings:toggle:hide_tool_calls",
       "settings:toggle:hide_tool_files",
-      "settings:cancel",
+      "inline:cancel:settings",
     ]);
     expect(rows[0]?.[0]?.text).toBe(t("settings.language", { value: "English" }));
     expect(rows[1]?.[0]?.text).toBe(
@@ -110,6 +123,7 @@ describe("bot/commands/settings", () => {
   });
 
   it("edits to the language submenu using locale options", async () => {
+    startActiveSettingsMenu();
     const ctx = createCallbackContext("settings:language");
 
     const handled = await handleSettingsCallback(ctx);
@@ -125,11 +139,12 @@ describe("bot/commands/settings", () => {
     expect(text).toBe(t("settings.language.title"));
     expect(rows[0]?.[0]).toMatchObject({ text: "English", callback_data: "settings:language:en" });
     expect(rows.some((row) => row[0]?.callback_data === "settings:language:ru")).toBe(true);
-    expect(rows[rows.length - 1]?.[0]?.callback_data).toBe("settings:cancel");
+    expect(rows[rows.length - 1]?.[0]?.callback_data).toBe("inline:cancel:settings");
   });
 
   it("renders the language submenu title and cancel button with the stored locale", async () => {
     mocked.userLocale = "ru";
+    startActiveSettingsMenu();
     const ctx = createCallbackContext("settings:language");
 
     const handled = await handleSettingsCallback(ctx);
@@ -142,11 +157,12 @@ describe("bot/commands/settings", () => {
     const rows = getInlineRows(options);
 
     expect(text).toBe(t("settings.language.title", undefined, "ru"));
-    expect(rows[rows.length - 1]?.[0]?.text).toBe(t("inline.button.cancel", undefined, "ru"));
-    expect(rows[rows.length - 1]?.[0]?.callback_data).toBe("settings:cancel");
+    expect(rows[rows.length - 1]?.[0]?.text).toBe(t("inline.button.cancel"));
+    expect(rows[rows.length - 1]?.[0]?.callback_data).toBe("inline:cancel:settings");
   });
 
   it("updates language and redraws the root menu in the selected locale", async () => {
+    startActiveSettingsMenu();
     const ctx = createCallbackContext("settings:language:ru");
 
     const handled = await handleSettingsCallback(ctx);
@@ -169,6 +185,7 @@ describe("bot/commands/settings", () => {
   });
 
   it("toggles hide thinking messages", async () => {
+    startActiveSettingsMenu();
     const ctx = createCallbackContext("settings:toggle:hide_thinking");
 
     const handled = await handleSettingsCallback(ctx);
@@ -187,6 +204,7 @@ describe("bot/commands/settings", () => {
   });
 
   it("toggles hide tool call messages", async () => {
+    startActiveSettingsMenu();
     const ctx = createCallbackContext("settings:toggle:hide_tool_calls");
 
     const handled = await handleSettingsCallback(ctx);
@@ -204,6 +222,7 @@ describe("bot/commands/settings", () => {
   });
 
   it("toggles hide tool file messages", async () => {
+    startActiveSettingsMenu();
     const ctx = createCallbackContext("settings:toggle:hide_tool_files");
 
     const handled = await handleSettingsCallback(ctx);
@@ -227,6 +246,7 @@ describe("bot/commands/settings", () => {
 
   it("handles cancel callbacks by closing the settings menu", async () => {
     mocked.userLocale = "ru";
+    startActiveSettingsMenu();
     const ctx = createCallbackContext("settings:cancel");
 
     const handled = await handleSettingsCallback(ctx);
@@ -239,10 +259,43 @@ describe("bot/commands/settings", () => {
     expect(ctx.editMessageText).not.toHaveBeenCalled();
   });
 
+  it("does not mutate language when the settings callback is stale", async () => {
+    startActiveSettingsMenu(99);
+    const ctx = createCallbackContext("settings:language:ru");
+
+    const handled = await handleSettingsCallback(ctx);
+
+    expect(handled).toBe(true);
+    expect(mocked.setUserLocaleMock).not.toHaveBeenCalled();
+    expect(mocked.userLocale).toBeUndefined();
+    expect(ctx.editMessageText).not.toHaveBeenCalled();
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: t("inline.inactive_callback"),
+      show_alert: true,
+    });
+  });
+
+  it("does not mutate toggles when the settings callback is stale", async () => {
+    startActiveSettingsMenu(99);
+    const ctx = createCallbackContext("settings:toggle:hide_thinking");
+
+    const handled = await handleSettingsCallback(ctx);
+
+    expect(handled).toBe(true);
+    expect(mocked.setHideThinkingMessagesMock).not.toHaveBeenCalled();
+    expect(mocked.hideThinkingMessages).toBe(false);
+    expect(ctx.editMessageText).not.toHaveBeenCalled();
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: t("inline.inactive_callback"),
+      show_alert: true,
+    });
+  });
+
   it("answers with an error when settings storage throws", async () => {
     mocked.setHideToolFileMessagesMock.mockImplementationOnce(() => {
       throw new Error("storage failed");
     });
+    startActiveSettingsMenu();
     const ctx = createCallbackContext("settings:toggle:hide_tool_files");
 
     const handled = await handleSettingsCallback(ctx);

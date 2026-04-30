@@ -79,7 +79,7 @@ import { logger } from "../utils/logger.js";
 import { safeBackgroundTask } from "../utils/safe-background-task.js";
 import { withTelegramRateLimitRetry } from "../utils/telegram-rate-limit-retry.js";
 import { pinnedMessageManager } from "../pinned/manager.js";
-import { t } from "../i18n/index.js";
+import { setUserLocaleResolver, t } from "../i18n/index.js";
 import {
   clearPromptResponseMode,
   clearPromptRouting,
@@ -135,6 +135,7 @@ import {
   getReasoningMode,
   getTenantRuntimeInfo,
   getThinkingClearMode,
+  getUserLocale,
   isMessageStreamingEnabled,
 } from "../settings/manager.js";
 import {
@@ -1665,6 +1666,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
 export function createBot(): Bot<Context> {
   clearAllInteractionState("bot_startup");
+  setUserLocaleResolver(getUserLocale);
 
   const botOptions: ConstructorParameters<typeof Bot<Context>>[1] = {};
 

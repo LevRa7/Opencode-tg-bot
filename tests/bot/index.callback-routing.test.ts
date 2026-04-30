@@ -20,6 +20,8 @@ const handleCommandsCallbackMock = vi.hoisted(() => vi.fn(async () => false));
 const handleSettingsCallbackMock = vi.hoisted(() => vi.fn(async () => false));
 const syncAuthorizedChatCommandsMock = vi.hoisted(() => vi.fn(async () => undefined));
 const getApprovedTelegramUserIdsMock = vi.hoisted(() => vi.fn(() => [1]));
+const getUserLocaleMock = vi.hoisted(() => vi.fn(() => undefined));
+const setUserLocaleResolverMock = vi.hoisted(() => vi.fn());
 const attachTargetBySessionId = vi.hoisted(() => new Map<string, { chatId: number; messageThreadId?: number }>());
 const attachScopeBySessionId = vi.hoisted(
   () => new Map<string, { userId: number; chatId: number; messageThreadId?: number }>(),
@@ -373,6 +375,7 @@ vi.mock("../../src/pinned/manager.js", () => ({
 
 vi.mock("../../src/i18n/index.js", () => ({
   t: vi.fn((key: string) => key),
+  setUserLocaleResolver: setUserLocaleResolverMock,
 }));
 
 vi.mock("../../src/bot/handlers/prompt.js", () => ({
@@ -511,6 +514,7 @@ vi.mock("../../src/bot/utils/message-thread.js", () => ({
 }));
 vi.mock("../../src/settings/manager.js", () => ({
   getApprovedTelegramUserIds: getApprovedTelegramUserIdsMock,
+  getUserLocale: getUserLocaleMock,
   getReasoningMode: vi.fn(() => 0),
   getTenantRuntimeInfo: vi.fn(() => undefined),
   getThinkingClearMode: vi.fn(() => false),
@@ -593,6 +597,8 @@ describe("bot/index callback routing", () => {
     handleSettingsCallbackMock.mockReset().mockResolvedValue(false);
     syncAuthorizedChatCommandsMock.mockReset().mockResolvedValue(undefined);
     getApprovedTelegramUserIdsMock.mockReset().mockReturnValue([1]);
+    getUserLocaleMock.mockReset().mockReturnValue(undefined);
+    setUserLocaleResolverMock.mockClear();
   });
 
   it("registers a single callback_query:data dispatcher", () => {
@@ -603,6 +609,13 @@ describe("bot/index callback routing", () => {
     );
 
     expect(callbackHandlers).toHaveLength(1);
+  });
+
+  it("registers the selected user locale resolver during bot setup", () => {
+    createBot();
+
+    expect(setUserLocaleResolverMock).toHaveBeenCalledTimes(1);
+    expect(setUserLocaleResolverMock).toHaveBeenCalledWith(getUserLocaleMock);
   });
 
   it("preserves the current grammY middleware registration order", async () => {

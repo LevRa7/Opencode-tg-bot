@@ -235,6 +235,9 @@ export async function handleVoiceMessage(ctx: Context, deps: VoiceMessageDeps): 
     const recognizedText = prepared.recognizedText?.trim() ?? "";
     if (!recognizedText) {
       await ctx.api.editMessageText(chatId, statusMessage.message_id, t("stt.empty_result"));
+      if (prepared.promptText.trim().length > 0) {
+        await processPrompt(ctx, prepared.promptText, deps);
+      }
       return;
     }
 

@@ -63,6 +63,7 @@ const statMock = vi.hoisted(() =>
     throw new Error(`Unexpected file path: ${filePath}`);
   }),
 );
+const realpathMock = vi.hoisted(() => vi.fn(async (filePath: string) => filePath));
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -134,6 +135,7 @@ vi.mock("grammy", () => {
 
 vi.mock("node:fs/promises", () => ({
   stat: statMock,
+  realpath: realpathMock,
 }));
 
 vi.mock("../../src/config.js", () => ({
@@ -449,6 +451,7 @@ describe("bot/index local file follow-up orchestration", () => {
     sendVideoMock.mockClear();
     sendChatActionMock.mockClear();
     editMessageTextMock.mockClear();
+    routingBySessionId.clear();
     keyboardGetKeyboardMock.mockReset();
     keyboardGetKeyboardMock.mockReturnValue(undefined);
     keyboardIsInitializedMock.mockReset();
@@ -476,6 +479,8 @@ describe("bot/index local file follow-up orchestration", () => {
     sessionPromptAsyncMock.mockClear();
     sessionStatusMock.mockClear();
     statMock.mockClear();
+    realpathMock.mockClear();
+    realpathMock.mockImplementation(async (filePath: string) => filePath);
     vi.spyOn(global, "setInterval").mockReturnValue(0 as unknown as NodeJS.Timeout);
     summaryAggregator.clear();
   });
@@ -4415,6 +4420,224 @@ describe("bot/index local file follow-up orchestration", () => {
         message_thread_id: 1,
       }),
     );
+  });
+
+  it("ignores tenant host paths from assistant text before checking the filesystem", async () => {
+    getActiveScopeMock.mockReturnValue({ userId: 888, chatId: 123, messageThreadId: 1 });
+
+    vi.mocked(getTenantRuntimeInfo).mockReturnValue({
+      userId: 888,
+      chatId: 123,
+      port: 49600,
+      baseUrl: "http://127.0.0.1:49600",
+      tenantId: "tg-888",
+    });
+
+    statMock.mockImplementation(async (filePath: string) => {
+      if (filePath === "/home/me/Workspaces/tg-7408085157/AGENTS.md") {
+        return { isFile: () => true, size: 128 };
+      }
+
+      throw new Error(`Unexpected file path: ${filePath}`);
+    });
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "say hello",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 888 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    capturedEventCallbacksByDirectory.get("/repo")?.[0]?.({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-host-path-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    capturedEventCallbacksByDirectory.get("/repo")?.[0]?.({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-host-path-1",
+          sessionID: "session-1",
+          messageID: "message-host-path-1",
+          type: "text",
+          text: "Requested file: /home/me/Workspaces/tg-7408085157/AGENTS.md",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(statMock).not.toHaveBeenCalled();
+    expect(sendDocumentMock).not.toHaveBeenCalled();
+    expect(sendPhotoMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores tenant /workspace traversal before checking the filesystem", async () => {
+    getActiveScopeMock.mockReturnValue({ userId: 888, chatId: 123, messageThreadId: 1 });
+
+    vi.mocked(getTenantRuntimeInfo).mockReturnValue({
+      userId: 888,
+      chatId: 123,
+      port: 49600,
+      baseUrl: "http://127.0.0.1:49600",
+      tenantId: "tg-888",
+    });
+
+    statMock.mockImplementation(async (filePath: string) => {
+      if (filePath === "/home/me/Workspaces/tg-888/state/secret.txt") {
+        return { isFile: () => true, size: 128 };
+      }
+
+      throw new Error(`Unexpected file path: ${filePath}`);
+    });
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "say hello",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 888 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    capturedEventCallbacksByDirectory.get("/repo")?.[0]?.({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-traversal-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    capturedEventCallbacksByDirectory.get("/repo")?.[0]?.({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-traversal-1",
+          sessionID: "session-1",
+          messageID: "message-traversal-1",
+          type: "text",
+          text: "Requested file: /workspace/../state/secret.txt",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(statMock).not.toHaveBeenCalled();
+    expect(sendDocumentMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores tenant /workspace symlink escapes before sending files", async () => {
+    getActiveScopeMock.mockReturnValue({ userId: 888, chatId: 123, messageThreadId: 1 });
+
+    vi.mocked(getTenantRuntimeInfo).mockReturnValue({
+      userId: 888,
+      chatId: 123,
+      port: 49600,
+      baseUrl: "http://127.0.0.1:49600",
+      tenantId: "tg-888",
+    });
+
+    statMock.mockImplementation(async (filePath: string) => {
+      if (filePath === "/home/me/Workspaces/tg-888/workspace/link.txt") {
+        return { isFile: () => true, size: 128 };
+      }
+
+      throw new Error(`Unexpected file path: ${filePath}`);
+    });
+    realpathMock.mockImplementation(async (filePath: string) => {
+      if (filePath === "/home/me/Workspaces/tg-888/workspace/link.txt") {
+        return "/home/me/pass.db";
+      }
+
+      return filePath;
+    });
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "say hello",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 888 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    capturedEventCallbacksByDirectory.get("/repo")?.[0]?.({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-symlink-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    capturedEventCallbacksByDirectory.get("/repo")?.[0]?.({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-symlink-1",
+          sessionID: "session-1",
+          messageID: "message-symlink-1",
+          type: "text",
+          text: "Requested file: /workspace/link.txt",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(statMock).not.toHaveBeenCalled();
+    expect(sendDocumentMock).not.toHaveBeenCalled();
   });
 
   it("uses assistant renderer functions when message format mode is markdown", async () => {

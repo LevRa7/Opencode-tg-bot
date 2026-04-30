@@ -106,18 +106,42 @@ export function buildStoredMediaPrompt(params: {
   runtimeVisiblePath: string;
   extractedText: string;
   caption: string;
+  processingError?: string;
 }): string {
   const sections = [
     "Telegram media was already processed locally.",
-    "Use only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.",
-    `Processed media result:\n${params.extractedText}`,
+    "Use the saved file path only when you need to reference the uploaded file in this session; otherwise use the processed result below as the source of truth.",
+    `Saved file path:\n${params.runtimeVisiblePath}`,
   ];
+
+  if (params.processingError?.trim()) {
+    sections.push(`Media processing failed:\n${params.processingError.trim()}`);
+  }
+
+  if (params.extractedText.trim().length > 0) {
+    sections.push(`Processed media result:\n${params.extractedText}`);
+  }
 
   if (params.caption.trim().length > 0) {
     sections.push(`User caption/instruction:\n${params.caption}`);
   }
 
   return sections.join("\n\n");
+}
+
+function formatMediaProcessingError(_error: unknown): string {
+  return "Media processing failed after the file was saved.";
+}
+
+function buildStoredMediaPathPrompt(params: {
+  runtimeVisiblePath: string;
+  caption: string;
+}): string {
+  return buildStoredMediaPrompt({
+    runtimeVisiblePath: params.runtimeVisiblePath,
+    extractedText: "",
+    caption: params.caption,
+  });
 }
 
 export async function prepareAttachmentMediaPrompt(
@@ -158,7 +182,10 @@ export async function prepareAttachmentMediaPrompt(
   const inputType = getAttachmentInputType(params.mediaType);
 
   if (supportsInput(capabilities, inputType) && supportsAttachment(capabilities)) {
-    let promptText = params.caption;
+    let promptText = buildStoredMediaPathPrompt({
+      runtimeVisiblePath: sourceFile.runtimeVisiblePath,
+      caption: params.caption,
+    });
 
     if (inputType === "video") {
       try {
@@ -168,9 +195,11 @@ export async function prepareAttachmentMediaPrompt(
           hostAbsolutePath: sourceFile.hostAbsolutePath,
         });
         if (extractedText.trim().length > 0) {
-          promptText = params.caption.trim()
-            ? `${params.caption}\n\nTranscribed video audio:\n${extractedText}`
-            : extractedText;
+          promptText = buildStoredMediaPrompt({
+            runtimeVisiblePath: sourceFile.runtimeVisiblePath,
+            extractedText: `Transcribed video audio:\n${extractedText}`,
+            caption: params.caption,
+          });
         }
       } catch (error) {
         logger.warn(
@@ -200,10 +229,18 @@ export async function prepareAttachmentMediaPrompt(
   }
 
   await params.onFallbackStart?.();
-  const extractedText = await transcribeMedia({
-    kind: transcriberKind,
-    hostAbsolutePath: sourceFile.hostAbsolutePath,
-  });
+  let extractedText = "";
+  let processingError: string | undefined;
+
+  try {
+    extractedText = await transcribeMedia({
+      kind: transcriberKind,
+      hostAbsolutePath: sourceFile.hostAbsolutePath,
+    });
+  } catch (error) {
+    processingError = formatMediaProcessingError(error);
+    logger.error("[Media] Stored media transcription failed after saving file", error);
+  }
 
   return {
     mode: "text",
@@ -211,6 +248,7 @@ export async function prepareAttachmentMediaPrompt(
       runtimeVisiblePath: sourceFile.runtimeVisiblePath,
       extractedText,
       caption: params.caption,
+      processingError,
     }),
     sourceFile,
     transcriberKind,
@@ -285,7 +323,20 @@ export async function prepareAudioPrompt(
       transcriberKind: "audio",
     };
   } catch (error) {
-    logger.error("[MediaIngest] Stored-media audio transcription failed", error);
-    throw error;
+    logger.error("[MediaIngest] Stored-media audio transcription failed after saving file", error);
+    const recognizedText = "";
+
+    return {
+      mode: "text",
+      recognizedText,
+      promptText: buildStoredMediaPrompt({
+        runtimeVisiblePath: sourceFile.runtimeVisiblePath,
+        extractedText: recognizedText,
+        caption: "",
+        processingError: formatMediaProcessingError(error),
+      }),
+      sourceFile,
+      transcriberKind: "audio",
+    };
   }
 }

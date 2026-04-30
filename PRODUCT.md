@@ -64,6 +64,7 @@ No public inbound ports are required for normal usage.
 - Split long responses into multiple Telegram messages
 - Split long HTML assistant replies into multiple Telegram messages without overwriting already delivered chunks
 - Send code updates as files (size-limited)
+- Send assistant-mentioned local files as follow-up attachments only from the admin host runtime or from tenant-visible `/workspace/...` and `/state/...` paths that map to the current Docker user's Workspaces directory
 
 ### Session status in chat
 
@@ -76,6 +77,7 @@ No public inbound ports are required for normal usage.
 
 - Whitelist by Telegram admin user ID plus optional allowed user IDs
 - Ignore messages from non-authorized users
+- Prevent non-admin Docker tenant users from receiving arbitrary host files through automatic local-file follow-ups
 
 ### Configuration
 
@@ -120,7 +122,7 @@ Current command set:
 
 Model, agent, variant, and context actions are available from the bottom reply keyboard, which users can hide manually and which the bot reattaches on later replies; in forum chats, main-thread reply-keyboard actions stay in the main thread while topic-local `agent`/`model`/`variant` behavior remains isolated.
 
-Text messages (non-commands) are treated as prompts for OpenCode only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured. When `/tts` is enabled globally, completed assistant replies also include a generated audio file if TTS is configured.
+Text messages (non-commands) are treated as prompts for OpenCode only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured. Photos, PDFs, text documents, videos, video notes, and voice/audio files are persisted in per-user media storage, and the saved runtime-visible file path is included in the OpenCode prompt even when transcription succeeds, returns no text, or fails after saving. When `/tts` is enabled globally, completed assistant replies also include a generated audio file if TTS is configured.
 
 Interaction routing rules:
 

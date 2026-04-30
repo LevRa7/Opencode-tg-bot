@@ -110,6 +110,12 @@ Documentation rule:
 
 ### Fixed
 
+- Fixed automatic local-file follow-ups for Docker tenant users so assistant-mentioned host paths are ignored before filesystem checks, while container-visible `/workspace/...` and `/state/...` paths still resolve to the user's own Workspaces tenant directory.
+  - Why: a non-admin user could ask the assistant to mention an arbitrary host absolute path and the bot could send that file if it existed and was under the size limit.
+  - Affects: `src/bot/index.ts`, `src/bot/utils/telegram-local-file-follow-up.ts`, `tests/bot/index.local-file-follow-up.test.ts`
+- Fixed incoming media prompts so saved file paths are always included in OpenCode context for photos, PDFs, videos, text documents, voice/audio, attachment mode, text fallback mode, and post-save transcription failures.
+  - Why: Telegram-uploaded files must remain addressable by path inside the active OpenCode session even when transcription succeeds, returns empty text, or fails after the file has been saved.
+  - Affects: `src/media/ingest.ts`, `src/bot/handlers/voice.ts`, `tests/media/ingest.test.ts`, `tests/bot/handlers/voice.test.ts`
 - Fixed interactive Telegram prompt dispatch to use OpenCode's async prompt endpoint instead of waiting on the synchronous prompt response behind a local 60-second timeout.
   - Why: long-running coding tasks could be accepted by OpenCode but still be reported as failed by the bot after the local timeout expired.
   - Affects: `src/bot/handlers/prompt.ts`, `src/bot/index.ts`, `tests/bot/handlers/prompt-deferred-follow-up.test.ts`

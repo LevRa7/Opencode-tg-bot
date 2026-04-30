@@ -94,6 +94,98 @@ describe("summary/aggregator", () => {
     expect(onSessionIdle).toHaveBeenCalledWith("session-1");
   });
 
+  it("keeps emitting assistant partials for an earlier root session after another root session starts", () => {
+    const onPartial = vi.fn();
+    summaryAggregator.setOnPartial(onPartial);
+
+    summaryAggregator.setSession("session-1");
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.setSession("session-2");
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-2",
+          sessionID: "session-2",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-1",
+          sessionID: "session-1",
+          messageID: "message-1",
+          type: "text",
+          text: "stream from session 1",
+        },
+      },
+    } as unknown as Event);
+
+    expect(onPartial).toHaveBeenCalledWith(
+      "session-1",
+      "message-1",
+      "stream from session 1",
+      "",
+      [],
+    );
+  });
+
+  it("keeps delivering question and permission events for all active root sessions", async () => {
+    const onQuestion = vi.fn();
+    const onPermission = vi.fn();
+    summaryAggregator.setOnQuestion(onQuestion);
+    summaryAggregator.setOnPermission(onPermission);
+
+    summaryAggregator.setSession("session-1");
+    summaryAggregator.setSession("session-2");
+
+    summaryAggregator.processEvent({
+      type: "question.asked",
+      properties: {
+        id: "question-1",
+        sessionID: "session-1",
+        questions: [{ header: "Question", options: [], multiple: false, question: "Q?" }],
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "permission.asked",
+      properties: {
+        id: "permission-1",
+        sessionID: "session-1",
+        permission: "bash",
+        patterns: [],
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onQuestion).toHaveBeenCalledWith(
+      "session-1",
+      expect.arrayContaining([expect.objectContaining({ question: "Q?" })]),
+      "question-1",
+    );
+    expect(onPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "permission-1", sessionID: "session-1" }),
+    );
+  });
+
   it("includes sessionId in tool callback payload", () => {
     const onTool = vi.fn();
     summaryAggregator.setOnTool(onTool);
@@ -200,7 +292,8 @@ describe("summary/aggregator", () => {
               command: "python watcher.py",
             },
             metadata: {
-              output: '{"ok":true,"data":{"step":"scan-started"}}\n{"ok":true,"data":{"step":"scan-complete"}}',
+              output:
+                '{"ok":true,"data":{"step":"scan-started"}}\n{"ok":true,"data":{"step":"scan-complete"}}',
             },
             time: { start: Date.now() },
           },
@@ -1228,7 +1321,13 @@ describe("summary/aggregator", () => {
       },
     } as unknown as Event);
 
-    expect(onPartial).toHaveBeenCalledWith("session-1", "message-stream-1", "Partial answer", "", []);
+    expect(onPartial).toHaveBeenCalledWith(
+      "session-1",
+      "message-stream-1",
+      "Partial answer",
+      "",
+      [],
+    );
     expect(onComplete).toHaveBeenCalledWith(
       "session-1",
       "message-stream-1",
@@ -1299,7 +1398,13 @@ describe("summary/aggregator", () => {
       },
     } as unknown as Event);
 
-    expect(onPartial).toHaveBeenLastCalledWith("session-1", "message-multipart-1", "Hello world", "", []);
+    expect(onPartial).toHaveBeenLastCalledWith(
+      "session-1",
+      "message-multipart-1",
+      "Hello world",
+      "",
+      [],
+    );
     expect(onComplete).toHaveBeenCalledWith(
       "session-1",
       "message-multipart-1",
@@ -2019,7 +2124,14 @@ describe("summary/aggregator", () => {
     } as unknown as Event);
 
     expect(onComplete).toHaveBeenCalledTimes(1);
-    expect(onComplete).toHaveBeenCalledWith("session-1", "message-complete-once", "Only once", "", [], { agent: undefined, providerID: undefined, modelID: undefined });
+    expect(onComplete).toHaveBeenCalledWith(
+      "session-1",
+      "message-complete-once",
+      "Only once",
+      "",
+      [],
+      { agent: undefined, providerID: undefined, modelID: undefined },
+    );
   });
 
   it("keeps first root session partial state after second root session starts", () => {

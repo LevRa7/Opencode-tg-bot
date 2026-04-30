@@ -3,6 +3,7 @@ import {
   buildLocalFileFollowUpCaption,
   createLocalFileFollowUpTracker,
   extractLocalFilePaths,
+  isPathInsideRoot,
   prepareLocalFileFollowUps,
   resolveTelegramFileKind,
 } from "../../../src/bot/utils/telegram-local-file-follow-up.js";
@@ -154,6 +155,43 @@ describe("bot/utils/telegram-local-file-follow-up", () => {
         caption: "<code>/state/tg-cli/data/login.qr.png</code>",
       },
     ]);
+  });
+
+  it("applies the resolved-path allowlist before statting tenant files", async () => {
+    mockedFs.stat.mockImplementation(async (filePath: string) => {
+      if (filePath === "/home/me/Workspaces/tg-42/workspace/report.txt") {
+        return { isFile: () => true, size: 128 };
+      }
+
+      throw new Error(`Unexpected stat for ${filePath}`);
+    });
+
+    const result = await prepareLocalFileFollowUps(
+      [
+        "/workspace/report.txt",
+        "/workspace/../state/secret.txt",
+      ].join("\n"),
+      (filePath) =>
+        filePath === "/workspace/report.txt"
+          ? "/home/me/Workspaces/tg-42/workspace/report.txt"
+          : "/home/me/Workspaces/tg-42/state/secret.txt",
+      (resolvedPath) => resolvedPath.startsWith("/home/me/Workspaces/tg-42/workspace/"),
+    );
+
+    expect(mockedFs.stat).toHaveBeenCalledTimes(1);
+    expect(mockedFs.stat).toHaveBeenCalledWith("/home/me/Workspaces/tg-42/workspace/report.txt");
+    expect(result).toEqual([
+      expect.objectContaining({
+        path: "/workspace/report.txt",
+        resolvedPath: "/home/me/Workspaces/tg-42/workspace/report.txt",
+      }),
+    ]);
+  });
+
+  it("checks path containment on normalized root boundaries", () => {
+    expect(isPathInsideRoot("/home/me/Workspaces/tg-42/workspace/file.txt", "/home/me/Workspaces/tg-42/workspace")).toBe(true);
+    expect(isPathInsideRoot("/home/me/Workspaces/tg-42/workspace", "/home/me/Workspaces/tg-42/workspace")).toBe(true);
+    expect(isPathInsideRoot("/home/me/Workspaces/tg-42/workspace-other/file.txt", "/home/me/Workspaces/tg-42/workspace")).toBe(false);
   });
 
   it("tracks sent and in-flight paths per session to prevent duplicate follow-ups", () => {

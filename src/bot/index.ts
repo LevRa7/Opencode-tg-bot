@@ -112,6 +112,8 @@ import { sendBotText } from "./utils/telegram-text.js";
 import {
   createLocalFileFollowUpTracker,
   extractLocalFilePaths,
+  isPathInsideRoot,
+  isRealPathInsideRoot,
   prepareLocalFileFollowUpsFromPaths,
   type PreparedLocalFileFollowUp,
 } from "./utils/telegram-local-file-follow-up.js";
@@ -395,9 +397,37 @@ interface LocalFileFollowUpDeliveryRoute {
   routingIdentity: string;
 }
 
+interface SessionLocalFilePathAccess {
+  resolvePath: (filePath: string) => string | null;
+  isAllowed?: (resolvedPath: string) => Promise<boolean> | boolean;
+}
+
+function resolveTenantContainerPath(params: {
+  filePath: string;
+  containerRoot: string;
+  hostRoot: string;
+}): string | null {
+  if (params.filePath !== params.containerRoot && !params.filePath.startsWith(`${params.containerRoot}/`)) {
+    return null;
+  }
+
+  const relativePath = path.posix.relative(params.containerRoot, params.filePath);
+  if (relativePath.startsWith("..") || path.posix.isAbsolute(relativePath)) {
+    return null;
+  }
+
+  const resolvedPath =
+    relativePath === "" || relativePath === "."
+      ? path.resolve(params.hostRoot)
+      : path.resolve(params.hostRoot, relativePath);
+  const resolvedRoot = path.resolve(params.hostRoot);
+
+  return isPathInsideRoot(resolvedPath, resolvedRoot) ? resolvedPath : null;
+}
+
 function getSessionLocalFilePathResolver(
   sessionId: string,
-): ((filePath: string) => string) | undefined {
+): SessionLocalFilePathAccess | undefined {
   const scope = getSessionRoutingScope(sessionId);
   if (!scope || scope.userId === config.telegram.adminUserId) {
     return undefined;
@@ -413,22 +443,30 @@ function getSessionLocalFilePathResolver(
   const tenantStateRoot = path.join(tenantRoot, "state");
   const tenantWorkspaceRoot = path.join(tenantRoot, "workspace");
 
-  return (filePath: string): string => {
-    if (filePath === "/state" || filePath.startsWith("/state/")) {
-      const relativePath = path.posix.relative("/state", filePath);
-      return relativePath === "" || relativePath === "."
-        ? tenantStateRoot
-        : path.join(tenantStateRoot, relativePath);
-    }
-
-    if (filePath === "/workspace" || filePath.startsWith("/workspace/")) {
-      const relativePath = path.posix.relative("/workspace", filePath);
-      return relativePath === "" || relativePath === "."
-        ? tenantWorkspaceRoot
-        : path.join(tenantWorkspaceRoot, relativePath);
-    }
-
-    return filePath;
+  return {
+    resolvePath: (filePath: string): string | null => {
+      return (
+        resolveTenantContainerPath({
+          filePath,
+          containerRoot: "/state",
+          hostRoot: tenantStateRoot,
+        }) ??
+        resolveTenantContainerPath({
+          filePath,
+          containerRoot: "/workspace",
+          hostRoot: tenantWorkspaceRoot,
+        })
+      );
+    },
+    isAllowed: async (resolvedPath: string): Promise<boolean> => {
+      // 2026-04-30: tenant users may only receive files whose canonical target
+      // remains inside their mapped roots. This blocks raw host paths, `..`
+      // traversal, and symlink escapes before Telegram opens the file.
+      return (
+        (await isRealPathInsideRoot(resolvedPath, tenantStateRoot).catch(() => false)) ||
+        (await isRealPathInsideRoot(resolvedPath, tenantWorkspaceRoot).catch(() => false))
+      );
+    },
   };
 }
 
@@ -501,10 +539,11 @@ async function enqueueLocalFileFollowUpsFromText(sessionId: string, text: string
     return;
   }
 
-  const resolveLocalFilePath = getSessionLocalFilePathResolver(sessionId);
+  const localFilePathAccess = getSessionLocalFilePathResolver(sessionId);
   const preparedFollowUps = await prepareLocalFileFollowUpsFromPaths(
     reservedPaths,
-    resolveLocalFilePath,
+    localFilePathAccess?.resolvePath,
+    localFilePathAccess?.isAllowed,
   );
   if (preparedFollowUps.length === 0) {
     localFileFollowUpTracker.release(sessionId, reservedPaths);

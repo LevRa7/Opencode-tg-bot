@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { escapeHtml } from "./reasoning-format.js";
@@ -143,14 +143,22 @@ export function buildLocalFileFollowUpCaption(filePath: string): string {
 
 export async function prepareLocalFileFollowUpsFromPaths(
   filePaths: Iterable<string>,
-  resolveLocalFilePath?: (filePath: string) => string,
+  resolveLocalFilePath?: (filePath: string) => string | null,
+  isResolvedLocalFilePathAllowed?: (resolvedPath: string) => Promise<boolean> | boolean,
 ): Promise<PreparedLocalFileFollowUp[]> {
   const prepared: PreparedLocalFileFollowUp[] = [];
 
   for (const filePath of filePaths) {
-    const resolvedPath = resolveLocalFilePath?.(filePath) ?? filePath;
+    const resolvedPath = resolveLocalFilePath ? resolveLocalFilePath(filePath) : filePath;
+    if (!resolvedPath) {
+      continue;
+    }
 
     try {
+      if (isResolvedLocalFilePathAllowed && !(await isResolvedLocalFilePathAllowed(resolvedPath))) {
+        continue;
+      }
+
       const fileStat = await stat(resolvedPath);
       if (!fileStat.isFile()) {
         continue;
@@ -177,7 +185,8 @@ export async function prepareLocalFileFollowUpsFromPaths(
 
 export async function prepareLocalFileFollowUps(
   text: string,
-  resolveLocalFilePath?: (filePath: string) => string,
+  resolveLocalFilePath?: (filePath: string) => string | null,
+  isResolvedLocalFilePathAllowed?: (resolvedPath: string) => Promise<boolean> | boolean,
 ): Promise<PreparedLocalFileFollowUp[]> {
   // Что делает этот код:
   // - превращает текст ответа в список готовых follow-up вложений.
@@ -189,7 +198,20 @@ export async function prepareLocalFileFollowUps(
   return await prepareLocalFileFollowUpsFromPaths(
     extractLocalFilePaths(text),
     resolveLocalFilePath,
+    isResolvedLocalFilePathAllowed,
   );
+}
+
+export function isPathInsideRoot(targetPath: string, rootPath: string): boolean {
+  const normalizedTarget = targetPath.replace(/[\\/]+$/g, "");
+  const normalizedRoot = rootPath.replace(/[\\/]+$/g, "");
+
+  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}/`);
+}
+
+export async function isRealPathInsideRoot(targetPath: string, rootPath: string): Promise<boolean> {
+  const [resolvedTarget, resolvedRoot] = await Promise.all([realpath(targetPath), realpath(rootPath)]);
+  return isPathInsideRoot(resolvedTarget, resolvedRoot);
 }
 
 class InMemoryLocalFileFollowUpTracker implements LocalFileFollowUpTracker {

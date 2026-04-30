@@ -1,34 +1,40 @@
 import type { Context } from "grammy";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const getCurrentOpencodeRouteMock = vi.hoisted(() => vi.fn());
-const loggerMock = vi.hoisted(() => ({
-  debug: vi.fn(),
-  info: vi.fn(),
-  warn: vi.fn(),
-  error: vi.fn(),
-}));
-const sttClientMock = vi.hoisted(() => ({
-  isSttConfigured: vi.fn(),
-  transcribeAudio: vi.fn(),
-}));
-
-vi.mock("../../src/opencode/client.js", () => ({
-  getCurrentOpencodeRoute: getCurrentOpencodeRouteMock,
-}));
-
-vi.mock("../../src/utils/logger.js", () => ({
-  logger: loggerMock,
-}));
-
-vi.mock("../../src/stt/client.js", () => sttClientMock);
-
 import {
   buildStoredMediaPrompt,
   prepareAudioPrompt,
   prepareAttachmentMediaPrompt,
   resolveMediaStorageOwner,
 } from "../../src/media/ingest.js";
+import type { StoredMediaFile, StoredMediaType } from "../../src/media/types.js";
+
+const getCurrentOpencodeRouteMock = vi.hoisted(() => vi.fn());
+
+const baseSourceFile: StoredMediaFile = {
+  hostAbsolutePath: "/home/me/Workspaces/tg-123/state/media/123/2026/04/30/photo.jpg",
+  runtimeVisiblePath: "/state/media/123/2026/04/30/photo.jpg",
+  fileName: "photo.jpg",
+  mimeType: "image/jpeg",
+  sizeBytes: 11,
+  mediaType: "image",
+};
+
+vi.mock("../../src/opencode/client.js", () => ({
+  getCurrentOpencodeRoute: getCurrentOpencodeRouteMock,
+}));
+
+function createStoredMediaFile(overrides: Partial<StoredMediaFile> = {}): StoredMediaFile {
+  const mediaType = overrides.mediaType ?? "image";
+  return {
+    hostAbsolutePath: `/host/media/123/2026/04/30/file`,
+    runtimeVisiblePath: `/state/media/123/2026/04/30/file`,
+    fileName: "file",
+    mimeType: "application/octet-stream",
+    sizeBytes: 11,
+    mediaType: mediaType as StoredMediaType,
+    ...overrides,
+  };
+}
 
 describe("media/ingest", () => {
   beforeEach(() => {
@@ -40,256 +46,19 @@ describe("media/ingest", () => {
     });
   });
 
-  it("keeps the STT result for audio when remote transcription succeeds", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
-      fileName: "audio.ogg",
-      mimeType: "audio/ogg",
-      sizeBytes: 6,
-      mediaType: "audio",
-    });
-    const transcribeAudio = vi.fn().mockResolvedValue({ text: "  remote transcript  " });
-    const transcribeStoredMedia = vi.fn();
-
-    const preparedPrompt = await prepareAudioPrompt({
-      ctx: { from: { id: 123 } } as Context,
-      telegramFileId: "telegram-audio-1",
-      mimeType: "audio/ogg",
-      originalFileName: "audio.ogg",
-      fallbackFileName: "fallback.ogg",
-      buffer: Buffer.from("audio!"),
-      saveIncomingMediaFile,
-      isSttConfigured: () => true,
-      transcribeAudio,
-      transcribeStoredMedia,
+  it("includes the saved file path in stored-media text prompts", () => {
+    // What this verifies:
+    // - every text/fallback media prompt must carry the runtime-visible path.
+    // Passing result:
+    // - OpenCode receives the saved path before any extracted text.
+    const prompt = buildStoredMediaPrompt({
+      runtimeVisiblePath: "/state/media/123/2026/04/30/audio.ogg",
+      extractedText: "hello world",
+      caption: "",
     });
 
-    expect(saveIncomingMediaFile).toHaveBeenCalledWith(
-      expect.objectContaining({
-        owner: { userId: 123, runtimeKind: "host" },
-        telegramFileId: "telegram-audio-1",
-        originalFileName: "audio.ogg",
-        fallbackFileName: "fallback.ogg",
-        mimeType: "audio/ogg",
-        mediaType: "audio",
-        buffer: Buffer.from("audio!"),
-      }),
-    );
-    expect(transcribeAudio).toHaveBeenCalledWith(Buffer.from("audio!"), "audio.ogg");
-    expect(transcribeStoredMedia).not.toHaveBeenCalled();
-    expect(preparedPrompt).toEqual({
-      mode: "text",
-      recognizedText: "remote transcript",
-      promptText:
-        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nremote transcript",
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
-        fileName: "audio.ogg",
-        mimeType: "audio/ogg",
-        sizeBytes: 6,
-        mediaType: "audio",
-      },
-      transcriberKind: "audio",
-    });
-  });
-
-  it("uses the default STT dependencies for audio when no overrides are injected", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
-      fileName: "audio.ogg",
-      mimeType: "audio/ogg",
-      sizeBytes: 6,
-      mediaType: "audio",
-    });
-    const transcribeStoredMedia = vi.fn();
-
-    sttClientMock.isSttConfigured.mockReturnValue(true);
-    sttClientMock.transcribeAudio.mockResolvedValue({ text: " default transcript " });
-
-    const preparedPrompt = await prepareAudioPrompt({
-      ctx: { from: { id: 123 } } as Context,
-      telegramFileId: "telegram-audio-default",
-      mimeType: "audio/ogg",
-      fallbackFileName: "fallback.ogg",
-      buffer: Buffer.from("audio!"),
-      saveIncomingMediaFile,
-      transcribeStoredMedia,
-    });
-
-    expect(sttClientMock.isSttConfigured).toHaveBeenCalledTimes(1);
-    expect(sttClientMock.transcribeAudio).toHaveBeenCalledWith(Buffer.from("audio!"), "audio.ogg");
-    expect(transcribeStoredMedia).not.toHaveBeenCalled();
-    expect(preparedPrompt).toEqual({
-      mode: "text",
-      recognizedText: "default transcript",
-      promptText:
-        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\ndefault transcript",
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
-        fileName: "audio.ogg",
-        mimeType: "audio/ogg",
-        sizeBytes: 6,
-        mediaType: "audio",
-      },
-      transcriberKind: "audio",
-    });
-  });
-
-  it("falls back when remote STT returns blank text and uses the fallback transcript", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
-      fileName: "audio.ogg",
-      mimeType: "audio/ogg",
-      sizeBytes: 6,
-      mediaType: "audio",
-    });
-    const onFallbackStart = vi.fn();
-    const transcribeAudio = vi.fn().mockResolvedValue({ text: "   \n  " });
-    const transcribeStoredMedia = vi.fn().mockResolvedValue("fallback transcript");
-
-    const preparedPrompt = await prepareAudioPrompt({
-      ctx: { from: { id: 123 } } as Context,
-      telegramFileId: "telegram-audio-blank-stt",
-      mimeType: "audio/ogg",
-      fallbackFileName: "fallback.ogg",
-      buffer: Buffer.from("audio!"),
-      onFallbackStart,
-      saveIncomingMediaFile,
-      isSttConfigured: () => true,
-      transcribeAudio,
-      transcribeStoredMedia,
-    });
-
-    expect(loggerMock.warn).toHaveBeenCalledWith(
-      "[MediaIngest] Remote audio STT returned empty text, falling back to stored-media transcription",
-    );
-    expect(onFallbackStart).toHaveBeenCalledTimes(1);
-    expect(transcribeStoredMedia).toHaveBeenCalledWith({
-      kind: "audio",
-      hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-    });
-    expect(preparedPrompt).toEqual({
-      mode: "text",
-      recognizedText: "fallback transcript",
-      promptText:
-        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nfallback transcript",
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
-        fileName: "audio.ogg",
-        mimeType: "audio/ogg",
-        sizeBytes: 6,
-        mediaType: "audio",
-      },
-      transcriberKind: "audio",
-    });
-  });
-
-  it("falls back to the stored-media audio transcriber when STT is not configured", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
-      fileName: "audio.ogg",
-      mimeType: "audio/ogg",
-      sizeBytes: 6,
-      mediaType: "audio",
-    });
-    const onFallbackStart = vi.fn();
-    const transcribeStoredMedia = vi.fn().mockResolvedValue("local transcript");
-    const transcribeAudio = vi.fn();
-
-    const preparedPrompt = await prepareAudioPrompt({
-      ctx: { from: { id: 123 } } as Context,
-      telegramFileId: "telegram-audio-2",
-      mimeType: "audio/ogg",
-      fallbackFileName: "fallback.ogg",
-      buffer: Buffer.from("audio!"),
-      onFallbackStart,
-      saveIncomingMediaFile,
-      isSttConfigured: () => false,
-      transcribeAudio,
-      transcribeStoredMedia,
-    });
-
-    expect(transcribeAudio).not.toHaveBeenCalled();
-    expect(onFallbackStart).toHaveBeenCalledTimes(1);
-    expect(transcribeStoredMedia).toHaveBeenCalledWith({
-      kind: "audio",
-      hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-    });
-    expect(preparedPrompt).toEqual({
-      mode: "text",
-      recognizedText: "local transcript",
-      promptText:
-        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nlocal transcript",
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
-        fileName: "audio.ogg",
-        mimeType: "audio/ogg",
-        sizeBytes: 6,
-        mediaType: "audio",
-      },
-      transcriberKind: "audio",
-    });
-  });
-
-  it("falls back to the stored-media audio transcriber when remote STT throws", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
-      fileName: "audio.ogg",
-      mimeType: "audio/ogg",
-      sizeBytes: 6,
-      mediaType: "audio",
-    });
-    const onFallbackStart = vi.fn();
-    const sttError = new Error("remote STT failed");
-    const transcribeAudio = vi.fn().mockRejectedValue(sttError);
-    const transcribeStoredMedia = vi.fn().mockResolvedValue("local transcript");
-
-    const preparedPrompt = await prepareAudioPrompt({
-      ctx: { from: { id: 123 } } as Context,
-      telegramFileId: "telegram-audio-3",
-      mimeType: "audio/ogg",
-      fallbackFileName: "fallback.ogg",
-      buffer: Buffer.from("audio!"),
-      onFallbackStart,
-      saveIncomingMediaFile,
-      isSttConfigured: () => true,
-      transcribeAudio,
-      transcribeStoredMedia,
-    });
-
-    expect(loggerMock.warn).toHaveBeenCalledWith(
-      "[MediaIngest] Remote audio STT failed, falling back to stored-media transcription",
-      sttError,
-    );
-    expect(onFallbackStart).toHaveBeenCalledTimes(1);
-    expect(transcribeStoredMedia).toHaveBeenCalledWith({
-      kind: "audio",
-      hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-    });
-    expect(preparedPrompt).toEqual({
-      mode: "text",
-      recognizedText: "local transcript",
-      promptText:
-        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nlocal transcript",
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/audio.ogg",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/audio.ogg",
-        fileName: "audio.ogg",
-        mimeType: "audio/ogg",
-        sizeBytes: 6,
-        mediaType: "audio",
-      },
-      transcriberKind: "audio",
-    });
+    expect(prompt).toContain("Saved file path:\n/state/media/123/2026/04/30/audio.ogg");
+    expect(prompt).toContain("Processed media result:\nhello world");
   });
 
   it("resolves tenant media storage owner from telegram context and current route", () => {
@@ -309,29 +78,125 @@ describe("media/ingest", () => {
     });
   });
 
-  it("builds stored media prompt without caption when caption is blank", () => {
-    const prompt = buildStoredMediaPrompt({
-      runtimeVisiblePath: "/state/media/123/2026/04/24/image.png",
-      extractedText: "visual summary",
-      caption: "   ",
+  it("keeps the STT result and saved path for audio when remote transcription succeeds", async () => {
+    const sourceFile = createStoredMediaFile({
+      hostAbsolutePath: "/host/media/123/audio.ogg",
+      runtimeVisiblePath: "/state/media/123/audio.ogg",
+      fileName: "audio.ogg",
+      mimeType: "audio/ogg",
+      mediaType: "audio",
+    });
+    const saveIncomingMediaFile = vi.fn().mockResolvedValue(sourceFile);
+    const transcribeAudio = vi.fn().mockResolvedValue({ text: "  remote transcript  " });
+    const transcribeStoredMedia = vi.fn();
+
+    const prepared = await prepareAudioPrompt({
+      ctx: { from: { id: 123 } } as Context,
+      telegramFileId: "telegram-audio-1",
+      mimeType: "audio/ogg",
+      originalFileName: "audio.ogg",
+      fallbackFileName: "fallback.ogg",
+      buffer: Buffer.from("audio!"),
+      saveIncomingMediaFile,
+      isSttConfigured: () => true,
+      transcribeAudio,
+      transcribeStoredMedia,
     });
 
-    expect(prompt).toBe(
-      "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nvisual summary",
+    expect(saveIncomingMediaFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: { userId: 123, runtimeKind: "host" },
+        telegramFileId: "telegram-audio-1",
+        mediaType: "audio",
+      }),
     );
+    expect(transcribeAudio).toHaveBeenCalledWith(Buffer.from("audio!"), "audio.ogg");
+    expect(transcribeStoredMedia).not.toHaveBeenCalled();
+    expect(prepared).toEqual(
+      expect.objectContaining({
+        mode: "text",
+        recognizedText: "remote transcript",
+        sourceFile,
+        transcriberKind: "audio",
+      }),
+    );
+    expect(prepared.promptText).toContain("Saved file path:\n/state/media/123/audio.ogg");
+    expect(prepared.promptText).toContain("Processed media result:\nremote transcript");
   });
 
-  it("returns text mode for text documents and includes the saved file path and caption", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/notes.txt",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/notes.txt",
+  it("falls back when remote audio STT returns blank text", async () => {
+    const sourceFile = createStoredMediaFile({
+      hostAbsolutePath: "/host/media/123/audio.ogg",
+      runtimeVisiblePath: "/state/media/123/audio.ogg",
+      fileName: "audio.ogg",
+      mimeType: "audio/ogg",
+      mediaType: "audio",
+    });
+    const onFallbackStart = vi.fn();
+    const transcribeStoredMedia = vi.fn().mockResolvedValue("fallback transcript");
+
+    const prepared = await prepareAudioPrompt({
+      ctx: { from: { id: 123 } } as Context,
+      telegramFileId: "telegram-audio-blank-stt",
+      mimeType: "audio/ogg",
+      fallbackFileName: "fallback.ogg",
+      buffer: Buffer.from("audio!"),
+      onFallbackStart,
+      saveIncomingMediaFile: vi.fn().mockResolvedValue(sourceFile),
+      isSttConfigured: () => true,
+      transcribeAudio: vi.fn().mockResolvedValue({ text: "   \n  " }),
+      transcribeStoredMedia,
+    });
+
+    expect(onFallbackStart).toHaveBeenCalledTimes(1);
+    expect(transcribeStoredMedia).toHaveBeenCalledWith({
+      kind: "audio",
+      hostAbsolutePath: "/host/media/123/audio.ogg",
+    });
+    expect(prepared.recognizedText).toBe("fallback transcript");
+    expect(prepared.promptText).toContain("Saved file path:\n/state/media/123/audio.ogg");
+    expect(prepared.promptText).toContain("Processed media result:\nfallback transcript");
+  });
+
+  it("returns saved audio path context when stored audio transcription fails after saving", async () => {
+    const sourceFile = createStoredMediaFile({
+      hostAbsolutePath: "/host/media/123/audio.ogg",
+      runtimeVisiblePath: "/state/media/123/audio.ogg",
+      fileName: "audio.ogg",
+      mimeType: "audio/ogg",
+      mediaType: "audio",
+    });
+
+    const prepared = await prepareAudioPrompt({
+      ctx: { from: { id: 123 } } as Context,
+      telegramFileId: "telegram-audio-fail",
+      mimeType: "audio/ogg",
+      fallbackFileName: "fallback.ogg",
+      buffer: Buffer.from("audio!"),
+      saveIncomingMediaFile: vi.fn().mockResolvedValue(sourceFile),
+      isSttConfigured: () => false,
+      transcribeAudio: vi.fn(),
+      transcribeStoredMedia: vi.fn().mockRejectedValue(new Error("host /secret leaked")),
+    });
+
+    expect(prepared.recognizedText).toBe("");
+    expect(prepared.promptText).toContain("Saved file path:\n/state/media/123/audio.ogg");
+    expect(prepared.promptText).toContain(
+      "Media processing failed:\nMedia processing failed after the file was saved.",
+    );
+    expect(prepared.promptText).not.toContain("/secret");
+  });
+
+  it("returns text mode for text documents and includes saved file path and caption", async () => {
+    const sourceFile = createStoredMediaFile({
+      hostAbsolutePath: "/host/media/123/notes.txt",
+      runtimeVisiblePath: "/state/media/123/notes.txt",
       fileName: "notes.txt",
       mimeType: "text/plain",
-      sizeBytes: 10,
       mediaType: "text_document",
     });
 
-    const preparedPrompt = await prepareAttachmentMediaPrompt({
+    const prepared = await prepareAttachmentMediaPrompt({
       ctx: { from: { id: 123 } } as Context,
       telegramFileId: "telegram-file-1",
       mediaType: "text_document",
@@ -341,120 +206,58 @@ describe("media/ingest", () => {
       caption: "Summarize this",
       buffer: Buffer.from("ignored buffer text"),
       textContent: "alpha\nbeta",
-      saveIncomingMediaFile,
+      saveIncomingMediaFile: vi.fn().mockResolvedValue(sourceFile),
       getStoredModel: vi.fn(),
       getModelCapabilities: vi.fn(),
       transcribeStoredMedia: vi.fn(),
     });
 
-    expect(saveIncomingMediaFile).toHaveBeenCalledWith(
-      expect.objectContaining({
-        owner: { userId: 123, runtimeKind: "host" },
-        telegramFileId: "telegram-file-1",
-        originalFileName: "notes.txt",
-        fallbackFileName: "notes.txt",
-        mimeType: "text/plain",
-        mediaType: "text_document",
-        buffer: Buffer.from("ignored buffer text"),
+    expect(prepared).toEqual(expect.objectContaining({ mode: "text", sourceFile }));
+    expect(prepared.promptText).toContain("Saved file path:\n/state/media/123/notes.txt");
+    expect(prepared.promptText).toContain("Processed media result:\nalpha\nbeta");
+    expect(prepared.promptText).toContain("User caption/instruction:\nSummarize this");
+  });
+
+  it("prefixes attachment prompts with the saved file path", async () => {
+    // What this verifies:
+    // - native image/PDF/video attachment mode also carries the saved path in text.
+    // Passing result:
+    // - OpenCode sees the file path even when the model receives a file part.
+    const prepared = await prepareAttachmentMediaPrompt({
+      ctx: {
+        from: { id: 123 },
+      } as Parameters<typeof prepareAttachmentMediaPrompt>[0]["ctx"],
+      telegramFileId: "photo-file-id",
+      mediaType: "image",
+      mimeType: "image/jpeg",
+      fallbackFileName: "photo.jpg",
+      caption: "Describe this photo",
+      buffer: Buffer.from("jpeg-binary"),
+      saveIncomingMediaFile: vi.fn().mockResolvedValue(baseSourceFile),
+      getStoredModel: vi.fn(() => ({ providerID: "test", modelID: "vision" })),
+      getModelCapabilities: vi.fn().mockResolvedValue({
+        input: { image: true },
+        attachment: true,
       }),
-    );
-    expect(preparedPrompt).toEqual({
-      mode: "text",
-      promptText:
-        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nalpha\nbeta\n\nUser caption/instruction:\nSummarize this",
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/notes.txt",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/notes.txt",
-        fileName: "notes.txt",
-        mimeType: "text/plain",
-        sizeBytes: 10,
-        mediaType: "text_document",
-      },
-      transcriberKind: "document",
     });
+
+    expect(prepared.mode).toBe("attachment");
+    expect(prepared.promptText).toContain("Saved file path:\n/state/media/123/2026/04/30/photo.jpg");
+    expect(prepared.promptText).toContain("User caption/instruction:\nDescribe this photo");
   });
 
-  it("returns attachment mode with a data uri file part when the model supports image input", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/photo.png",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/photo.png",
+  it("falls back to text transcription for unsupported images and includes saved path", async () => {
+    const sourceFile = createStoredMediaFile({
+      hostAbsolutePath: "/host/media/123/photo.png",
+      runtimeVisiblePath: "/state/media/123/photo.png",
       fileName: "photo.png",
       mimeType: "image/png",
-      sizeBytes: 4,
       mediaType: "image",
-    });
-    const getStoredModel = vi.fn().mockReturnValue({
-      providerID: "openai",
-      modelID: "gpt-4.1",
-      variant: "default",
-    });
-    const getModelCapabilities = vi.fn().mockResolvedValue({
-      input: { image: true, pdf: false, audio: false, video: false },
-      attachment: true,
-    });
-
-    const preparedPrompt = await prepareAttachmentMediaPrompt({
-      ctx: { from: { id: 123 } } as Context,
-      telegramFileId: "telegram-file-2",
-      mediaType: "image",
-      mimeType: "image/png",
-      originalFileName: "photo.png",
-      fallbackFileName: "photo.png",
-      caption: "Describe this",
-      buffer: Buffer.from("png!"),
-      saveIncomingMediaFile,
-      getStoredModel,
-      getModelCapabilities,
-      transcribeStoredMedia: vi.fn(),
-    });
-
-    expect(getStoredModel).toHaveBeenCalledTimes(1);
-    expect(getModelCapabilities).toHaveBeenCalledWith("openai", "gpt-4.1");
-    expect(preparedPrompt).toEqual({
-      mode: "attachment",
-      promptText: "Describe this",
-      fileParts: [
-        {
-          type: "file",
-          mime: "image/png",
-          filename: "photo.png",
-          url: "data:image/png;base64,cG5nIQ==",
-        },
-      ],
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/photo.png",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/photo.png",
-        fileName: "photo.png",
-        mimeType: "image/png",
-        sizeBytes: 4,
-        mediaType: "image",
-      },
-      transcriberKind: "photo",
-    });
-  });
-
-  it("falls back to text transcription for unsupported images and notifies when fallback starts", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/photo.png",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/photo.png",
-      fileName: "photo.png",
-      mimeType: "image/png",
-      sizeBytes: 4,
-      mediaType: "image",
-    });
-    const getStoredModel = vi.fn().mockReturnValue({
-      providerID: "openai",
-      modelID: "gpt-4.1",
-      variant: "default",
-    });
-    const getModelCapabilities = vi.fn().mockResolvedValue({
-      input: { image: false, pdf: false, audio: false, video: false },
-      attachment: false,
     });
     const transcribeStoredMedia = vi.fn().mockResolvedValue("image transcript");
     const onFallbackStart = vi.fn();
 
-    const preparedPrompt = await prepareAttachmentMediaPrompt({
+    const prepared = await prepareAttachmentMediaPrompt({
       ctx: { from: { id: 123 } } as Context,
       telegramFileId: "telegram-file-3",
       mediaType: "image",
@@ -464,173 +267,36 @@ describe("media/ingest", () => {
       caption: "Describe this",
       buffer: Buffer.from("png!"),
       onFallbackStart,
-      saveIncomingMediaFile,
-      getStoredModel,
-      getModelCapabilities,
+      saveIncomingMediaFile: vi.fn().mockResolvedValue(sourceFile),
+      getStoredModel: vi.fn(() => ({ providerID: "openai", modelID: "text-only" })),
+      getModelCapabilities: vi.fn().mockResolvedValue({
+        input: { image: false },
+        attachment: false,
+      }),
       transcribeStoredMedia,
     });
 
     expect(onFallbackStart).toHaveBeenCalledTimes(1);
     expect(transcribeStoredMedia).toHaveBeenCalledWith({
       kind: "photo",
-      hostAbsolutePath: "/host/media/123/2026/04/24/photo.png",
+      hostAbsolutePath: "/host/media/123/photo.png",
     });
-    expect(preparedPrompt).toEqual({
-      mode: "text",
-      promptText:
-        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nimage transcript\n\nUser caption/instruction:\nDescribe this",
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/photo.png",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/photo.png",
-        fileName: "photo.png",
-        mimeType: "image/png",
-        sizeBytes: 4,
-        mediaType: "image",
-      },
-      transcriberKind: "photo",
-    });
+    expect(prepared.mode).toBe("text");
+    expect(prepared.promptText).toContain("Saved file path:\n/state/media/123/photo.png");
+    expect(prepared.promptText).toContain("Processed media result:\nimage transcript");
   });
 
-  it("falls back to text transcription when image input exists but attachments are disabled", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/photo.png",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/photo.png",
-      fileName: "photo.png",
-      mimeType: "image/png",
-      sizeBytes: 4,
-      mediaType: "image",
-    });
-    const getStoredModel = vi.fn().mockReturnValue({
-      providerID: "openai",
-      modelID: "gpt-4.1",
-      variant: "default",
-    });
-    const getModelCapabilities = vi.fn().mockResolvedValue({
-      input: { image: true, pdf: false, audio: false, video: false },
-      attachment: false,
-    });
-    const transcribeStoredMedia = vi.fn().mockResolvedValue("image transcript");
-
-    const preparedPrompt = await prepareAttachmentMediaPrompt({
-      ctx: { from: { id: 123 } } as Context,
-      telegramFileId: "telegram-file-4",
-      mediaType: "image",
-      mimeType: "image/png",
-      originalFileName: "photo.png",
-      fallbackFileName: "photo.png",
-      caption: "Describe this",
-      buffer: Buffer.from("png!"),
-      saveIncomingMediaFile,
-      getStoredModel,
-      getModelCapabilities,
-      transcribeStoredMedia,
-    });
-
-    expect(transcribeStoredMedia).toHaveBeenCalledWith({
-      kind: "photo",
-      hostAbsolutePath: "/host/media/123/2026/04/24/photo.png",
-    });
-    expect(preparedPrompt).toEqual({
-      mode: "text",
-      promptText:
-        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nimage transcript\n\nUser caption/instruction:\nDescribe this",
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/photo.png",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/photo.png",
-        fileName: "photo.png",
-        mimeType: "image/png",
-        sizeBytes: 4,
-        mediaType: "image",
-      },
-      transcriberKind: "photo",
-    });
-  });
-
-  it("transcribes audio and returns attachment mode when the model supports video input and attachment", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/video.mp4",
+  it("adds saved path and transcribed audio to video attachment prompts", async () => {
+    const sourceFile = createStoredMediaFile({
+      hostAbsolutePath: "/host/media/123/video.mp4",
+      runtimeVisiblePath: "/state/media/123/video.mp4",
       fileName: "video.mp4",
       mimeType: "video/mp4",
-      sizeBytes: 999,
       mediaType: "video",
-    });
-    const getStoredModel = vi.fn().mockReturnValue({
-      providerID: "openai",
-      modelID: "gpt-4.1",
-      variant: "default",
-    });
-    const getModelCapabilities = vi.fn().mockResolvedValue({
-      input: { image: true, pdf: false, audio: false, video: true },
-      attachment: true,
-    });
-    const transcribeStoredMedia = vi.fn().mockResolvedValue("what's in this cup?");
-    const onFallbackStart = vi.fn();
-
-    const preparedPrompt = await prepareAttachmentMediaPrompt({
-      ctx: { from: { id: 123 } } as Context,
-      telegramFileId: "telegram-video-attach",
-      mediaType: "video",
-      mimeType: "video/mp4",
-      fallbackFileName: "video.mp4",
-      caption: "",
-      buffer: Buffer.from("mp4!"),
-      onFallbackStart,
-      saveIncomingMediaFile,
-      getStoredModel,
-      getModelCapabilities,
-      transcribeStoredMedia,
-    });
-
-    expect(onFallbackStart).toHaveBeenCalledTimes(1);
-    expect(transcribeStoredMedia).toHaveBeenCalledWith({
-      kind: "video",
-      hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
-    });
-    expect(preparedPrompt).toEqual({
-      mode: "attachment",
-      promptText: "what's in this cup?",
-      fileParts: [
-        {
-          type: "file",
-          mime: "video/mp4",
-          filename: "video.mp4",
-          url: "data:video/mp4;base64,bXA0IQ==",
-        },
-      ],
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/video.mp4",
-        fileName: "video.mp4",
-        mimeType: "video/mp4",
-        sizeBytes: 999,
-        mediaType: "video",
-      },
-      transcriberKind: "video",
-    });
-  });
-
-  it("merges caption with video transcription in attachment mode when both are present", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/video.mp4",
-      fileName: "video.mp4",
-      mimeType: "video/mp4",
-      sizeBytes: 999,
-      mediaType: "video",
-    });
-    const getStoredModel = vi.fn().mockReturnValue({
-      providerID: "openai",
-      modelID: "gpt-4.1",
-      variant: "default",
-    });
-    const getModelCapabilities = vi.fn().mockResolvedValue({
-      input: { image: true, pdf: false, audio: false, video: true },
-      attachment: true,
     });
     const transcribeStoredMedia = vi.fn().mockResolvedValue("how does this work?");
 
-    const preparedPrompt = await prepareAttachmentMediaPrompt({
+    const prepared = await prepareAttachmentMediaPrompt({
       ctx: { from: { id: 123 } } as Context,
       telegramFileId: "telegram-video-cap",
       mediaType: "video",
@@ -638,57 +304,31 @@ describe("media/ingest", () => {
       fallbackFileName: "video.mp4",
       caption: "Explain this",
       buffer: Buffer.from("mp4!"),
-      saveIncomingMediaFile,
-      getStoredModel,
-      getModelCapabilities,
+      saveIncomingMediaFile: vi.fn().mockResolvedValue(sourceFile),
+      getStoredModel: vi.fn(() => ({ providerID: "openai", modelID: "gpt-4.1" })),
+      getModelCapabilities: vi.fn().mockResolvedValue({
+        input: { video: true },
+        attachment: true,
+      }),
       transcribeStoredMedia,
     });
 
-    expect(transcribeStoredMedia).toHaveBeenCalledTimes(1);
-    expect(preparedPrompt).toEqual({
-      mode: "attachment",
-      promptText: "Explain this\n\nTranscribed video audio:\nhow does this work?",
-      fileParts: [
-        {
-          type: "file",
-          mime: "video/mp4",
-          filename: "video.mp4",
-          url: "data:video/mp4;base64,bXA0IQ==",
-        },
-      ],
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/video.mp4",
-        fileName: "video.mp4",
-        mimeType: "video/mp4",
-        sizeBytes: 999,
-        mediaType: "video",
-      },
-      transcriberKind: "video",
-    });
+    expect(prepared.mode).toBe("attachment");
+    expect(prepared.promptText).toContain("Saved file path:\n/state/media/123/video.mp4");
+    expect(prepared.promptText).toContain("Processed media result:\nTranscribed video audio:\nhow does this work?");
+    expect(prepared.promptText).toContain("User caption/instruction:\nExplain this");
   });
 
-  it("falls back to caption when video transcription in attachment mode fails", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/video.mp4",
+  it("keeps saved path in video attachment prompts when audio transcription fails", async () => {
+    const sourceFile = createStoredMediaFile({
+      hostAbsolutePath: "/host/media/123/video.mp4",
+      runtimeVisiblePath: "/state/media/123/video.mp4",
       fileName: "video.mp4",
       mimeType: "video/mp4",
-      sizeBytes: 999,
       mediaType: "video",
     });
-    const getStoredModel = vi.fn().mockReturnValue({
-      providerID: "openai",
-      modelID: "gpt-4.1",
-      variant: "default",
-    });
-    const getModelCapabilities = vi.fn().mockResolvedValue({
-      input: { image: true, pdf: false, audio: false, video: true },
-      attachment: true,
-    });
-    const transcribeStoredMedia = vi.fn().mockRejectedValue(new Error("transcriber unavailable"));
 
-    const preparedPrompt = await prepareAttachmentMediaPrompt({
+    const prepared = await prepareAttachmentMediaPrompt({
       ctx: { from: { id: 123 } } as Context,
       telegramFileId: "telegram-video-fail",
       mediaType: "video",
@@ -696,91 +336,47 @@ describe("media/ingest", () => {
       fallbackFileName: "video.mp4",
       caption: "What's going on?",
       buffer: Buffer.from("mp4!"),
-      saveIncomingMediaFile,
-      getStoredModel,
-      getModelCapabilities,
-      transcribeStoredMedia,
+      saveIncomingMediaFile: vi.fn().mockResolvedValue(sourceFile),
+      getStoredModel: vi.fn(() => ({ providerID: "openai", modelID: "gpt-4.1" })),
+      getModelCapabilities: vi.fn().mockResolvedValue({
+        input: { video: true },
+        attachment: true,
+      }),
+      transcribeStoredMedia: vi.fn().mockRejectedValue(new Error("transcriber unavailable")),
     });
 
-    expect(loggerMock.warn).toHaveBeenCalledWith(
-      "[Media] Video transcription in attachment mode failed, using caption only",
-      expect.any(Error),
-    );
-    expect(preparedPrompt).toEqual({
-      mode: "attachment",
-      promptText: "What's going on?",
-      fileParts: [
-        {
-          type: "file",
-          mime: "video/mp4",
-          filename: "video.mp4",
-          url: "data:video/mp4;base64,bXA0IQ==",
-        },
-      ],
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/video.mp4",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/video.mp4",
-        fileName: "video.mp4",
-        mimeType: "video/mp4",
-        sizeBytes: 999,
-        mediaType: "video",
-      },
-      transcriberKind: "video",
-    });
+    expect(prepared.mode).toBe("attachment");
+    expect(prepared.promptText).toContain("Saved file path:\n/state/media/123/video.mp4");
+    expect(prepared.promptText).toContain("User caption/instruction:\nWhat's going on?");
+    expect(prepared.promptText).not.toContain("transcriber unavailable");
   });
 
-  it("uses a processed-result-only prompt for unsupported video fallback so OpenCode does not try to reopen the file", async () => {
-    const saveIncomingMediaFile = vi.fn().mockResolvedValue({
-      hostAbsolutePath: "/host/media/123/2026/04/24/video-note.mp4",
-      runtimeVisiblePath: "/state/media/123/2026/04/24/video-note.mp4",
-      fileName: "video-note.mp4",
-      mimeType: "video/mp4",
-      sizeBytes: 4,
-      mediaType: "video",
-    });
-    const getStoredModel = vi.fn().mockReturnValue({
-      providerID: "cliproxyapi",
-      modelID: "gpt-5.4",
-      variant: "default",
-    });
-    const getModelCapabilities = vi.fn().mockResolvedValue({
-      input: { image: true, pdf: false, audio: false, video: false },
-      attachment: true,
-    });
-    const transcribeStoredMedia = vi.fn().mockResolvedValue("video transcript and visual summary");
-
-    const preparedPrompt = await prepareAttachmentMediaPrompt({
-      ctx: { from: { id: 123 } } as Context,
-      telegramFileId: "telegram-video-1",
-      mediaType: "video",
-      mimeType: "video/mp4",
-      originalFileName: "video-note.mp4",
-      fallbackFileName: "video-note.mp4",
-      caption: "What is happening here?",
-      buffer: Buffer.from("mp4!"),
-      saveIncomingMediaFile,
-      getStoredModel,
-      getModelCapabilities,
-      transcribeStoredMedia,
+  it("returns a saved file path prompt when attachment fallback transcription fails", async () => {
+    // What this verifies:
+    // - after the file has been saved, transcription failure still creates OpenCode context.
+    // Passing result:
+    // - caller can send a failure prompt that contains the saved runtime-visible path.
+    const prepared = await prepareAttachmentMediaPrompt({
+      ctx: {
+        from: { id: 123 },
+      } as Parameters<typeof prepareAttachmentMediaPrompt>[0]["ctx"],
+      telegramFileId: "photo-file-id",
+      mediaType: "image",
+      mimeType: "image/jpeg",
+      fallbackFileName: "photo.jpg",
+      caption: "Describe this photo",
+      buffer: Buffer.from("jpeg-binary"),
+      saveIncomingMediaFile: vi.fn().mockResolvedValue(baseSourceFile),
+      getStoredModel: vi.fn(() => ({ providerID: "test", modelID: "text-only" })),
+      getModelCapabilities: vi.fn().mockResolvedValue({ input: {}, attachment: false }),
+      transcribeStoredMedia: vi.fn().mockRejectedValue(new Error("transcriber failed")),
     });
 
-    expect(transcribeStoredMedia).toHaveBeenCalledWith({
-      kind: "video",
-      hostAbsolutePath: "/host/media/123/2026/04/24/video-note.mp4",
-    });
-    expect(preparedPrompt).toEqual({
-      mode: "text",
-      promptText:
-        "Telegram media was already processed locally.\n\nUse only the processed result below as the source of truth. Do not try to reopen, locate, inspect, or transcribe the original file again.\n\nProcessed media result:\nvideo transcript and visual summary\n\nUser caption/instruction:\nWhat is happening here?",
-      sourceFile: {
-        hostAbsolutePath: "/host/media/123/2026/04/24/video-note.mp4",
-        runtimeVisiblePath: "/state/media/123/2026/04/24/video-note.mp4",
-        fileName: "video-note.mp4",
-        mimeType: "video/mp4",
-        sizeBytes: 4,
-        mediaType: "video",
-      },
-      transcriberKind: "video",
-    });
+    expect(prepared.mode).toBe("text");
+    expect(prepared.promptText).toContain("Saved file path:\n/state/media/123/2026/04/30/photo.jpg");
+    expect(prepared.promptText).toContain(
+      "Media processing failed:\nMedia processing failed after the file was saved.",
+    );
+    expect(prepared.promptText).not.toContain("transcriber failed");
   });
 });

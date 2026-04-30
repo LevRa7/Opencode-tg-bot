@@ -228,6 +228,6 @@ describe("bot/handlers/voice", () => {
     await handleVoiceMessage(ctx, deps);
 
     expect(editMessageTextMock).toHaveBeenCalledWith(777, 101, t("stt.empty_result"));
-    expect(processPromptMock).not.toHaveBeenCalled();
+    expect(processPromptMock).toHaveBeenCalledWith(ctx, "stored prompt text", deps);
   });
 });

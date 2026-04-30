@@ -108,11 +108,10 @@ export async function statusCommand(ctx: CommandContext<Context>) {
         api: ctx.api,
         chatId: ctx.chat.id,
         text: message,
-        options: { reply_markup: keyboard },
         messageThreadId,
       });
     } else {
-      await ctx.reply(message, withMessageThreadId({ reply_markup: keyboard }, messageThreadId));
+      await ctx.reply(message, withMessageThreadId(undefined, messageThreadId));
     }
   } catch (error) {
     logger.error("[Bot] Error checking server status:", error);

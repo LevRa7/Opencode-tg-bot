@@ -1120,6 +1120,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             sessionId,
             messageId: `${messageId}:assistant`,
             messageText: finalText,
+            sourceCommand: undefined,
             responseStreamer,
             flushPendingServiceMessages: () =>
               Promise.all([

@@ -81,7 +81,7 @@ export async function applySelectedVariant(
 
   await ctx.reply(
     t(options.replyTextKey, { name: displayName }),
-    withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+    withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
   );
 
   return { applied: true, displayName };

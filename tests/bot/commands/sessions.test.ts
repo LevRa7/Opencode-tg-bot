@@ -406,6 +406,8 @@ describe("bot/commands/sessions", () => {
     const handled = await handleSessionSelect(ctx);
 
     expect(handled).toBe(true);
+    const sendMessageCalls = ((ctx.api as { sendMessage: ReturnType<typeof vi.fn> }).sendMessage).mock.calls;
+    expect(sendMessageCalls[0]?.[2]).not.toHaveProperty("reply_markup");
     expect(editForumTopic).toHaveBeenCalledWith(111, 100, { name: "New Session Title" });
   });
 

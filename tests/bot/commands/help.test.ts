@@ -3,10 +3,25 @@ import type { Context } from "grammy";
 import { helpCommand } from "../../../src/bot/commands/help.js";
 import { getLocalizedBotCommands } from "../../../src/bot/commands/definitions.js";
 
+const mocked = vi.hoisted(() => ({
+  keyboardInitializeMock: vi.fn(),
+  keyboardGetKeyboardMock: vi.fn(() => ({ keyboard: true })),
+}));
+
+vi.mock("../../../src/keyboard/manager.js", () => ({
+  keyboardManager: {
+    initialize: mocked.keyboardInitializeMock,
+    getKeyboard: mocked.keyboardGetKeyboardMock,
+  },
+}));
+
 describe("bot/commands/help", () => {
   it("returns full commands list from centralized definitions", async () => {
     const replyMock = vi.fn().mockResolvedValue(undefined);
     const ctx = {
+      chat: { id: 100 },
+      message: { message_thread_id: 77 },
+      api: {},
       reply: replyMock,
     } as unknown as Context;
 
@@ -23,5 +38,12 @@ describe("bot/commands/help", () => {
     }
     expect(helpText).toContain("/mcps");
     expect(helpText).not.toContain("/export_data");
+    expect(replyMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        reply_markup: { keyboard: true },
+        message_thread_id: 77,
+      }),
+    );
   });
 });

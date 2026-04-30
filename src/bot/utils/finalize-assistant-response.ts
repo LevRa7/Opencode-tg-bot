@@ -6,6 +6,7 @@ interface FinalizeAssistantResponseOptions {
   sessionId: string;
   messageId: string;
   messageText: string;
+  sourceCommand?: string;
   responseStreamer: Pick<ResponseStreamer, "complete">;
   flushPendingServiceMessages: () => Promise<void>;
   prepareStreamingPayload: (messageText: string) => StreamingMessagePayload | null;
@@ -22,10 +23,15 @@ interface FinalizeAssistantResponseOptions {
   ) => Promise<void>;
 }
 
+function shouldAutoExpandReplyKeyboard(sourceCommand?: string): boolean {
+  return sourceCommand === "/start" || sourceCommand === "/help" || sourceCommand === "/new";
+}
+
 export async function finalizeAssistantResponse({
   sessionId,
   messageId,
   messageText,
+  sourceCommand,
   responseStreamer,
   flushPendingServiceMessages,
   prepareStreamingPayload,
@@ -38,7 +44,7 @@ export async function finalizeAssistantResponse({
     messageText,
   );
 
-  const keyboard = await getReplyKeyboard();
+  const keyboard = shouldAutoExpandReplyKeyboard(sourceCommand) ? await getReplyKeyboard() : undefined;
   const replyOptions = keyboard ? { reply_markup: keyboard } : undefined;
   const silentReplyOptions = {
     disable_notification: true,

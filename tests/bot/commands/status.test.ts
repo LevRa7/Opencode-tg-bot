@@ -120,11 +120,7 @@ describe("bot/commands/status", () => {
     expect(message).toContain("TTS replies");
     expect(message).toContain("On");
     expect(message).not.toContain("Started by bot");
-    expect(mocked.sendBotTextMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        options: expect.objectContaining({ reply_markup: { inline_keyboard: [] } }),
-      }),
-    );
+    expect(mocked.sendBotTextMock.mock.calls[0]?.[0]).not.toHaveProperty("options");
   });
 
   it("shows main project path and linked worktree when git metadata is available", async () => {

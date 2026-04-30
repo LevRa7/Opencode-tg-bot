@@ -381,7 +381,7 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
         await ctx.api.sendMessage(
           chatId,
           t("sessions.selected", { title: session.title }),
-          withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+          withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
         );
       } catch (err) {
         logger.error("[Sessions] Failed to send selection message:", err);

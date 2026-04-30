@@ -35,6 +35,7 @@ describe("bot/utils/finalize-assistant-response", () => {
       renderFinalParts: vi.fn(() => [createRenderedPart("fallback final")]),
       getReplyKeyboard: vi.fn(() => ({ keyboard: [[{ text: "A" }]] })),
       sendRenderedPart,
+      sourceCommand: undefined,
     });
 
     expect(streamed).toBe(true);
@@ -46,7 +47,6 @@ describe("bot/utils/finalize-assistant-response", () => {
         parts: [createRenderedPart("final reply")],
         sendOptions: {
           disable_notification: true,
-          reply_markup: { keyboard: [[{ text: "A" }]] },
         },
         editOptions: undefined,
       },
@@ -126,11 +126,59 @@ describe("bot/utils/finalize-assistant-response", () => {
       renderFinalParts: vi.fn(() => [createRenderedPart("final reply")]),
       getReplyKeyboard: vi.fn(() => ({ keyboard: [[{ text: "A" }]] })),
       sendRenderedPart,
+      sourceCommand: "/start",
     });
 
     expect(sendRenderedPart).toHaveBeenCalledWith(createRenderedPart("final reply"), {
       disable_notification: true,
       reply_markup: { keyboard: [[{ text: "A" }]] },
+    });
+  });
+
+  it("keeps reply keyboard for /start /help /new triggers", async () => {
+    const sendRenderedPart = vi.fn().mockResolvedValue(undefined);
+
+    await finalizeAssistantResponse({
+      sessionId: "s1",
+      messageId: "m1",
+      messageText: "final reply",
+      responseStreamer: {
+        complete: vi.fn().mockResolvedValue({ streamed: false, telegramMessageIds: [] }),
+      },
+      flushPendingServiceMessages: vi.fn().mockResolvedValue(undefined),
+      prepareStreamingPayload: vi.fn(() => null),
+      renderFinalParts: vi.fn(() => [createRenderedPart("final reply")]),
+      getReplyKeyboard: vi.fn(() => ({ keyboard: [[{ text: "A" }]] })),
+      sendRenderedPart,
+      sourceCommand: "/start",
+    });
+
+    expect(sendRenderedPart).toHaveBeenCalledWith(createRenderedPart("final reply"), {
+      disable_notification: true,
+      reply_markup: { keyboard: [[{ text: "A" }]] },
+    });
+  });
+
+  it("does not auto-expand reply keyboard for ordinary responses", async () => {
+    const sendRenderedPart = vi.fn().mockResolvedValue(undefined);
+
+    await finalizeAssistantResponse({
+      sessionId: "s1",
+      messageId: "m1",
+      messageText: "final reply",
+      responseStreamer: {
+        complete: vi.fn().mockResolvedValue({ streamed: false, telegramMessageIds: [] }),
+      },
+      flushPendingServiceMessages: vi.fn().mockResolvedValue(undefined),
+      prepareStreamingPayload: vi.fn(() => null),
+      renderFinalParts: vi.fn(() => [createRenderedPart("final reply")]),
+      getReplyKeyboard: vi.fn(() => ({ keyboard: [[{ text: "A" }]] })),
+      sendRenderedPart,
+      sourceCommand: undefined,
+    });
+
+    expect(sendRenderedPart).toHaveBeenCalledWith(createRenderedPart("final reply"), {
+      disable_notification: true,
     });
   });
 
@@ -152,6 +200,7 @@ describe("bot/utils/finalize-assistant-response", () => {
       renderFinalParts: vi.fn(() => [createRenderedPart("tg-cli")]),
       getReplyKeyboard: vi.fn(() => undefined),
       sendRenderedPart: vi.fn().mockResolvedValue(undefined),
+      sourceCommand: undefined,
     });
 
     expect(responseStreamer.complete).toHaveBeenCalledWith(
@@ -164,5 +213,54 @@ describe("bot/utils/finalize-assistant-response", () => {
         editOptions: undefined,
       },
     );
+  });
+
+  it("keeps reply keyboard for /help and /new triggers", async () => {
+    const sendRenderedPart = vi.fn().mockResolvedValue(undefined);
+
+    for (const command of ["/help", "/new"]) {
+      await finalizeAssistantResponse({
+        sessionId: "s1",
+        messageId: "m1",
+        messageText: "final reply",
+        responseStreamer: {
+          complete: vi.fn().mockResolvedValue({ streamed: false, telegramMessageIds: [] }),
+        },
+        flushPendingServiceMessages: vi.fn().mockResolvedValue(undefined),
+        prepareStreamingPayload: vi.fn(() => null),
+        renderFinalParts: vi.fn(() => [createRenderedPart("final reply")]),
+        getReplyKeyboard: vi.fn(() => ({ keyboard: [[{ text: "A" }]] })),
+        sendRenderedPart,
+        sourceCommand: command,
+      });
+    }
+
+    expect(sendRenderedPart).toHaveBeenCalledWith(createRenderedPart("final reply"), {
+      disable_notification: true,
+      reply_markup: { keyboard: [[{ text: "A" }]] },
+    });
+  });
+
+  it("does not auto-expand reply keyboard for ordinary responses", async () => {
+    const sendRenderedPart = vi.fn().mockResolvedValue(undefined);
+
+    await finalizeAssistantResponse({
+      sessionId: "s1",
+      messageId: "m1",
+      messageText: "final reply",
+      responseStreamer: {
+        complete: vi.fn().mockResolvedValue({ streamed: false, telegramMessageIds: [] }),
+      },
+      flushPendingServiceMessages: vi.fn().mockResolvedValue(undefined),
+      prepareStreamingPayload: vi.fn(() => null),
+      renderFinalParts: vi.fn(() => [createRenderedPart("final reply")]),
+      getReplyKeyboard: vi.fn(() => ({ keyboard: [[{ text: "A" }]] })),
+      sendRenderedPart,
+      sourceCommand: undefined,
+    });
+
+    expect(sendRenderedPart).toHaveBeenCalledWith(createRenderedPart("final reply"), {
+      disable_notification: true,
+    });
   });
 });

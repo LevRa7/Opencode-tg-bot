@@ -59,8 +59,8 @@ describe("bot/streaming/response-streamer", () => {
       expect(sendText).toHaveBeenCalledTimes(2);
     });
 
-    expect(sendText).toHaveBeenNthCalledWith(1, "s1", "part-1", "raw", undefined);
-    expect(sendText).toHaveBeenNthCalledWith(2, "s1", "part-2", "raw", undefined);
+    expect(sendText).toHaveBeenNthCalledWith(1, "s1", "part-1", "markdown_v2", undefined);
+    expect(sendText).toHaveBeenNthCalledWith(2, "s1", "part-2", "markdown_v2", undefined);
     expect(editText).not.toHaveBeenCalled();
     expect(deleteText).not.toHaveBeenCalled();
   });
@@ -82,10 +82,7 @@ describe("bot/streaming/response-streamer", () => {
     const richEntities = [{ type: "bold" as const, offset: 0, length: 4 }];
 
     streamer.enqueue("s1", "m1", {
-      parts: [
-        { text: "rich", entities: richEntities },
-        { text: "plain-tail" },
-      ],
+      parts: [{ text: "rich", entities: richEntities }, { text: "plain-tail" }],
       format: "markdown_v2",
     });
 
@@ -96,7 +93,7 @@ describe("bot/streaming/response-streamer", () => {
     expect(sendText).toHaveBeenNthCalledWith(1, "s1", "rich", "markdown_v2", {
       entities: richEntities,
     });
-    expect(sendText).toHaveBeenNthCalledWith(2, "s1", "plain-tail", "raw", undefined);
+    expect(sendText).toHaveBeenNthCalledWith(2, "s1", "plain-tail", "markdown_v2", undefined);
     expect(editText).not.toHaveBeenCalled();
   });
 
@@ -117,10 +114,7 @@ describe("bot/streaming/response-streamer", () => {
     const richEntities = [{ type: "bold" as const, offset: 0, length: 4 }];
 
     streamer.enqueue("s1", "m1", {
-      parts: [
-        { text: "rich", entities: richEntities },
-        { text: "plain-tail" },
-      ],
+      parts: [{ text: "rich", entities: richEntities }, { text: "plain-tail" }],
       format: "markdown_v2",
     });
 
@@ -129,10 +123,7 @@ describe("bot/streaming/response-streamer", () => {
     });
 
     streamer.enqueue("s1", "m1", {
-      parts: [
-        { text: "rich updated", entities: richEntities },
-        { text: "plain-tail-updated" },
-      ],
+      parts: [{ text: "rich updated", entities: richEntities }, { text: "plain-tail-updated" }],
       format: "markdown_v2",
     });
 
@@ -143,7 +134,14 @@ describe("bot/streaming/response-streamer", () => {
     expect(editText).toHaveBeenNthCalledWith(1, "s1", 401, "rich updated", "markdown_v2", {
       entities: richEntities,
     });
-    expect(editText).toHaveBeenNthCalledWith(2, "s1", 402, "plain-tail-updated", "raw", undefined);
+    expect(editText).toHaveBeenNthCalledWith(
+      2,
+      "s1",
+      402,
+      "plain-tail-updated",
+      "markdown_v2",
+      undefined,
+    );
     expect(deleteText).not.toHaveBeenCalled();
   });
 
@@ -164,7 +162,10 @@ describe("bot/streaming/response-streamer", () => {
     streamer.enqueue("s1", "m1", { parts: [{ text: "partial" }], format: "raw" });
     await vi.advanceTimersByTimeAsync(500);
 
-    const result = await streamer.complete("s1", "m1", { parts: [{ text: "final" }], format: "raw" });
+    const result = await streamer.complete("s1", "m1", {
+      parts: [{ text: "final" }],
+      format: "raw",
+    });
 
     expect(result.streamed).toBe(true);
     expect(result.telegramMessageIds).toEqual([1]);
@@ -256,7 +257,10 @@ describe("bot/streaming/response-streamer", () => {
 
     expect(editText).toHaveBeenCalledTimes(1);
 
-    const result = await streamer.complete("s1", "m1", { parts: [{ text: "final" }], format: "raw" });
+    const result = await streamer.complete("s1", "m1", {
+      parts: [{ text: "final" }],
+      format: "raw",
+    });
 
     expect(result.streamed).toBe(false);
     expect(result.telegramMessageIds).toEqual([]);
@@ -290,7 +294,10 @@ describe("bot/streaming/response-streamer", () => {
 
     expect(sendText).toHaveBeenCalledTimes(1);
 
-    const result = await streamer.complete("s1", "m1", { parts: [{ text: "final" }], format: "raw" });
+    const result = await streamer.complete("s1", "m1", {
+      parts: [{ text: "final" }],
+      format: "raw",
+    });
 
     expect(result.streamed).toBe(false);
     expect(result.telegramMessageIds).toEqual([]);
@@ -425,7 +432,10 @@ describe("bot/streaming/response-streamer", () => {
     });
 
     streamer.enqueue("s1", "m1", { parts: [{ text: "partial" }], format: "raw" });
-    const synced = await streamer.complete("s1", "m1", { parts: [{ text: "final" }], format: "raw" });
+    const synced = await streamer.complete("s1", "m1", {
+      parts: [{ text: "final" }],
+      format: "raw",
+    });
 
     await vi.advanceTimersByTimeAsync(1000);
 
@@ -450,15 +460,24 @@ describe("bot/streaming/response-streamer", () => {
       deleteText,
     });
 
-    streamer.enqueue("session-1", "message-1", { parts: [{ text: "first partial" }], format: "raw" });
-    streamer.enqueue("session-2", "message-2", { parts: [{ text: "second partial" }], format: "raw" });
+    streamer.enqueue("session-1", "message-1", {
+      parts: [{ text: "first partial" }],
+      format: "raw",
+    });
+    streamer.enqueue("session-2", "message-2", {
+      parts: [{ text: "second partial" }],
+      format: "raw",
+    });
 
     await vi.waitFor(() => {
       expect(sendText).toHaveBeenCalledTimes(2);
     });
 
     streamer.enqueue("session-1", "message-1", { parts: [{ text: "first final" }], format: "raw" });
-    streamer.enqueue("session-2", "message-2", { parts: [{ text: "second final" }], format: "raw" });
+    streamer.enqueue("session-2", "message-2", {
+      parts: [{ text: "second final" }],
+      format: "raw",
+    });
 
     await vi.waitFor(() => {
       expect(editText).toHaveBeenCalledTimes(2);
@@ -478,5 +497,44 @@ describe("bot/streaming/response-streamer", () => {
 
     expect(firstResult).toEqual({ streamed: true, telegramMessageIds: [200] });
     expect(secondResult).toEqual({ streamed: true, telegramMessageIds: [201] });
+  });
+
+  it("keeps markdown_v2 format for plain parts on complete to preserve parse_mode", async () => {
+    vi.useFakeTimers();
+
+    let nextMessageId = 501;
+    const sendText = vi.fn(async () => nextMessageId++);
+    const editText = vi.fn().mockResolvedValue(undefined);
+    const deleteText = vi.fn().mockResolvedValue(undefined);
+    const streamer = new ResponseStreamer({
+      throttleMs: 0,
+      sendText,
+      editText,
+      deleteText,
+    });
+
+    streamer.enqueue("s1", "m1", {
+      parts: [{ text: "partial **bold**" }],
+      format: "markdown_v2",
+    });
+    await vi.waitFor(() => {
+      expect(sendText).toHaveBeenCalledTimes(1);
+    });
+
+    const result = await streamer.complete("s1", "m1", {
+      parts: [{ text: "final **bold** and *italic*" }],
+      format: "markdown_v2",
+    });
+
+    expect(result.streamed).toBe(true);
+    expect(editText).toHaveBeenCalledTimes(1);
+    expect(editText).toHaveBeenNthCalledWith(
+      1,
+      "s1",
+      501,
+      "final **bold** and *italic*",
+      "markdown_v2",
+      undefined,
+    );
   });
 });

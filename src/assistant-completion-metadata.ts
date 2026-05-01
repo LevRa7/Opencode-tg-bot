@@ -4,4 +4,6 @@ export interface AssistantCompletionMetadata {
   modelID?: string;
   logicalMessageId?: string;
   completedAt?: number;
+  inputTokens?: number;
+  outputTokens?: number;
 }

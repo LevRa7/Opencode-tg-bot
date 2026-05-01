@@ -3,11 +3,11 @@ import type { Context } from "grammy";
 import { t } from "../../../src/i18n/index.js";
 import { handleProjectSelect } from "../../../src/bot/commands/projects.js";
 import { foregroundSessionState } from "../../../src/scheduled-task/foreground-state.js";
-import { runWithTelegramConversationScope, type TelegramConversationScope } from "../../../src/telegram/scope.js";
 import {
-  __resetSettingsForTests,
-  getCurrentProject,
-} from "../../../src/settings/manager.js";
+  runWithTelegramConversationScope,
+  type TelegramConversationScope,
+} from "../../../src/telegram/scope.js";
+import { __resetSettingsForTests, getCurrentProject } from "../../../src/settings/manager.js";
 
 const mocked = vi.hoisted(() => ({
   getProjectsMock: vi.fn(),
@@ -168,6 +168,28 @@ describe("bot/commands/projects handleProjectSelect", () => {
     });
   });
 
+  it("does not block permission callbacks while foreground session is busy", async () => {
+    foregroundSessionState.markBusy("session-1");
+
+    const ctx = createCallbackContext("permission:once");
+    const handled = await handleProjectSelect(ctx);
+
+    expect(handled).toBe(false);
+    expect(ctx.answerCallbackQuery).not.toHaveBeenCalled();
+    expect(mocked.getProjectsMock).not.toHaveBeenCalled();
+  });
+
+  it("does not block question callbacks while foreground session is busy", async () => {
+    foregroundSessionState.markBusy("session-1");
+
+    const ctx = createCallbackContext("question:select:0:1");
+    const handled = await handleProjectSelect(ctx);
+
+    expect(handled).toBe(false);
+    expect(ctx.answerCallbackQuery).not.toHaveBeenCalled();
+    expect(mocked.getProjectsMock).not.toHaveBeenCalled();
+  });
+
   it("persists explicit project selection as a user default across new topics without leaking across users", async () => {
     mocked.getProjectsMock.mockResolvedValue([
       {
@@ -176,7 +198,11 @@ describe("bot/commands/projects handleProjectSelect", () => {
         worktree: "/repo-a",
       },
     ]);
-    mocked.getCurrentSessionMock.mockReturnValue({ id: "session-0", title: "Previous", directory: "/repo-a" });
+    mocked.getCurrentSessionMock.mockReturnValue({
+      id: "session-0",
+      title: "Previous",
+      directory: "/repo-a",
+    });
 
     const ctx = createCallbackContext("project:project-a");
 
@@ -189,7 +215,10 @@ describe("bot/commands/projects handleProjectSelect", () => {
       worktree: "/repo-a",
     });
     expect(runWithTelegramConversationScope(scopeB, () => getCurrentProject())).toBeUndefined();
-    expect(mocked.clearScopedSessionRuntimeMock).toHaveBeenCalledWith("session-0", "project_switched");
+    expect(mocked.clearScopedSessionRuntimeMock).toHaveBeenCalledWith(
+      "session-0",
+      "project_switched",
+    );
     expect(mocked.clearSummaryMock).not.toHaveBeenCalled();
   });
 });

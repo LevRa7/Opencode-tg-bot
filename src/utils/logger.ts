@@ -1,15 +1,12 @@
+import fs from "node:fs";
+import path from "node:path";
+import fsPromises from "node:fs/promises";
+import { getRuntimeMode, type RuntimeMode } from "../runtime/mode.js";
+import { getRuntimePaths } from "../runtime/paths.js";
 import { config } from "../config.js";
 
-/**
- * Available log levels in order of severity
- * Lower numbers indicate lower severity (more verbose)
- */
 type LogLevel = "debug" | "info" | "warn" | "error";
 
-/**
- * Mapping of log levels to numeric values for comparison
- * Used to determine if a message should be logged based on configured level
- */
 const LOG_LEVELS: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
@@ -17,13 +14,12 @@ const LOG_LEVELS: Record<LogLevel, number> = {
   error: 3,
 };
 
-/**
- * Normalizes a string value to a valid LogLevel
- * Falls back to 'info' if the value is invalid
- *
- * @param value - The log level string to normalize
- * @returns A valid LogLevel
- */
+let logStream: fs.WriteStream | null = null;
+let logFilePath: string | null = null;
+let initializePromise: Promise<void> | null = null;
+let cleanupPromise: Promise<void> | null = null;
+let streamErrorReported = false;
+
 function normalizeLogLevel(value: string): LogLevel {
   if (value in LOG_LEVELS) {
     return value as LogLevel;
@@ -32,23 +28,10 @@ function normalizeLogLevel(value: string): LogLevel {
   return "info";
 }
 
-/**
- * Formats the log message prefix with timestamp and level
- *
- * @param level - The log level for the message
- * @returns Formatted prefix string
- */
 function formatPrefix(level: LogLevel): string {
   return `[${new Date().toISOString()}] [${level.toUpperCase()}]`;
 }
 
-/**
- * Formats individual arguments for logging
- * Special handling for Error objects to extract stack trace
- *
- * @param arg - The argument to format
- * @returns Formatted argument
- */
 function formatArg(arg: unknown): unknown {
   if (arg instanceof Error) {
     return arg.stack ?? `${arg.name}: ${arg.message}`;
@@ -57,14 +40,6 @@ function formatArg(arg: unknown): unknown {
   return arg;
 }
 
-/**
- * Prepends formatted prefix to log arguments
- * Handles different argument formats (string vs non-string first argument)
- *
- * @param level - The log level for prefix formatting
- * @param args - The arguments to log
- * @returns Array with prefix prepended
- */
 function withPrefix(level: LogLevel, args: unknown[]): unknown[] {
   const formattedArgs = args.map((arg) => formatArg(arg));
   const prefix = formatPrefix(level);
@@ -80,69 +55,283 @@ function withPrefix(level: LogLevel, args: unknown[]): unknown[] {
   return [prefix, ...formattedArgs];
 }
 
-/**
- * Determines if a message should be logged based on configured log level
- * Messages with level >= configured level will be logged
- *
- * @param level - The level of the message to check
- * @returns True if the message should be logged
- */
 function shouldLog(level: LogLevel): boolean {
   const configLevel = normalizeLogLevel(config.server.logLevel);
   return LOG_LEVELS[level] >= LOG_LEVELS[configLevel];
 }
 
-/**
- * Logger interface with methods for different log levels
- * Each method checks if the message should be logged based on configured level
- * and formats the output with timestamp and level prefix
- */
+function getInstalledLogFileName(): string {
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(now.getUTCDate()).padStart(2, "0");
+  return `bot-${year}-${month}-${day}.log`;
+}
+
+function getSourcesLogFileName(): string {
+  return "bot.log";
+}
+
+function getLogFileName(mode: RuntimeMode): string {
+  return mode === "installed" ? getInstalledLogFileName() : getSourcesLogFileName();
+}
+
+function getLogFilePathForMode(logsDirPath: string, mode: RuntimeMode): string {
+  return path.join(logsDirPath, getLogFileName(mode));
+}
+
+function getLogFilePattern(mode: RuntimeMode): RegExp {
+  if (mode === "installed") {
+    return /^bot-\d{4}-\d{2}-\d{2}\.log$/;
+  }
+
+  return /^bot\.log$/;
+}
+
+function closeLogStream(): void {
+  if (logStream) {
+    try {
+      logStream.close();
+    } catch {
+      // ignore close errors
+    }
+
+    logStream = null;
+  }
+}
+
+function handleLogStreamError(error: unknown): void {
+  if (streamErrorReported) {
+    return;
+  }
+
+  streamErrorReported = true;
+  reportLoggerInternalError("File logging stream error.", error);
+  closeLogStream();
+  logFilePath = null;
+}
+
+function reportLoggerInternalError(message: string, error: unknown): void {
+  try {
+    console.error(formatPrefix("error"), message, formatArg(error));
+  } catch {
+    // fail-safe: raw console
+  }
+}
+
+function ensureLogStream(targetFilePath: string): void {
+  if (logStream && logFilePath === targetFilePath) {
+    return;
+  }
+
+  closeLogStream();
+  logFilePath = targetFilePath;
+
+  try {
+    logStream = fs.createWriteStream(targetFilePath, { flags: "a" });
+    logStream.on("error", (error) => {
+      handleLogStreamError(error);
+    });
+    streamErrorReported = false;
+  } catch (error) {
+    reportLoggerInternalError(`Failed to open log file: ${targetFilePath}.`, error);
+    logFilePath = null;
+  }
+}
+
+async function cleanupOldLogs(logsDirPath: string, mode: RuntimeMode): Promise<void> {
+  const retention = config.bot.logRetention;
+  if (retention <= 0) {
+    return;
+  }
+
+  const logFilePattern = getLogFilePattern(mode);
+  const cutoffDate = Date.now() - retention * 24 * 60 * 60 * 1000;
+
+  let entries: string[];
+  try {
+    entries = await fsPromises.readdir(logsDirPath);
+  } catch {
+    return;
+  }
+
+  const deletePromises = entries
+    .filter((entry) => logFilePattern.test(entry))
+    .filter((entry) => {
+      if (mode !== "installed") {
+        return false;
+      }
+
+      const match = entry.match(/^bot-(\d{4}-\d{2}-\d{2})\.log$/);
+      if (!match) {
+        return false;
+      }
+
+      const fileDateMs = Date.parse(match[1]);
+      return !Number.isNaN(fileDateMs) && fileDateMs < cutoffDate;
+    })
+    .map((entry) =>
+      fsPromises.rm(path.join(logsDirPath, entry), { force: true }).catch(() => {
+        // ignore individual delete failures
+      }),
+    );
+
+  await Promise.all(deletePromises);
+}
+
+function cleanupOldLogsInBackground(logsDirPath: string, mode: RuntimeMode): void {
+  if (cleanupPromise) {
+    return;
+  }
+
+  cleanupPromise = cleanupOldLogs(logsDirPath, mode)
+    .catch((error) => {
+      reportLoggerInternalError(`Failed to clean up old logs in ${logsDirPath}.`, error);
+    })
+    .finally(() => {
+      cleanupPromise = null;
+    });
+}
+
+function rotateInstalledLogIfNeeded(): void {
+  const mode = getRuntimeMode();
+  if (mode !== "installed" || !logFilePath) {
+    return;
+  }
+
+  const runtimePaths = getRuntimePaths();
+  const nextLogFilePath = getLogFilePathForMode(runtimePaths.logsDirPath, mode);
+  if (logFilePath === nextLogFilePath) {
+    return;
+  }
+
+  try {
+    fs.mkdirSync(runtimePaths.logsDirPath, { recursive: true });
+    fs.appendFileSync(nextLogFilePath, "");
+    ensureLogStream(nextLogFilePath);
+    cleanupOldLogsInBackground(runtimePaths.logsDirPath, mode);
+  } catch (error) {
+    reportLoggerInternalError(`Failed to rotate file logging to ${nextLogFilePath}.`, error);
+    closeLogStream();
+    logFilePath = null;
+  }
+}
+
+function writeToFile(line: string): void {
+  if (!logStream) {
+    return;
+  }
+
+  try {
+    rotateInstalledLogIfNeeded();
+    if (!logStream) {
+      return;
+    }
+
+    logStream.write(`${line}\n`);
+  } catch (error) {
+    handleLogStreamError(error);
+  }
+}
+
+function writeToConsole(level: LogLevel, args: unknown[]): void {
+  const prefixedArgs = withPrefix(level, args);
+
+  if (level === "error") {
+    console.error(...prefixedArgs);
+  } else if (level === "warn") {
+    console.warn(...prefixedArgs);
+  } else {
+    console.log(...prefixedArgs);
+  }
+}
+
+async function initializeLoggerInternal(): Promise<void> {
+  const mode = getRuntimeMode();
+  const runtimePaths = getRuntimePaths();
+
+  try {
+    await fsPromises.mkdir(runtimePaths.logsDirPath, { recursive: true });
+    const nextLogFilePath = getLogFilePathForMode(runtimePaths.logsDirPath, mode);
+    await fsPromises.appendFile(nextLogFilePath, "");
+    ensureLogStream(nextLogFilePath);
+    await cleanupOldLogs(runtimePaths.logsDirPath, mode);
+  } catch (error) {
+    reportLoggerInternalError("Failed to initialise file logging.", error);
+  }
+}
+
+export function getLogFilePath(): string | null {
+  return logFilePath;
+}
+
+export async function __flushLoggerForTests(): Promise<void> {
+  if (cleanupPromise) {
+    await cleanupPromise;
+  }
+
+  if (!logStream) {
+    return;
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    logStream!.write("", (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+export function __resetLoggerForTests(): void {
+  initializePromise = null;
+  cleanupPromise = null;
+  logFilePath = null;
+  streamErrorReported = false;
+  closeLogStream();
+}
+
+function log(level: LogLevel, args: unknown[]): void {
+  writeToConsole(level, args);
+
+  if (shouldLog(level) && logStream) {
+    const line = withPrefix(level, args)
+      .map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
+      .join(" ");
+    writeToFile(line);
+  }
+}
+
 export const logger = {
-  /**
-   * Logs debug-level messages (most verbose)
-   * Used for detailed diagnostics and internal operations
-   *
-   * @param args - Arguments to log
-   */
   debug: (...args: unknown[]): void => {
-    if (shouldLog("debug")) {
-      console.log(...withPrefix("debug", args));
-    }
+    log("debug", args);
   },
 
-  /**
-   * Logs info-level messages
-   * Used for important events and general information
-   *
-   * @param args - Arguments to log
-   */
   info: (...args: unknown[]): void => {
-    if (shouldLog("info")) {
-      console.log(...withPrefix("info", args));
-    }
+    log("info", args);
   },
 
-  /**
-   * Logs warning-level messages
-   * Used for recoverable errors and potential issues
-   *
-   * @param args - Arguments to log
-   */
   warn: (...args: unknown[]): void => {
-    if (shouldLog("warn")) {
-      console.warn(...withPrefix("warn", args));
-    }
+    log("warn", args);
   },
 
-  /**
-   * Logs error-level messages
-   * Used for critical failures and exceptions
-   *
-   * @param args - Arguments to log
-   */
   error: (...args: unknown[]): void => {
-    if (shouldLog("error")) {
-      console.error(...withPrefix("error", args));
-    }
+    log("error", args);
   },
 };
+
+export async function initializeLogger(): Promise<void> {
+  if (initializePromise && logStream) {
+    await initializePromise;
+    return;
+  }
+
+  initializePromise = initializeLoggerInternal().catch((error) => {
+    reportLoggerInternalError("Logger initialization failed.", error);
+  });
+
+  await initializePromise;
+}

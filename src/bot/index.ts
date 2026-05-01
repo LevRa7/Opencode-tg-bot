@@ -307,6 +307,10 @@ const childSessionMeta = new Map<string, ChildSessionMeta>();
 const subagentTokensByParent = new Map<string, { input: number; output: number }>();
 const childTopicPinnedMessageId = new Map<string, number>();
 
+// 2026-05-01: Tracks the maternal session's own token usage from completionInfo,
+// used in the maternal idle footer to show maternal + sum(child) tokens.
+const maternalTokenUsage = new Map<string, { input: number; output: number }>();
+
 interface ChildAssistantMessageState {
   orderedPartIds: string[];
   partTexts: Map<string, string>;
@@ -1525,6 +1529,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     childTopicDeletionBlockedSessions.clear();
     childTopicPromptSent.clear();
     subagentTopicService.clearAll();
+    maternalTokenUsage.clear();
   });
 
   summaryAggregator.setOnPartial(
@@ -1609,6 +1614,18 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     async (sessionId, messageId, messageText, reasoningText, toolCalls, completionInfo) => {
       await enqueueSessionCompletionTask(sessionId, async () => {
         assistantRunState.markResponseCompleted(sessionId, completionInfo);
+
+        // 2026-05-01: Track maternal session's own token usage for the idle footer.
+        if (
+          typeof completionInfo?.inputTokens === "number" ||
+          typeof completionInfo?.outputTokens === "number"
+        ) {
+          const prev = maternalTokenUsage.get(sessionId) ?? { input: 0, output: 0 };
+          maternalTokenUsage.set(sessionId, {
+            input: Math.max(prev.input, completionInfo?.inputTokens ?? 0),
+            output: Math.max(prev.output, completionInfo?.outputTokens ?? 0),
+          });
+        }
 
         if (!isSessionCurrent(sessionId)) {
           finalAssistantDeliveryOrchestrator.clearSession(sessionId);
@@ -1823,6 +1840,19 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
 
     const completedRun = assistantRunState.finishRun(sessionId, "session_idle");
+
+    // 2026-05-01: Diagnose maternal session not cleaning up. If finishRun returns
+    // null the run may have been missing (never started / already cleared).
+    if (!completedRun) {
+      logger.warn(
+        `[Bot] handleSessionIdle: finishRun returned null — no active run for session=${sessionId}, isDedicatedTopicSession=${isDedicatedTopicSession}, hasLiveTarget=${!!resolveAttachedSessionTarget(sessionId)}`,
+      );
+    } else {
+      logger.debug(
+        `[Bot] handleSessionIdle: finishRun ok session=${sessionId}, hasPublishedFinalResponse=${completedRun.hasPublishedFinalResponse}`,
+      );
+    }
+
     clearPromptResponseMode(sessionId);
 
     syncSessionRoutingContext(sessionId);
@@ -1870,8 +1900,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                   providerID,
                   modelID,
                   elapsedMs: (completedRun.completedAt ?? Date.now()) - completedRun.startedAt,
-                  inputTokens: subagentTokensByParent.get(sessionId)?.input,
-                  outputTokens: subagentTokensByParent.get(sessionId)?.output,
+                  inputTokens:
+                    (maternalTokenUsage.get(sessionId)?.input ?? 0) +
+                    (subagentTokensByParent.get(sessionId)?.input ?? 0),
+                  outputTokens:
+                    (maternalTokenUsage.get(sessionId)?.output ?? 0) +
+                    (subagentTokensByParent.get(sessionId)?.output ?? 0),
                 }),
                 withMessageThreadId(
                   {
@@ -2714,14 +2748,14 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                       await sendBotText({
                         api: botApi,
                         chatId: target.chatId,
-                        text: `${formatAssistantRunFooter({
+                        text: formatAssistantRunFooter({
                           agent: meta.agent,
                           providerID: meta.providerID,
                           modelID: meta.modelID,
                           elapsedMs,
                           inputTokens: meta.tokens.input,
                           outputTokens: meta.tokens.output,
-                        })}\n📥 ${meta.tokens.input} · 📤 ${meta.tokens.output}`,
+                        }),
                         format: "html",
                         messageThreadId: target.messageThreadId,
                         deliveryTarget: target,

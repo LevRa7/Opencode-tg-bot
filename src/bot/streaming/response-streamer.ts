@@ -69,17 +69,17 @@ function buildStateKey(sessionId: string, messageId: string): string {
 }
 
 function normalizePayload(payload: StreamingMessagePayload): StreamingMessagePayload | null {
-   const normalizedParts = payload.parts
-     .map((part) => {
-       if (typeof part === "string") {
-         return { text: part.trim() };
-       }
-       return {
-         text: part.text.trim(),
-         entities: part.entities,
-       };
-     })
-     .filter((part) => part.text.length > 0);
+  const normalizedParts = payload.parts
+    .map((part) => {
+      if (typeof part === "string") {
+        return { text: part.trim() };
+      }
+      return {
+        text: part.text.trim(),
+        entities: part.entities,
+      };
+    })
+    .filter((part) => part.text.length > 0);
   if (normalizedParts.length === 0) {
     return null;
   }
@@ -119,10 +119,13 @@ function getRetryAfterMs(error: unknown): number | null {
   return seconds * 1000;
 }
 
-function createSignature(part: string | StreamingMessagePayloadPart, format: StreamingMessageFormat): string {
+function createSignature(
+  part: string | StreamingMessagePayloadPart,
+  format: StreamingMessageFormat,
+): string {
   const text = typeof part === "string" ? part : part.text;
   const entities = typeof part === "string" ? undefined : part.entities;
-  const entitiesKey = entities ? JSON.stringify(entities) : 'null';
+  const entitiesKey = entities ? JSON.stringify(entities) : "null";
   return `${format}\n${text}\n${entitiesKey}`;
 }
 
@@ -134,11 +137,7 @@ function resolvePartFormat(
     return payloadFormat;
   }
 
-  if (typeof part === "string") {
-    return "raw";
-  }
-
-  return part.entities?.length ? "markdown_v2" : "raw";
+  return "markdown_v2";
 }
 
 function delay(ms: number): Promise<void> {

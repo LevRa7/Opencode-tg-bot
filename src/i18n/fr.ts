@@ -297,7 +297,8 @@ export const fr: I18nDictionary = {
   "model.menu.button.prev_page": "⬅️ Préc.",
   "model.menu.button.next_page": "Suiv. ➡️",
   "model.menu.button.back_providers": "⬅️ Retour aux fournisseurs",
-  "model.command.usage": "Utilisation : /model provider/model\nExemple : /model cliproxyapi/gpt-5.5",
+  "model.command.usage":
+    "Utilisation : /model provider/model\nExemple : /model cliproxyapi/gpt-5.5",
   "model.command.not_found": "Modèle introuvable : {name}",
   "model.command.changed": "✅ Modèle défini sur {name}",
 
@@ -484,6 +485,10 @@ export const fr: I18nDictionary = {
   "task.kind.once": "ponctuelle",
   "task.run.success": "⏰ Tâche planifiée terminée : {description}",
   "task.run.error": "🔴 Échec de la tâche planifiée : {description}\n\nErreur : {error}",
+  "task.run.error.interactive_question":
+    "La tâche planifiée a demandé une question interactive et ne peut pas continuer sans intervention.",
+  "task.run.error.interactive_permission":
+    "La tâche planifiée a demandé une autorisation interactive et ne peut pas continuer sans intervention.",
 
   "tasklist.empty": "📭 Aucune tâche planifiée pour le moment.",
   "tasklist.select": "Sélectionnez une tâche planifiée :",

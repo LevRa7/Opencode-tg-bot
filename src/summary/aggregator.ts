@@ -1083,6 +1083,18 @@ class SummaryAggregator {
       const messageText = this.getCombinedMessageText(messageID);
       const reasoningText = this.getCombinedReasoningText(messageID);
 
+      // Extract token data early — used by both the completion callback and the
+      // token reporter below.
+      const assistantInfo = info as {
+        tokens?: {
+          input: number;
+          output: number;
+          reasoning: number;
+          cache: { read: number; write: number };
+        };
+        cost?: number;
+      };
+
       if (isCompleted && this.onCompleteCallback) {
         this.onCompleteCallback(
           info.sessionID,
@@ -1096,21 +1108,14 @@ class SummaryAggregator {
             modelID: (info as { modelID?: string }).modelID,
             logicalMessageId: messageID,
             completedAt: typeof time?.completed === "number" ? time.completed : undefined,
+            inputTokens: assistantInfo.tokens?.input,
+            outputTokens: assistantInfo.tokens?.output,
           },
         );
       }
 
       // Extract and report tokens for EVERY message.updated with token data
       // (both intermediate and completed). This keeps keyboard context in sync.
-      const assistantInfo = info as {
-        tokens?: {
-          input: number;
-          output: number;
-          reasoning: number;
-          cache: { read: number; write: number };
-        };
-        cost?: number;
-      };
 
       if (this.onTokensCallback && assistantInfo.tokens) {
         const tokens: TokensInfo = {

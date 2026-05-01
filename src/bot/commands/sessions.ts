@@ -2,10 +2,10 @@ import { CommandContext, Context } from "grammy";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { InlineKeyboard } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
-import { setCurrentSession, SessionInfo } from "../../session/manager.js";
+import { setCurrentSession, getCurrentSession, SessionInfo } from "../../session/manager.js";
 import { getCurrentProject } from "../../settings/manager.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
-import { summaryAggregator } from "../../summary/aggregator.js";
+import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import {
@@ -299,6 +299,11 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
       `[Bot] Session selected: id=${session.id}, title="${session.title}", project=${currentProject.worktree}`,
     );
 
+    const previousSession = getCurrentSession();
+    if (previousSession) {
+      clearScopedSessionRuntime(previousSession.id, "session_switched");
+    }
+
     const sessionInfo: SessionInfo = {
       id: session.id,
       title: session.title,
@@ -317,7 +322,6 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
           showPermissionRequest(ctx.api, activeScope.chatId, request, activeScope.messageThreadId),
       });
     }
-    summaryAggregator.clear();
     clearAllInteractionState("session_switched");
 
     // Sync the forum topic name with the session title (Telegram forums only)

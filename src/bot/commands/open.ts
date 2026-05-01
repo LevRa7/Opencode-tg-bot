@@ -16,6 +16,8 @@ import { getTenantBrowserRoots, isWithinAllowedTenantRoot, isAllowedTenantRoot }
 import { upsertSessionDirectory } from "../../session/cache-manager.js";
 import { getProjectByWorktree } from "../../project/manager.js";
 import { switchToProject } from "../utils/switch-project.js";
+import { getCurrentTelegramConversationScopeKey } from "../../telegram/scope.js";
+import { clearScopeOpenPathIndex, encodeScopedPathReference, decodeScopedPathReference } from "../runtime/scope-open-state.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 
@@ -41,18 +43,11 @@ function truncateLabel(label: string, maxLen: number = MAX_BUTTON_LABEL_LENGTH):
 }
 
 /**
- * Encode a path into callback data. Telegram limits callback_data to 64 bytes.
- * Long absolute paths can exceed this, so we encode them as a compact index
- * when necessary. The index is stored in a module-level map that lives for the
- * duration of the current inline menu interaction.
+ * Clear the path index for the current scope.
+ * Exported so it can be called on menu cancel/cleanup.
  */
-const pathIndex = new Map<string, string>();
-let pathCounter = 0;
-
-/** Clear the path index. Exported so it can be called on menu cancel/cleanup. */
 export function clearOpenPathIndex(): void {
-  pathIndex.clear();
-  pathCounter = 0;
+  clearScopeOpenPathIndex(getCurrentTelegramConversationScopeKey());
 }
 
 /**
@@ -68,10 +63,9 @@ function encodePathForCallback(prefix: string, fullPath: string, reserveBytes: n
     return naive;
   }
 
-  // Use a short numeric key instead
-  const key = `#${pathCounter++}`;
-  pathIndex.set(key, fullPath);
-  return `${prefix}${key}`;
+  const scopeKey = getCurrentTelegramConversationScopeKey();
+  const ref = encodeScopedPathReference(scopeKey, fullPath);
+  return `${prefix}${ref}`;
 }
 
 function decodePathFromCallback(prefix: string, data: string): string | null {
@@ -80,7 +74,8 @@ function decodePathFromCallback(prefix: string, data: string): string | null {
   }
   const raw = data.slice(prefix.length);
   if (raw.startsWith("#")) {
-    return pathIndex.get(raw) ?? null;
+    const scopeKey = getCurrentTelegramConversationScopeKey();
+    return decodeScopedPathReference(scopeKey, raw);
   }
   return raw;
 }
@@ -120,8 +115,10 @@ function decodePaginationCallback(data: string): { path: string; page: number } 
     return null;
   }
 
-  // Resolve indexed path references
-  const resolvedPath = pathRef.startsWith("#") ? (pathIndex.get(pathRef) ?? null) : pathRef;
+  // Resolve indexed path references via scope-keyed state
+  const resolvedPath = pathRef.startsWith("#")
+    ? (decodeScopedPathReference(getCurrentTelegramConversationScopeKey(), pathRef) ?? null)
+    : pathRef;
   if (resolvedPath === null) {
     return null;
   }

@@ -1,8 +1,8 @@
 import type { Context } from "grammy";
 import type { ProjectInfo } from "../../settings/manager.js";
 import { setCurrentProject } from "../../settings/manager.js";
-import { clearSession } from "../../session/manager.js";
-import { summaryAggregator } from "../../summary/aggregator.js";
+import { clearSession, getCurrentSession } from "../../session/manager.js";
+import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { getStoredAgent, resolveProjectAgent } from "../../agent/manager.js";
@@ -26,9 +26,12 @@ import { logger } from "../../utils/logger.js";
  * @param reason    short tag for `clearAllInteractionState` (e.g. "project_switched")
  */
 export async function switchToProject(ctx: Context, project: ProjectInfo, reason: string) {
+  const previousSession = getCurrentSession();
+  if (previousSession) {
+    clearScopedSessionRuntime(previousSession.id, reason);
+  }
   setCurrentProject(project);
   clearSession();
-  summaryAggregator.clear();
   clearAllInteractionState(reason);
 
   try {

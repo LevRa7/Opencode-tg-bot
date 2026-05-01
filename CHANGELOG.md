@@ -45,8 +45,20 @@ Documentation rule:
   - Why: Docker tenants were hitting blocked system `pip` flows and missing `python3-venv`, which made ad-hoc Python package installation unreliable and often impossible to repair remotely.
   - Affects: `docker/Dockerfile`, `docker/bin/ensure-tenant-python-env.sh`, `docker/bin/docker-entrypoint.sh`, `docker/tests/tg-cli-image.test.sh`, `docker/tests/tenant-python-env.test.sh`, `docker/update-opencode.sh`, `docker/README.md`, `docker/README-ru.md`
 
+### Added
+
+- Added scope-keyed path reference storage with `clearScopeOpenPathIndex`, `encodeScopedPathReference`, `decodeScopedPathReference` in `src/bot/runtime/scope-open-state.ts` for topic-isolated file browser state.
+  - Why: a shared module-level path index caused one topic's open-file-browser callback data to invalidate another topic's callbacks.
+  - Affects: `src/bot/runtime/scope-open-state.ts`, `tests/bot/runtime/scope-open-state.test.ts`
+- Added user-visible change for /open command: each topic's file browser now uses its own scope-keyed path index so clearing or navigating in one topic does not break another topic's pending callback buttons.
+  - Why: concurrent file browser sessions in different forum topics need independent state.
+  - Affects: `src/bot/commands/open.ts`, `tests/bot/commands/open.test.ts`
+
 ### Changed
 
+- Changed session/project switch cleanup from global `summaryAggregator.clear()` to scope-scoped `clearScopedSessionRuntime()` so switching sessions or projects in one topic does not reset summary state for another topic.
+  - Why: `summaryAggregator.clear()` was global and could discard summary data for active sessions in other topics.
+  - Affects: `src/bot/utils/switch-project.ts`, `src/bot/commands/sessions.ts`, `src/bot/commands/new.ts`, `src/bot/commands/projects.ts`, `tests/bot/utils/switch-project.test.ts`, `tests/bot/commands/sessions.test.ts`, `tests/bot/commands/new.test.ts`, `tests/bot/commands/projects.handle-project-select.test.ts`
 - Changed forum subagent delivery to route each child session through a dedicated per-user topic when available, keep child-session final answers silent in that topic, delete the topic only after the final child answer is actually delivered and the configured timeout elapses, and preserve `/projects` selections as user defaults across new topics.
   - Why: forum subagents need isolated child-session output that does not leak across users or topics, topic cleanup must not race ahead of the final answer, and project selection should follow the same user-default model as other scoped preferences.
   - Affects: `src/bot/index.ts`, `src/bot/subagent-topics/service.ts`, `src/settings/manager.ts`, `tests/bot/index.local-file-follow-up.test.ts`, `tests/bot/subagent-topics/service.test.ts`, `tests/settings/manager.test.ts`, `PRODUCT.md`

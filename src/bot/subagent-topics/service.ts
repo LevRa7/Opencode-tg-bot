@@ -83,6 +83,7 @@ export class SubagentTopicService {
   private readonly deleteForumTopic: SubagentTopicServiceDependencies["deleteForumTopic"];
   private readonly scheduleDeletion: SubagentTopicScheduler;
   private readonly registry = new Map<string, SubagentTopicRegistryEntry>();
+  private readonly stoppedSessionIds = new Set<string>();
 
   constructor(dependencies: SubagentTopicServiceDependencies) {
     this.createForumTopic = dependencies.createForumTopic;
@@ -217,6 +218,27 @@ export class SubagentTopicService {
         entry.deletionHandle = null;
       }
     }, delayMs);
+  }
+
+  markSubagentStopped(sessionId: string): void {
+    this.stoppedSessionIds.add(sessionId);
+    this.clearSession(sessionId);
+  }
+
+  getLinkState(sessionId: string): { kind: "active"; url: string } | { kind: "stopped" } | null {
+    if (this.stoppedSessionIds.has(sessionId)) {
+      return { kind: "stopped" };
+    }
+
+    const entry = this.registry.get(sessionId);
+    if (!entry || entry.scope.kind !== "topic") {
+      return null;
+    }
+
+    return {
+      kind: "active",
+      url: `https://t.me/c/${entry.scope.chatId}/${entry.scope.messageThreadId}`,
+    };
   }
 
   clearSession(sessionId: string): void {

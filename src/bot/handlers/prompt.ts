@@ -18,9 +18,9 @@ import {
 import { keyboardManager } from "../../keyboard/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { summaryAggregator } from "../../summary/aggregator.js";
-import { stopEventListening } from "../../opencode/events.js";
 import { interactionManager } from "../../interaction/manager.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
+import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { formatErrorDetails } from "../../utils/error-format.js";
 import { logger } from "../../utils/logger.js";
@@ -227,12 +227,10 @@ export async function isSessionBusy(sessionId: string, directory: string): Promi
 }
 
 async function resetMismatchedSessionContext(sessionId?: string): Promise<void> {
-  stopEventListening();
-  summaryAggregator.clear();
+  clearScopedSessionRuntime(sessionId ?? "", "session_mismatch_reset");
   if (sessionId) {
     foregroundSessionState.markIdle(sessionId, attachManager.getScopeForSession(sessionId));
   }
-  clearAllInteractionState("session_mismatch_reset");
   clearSession();
   threadContextManager.clearSessionForActiveContext();
   keyboardManager.clearContext();

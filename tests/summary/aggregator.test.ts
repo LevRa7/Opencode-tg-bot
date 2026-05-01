@@ -2370,4 +2370,106 @@ describe("summary/aggregator", () => {
 
     expect(onPartial).toHaveBeenLastCalledWith("session-a", "message-a", "Hello world", "", []);
   });
+
+  describe("getSessionTree", () => {
+    it("returns correct root/child mapping", () => {
+      summaryAggregator.setSession("root-1");
+
+      summaryAggregator.processEvent({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "child-1",
+            parentID: "root-1",
+            title: "Child 1",
+            time: { created: Date.now(), updated: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      summaryAggregator.processEvent({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "child-2",
+            parentID: "root-1",
+            title: "Child 2",
+            time: { created: Date.now(), updated: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      const tree = summaryAggregator.getSessionTree("root-1");
+      expect(tree.rootSessionId).toBe("root-1");
+      expect(tree.childSessionIds).toHaveLength(2);
+      expect(tree.childSessionIds).toEqual(expect.arrayContaining(["child-1", "child-2"]));
+    });
+
+    it("returns empty children when root has no child sessions", () => {
+      summaryAggregator.setSession("orphan-root");
+
+      const tree = summaryAggregator.getSessionTree("orphan-root");
+      expect(tree.rootSessionId).toBe("orphan-root");
+      expect(tree.childSessionIds).toEqual([]);
+    });
+  });
+
+  describe("getActiveSubagents", () => {
+    it("returns only active (non-completed, non-errored) children", () => {
+      const onSubagent = vi.fn();
+      summaryAggregator.setOnSubagent(onSubagent);
+      summaryAggregator.setSession("root-session");
+
+      for (const [id, agent, description] of [
+        ["child-completed", "explore", "completed task"],
+        ["child-error", "general", "errored task"],
+        ["child-pending", "coder", "pending task"],
+      ] as const) {
+        summaryAggregator.processEvent({
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: `subtask-${id}`,
+              sessionID: "root-session",
+              messageID: "root-message",
+              type: "subtask",
+              prompt: description,
+              description,
+              agent,
+            },
+          },
+        } as unknown as Event);
+
+        summaryAggregator.processEvent({
+          type: "session.created",
+          properties: {
+            info: {
+              id,
+              parentID: "root-session",
+              title: `${description} (@${agent} subagent)`,
+              time: { created: Date.now(), updated: Date.now() },
+            },
+          },
+        } as unknown as Event);
+      }
+
+      summaryAggregator.processEvent({
+        type: "session.idle",
+        properties: { sessionID: "child-completed" },
+      } as unknown as Event);
+
+      summaryAggregator.processEvent({
+        type: "session.error",
+        properties: {
+          sessionID: "child-error",
+          error: { data: { message: "Failed" } },
+        },
+      } as unknown as Event);
+
+      const active = summaryAggregator.getActiveSubagents("root-session");
+      expect(active).toHaveLength(1);
+      expect(active[0].sessionId).toBe("child-pending");
+      expect(active[0].status).toBe("pending");
+    });
+  });
 });

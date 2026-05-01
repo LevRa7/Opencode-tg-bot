@@ -89,6 +89,17 @@ async function formatSubagentCard(subagent: SubagentInfo): Promise<string> {
     formatSubagentActivity(subagent),
   ];
 
+  const topicLine = subagent.stoppedLine
+    ? `• ${escapeHtml(subagent.stoppedLine)}`
+    : subagent.topicLinkLabel && subagent.topicLinkUrl
+      ? `• <a href="${escapeHtml(subagent.topicLinkUrl)}">${escapeHtml(subagent.topicLinkLabel)}</a>`
+      : "";
+
+  if (topicLine) {
+    lines.push("");
+    lines.push(topicLine);
+  }
+
   return lines.join("\n");
 }
 

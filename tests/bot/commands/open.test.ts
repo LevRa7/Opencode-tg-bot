@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Context } from "grammy";
 import { t } from "../../../src/i18n/index.js";
 import { getTenantRuntimeInfo } from "../../../src/settings/manager.js";
-import { getCurrentTelegramConversationScope } from "../../../src/telegram/scope.js";
+import { getCurrentTelegramConversationScope, getCurrentTelegramConversationScopeKey } from "../../../src/telegram/scope.js";
 
 const mocked = vi.hoisted(() => ({
   scanDirectoryMock: vi.fn(),
@@ -104,13 +104,32 @@ vi.mock("../../../src/i18n/index.js", async (importOriginal) => {
 });
 
 vi.mock("../../../src/settings/manager.js");
-vi.mock("../../../src/telegram/scope.js");
+vi.mock("../../../src/telegram/scope.js", () => ({
+  getCurrentTelegramConversationScope: vi.fn(),
+  getCurrentTelegramConversationScopeKey: vi.fn(() => "global"),
+  buildTelegramConversationScopeKey: vi.fn(),
+  extractTelegramConversationScopeFromContext: vi.fn(),
+  GLOBAL_TELEGRAM_SCOPE_KEY: "global",
+  runWithTelegramConversationScope: vi.fn(),
+  resolveTelegramConversationScopeKey: vi.fn(),
+  extractMessageThreadIdFromContext: vi.fn(),
+  isForumChat: vi.fn(),
+  ConversationContextKey: {},
+}));
+
+
 
 import {
   openCommand,
   handleOpenCallback,
   clearOpenPathIndex,
 } from "../../../src/bot/commands/open.js";
+import {
+  clearScopeOpenPathIndex,
+  encodeScopedPathReference,
+  decodeScopedPathReference,
+} from "../../../src/bot/runtime/scope-open-state.js";
+import { getCurrentTelegramConversationScopeKey } from "../../../src/telegram/scope.js";
 
 // --- Context factories ---
 
@@ -160,6 +179,7 @@ function makeScanResult(
 describe("open command", () => {
   beforeEach(() => {
     clearOpenPathIndex();
+    clearScopeOpenPathIndex("global");
     // Reset hoisted mocks that need custom return values
     mocked.scanDirectoryMock.mockReset();
     mocked.getTenantBrowserRootsMock.mockReset().mockReturnValue(["/home/user"]);
@@ -477,9 +497,48 @@ describe("open command", () => {
     });
   });
 
+  describe("topic scope isolation for path encoding", () => {
+    beforeEach(() => {
+      clearOpenPathIndex();
+      vi.mocked(getCurrentTelegramConversationScopeKey).mockReturnValue("global");
+    });
+
+    it("should keep path references isolated per scope", async () => {
+      const longPathA = "/home/user/" + "a".repeat(60);
+      const longPathB = "/home/user/" + "b".repeat(60);
+
+      vi.mocked(getCurrentTelegramConversationScopeKey).mockReturnValue("topic-a");
+      mocked.scanDirectoryMock.mockResolvedValueOnce(
+        makeScanResult([{ name: "a".repeat(60), fullPath: longPathA }], "/home/user"),
+      );
+      const ctxA = createCommandContext();
+      await openCommand(ctxA as never);
+      const replyA = (ctxA.reply as ReturnType<typeof vi.fn>).mock.calls[0];
+      const callbackA = replyA[1]?.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data as string;
+      expect(callbackA).toMatch(/^open:nav:#\d+$/);
+
+      vi.mocked(getCurrentTelegramConversationScopeKey).mockReturnValue("topic-b");
+      mocked.scanDirectoryMock.mockResolvedValueOnce(
+        makeScanResult([{ name: "b".repeat(60), fullPath: longPathB }], "/home/user"),
+      );
+      const ctxB = createCommandContext();
+      await openCommand(ctxB as never);
+      const replyB = (ctxB.reply as ReturnType<typeof vi.fn>).mock.calls[0];
+      const callbackB = replyB[1]?.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data as string;
+      expect(callbackB).toMatch(/^open:nav:#\d+$/);
+
+      // topic A's callback still navigates to longPathA
+      mocked.scanDirectoryMock.mockReset();
+      mocked.scanDirectoryMock.mockResolvedValueOnce(makeScanResult([], longPathA));
+      vi.mocked(getCurrentTelegramConversationScopeKey).mockReturnValue("topic-a");
+      const navA = createCallbackContext(callbackA);
+      expect(await handleOpenCallback(navA)).toBe(true);
+      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(longPathA, 0);
+    });
+  });
+
   describe("tenant isolation", () => {
     beforeEach(() => {
-      vi.resetAllMocks();
       vi.mocked(getCurrentTelegramConversationScope).mockReturnValue({
         userId: 123,
         chatId: 456,
@@ -527,6 +586,55 @@ describe("open command", () => {
 
       expect(mocked.getTenantBrowserRootsMock).toHaveBeenCalled();
       // Should use global roots
+    });
+  });
+
+  describe("topic isolation", () => {
+    beforeEach(() => {
+      clearScopeOpenPathIndex("scope-a");
+      clearScopeOpenPathIndex("scope-b");
+      clearScopeOpenPathIndex("global");
+    });
+
+    it("should not invalidate one topic's encoded paths when another topic clears its index", async () => {
+      const longPathA = "/home/user/" + "a".repeat(60);
+      const longPathB = "/home/user/" + "b".repeat(60);
+      const entriesA = [{ name: "a".repeat(60), fullPath: longPathA }];
+      const entriesB = [{ name: "b".repeat(60), fullPath: longPathB }];
+
+      vi.mocked(getCurrentTelegramConversationScopeKey).mockReturnValue("scope-a");
+      mocked.scanDirectoryMock.mockResolvedValue(
+        makeScanResult(entriesA, "/home/user"),
+      );
+      const ctxA = createCommandContext();
+      await openCommand(ctxA as never);
+      const replyCallA = (ctxA.reply as ReturnType<typeof vi.fn>).mock.calls[0];
+      const callbackA = replyCallA[1]?.reply_markup?.inline_keyboard?.[0]?.[0]
+        ?.callback_data as string;
+      expect(callbackA).toMatch(/open:nav:#\d+/);
+
+      vi.mocked(getCurrentTelegramConversationScopeKey).mockReturnValue("scope-b");
+      mocked.scanDirectoryMock.mockResolvedValue(
+        makeScanResult(entriesB, "/home/user"),
+      );
+      const ctxB = createCommandContext();
+      await openCommand(ctxB as never);
+      const replyCallB = (ctxB.reply as ReturnType<typeof vi.fn>).mock.calls[0];
+      const callbackB = replyCallB[1]?.reply_markup?.inline_keyboard?.[0]?.[0]
+        ?.callback_data as string;
+      expect(callbackB).toMatch(/open:nav:#\d+/);
+
+      clearScopeOpenPathIndex("scope-a");
+
+      const navCtxA = createCallbackContext(callbackA);
+      const resultA = await handleOpenCallback(navCtxA);
+      expect(resultA).toBe(false);
+
+      mocked.scanDirectoryMock.mockResolvedValue(makeScanResult([], longPathB));
+      const navCtxB = createCallbackContext(callbackB);
+      const resultB = await handleOpenCallback(navCtxB);
+      expect(resultB).toBe(true);
+      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(longPathB, 0);
     });
   });
 });

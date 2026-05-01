@@ -384,6 +384,8 @@ export const ru: I18nDictionary = {
   "subagent.status.running": "в работе",
   "subagent.status.completed": "завершен",
   "subagent.status.error": "ошибка",
+  "subagent.topic_link": "Открыть тред субагента",
+  "subagent.topic_stopped": "Субагент был остановлен",
   "pinned.files.title": "Файлы ({count}):",
   "pinned.files.item": "  {path}{diff}",
   "pinned.files.more": "  ... и еще {count}",

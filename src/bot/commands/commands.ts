@@ -12,6 +12,7 @@ import { interactionManager } from "../../interaction/manager.js";
 import type { InteractionState } from "../../interaction/types.js";
 import { summaryAggregator } from "../../summary/aggregator.js";
 import { getStoredAgent } from "../../agent/manager.js";
+import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { getStoredModel } from "../../model/manager.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { logger } from "../../utils/logger.js";
@@ -382,13 +383,13 @@ async function ensureSessionForProject(
     logger.warn(
       `[Commands] Session/project mismatch detected. sessionDirectory=${currentSession.directory}, projectDirectory=${projectDirectory}. Resetting session context.`,
     );
+    await clearScopedSessionRuntime(currentSession.id, "session_project_mismatch");
     foregroundSessionState.markIdle(
       currentSession.id,
       attachManager.getScopeForSession(currentSession.id),
     );
     clearSession();
     threadContextManager.clearSessionForActiveContext();
-    summaryAggregator.clear();
     await ctx.reply(t("bot.session_reset_project_mismatch"), threadOptions);
     currentSession = null;
   }

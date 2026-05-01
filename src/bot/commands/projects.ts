@@ -3,8 +3,8 @@ import { InlineKeyboard } from "grammy";
 import { setCurrentProject, getCurrentProject } from "../../settings/manager.js";
 import { getProjects } from "../../project/manager.js";
 import { syncSessionDirectoryCache } from "../../session/cache-manager.js";
-import { clearSession } from "../../session/manager.js";
-import { summaryAggregator } from "../../summary/aggregator.js";
+import { clearSession, getCurrentSession } from "../../session/manager.js";
+import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { getStoredAgent } from "../../agent/manager.js";
@@ -263,11 +263,15 @@ export async function handleProjectSelect(ctx: Context): Promise<boolean> {
       `[Bot] Project selected: ${selectedProject.name || selectedProject.worktree} (id: ${projectId})`,
     );
 
+    const previousSession = getCurrentSession();
+    if (previousSession) {
+      clearScopedSessionRuntime(previousSession.id, "project_switched");
+    }
+
     setCurrentProject(selectedProject);
     threadContextManager.bindProjectToActiveContext(selectedProject);
     clearSession();
     threadContextManager.clearSessionForActiveContext();
-    summaryAggregator.clear();
     clearAllInteractionState("project_switched");
 
     // Clear pinned message when switching projects

@@ -13,6 +13,9 @@ const mocked = vi.hoisted(() => ({
   getProjectsMock: vi.fn(),
   ensureActiveInlineMenuMock: vi.fn(),
   clearAllInteractionStateMock: vi.fn(),
+  clearSummaryMock: vi.fn(),
+  clearScopedSessionRuntimeMock: vi.fn(),
+  getCurrentSessionMock: vi.fn(),
   settingsFilePath: `${process.env.TMPDIR ?? "/tmp"}/opencode-telegram-bot-project-select.test.json`,
 }));
 
@@ -36,12 +39,17 @@ vi.mock("../../../src/interaction/cleanup.js", () => ({
   clearAllInteractionState: mocked.clearAllInteractionStateMock,
 }));
 
-vi.mock("../../../src/session/manager.js", () => ({
-  clearSession: vi.fn(),
+vi.mock("../../../src/summary/aggregator.js", () => ({
+  summaryAggregator: { clear: mocked.clearSummaryMock },
 }));
 
-vi.mock("../../../src/summary/aggregator.js", () => ({
-  summaryAggregator: { clear: vi.fn() },
+vi.mock("../../../src/bot/runtime/scoped-runtime-reset.js", () => ({
+  clearScopedSessionRuntime: mocked.clearScopedSessionRuntimeMock,
+}));
+
+vi.mock("../../../src/session/manager.js", () => ({
+  clearSession: vi.fn(),
+  getCurrentSession: mocked.getCurrentSessionMock,
 }));
 
 vi.mock("../../../src/pinned/manager.js", () => ({
@@ -108,6 +116,9 @@ describe("bot/commands/projects handleProjectSelect", () => {
     mocked.getProjectsMock.mockReset();
     mocked.ensureActiveInlineMenuMock.mockReset();
     mocked.clearAllInteractionStateMock.mockReset();
+    mocked.clearSummaryMock.mockReset();
+    mocked.clearScopedSessionRuntimeMock.mockReset();
+    mocked.getCurrentSessionMock.mockReset();
     mocked.ensureActiveInlineMenuMock.mockResolvedValue(true);
   });
 
@@ -165,6 +176,7 @@ describe("bot/commands/projects handleProjectSelect", () => {
         worktree: "/repo-a",
       },
     ]);
+    mocked.getCurrentSessionMock.mockReturnValue({ id: "session-0", title: "Previous", directory: "/repo-a" });
 
     const ctx = createCallbackContext("project:project-a");
 
@@ -177,5 +189,7 @@ describe("bot/commands/projects handleProjectSelect", () => {
       worktree: "/repo-a",
     });
     expect(runWithTelegramConversationScope(scopeB, () => getCurrentProject())).toBeUndefined();
+    expect(mocked.clearScopedSessionRuntimeMock).toHaveBeenCalledWith("session-0", "project_switched");
+    expect(mocked.clearSummaryMock).not.toHaveBeenCalled();
   });
 });

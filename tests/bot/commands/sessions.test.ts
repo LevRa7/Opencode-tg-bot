@@ -13,8 +13,10 @@ const mocked = vi.hoisted(() => ({
   sessionListMock: vi.fn(),
   sessionGetMock: vi.fn(),
   setCurrentSessionMock: vi.fn(),
+  getCurrentSessionMock: vi.fn(),
   clearSummaryMock: vi.fn(),
   clearInteractionMock: vi.fn(),
+  clearScopedSessionRuntimeMock: vi.fn(),
   keyboardInitializeMock: vi.fn(),
   keyboardGetKeyboardMock: vi.fn(() => ({ inline_keyboard: [] })),
   keyboardUpdateContextMock: vi.fn(),
@@ -46,6 +48,7 @@ vi.mock("../../../src/settings/manager.js", () => ({
 
 vi.mock("../../../src/session/manager.js", () => ({
   setCurrentSession: mocked.setCurrentSessionMock,
+  getCurrentSession: mocked.getCurrentSessionMock,
 }));
 
 vi.mock("../../../src/summary/aggregator.js", () => ({
@@ -103,6 +106,10 @@ vi.mock("../../../src/attach/service.js", () => ({
 
 vi.mock("../../../src/utils/safe-background-task.js", () => ({
   safeBackgroundTask: vi.fn(),
+}));
+
+vi.mock("../../../src/bot/runtime/scoped-runtime-reset.js", () => ({
+  clearScopedSessionRuntime: mocked.clearScopedSessionRuntimeMock,
 }));
 
 type SessionStub = {
@@ -191,6 +198,8 @@ describe("bot/commands/sessions", () => {
     mocked.setCurrentSessionMock.mockReset();
     mocked.clearSummaryMock.mockReset();
     mocked.clearInteractionMock.mockReset();
+    mocked.clearScopedSessionRuntimeMock.mockReset();
+    mocked.getCurrentSessionMock.mockReset();
     mocked.keyboardInitializeMock.mockReset();
     mocked.keyboardGetKeyboardMock.mockReset();
     mocked.keyboardGetKeyboardMock.mockReturnValue({ inline_keyboard: [] });
@@ -503,6 +512,7 @@ describe("bot/commands/sessions", () => {
       },
       error: null,
     });
+    mocked.getCurrentSessionMock.mockReturnValue({ id: "session-0", title: "Previous", directory: "/repo" });
 
     const ctx = createCallbackContext("session:session-1", 456);
     setCallbackMessage(ctx, {
@@ -521,5 +531,7 @@ describe("bot/commands/sessions", () => {
         reason: "selected_session",
       }),
     );
+    expect(mocked.clearScopedSessionRuntimeMock).toHaveBeenCalledWith("session-0", "session_switched");
+    expect(mocked.clearSummaryMock).not.toHaveBeenCalled();
   });
 });

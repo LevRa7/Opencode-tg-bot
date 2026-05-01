@@ -1951,12 +1951,26 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         pendingChildRoutingSetupBySessionId.delete(subagent.sessionId);
       }
 
+      const enrichedSubagents = subagents.map((subagent) => {
+        if (!subagent.sessionId) return subagent;
+        const linkState = subagentTopicService.getLinkState(subagent.sessionId);
+        if (!linkState) return subagent;
+        if (linkState.kind === "stopped") {
+          return { ...subagent, stoppedLine: t("subagent.topic_stopped") };
+        }
+        return {
+          ...subagent,
+          topicLinkLabel: t("subagent.topic_link"),
+          topicLinkUrl: linkState.url,
+        };
+      });
+
       if (await getHideToolCallMessagesForSession(sessionId)) {
         orderedPublication.resolve(null);
         return;
       }
 
-      const renderedCards = await renderSubagentCards(subagents);
+      const renderedCards = await renderSubagentCards(enrichedSubagents);
       if (!renderedCards) {
         orderedPublication.resolve(null);
         return;

@@ -26,7 +26,7 @@ export async function startCommand(ctx: Context): Promise<void> {
 
   clearSession();
   clearProject();
-  threadContextManager.clearAll("start_command_reset");
+  threadContextManager.clearActiveContext("start_command_reset");
   keyboardManager.clearContext();
   await pinnedMessageManager.clear();
 

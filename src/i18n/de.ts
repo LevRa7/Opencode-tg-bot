@@ -397,6 +397,8 @@ export const de: I18nDictionary = {
   "subagent.status.running": "laeuft",
   "subagent.status.completed": "abgeschlossen",
   "subagent.status.error": "Fehler",
+  "subagent.topic_link": "Subagent-Thread öffnen",
+  "subagent.topic_stopped": "Subagent wurde gestoppt",
   "pinned.files.title": "Dateien ({count}):",
   "pinned.files.item": "  {path}{diff}",
   "pinned.files.more": "  ... und {count} mehr",

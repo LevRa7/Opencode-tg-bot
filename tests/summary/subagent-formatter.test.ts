@@ -247,6 +247,158 @@ describe("summary/subagent-formatter", () => {
     expect(text).not.toContain('<i>Permission denied</i>');
   });
 
+  it("renders a topic link for an active subagent", async () => {
+    setRuntimeLocale("en");
+
+    const text = await renderSubagentCards([
+      {
+        cardId: "card-1",
+        sessionId: "child-1",
+        parentSessionId: "root-1",
+        agent: "explore",
+        description: "task description",
+        prompt: "task description",
+        status: "running",
+        providerID: "openai",
+        modelID: "gpt-5.4",
+        tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        updatedAt: Date.now(),
+        topicLinkLabel: "Open subagent thread",
+        topicLinkUrl: "https://t.me/c/-100123/321",
+      },
+    ]);
+
+    expect(text).toContain('• <a href="https://t.me/c/-100123/321">Open subagent thread</a>');
+  });
+
+  it("renders a stopped line for a stopped subagent", async () => {
+    setRuntimeLocale("en");
+
+    const text = await renderSubagentCards([
+      {
+        cardId: "card-1",
+        sessionId: "child-1",
+        parentSessionId: "root-1",
+        agent: "explore",
+        description: "task description",
+        prompt: "task description",
+        status: "running",
+        providerID: "openai",
+        modelID: "gpt-5.4",
+        tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        updatedAt: Date.now(),
+        stoppedLine: "Subagent was stopped",
+      },
+    ]);
+
+    expect(text).toContain("• Subagent was stopped");
+  });
+
+  it("renders stopped line over topic link when both are present", async () => {
+    setRuntimeLocale("en");
+
+    const text = await renderSubagentCards([
+      {
+        cardId: "card-1",
+        sessionId: "child-1",
+        parentSessionId: "root-1",
+        agent: "explore",
+        description: "task description",
+        prompt: "task description",
+        status: "error",
+        providerID: "openai",
+        modelID: "gpt-5.4",
+        tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        terminalMessage: "Permission denied",
+        updatedAt: Date.now(),
+        stoppedLine: "Subagent was stopped",
+        topicLinkLabel: "Open subagent thread",
+        topicLinkUrl: "https://t.me/c/-100123/321",
+      },
+    ]);
+
+    expect(text).toContain("• Subagent was stopped");
+    expect(text).not.toContain("Open subagent thread");
+  });
+
+  it("renders no link or stopped line for completed subagent without those fields", async () => {
+    setRuntimeLocale("en");
+
+    const text = await renderSubagentCards([
+      {
+        cardId: "card-1",
+        sessionId: "child-1",
+        parentSessionId: "root-1",
+        agent: "explore",
+        description: "task description",
+        prompt: "task description",
+        status: "completed",
+        providerID: "openai",
+        modelID: "gpt-5.4",
+        tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        updatedAt: Date.now(),
+      },
+    ]);
+
+    expect(text).toContain("✅ Completed");
+    expect(text).not.toContain("•");
+  });
+
+  it("escapes topic link URL and label in HTML output", async () => {
+    setRuntimeLocale("en");
+
+    const text = await renderSubagentCards([
+      {
+        cardId: "card-1",
+        sessionId: "child-1",
+        parentSessionId: "root-1",
+        agent: "explore",
+        description: "task description",
+        prompt: "task description",
+        status: "running",
+        providerID: "openai",
+        modelID: "gpt-5.4",
+        tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        updatedAt: Date.now(),
+        topicLinkLabel: '<b>malicious</b>',
+        topicLinkUrl: 'https://evil.example',
+      },
+    ]);
+
+    expect(text).toContain('&lt;b&gt;malicious&lt;/b&gt;');
+    expect(text).not.toContain('<b>malicious</b>');
+  });
+
+  it("escapes stoppedLine in HTML output", async () => {
+    setRuntimeLocale("en");
+
+    const text = await renderSubagentCards([
+      {
+        cardId: "card-1",
+        sessionId: "child-1",
+        parentSessionId: "root-1",
+        agent: "explore",
+        description: "task description",
+        prompt: "task description",
+        status: "running",
+        providerID: "openai",
+        modelID: "gpt-5.4",
+        tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        updatedAt: Date.now(),
+        stoppedLine: '<script>alert("xss")</script>',
+      },
+    ]);
+
+    expect(text).toContain('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;');
+    expect(text).not.toContain('<script>alert("xss")</script>');
+  });
+
   it("escapes tool-step details before inserting them into Telegram HTML", async () => {
     setRuntimeLocale("en");
 

@@ -125,6 +125,9 @@ export interface SubagentInfo {
   currentToolTitle?: string;
   terminalMessage?: string;
   updatedAt: number;
+  topicLinkLabel?: string;
+  topicLinkUrl?: string;
+  stoppedLine?: string;
 }
 
 type SubagentCallback = (
@@ -421,6 +424,47 @@ class SummaryAggregator {
     }
   }
 
+  getSessionTree(rootSessionId: string): { rootSessionId: string; childSessionIds: string[] } {
+    const childSessionIds: string[] = [];
+    for (const [sessionId, parentId] of this.trackedSessionParents) {
+      if (parentId === rootSessionId) {
+        childSessionIds.push(sessionId);
+      }
+    }
+    return { rootSessionId, childSessionIds };
+  }
+
+  private buildSubagentInfoList(parentSessionId: string): SubagentInfo[] {
+    return this.subagentOrder
+      .map((cardId) => this.subagentStates.get(cardId))
+      .filter((state): state is SubagentState => Boolean(state))
+      .filter((state) => state.parentSessionId === parentSessionId)
+      .map((state) => ({
+        cardId: state.cardId,
+        sessionId: state.sessionId,
+        parentSessionId: state.parentSessionId,
+        agent: state.agent,
+        description: state.description,
+        prompt: state.prompt,
+        command: state.command,
+        status: state.status,
+        providerID: state.providerID,
+        modelID: state.modelID,
+        tokens: { ...state.tokens },
+        cost: state.cost,
+        currentTool: state.currentTool,
+        currentToolInput: state.currentToolInput ? { ...state.currentToolInput } : undefined,
+        currentToolTitle: state.currentToolTitle,
+        terminalMessage: state.terminalMessage,
+        updatedAt: state.updatedAt,
+      }));
+  }
+
+  getActiveSubagents(parentSessionId: string): SubagentInfo[] {
+    return this.buildSubagentInfoList(parentSessionId)
+      .filter((state) => state.status !== "completed" && state.status !== "error");
+  }
+
   clear(): void {
     this.stopTypingIndicator();
     this.currentSessionId = null;
@@ -522,29 +566,7 @@ class SummaryAggregator {
       return;
     }
 
-    const subagents = this.subagentOrder
-      .map((cardId) => this.subagentStates.get(cardId))
-      .filter((state): state is SubagentState => Boolean(state))
-      .filter((state) => state.parentSessionId === parentSessionId)
-      .map((state) => ({
-        cardId: state.cardId,
-        sessionId: state.sessionId,
-        parentSessionId: state.parentSessionId,
-        agent: state.agent,
-        description: state.description,
-        prompt: state.prompt,
-        command: state.command,
-        status: state.status,
-        providerID: state.providerID,
-        modelID: state.modelID,
-        tokens: { ...state.tokens },
-        cost: state.cost,
-        currentTool: state.currentTool,
-        currentToolInput: state.currentToolInput ? { ...state.currentToolInput } : undefined,
-        currentToolTitle: state.currentToolTitle,
-        terminalMessage: state.terminalMessage,
-        updatedAt: state.updatedAt,
-      }));
+    const subagents = this.buildSubagentInfoList(parentSessionId);
 
     if (subagents.length === 0) {
       return;

@@ -353,6 +353,8 @@ export const zh: I18nDictionary = {
   "subagent.status.running": "运行中",
   "subagent.status.completed": "已完成",
   "subagent.status.error": "错误",
+  "subagent.topic_link": "打开子代理主题",
+  "subagent.topic_stopped": "子代理已被停止",
   "pinned.files.title": "文件（{count}）：",
   "pinned.files.item": "  {path}{diff}",
   "pinned.files.more": "  ... 还有 {count} 个",

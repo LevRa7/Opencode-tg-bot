@@ -505,6 +505,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
       messageThreadId: 30,
     });
     expect(mocked.foregroundClearAllMock).not.toHaveBeenCalledWith("session_mismatch_reset");
+    expect(mocked.summaryClearMock).not.toHaveBeenCalled();
     expect(replyMock).toHaveBeenCalledWith("bot.session_reset_project_mismatch");
   });
 

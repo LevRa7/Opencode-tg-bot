@@ -382,6 +382,8 @@ export const en = {
   "subagent.status.running": "running",
   "subagent.status.completed": "completed",
   "subagent.status.error": "error",
+  "subagent.topic_link": "Open subagent thread",
+  "subagent.topic_stopped": "Subagent was stopped",
   "pinned.files.title": "Files ({count}):",
   "pinned.files.item": "  {path}{diff}",
   "pinned.files.more": "  ... and {count} more",

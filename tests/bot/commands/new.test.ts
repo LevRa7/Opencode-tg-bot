@@ -9,6 +9,10 @@ const mocked = vi.hoisted(() => ({
   getCurrentProjectMock: vi.fn(),
   setCurrentProjectMock: vi.fn(),
   setConversationCurrentProjectMock: vi.fn(),
+  clearScopedSessionRuntimeMock: vi.fn(),
+  getCurrentSessionMock: vi.fn(),
+  clearSummaryMock: vi.fn(),
+  clearInteractionMock: vi.fn(),
   threadBindProjectMock: vi.fn(),
   threadBindSessionMock: vi.fn(),
   threadGetActiveScopeMock: vi.fn(),
@@ -38,6 +42,7 @@ vi.mock("../../../src/project/manager.js", () => ({
 
 vi.mock("../../../src/session/manager.js", () => ({
   setCurrentSession: vi.fn(),
+  getCurrentSession: mocked.getCurrentSessionMock,
 }));
 
 vi.mock("../../../src/session/cache-manager.js", () => ({
@@ -46,11 +51,15 @@ vi.mock("../../../src/session/cache-manager.js", () => ({
 }));
 
 vi.mock("../../../src/interaction/cleanup.js", () => ({
-  clearAllInteractionState: vi.fn(),
+  clearAllInteractionState: mocked.clearInteractionMock,
 }));
 
 vi.mock("../../../src/summary/aggregator.js", () => ({
-  summaryAggregator: { clear: vi.fn() },
+  summaryAggregator: { clear: mocked.clearSummaryMock },
+}));
+
+vi.mock("../../../src/bot/runtime/scoped-runtime-reset.js", () => ({
+  clearScopedSessionRuntime: mocked.clearScopedSessionRuntimeMock,
 }));
 
 vi.mock("../../../src/pinned/manager.js", () => ({
@@ -117,6 +126,10 @@ describe("bot/commands/new", () => {
     mocked.threadGetActiveScopeMock.mockReset();
     mocked.attachSessionForScopeMock.mockReset();
     mocked.getDefaultProjectMock.mockReset();
+    mocked.clearScopedSessionRuntimeMock.mockReset();
+    mocked.getCurrentSessionMock.mockReset();
+    mocked.clearSummaryMock.mockReset();
+    mocked.clearInteractionMock.mockReset();
     mocked.getCurrentProjectMock.mockReturnValue({ id: "project-1", worktree: "/repo" });
     mocked.getDefaultProjectMock.mockResolvedValue({ id: "default-project", worktree: "/default" });
     mocked.threadGetActiveScopeMock.mockReturnValue(null);
@@ -138,6 +151,7 @@ describe("bot/commands/new", () => {
       data: { id: "session-1", title: "Topic Session" },
       error: null,
     });
+    mocked.getCurrentSessionMock.mockReturnValue({ id: "session-0", title: "Previous", directory: "/repo" });
 
     const ctx = createContext();
     await newCommand(ctx as never);
@@ -146,6 +160,8 @@ describe("bot/commands/new", () => {
       reply_markup: { keyboard: true },
       message_thread_id: 88,
     });
+    expect(mocked.clearScopedSessionRuntimeMock).toHaveBeenCalledWith("session-0", "session_created");
+    expect(mocked.clearSummaryMock).not.toHaveBeenCalled();
   });
 
   it("does not bind the active scope directly when attachment owns session binding", async () => {

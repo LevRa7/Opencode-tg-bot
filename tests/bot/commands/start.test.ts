@@ -26,7 +26,7 @@ const mocked = vi.hoisted(() => ({
   keyboardUpdateModelMock: vi.fn(),
   keyboardUpdateContextMock: vi.fn(),
   keyboardClearContextMock: vi.fn(),
-  threadClearAllMock: vi.fn(),
+  threadClearActiveContextMock: vi.fn(),
 }));
 
 vi.mock("../../../src/bot/commands/abort.js", () => ({
@@ -82,7 +82,7 @@ vi.mock("../../../src/keyboard/manager.js", () => ({
 
 vi.mock("../../../src/thread/manager.js", () => ({
   threadContextManager: {
-    clearAll: mocked.threadClearAllMock,
+    clearActiveContext: mocked.threadClearActiveContextMock,
   },
 }));
 
@@ -136,7 +136,7 @@ describe("bot/commands/start", () => {
     mocked.keyboardUpdateModelMock.mockReset();
     mocked.keyboardUpdateContextMock.mockReset();
     mocked.keyboardClearContextMock.mockReset();
-    mocked.threadClearAllMock.mockReset();
+    mocked.threadClearActiveContextMock.mockReset();
   });
 
   it("stops active flow, resets project/session, and sends welcome message", async () => {

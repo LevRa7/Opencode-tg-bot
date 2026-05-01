@@ -235,6 +235,82 @@ describe("bot/subagent-topics/service", () => {
     expect(service.getTargetForSession("child-5")).toBeNull();
   });
 
+  it("marks a session as stopped and clears its registry entry", () => {
+    const service = new SubagentTopicService({
+      createForumTopic: vi.fn(),
+      deleteForumTopic: vi.fn(),
+    });
+
+    service.markSubagentStopped("stopped-1");
+
+    const linkState = service.getLinkState("stopped-1");
+    expect(linkState).toEqual({ kind: "stopped" });
+    expect(service.getScopeForSession("stopped-1")).toBeNull();
+    expect(service.getTargetForSession("stopped-1")).toBeNull();
+  });
+
+  it("returns active link state for a synced topic subagent", async () => {
+    const service = new SubagentTopicService({
+      createForumTopic: vi.fn().mockResolvedValue({ messageThreadId: 555 }),
+      deleteForumTopic: vi.fn(),
+    });
+
+    await service.syncSubagent({
+      childSessionId: "child-active",
+      topicName: "Active helper",
+      parent: { chatId: -100456, isForum: true },
+    });
+
+    const linkState = service.getLinkState("child-active");
+    expect(linkState).toEqual({
+      kind: "active",
+      url: "https://t.me/c/-100456/555",
+    });
+  });
+
+  it("returns null link state for a fallback subagent", async () => {
+    const service = new SubagentTopicService({
+      createForumTopic: vi.fn(),
+      deleteForumTopic: vi.fn(),
+    });
+
+    await service.syncSubagent({
+      childSessionId: "child-fallback",
+      topicName: "Fallback helper",
+      parent: { chatId: -100456, isForum: false },
+    });
+
+    const linkState = service.getLinkState("child-fallback");
+    expect(linkState).toBeNull();
+  });
+
+  it("returns null link state for unknown session", () => {
+    const service = new SubagentTopicService({
+      createForumTopic: vi.fn(),
+      deleteForumTopic: vi.fn(),
+    });
+
+    expect(service.getLinkState("unknown")).toBeNull();
+  });
+
+  it("markSubagentStopped returns stopped state over active", async () => {
+    const service = new SubagentTopicService({
+      createForumTopic: vi.fn().mockResolvedValue({ messageThreadId: 777 }),
+      deleteForumTopic: vi.fn(),
+    });
+
+    await service.syncSubagent({
+      childSessionId: "child-stopped-after",
+      topicName: "Stopped helper",
+      parent: { chatId: -100456, isForum: true },
+    });
+
+    service.markSubagentStopped("child-stopped-after");
+
+    const linkState = service.getLinkState("child-stopped-after");
+    expect(linkState).toEqual({ kind: "stopped" });
+  });
+
   it("cancels every scheduled deletion when all sessions are cleared", async () => {
     const scheduler = createSchedulerSpy();
     const service = new SubagentTopicService({

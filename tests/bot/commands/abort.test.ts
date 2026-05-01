@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
+import type { SessionInfo } from "../../../src/settings/manager.js";
+import type { TelegramConversationScope } from "../../../src/telegram/scope.js";
 import { abortCommand, abortCurrentOperation } from "../../../src/bot/commands/abort.js";
 import { clearAllInteractionState } from "../../../src/interaction/cleanup.js";
 import { questionManager } from "../../../src/question/manager.js";
@@ -14,13 +16,15 @@ import { attachManager } from "../../../src/attach/manager.js";
 import { runWithTelegramConversationScope } from "../../../src/telegram/scope.js";
 
 const mocked = vi.hoisted(() => ({
-  currentSession: null as { id: string; title: string; directory: string } | null,
+  resolveScopedSession: vi
+    .fn<() => { session: SessionInfo; scope: TelegramConversationScope } | null>(),
   abortMock: vi.fn(),
   statusMock: vi.fn(),
+  abortDeferredResolve: null as ((value: unknown) => void) | null,
 }));
 
-vi.mock("../../../src/session/manager.js", () => ({
-  getCurrentSession: vi.fn(() => mocked.currentSession),
+vi.mock("../../../src/bot/runtime/scope-session-resolver.js", () => ({
+  resolveScopedSessionFromContext: mocked.resolveScopedSession,
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -62,12 +66,23 @@ function activateInteractionState(): void {
   });
 }
 
+const DEFAULT_SCOPE: TelegramConversationScope = {
+  userId: 1,
+  chatId: 777,
+};
+
+const DEFAULT_SESSION: SessionInfo = {
+  id: "session-1",
+  title: "Session",
+  directory: "D:/repo",
+};
+
 describe("bot/commands/abort", () => {
   beforeEach(() => {
     clearAllInteractionState("test_setup");
     foregroundSessionState.__resetForTests();
     attachManager.__resetForTests();
-    mocked.currentSession = null;
+    mocked.resolveScopedSession.mockReset().mockReturnValue(null);
     mocked.abortMock.mockReset();
     mocked.statusMock.mockReset();
   });
@@ -91,13 +106,11 @@ describe("bot/commands/abort", () => {
   });
 
   it("clears interaction state and aborts active session", async () => {
-    activateInteractionState();
-
-    mocked.currentSession = {
-      id: "session-1",
-      title: "Session",
-      directory: "D:/repo",
-    };
+    runWithTelegramConversationScope(DEFAULT_SCOPE, activateInteractionState);
+    mocked.resolveScopedSession.mockReturnValue({
+      session: DEFAULT_SESSION,
+      scope: DEFAULT_SCOPE,
+    });
 
     mocked.abortMock.mockResolvedValue({ data: true, error: null });
     mocked.statusMock.mockResolvedValue({
@@ -124,20 +137,18 @@ describe("bot/commands/abort", () => {
     expect(mocked.abortMock).toHaveBeenCalled();
     expect(editMessageTextMock).toHaveBeenCalledWith(777, 88, t("stop.success"));
 
-    expect(questionManager.isActive()).toBe(false);
-    expect(permissionManager.isActive()).toBe(false);
-    expect(renameManager.isWaitingForName()).toBe(false);
-    expect(interactionManager.getSnapshot()).toBeNull();
+    expect(runWithTelegramConversationScope(DEFAULT_SCOPE, () => questionManager.isActive())).toBe(false);
+    expect(runWithTelegramConversationScope(DEFAULT_SCOPE, () => permissionManager.isActive())).toBe(false);
+    expect(runWithTelegramConversationScope(DEFAULT_SCOPE, () => renameManager.isWaitingForName())).toBe(false);
+    expect(runWithTelegramConversationScope(DEFAULT_SCOPE, () => interactionManager.getSnapshot())).toBeNull();
   });
 
   it("can abort silently without progress messages", async () => {
-    activateInteractionState();
-
-    mocked.currentSession = {
-      id: "session-1",
-      title: "Session",
-      directory: "D:/repo",
-    };
+    runWithTelegramConversationScope(DEFAULT_SCOPE, activateInteractionState);
+    mocked.resolveScopedSession.mockReturnValue({
+      session: DEFAULT_SESSION,
+      scope: DEFAULT_SCOPE,
+    });
 
     mocked.abortMock.mockResolvedValue({ data: true, error: null });
     mocked.statusMock.mockResolvedValue({
@@ -164,28 +175,29 @@ describe("bot/commands/abort", () => {
     expect(replyMock).not.toHaveBeenCalled();
     expect(editMessageTextMock).not.toHaveBeenCalled();
 
-    expect(questionManager.isActive()).toBe(false);
-    expect(permissionManager.isActive()).toBe(false);
-    expect(renameManager.isWaitingForName()).toBe(false);
-    expect(interactionManager.getSnapshot()).toBeNull();
+    expect(runWithTelegramConversationScope(DEFAULT_SCOPE, () => questionManager.isActive())).toBe(false);
+    expect(runWithTelegramConversationScope(DEFAULT_SCOPE, () => permissionManager.isActive())).toBe(false);
+    expect(runWithTelegramConversationScope(DEFAULT_SCOPE, () => renameManager.isWaitingForName())).toBe(false);
+    expect(runWithTelegramConversationScope(DEFAULT_SCOPE, () => interactionManager.getSnapshot())).toBeNull();
   });
 
   it("clears busy state only for the attached topic after abort reaches idle", async () => {
-    const topicAScope = { userId: 1, chatId: 777, messageThreadId: 10 };
-    const topicBScope = { userId: 1, chatId: 777, messageThreadId: 20 };
+    const topicAScope: TelegramConversationScope = { userId: 1, chatId: 777, messageThreadId: 10 };
+    const topicBScope: TelegramConversationScope = { userId: 1, chatId: 777, messageThreadId: 20 };
 
-    mocked.currentSession = {
-      id: "session-1",
-      title: "Session",
-      directory: "D:/repo",
-    };
+    const sessionA: SessionInfo = { id: "session-1", title: "Session", directory: "D:/repo" };
 
-    attachManager.attach(topicAScope, mocked.currentSession);
+    attachManager.attach(topicAScope, sessionA);
     runWithTelegramConversationScope(topicAScope, () => {
       foregroundSessionState.markBusy("session-1");
     });
     runWithTelegramConversationScope(topicBScope, () => {
       foregroundSessionState.markBusy("session-2");
+    });
+
+    mocked.resolveScopedSession.mockReturnValue({
+      session: sessionA,
+      scope: topicAScope,
     });
 
     mocked.abortMock.mockResolvedValue({ data: true, error: null });
@@ -218,21 +230,22 @@ describe("bot/commands/abort", () => {
   });
 
   it("clears the original busy topic when attachment changes before abort cleanup", async () => {
-    const topicAScope = { userId: 1, chatId: 777, messageThreadId: 10 };
-    const topicBScope = { userId: 1, chatId: 777, messageThreadId: 20 };
+    const topicAScope: TelegramConversationScope = { userId: 1, chatId: 777, messageThreadId: 10 };
+    const topicBScope: TelegramConversationScope = { userId: 1, chatId: 777, messageThreadId: 20 };
 
-    mocked.currentSession = {
-      id: "session-1",
-      title: "Session",
-      directory: "D:/repo",
-    };
+    const session: SessionInfo = { id: "session-1", title: "Session", directory: "D:/repo" };
 
-    attachManager.attach(topicAScope, mocked.currentSession);
+    attachManager.attach(topicAScope, session);
     runWithTelegramConversationScope(topicAScope, () => {
       foregroundSessionState.markBusy("session-1");
     });
 
-    attachManager.attach(topicBScope, mocked.currentSession);
+    attachManager.attach(topicBScope, session);
+
+    mocked.resolveScopedSession.mockReturnValue({
+      session,
+      scope: topicBScope,
+    });
 
     mocked.abortMock.mockResolvedValue({ data: true, error: null });
     mocked.statusMock.mockResolvedValue({
@@ -259,6 +272,121 @@ describe("bot/commands/abort", () => {
       false,
     );
     expect(runWithTelegramConversationScope(topicBScope, () => foregroundSessionState.isBusy())).toBe(
+      false,
+    );
+  });
+
+  it("abort uses the session attached to the invoking topic", async () => {
+    const topicAScope: TelegramConversationScope = { userId: 1, chatId: 777, messageThreadId: 10 };
+    const topicBScope: TelegramConversationScope = { userId: 1, chatId: 777, messageThreadId: 20 };
+
+    const sessionA: SessionInfo = { id: "session-a", title: "Session A", directory: "/dir/a" };
+    const sessionB: SessionInfo = { id: "session-b", title: "Session B", directory: "/dir/b" };
+
+    attachManager.attach(topicAScope, sessionA);
+    attachManager.attach(topicBScope, sessionB);
+
+    mocked.resolveScopedSession.mockReturnValue({
+      session: sessionA,
+      scope: topicAScope,
+    });
+
+    mocked.abortMock.mockResolvedValue({ data: true, error: null });
+    mocked.statusMock.mockResolvedValue({
+      data: {
+        "session-a": { type: "idle" },
+      },
+      error: null,
+    });
+
+    const replyMock = vi.fn().mockResolvedValue({ message_id: 88 });
+    const editMessageTextMock = vi.fn().mockResolvedValue(undefined);
+
+    const ctx = {
+      chat: { id: 777 },
+      reply: replyMock,
+      api: {
+        editMessageText: editMessageTextMock,
+      },
+    } as unknown as Context;
+
+    await abortCommand(ctx as never);
+
+    expect(mocked.abortMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionID: "session-a" }),
+      expect.anything(),
+    );
+  });
+
+  it("abort does not target another topic's attached session when current topic has no attachment", async () => {
+    const topicAScope: TelegramConversationScope = { userId: 1, chatId: 777, messageThreadId: 10 };
+    const topicBScope: TelegramConversationScope = { userId: 1, chatId: 777, messageThreadId: 20 };
+
+    const sessionB: SessionInfo = { id: "session-b", title: "Session B", directory: "/dir/b" };
+
+    attachManager.attach(topicBScope, sessionB);
+
+    mocked.resolveScopedSession.mockReturnValue(null);
+
+    const replyMock = vi.fn().mockResolvedValue(undefined);
+
+    const ctx = {
+      reply: replyMock,
+    } as unknown as Context;
+
+    await abortCommand(ctx as never);
+
+    expect(replyMock).toHaveBeenCalledWith(t("stop.no_active_session"), {});
+    expect(mocked.abortMock).not.toHaveBeenCalled();
+  });
+
+  it("abort cleanup stays bound to the invoking topic even if the session is reattached before cleanup runs", async () => {
+    const topicAScope: TelegramConversationScope = { userId: 1, chatId: 777, messageThreadId: 10 };
+    const topicBScope: TelegramConversationScope = { userId: 1, chatId: 777, messageThreadId: 20 };
+
+    const session: SessionInfo = { id: "session-1", title: "Session", directory: "D:/repo" };
+
+    attachManager.attach(topicAScope, session);
+    runWithTelegramConversationScope(topicAScope, () => {
+      foregroundSessionState.markBusy("session-1");
+    });
+
+    mocked.resolveScopedSession.mockReturnValue({
+      session,
+      scope: topicAScope,
+    });
+
+    const abortDeferred = new Promise((resolve) => {
+      mocked.abortDeferredResolve = resolve;
+    });
+    mocked.abortMock.mockReturnValue(abortDeferred);
+
+    const replyMock = vi.fn().mockResolvedValue({ message_id: 88 });
+    const editMessageTextMock = vi.fn().mockResolvedValue(undefined);
+
+    const ctx = {
+      chat: { id: 777 },
+      reply: replyMock,
+      api: {
+        editMessageText: editMessageTextMock,
+      },
+    } as unknown as Context;
+
+    const abortPromise = abortCommand(ctx as never);
+
+    attachManager.attach(topicBScope, session);
+
+    mocked.abortDeferredResolve!({ data: true, error: null });
+    mocked.statusMock.mockResolvedValue({
+      data: {
+        "session-1": { type: "idle" },
+      },
+      error: null,
+    });
+
+    await abortPromise;
+
+    expect(runWithTelegramConversationScope(topicAScope, () => foregroundSessionState.isBusy())).toBe(
       false,
     );
   });

@@ -1,10 +1,10 @@
 import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
-import { setCurrentSession, SessionInfo } from "../../session/manager.js";
+import { setCurrentSession, getCurrentSession, SessionInfo } from "../../session/manager.js";
 import { ingestSessionInfoForCache } from "../../session/cache-manager.js";
 import { getCurrentProject, setConversationCurrentProject } from "../../settings/manager.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
-import { summaryAggregator } from "../../summary/aggregator.js";
+import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { getStoredAgent } from "../../agent/manager.js";
@@ -62,6 +62,11 @@ export async function newCommand(ctx: CommandContext<Context>) {
       title: session.title,
       directory: currentProject.worktree,
     };
+    const previousSession = getCurrentSession();
+    if (previousSession) {
+      clearScopedSessionRuntime(previousSession.id, "session_created");
+    }
+
     setCurrentSession(sessionInfo);
     const activeScope = threadContextManager.getActiveScope();
     if (activeScope) {
@@ -80,7 +85,6 @@ export async function newCommand(ctx: CommandContext<Context>) {
           ),
       });
     }
-    summaryAggregator.clear();
     clearAllInteractionState("session_created");
     await ingestSessionInfoForCache(session);
 

@@ -4,8 +4,10 @@ import type { Context } from "grammy";
 const mocked = vi.hoisted(() => ({
   setCurrentProjectMock: vi.fn(),
   clearSessionMock: vi.fn(),
+  getCurrentSessionMock: vi.fn(),
   summaryAggregatorClearMock: vi.fn(),
   clearAllInteractionStateMock: vi.fn(),
+  clearScopedSessionRuntimeMock: vi.fn(),
   pinnedClearMock: vi.fn().mockResolvedValue(undefined),
   pinnedRefreshMock: vi.fn().mockResolvedValue(undefined),
   pinnedGetLimitMock: vi.fn(() => 128000),
@@ -28,12 +30,16 @@ vi.mock("../../../src/settings/manager.js", () => ({
 }));
 vi.mock("../../../src/session/manager.js", () => ({
   clearSession: mocked.clearSessionMock,
+  getCurrentSession: mocked.getCurrentSessionMock,
 }));
 vi.mock("../../../src/summary/aggregator.js", () => ({
   summaryAggregator: { clear: mocked.summaryAggregatorClearMock },
 }));
 vi.mock("../../../src/interaction/cleanup.js", () => ({
   clearAllInteractionState: mocked.clearAllInteractionStateMock,
+}));
+vi.mock("../../../src/bot/runtime/scoped-runtime-reset.js", () => ({
+  clearScopedSessionRuntime: mocked.clearScopedSessionRuntimeMock,
 }));
 vi.mock("../../../src/pinned/manager.js", () => ({
   pinnedMessageManager: {
@@ -79,10 +85,20 @@ const testProject = { id: "proj-1", worktree: "/home/user/my-app", name: "My App
 
 describe("switch-project", () => {
   beforeEach(() => {
+    mocked.setCurrentProjectMock.mockReset();
+    mocked.clearSessionMock.mockReset();
+    mocked.getCurrentSessionMock.mockReset();
+    mocked.summaryAggregatorClearMock.mockReset();
+    mocked.clearAllInteractionStateMock.mockReset();
+    mocked.clearScopedSessionRuntimeMock.mockReset();
     mocked.pinnedClearMock.mockReset().mockResolvedValue(undefined);
     mocked.pinnedRefreshMock.mockReset().mockResolvedValue(undefined);
     mocked.pinnedGetLimitMock.mockReset().mockReturnValue(128000);
+    mocked.keyboardInitMock.mockReset();
+    mocked.keyboardUpdateMock.mockReset();
+    mocked.keyboardUpdateAgentMock.mockReset();
     mocked.getStoredAgentMock.mockReset().mockReturnValue("code");
+    mocked.resolveProjectAgentMock.mockReset().mockImplementation(async (agent: string) => agent);
     mocked.getStoredModelMock.mockReset().mockReturnValue({
       providerID: "anthropic",
       modelID: "claude-4",
@@ -94,12 +110,13 @@ describe("switch-project", () => {
 
   it("should call state-clearing functions with correct arguments", async () => {
     const ctx = createCtx();
+    mocked.getCurrentSessionMock.mockReturnValue({ id: "session-1", title: "Current", directory: "/repo" });
     await switchToProject(ctx, testProject, "test_reason");
 
     expect(mocked.setCurrentProjectMock).toHaveBeenCalledWith(testProject);
     expect(mocked.clearSessionMock).toHaveBeenCalled();
-    expect(mocked.summaryAggregatorClearMock).toHaveBeenCalled();
-    expect(mocked.clearAllInteractionStateMock).toHaveBeenCalledWith("test_reason");
+    expect(mocked.clearScopedSessionRuntimeMock).toHaveBeenCalledWith("session-1", "test_reason");
+    expect(mocked.summaryAggregatorClearMock).not.toHaveBeenCalled();
   });
 
   it("should clear pinned message and refresh context limit", async () => {

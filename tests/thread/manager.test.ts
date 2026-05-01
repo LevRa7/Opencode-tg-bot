@@ -415,6 +415,81 @@ describe("thread/manager", () => {
     });
   });
 
+  it("clearActiveContext clears only active context bindings, leaves other contexts intact", () => {
+    const contextA = createMessageContext(-100100, 10);
+    const contextB = createMessageContext(-100100, 20);
+
+    threadContextManager.activateFromContext(contextA);
+    threadContextManager.bindProjectToActiveContext({ id: "project-a", worktree: "/repo-a" });
+    threadContextManager.bindSessionToActiveContext({
+      id: "session-a",
+      title: "Session A",
+      directory: "/repo-a",
+    });
+    threadContextManager.bindAgentToActiveContext("plan");
+    threadContextManager.bindModelToActiveContext({
+      providerID: "anthropic",
+      modelID: "claude",
+      variant: "fast",
+    });
+
+    threadContextManager.activateFromContext(contextB);
+    threadContextManager.bindProjectToActiveContext({ id: "project-b", worktree: "/repo-b" });
+    threadContextManager.bindSessionToActiveContext({
+      id: "session-b",
+      title: "Session B",
+      directory: "/repo-b",
+    });
+    threadContextManager.bindAgentToActiveContext("build");
+    threadContextManager.bindModelToActiveContext({
+      providerID: "openai",
+      modelID: "gpt-4",
+      variant: "default",
+    });
+
+    mocked.setThreadContextBindingsMock.mockReset();
+
+    threadContextManager.activateFromContext(contextA);
+    threadContextManager.clearActiveContext("test_reset");
+
+    expect(threadContextManager.canAutoAssignProjectForActiveContext()).toBe(true);
+    expect(threadContextManager.canAutoAssignSessionForActiveContext()).toBe(true);
+    expect(threadContextManager.getSessionTarget("session-a")).toBeNull();
+
+    expect(mocked.setThreadContextBindingsMock).toHaveBeenCalled();
+
+    mocked.setCurrentProjectMock.mockReset();
+    mocked.setCurrentSessionMock.mockReset();
+    mocked.currentProject = { id: "other", worktree: "/other" };
+    mocked.currentSession = { id: "other-session", title: "Other", directory: "/other" };
+
+    threadContextManager.activateFromContext(contextB);
+
+    expect(mocked.setCurrentProjectMock).toHaveBeenCalledWith({
+      id: "project-b",
+      worktree: "/repo-b",
+    });
+    expect(mocked.setCurrentSessionMock).toHaveBeenCalledWith({
+      id: "session-b",
+      title: "Session B",
+      directory: "/repo-b",
+    });
+    expect(threadContextManager.getSessionTarget("session-b")).toEqual({
+      chatId: -100100,
+      messageThreadId: 20,
+    });
+    expect(threadContextManager.getSessionDirectory("session-b")).toBe("/repo-b");
+
+    mocked.setCurrentProjectMock.mockReset();
+    mocked.setCurrentSessionMock.mockReset();
+    mocked.currentProject = { id: "other", worktree: "/other" };
+    mocked.currentSession = { id: "other-session", title: "Other", directory: "/other" };
+    threadContextManager.activateFromContext(contextA);
+
+    expect(mocked.setCurrentProjectMock).not.toHaveBeenCalled();
+    expect(mocked.setCurrentSessionMock).not.toHaveBeenCalled();
+  });
+
   it("new topic without binding should not inherit session from another topic", () => {
     mocked.threadContextBindings = [
       {

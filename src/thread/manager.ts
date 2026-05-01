@@ -486,6 +486,29 @@ class ThreadContextManager {
     return buildContextKey(this.activeScope) === buildContextKey(scope);
   }
 
+  clearActiveContext(reason: string): void {
+    this.ensureHydrated();
+
+    if (!this.activeContextKey) {
+      return;
+    }
+
+    const session = this.sessionByContext.get(this.activeContextKey);
+    if (session) {
+      this.scopeBySessionId.delete(session.id);
+    }
+
+    logger.info(
+      `[ThreadContext] Clearing active context bindings: reason=${reason}, contextKey=${this.activeContextKey}`,
+    );
+
+    this.projectByContext.delete(this.activeContextKey);
+    this.sessionByContext.delete(this.activeContextKey);
+    this.agentByContext.delete(this.activeContextKey);
+    this.modelByContext.delete(this.activeContextKey);
+    this.persistBindings();
+  }
+
   clearAll(reason: string): void {
     this.ensureHydrated();
 

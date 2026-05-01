@@ -40,6 +40,7 @@ const mocked = vi.hoisted(() => ({
   threadClearSessionForActiveContextMock: vi.fn(),
   threadGetActiveScopeMock: vi.fn(),
   attachSessionForScopeMock: vi.fn(),
+  clearScopedSessionRuntimeMock: vi.fn(),
 }));
 
 vi.mock("../../../src/settings/manager.js", () => ({
@@ -129,6 +130,10 @@ vi.mock("../../../src/thread/manager.js", () => ({
 
 vi.mock("../../../src/attach/service.js", () => ({
   attachSessionForScope: mocked.attachSessionForScopeMock,
+}));
+
+vi.mock("../../../src/bot/runtime/scoped-runtime-reset.js", () => ({
+  clearScopedSessionRuntime: mocked.clearScopedSessionRuntimeMock,
 }));
 
 function createCommandContext(messageId: number, messageThreadId?: number): Context {
@@ -225,6 +230,7 @@ describe("bot/commands/commands", () => {
     mocked.threadClearSessionForActiveContextMock.mockReset();
     mocked.threadGetActiveScopeMock.mockReset();
     mocked.attachSessionForScopeMock.mockReset();
+    mocked.clearScopedSessionRuntimeMock.mockReset();
 
     mocked.sessionStatusMock.mockResolvedValue({
       data: {
@@ -591,6 +597,8 @@ describe("bot/commands/commands", () => {
     expect(runWithTelegramConversationScope(topicAScope, () => foregroundSessionState.isBusy())).toBe(
       false,
     );
+    expect(mocked.clearScopedSessionRuntimeMock).toHaveBeenCalledWith("session-1", "session_project_mismatch");
+    expect(mocked.clearSummaryMock).not.toHaveBeenCalled();
     expect(ctx.reply).toHaveBeenCalledWith(t("bot.session_reset_project_mismatch"), {
       message_thread_id: 99,
     });

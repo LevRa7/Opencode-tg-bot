@@ -15,6 +15,8 @@ const sendAudioMock = vi.hoisted(() => vi.fn().mockResolvedValue({ message_id: 4
 const sendVideoMock = vi.hoisted(() => vi.fn().mockResolvedValue({ message_id: 45 }));
 const sendChatActionMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const editMessageTextMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
+const createForumTopicMock = vi.hoisted(() => vi.fn().mockResolvedValue({ messageThreadId: 321 }));
+const deleteForumTopicMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const keyboardGetKeyboardMock = vi.hoisted(() => vi.fn(() => undefined));
 const keyboardIsInitializedMock = vi.hoisted(() => vi.fn(() => false));
 const getSessionTargetMock = vi.hoisted(() => vi.fn(() => null));
@@ -59,6 +61,8 @@ const getCurrentProjectMock = vi.hoisted(() => vi.fn(() => ({ id: "p1", worktree
 const getHideThinkingMessagesMock = vi.hoisted(() => vi.fn(() => false));
 const getHideToolCallMessagesMock = vi.hoisted(() => vi.fn(() => false));
 const getHideToolFileMessagesMock = vi.hoisted(() => vi.fn(() => false));
+const getSubagentTopicsEnabledMock = vi.hoisted(() => vi.fn(() => false));
+const getSubagentTopicAutoDeleteMinutesMock = vi.hoisted(() => vi.fn(() => 10));
 const statMock = vi.hoisted(() =>
   vi.fn(async (filePath: string) => {
     if (filePath === "/tmp/report.txt") {
@@ -101,6 +105,8 @@ vi.mock("grammy", () => {
       setMyCommands: setMyCommandsMock,
       deleteMessage: deleteMessageMock,
       editMessageText: editMessageTextMock,
+      createForumTopic: createForumTopicMock,
+      deleteForumTopic: deleteForumTopicMock,
     };
 
     public readonly onHandlers: Array<{
@@ -193,11 +199,13 @@ vi.mock("../../src/settings/manager.js", () => ({
   getReasoningMode: vi.fn(() => 0),
   getTenantRuntimeInfo: vi.fn(() => undefined),
   getThinkingClearMode: vi.fn(() => false),
-  getHideThinkingMessages: getHideThinkingMessagesMock,
-  getHideToolCallMessages: getHideToolCallMessagesMock,
-  getHideToolFileMessages: getHideToolFileMessagesMock,
-  getUserLocale: vi.fn(() => "en"),
-  isMessageStreamingEnabled: vi.fn(() => true),
+      getHideThinkingMessages: getHideThinkingMessagesMock,
+      getHideToolCallMessages: getHideToolCallMessagesMock,
+      getHideToolFileMessages: getHideToolFileMessagesMock,
+      getSubagentTopicsEnabled: getSubagentTopicsEnabledMock,
+      getSubagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutesMock,
+      getUserLocale: vi.fn(() => "en"),
+      isMessageStreamingEnabled: vi.fn(() => true),
 }));
 
 vi.mock("../../src/agent/manager.js", () => ({
@@ -2287,6 +2295,600 @@ describe("bot/index local file follow-up orchestration", () => {
     } finally {
       vi.doUnmock("../../src/summary/subagent-formatter.js");
     }
+  });
+
+  it("routes child-session final output to a dedicated topic while root output stays on the parent route", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    createForumTopicMock.mockClear();
+    getSubagentTopicsEnabledMock.mockReturnValue(true);
+    createForumTopicMock.mockResolvedValue({ messageThreadId: 321 });
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 0),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
+      getSubagentTopicsEnabled: getSubagentTopicsEnabledMock,
+      getSubagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutesMock,
+      getUserLocale: vi.fn(() => "en"),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+    const bot = createIsolatedBot() as any;
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    await promptHandler({
+      message: {
+        text: "route child topic",
+        chat: { id: 123, is_forum: true },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "supergroup", is_forum: true },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "child-session-topic-1",
+          parentID: "session-1",
+          title: "Inspect artifact (@explore subagent)",
+          directory: "/repo",
+          time: { created: 1_000, updated: 1_000 },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "subtask-topic-route-1",
+          sessionID: "session-1",
+          messageID: "root-topic-route-1",
+          type: "subtask",
+          prompt: "Inspect artifact",
+          description: "Inspect artifact",
+          agent: "explore",
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(createForumTopicMock).toHaveBeenCalledWith(123, "Inspect artifact"),
+    );
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "root-message-topic-route-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: 1_100 },
+        },
+      },
+    } as unknown as Event);
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "root-text-topic-route-1",
+          sessionID: "session-1",
+          messageID: "root-message-topic-route-1",
+          type: "text",
+          text: "Root reply stays in parent thread.",
+          time: { start: 1_150 },
+        },
+      },
+    } as unknown as Event);
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "root-message-topic-route-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: 1_100, completed: 1_200 },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "child-message-topic-route-1",
+          sessionID: "child-session-topic-1",
+          role: "assistant",
+          time: { created: 1_300 },
+        },
+      },
+    } as unknown as Event);
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "child-text-topic-route-1",
+          sessionID: "child-session-topic-1",
+          messageID: "child-message-topic-route-1",
+          type: "text",
+          text: "Child output goes to dedicated topic only.",
+          time: { start: 1_350 },
+        },
+      },
+    } as unknown as Event);
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "child-message-topic-route-1",
+          sessionID: "child-session-topic-1",
+          role: "assistant",
+          time: { created: 1_300, completed: 1_400 },
+        },
+      },
+    } as unknown as Event);
+
+    emit({ type: "session.idle", properties: { sessionID: "child-session-topic-1" } } as unknown as Event);
+    emit({ type: "session.idle", properties: { sessionID: "session-1" } } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(
+        sendMessageMock.mock.calls.some(
+          (call) => call[1] === "Root reply stays in parent thread." && call[2]?.message_thread_id === 1,
+        ),
+      ).toBe(true),
+    );
+    await vi.waitFor(() =>
+      expect(
+        sendMessageMock.mock.calls.some(
+          (call) =>
+            call[1] === "Child output goes to dedicated topic only." &&
+            call[2]?.message_thread_id === 321 &&
+            call[2]?.disable_notification === true,
+        ),
+      ).toBe(true),
+    );
+
+    expect(
+      sendMessageMock.mock.calls.filter(
+        (call) => String(call[1]) === "Child output goes to dedicated topic only.",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("keeps a child topic alive until the final child answer is delivered when session.idle arrives first", async () => {
+    vi.useFakeTimers();
+
+    try {
+      vi.resetModules();
+      capturedEventCallbacksByDirectory.clear();
+      sendMessageMock.mockClear();
+      createForumTopicMock.mockClear();
+      deleteForumTopicMock.mockClear();
+      getSubagentTopicsEnabledMock.mockReturnValue(true);
+      getSubagentTopicAutoDeleteMinutesMock.mockReturnValue(1);
+      createForumTopicMock.mockResolvedValue({ messageThreadId: 321 });
+
+      const deferredChildFinalMessage = createDeferred<{ message_id: number }>();
+      sendMessageMock.mockImplementationOnce(() => deferredChildFinalMessage.promise);
+
+      vi.doMock("../../src/settings/manager.js", () => ({
+        getCurrentProject: getCurrentProjectMock,
+        setCurrentProject: vi.fn(),
+        getReasoningMode: vi.fn(() => 0),
+        getTenantRuntimeInfo: vi.fn(() => undefined),
+        getThinkingClearMode: vi.fn(() => false),
+        getHideThinkingMessages: vi.fn(() => false),
+        getHideToolCallMessages: vi.fn(() => false),
+        getHideToolFileMessages: vi.fn(() => false),
+        getSubagentTopicsEnabled: getSubagentTopicsEnabledMock,
+        getSubagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutesMock,
+        getUserLocale: vi.fn(() => "en"),
+        isMessageStreamingEnabled: vi.fn(() => true),
+      }));
+
+      const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+      const bot = createIsolatedBot() as any;
+      const textHandlers = bot.onHandlers.filter(
+        (entry: { event: string | string[] }) => entry.event === "message:text",
+      );
+      const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+      await promptHandler({
+        message: {
+          text: "route child topic with delayed final",
+          chat: { id: 123, is_forum: true },
+          message_thread_id: 1,
+        },
+        chat: { id: 123, type: "supergroup", is_forum: true },
+        from: { id: 777 },
+        api: bot.api,
+        reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+      });
+
+      const emit = (event: Event) => {
+        capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+      };
+
+      emit({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "child-session-topic-delayed-1",
+            parentID: "session-1",
+            title: "Inspect artifact (@explore subagent)",
+            directory: "/repo",
+            time: { created: 1_000, updated: 1_000 },
+          },
+        },
+      } as unknown as Event);
+
+      emit({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "subtask-topic-delayed-1",
+            sessionID: "session-1",
+            messageID: "root-topic-delayed-1",
+            type: "subtask",
+            prompt: "Inspect artifact",
+            description: "Inspect artifact",
+            agent: "explore",
+          },
+        },
+      } as unknown as Event);
+
+      await vi.waitFor(() =>
+        expect(createForumTopicMock).toHaveBeenCalledWith(123, "Inspect artifact"),
+      );
+
+      emit({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "child-message-topic-delayed-1",
+            sessionID: "child-session-topic-delayed-1",
+            role: "assistant",
+            time: { created: 1_300 },
+          },
+        },
+      } as unknown as Event);
+      emit({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "child-text-topic-delayed-1",
+            sessionID: "child-session-topic-delayed-1",
+            messageID: "child-message-topic-delayed-1",
+            type: "text",
+            text: "Deliver this child answer before deleting the topic.",
+            time: { start: 1_350 },
+          },
+        },
+      } as unknown as Event);
+
+      emit({
+        type: "session.idle",
+        properties: { sessionID: "child-session-topic-delayed-1" },
+      } as unknown as Event);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(deleteForumTopicMock).not.toHaveBeenCalled();
+      expect(sendMessageMock).not.toHaveBeenCalled();
+
+      emit({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "child-message-topic-delayed-1",
+            sessionID: "child-session-topic-delayed-1",
+            role: "assistant",
+            time: { created: 1_300, completed: 1_400 },
+          },
+        },
+      } as unknown as Event);
+
+      await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+      expect(sendMessageMock).toHaveBeenCalledWith(
+        123,
+        "Deliver this child answer before deleting the topic.",
+        expect.objectContaining({
+          message_thread_id: 321,
+          disable_notification: true,
+        }),
+      );
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(deleteForumTopicMock).not.toHaveBeenCalled();
+
+      deferredChildFinalMessage.resolve({ message_id: 42 });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(deleteForumTopicMock).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() =>
+        expect(deleteForumTopicMock).toHaveBeenCalledWith(123, 321),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not schedule child topic deletion when final child delivery fails", async () => {
+    vi.useFakeTimers();
+
+    try {
+      vi.resetModules();
+      capturedEventCallbacksByDirectory.clear();
+      sendMessageMock.mockClear();
+      createForumTopicMock.mockClear();
+      deleteForumTopicMock.mockClear();
+      getSubagentTopicsEnabledMock.mockReturnValue(true);
+      getSubagentTopicAutoDeleteMinutesMock.mockReturnValue(1);
+      createForumTopicMock.mockResolvedValue({ messageThreadId: 321 });
+      sendMessageMock.mockRejectedValueOnce(new Error("child final send failed"));
+
+      vi.doMock("../../src/settings/manager.js", () => ({
+        getCurrentProject: getCurrentProjectMock,
+        setCurrentProject: vi.fn(),
+        getReasoningMode: vi.fn(() => 0),
+        getTenantRuntimeInfo: vi.fn(() => undefined),
+        getThinkingClearMode: vi.fn(() => false),
+        getHideThinkingMessages: vi.fn(() => false),
+        getHideToolCallMessages: vi.fn(() => false),
+        getHideToolFileMessages: vi.fn(() => false),
+        getSubagentTopicsEnabled: getSubagentTopicsEnabledMock,
+        getSubagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutesMock,
+        getUserLocale: vi.fn(() => "en"),
+        isMessageStreamingEnabled: vi.fn(() => true),
+      }));
+
+      const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+      const bot = createIsolatedBot() as any;
+      const textHandlers = bot.onHandlers.filter(
+        (entry: { event: string | string[] }) => entry.event === "message:text",
+      );
+      const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+      await promptHandler({
+        message: {
+          text: "route child topic with failed final",
+          chat: { id: 123, is_forum: true },
+          message_thread_id: 1,
+        },
+        chat: { id: 123, type: "supergroup", is_forum: true },
+        from: { id: 777 },
+        api: bot.api,
+        reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+      });
+
+      const emit = (event: Event) => {
+        capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+      };
+
+      emit({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "child-session-topic-failed-1",
+            parentID: "session-1",
+            title: "Inspect artifact (@explore subagent)",
+            directory: "/repo",
+            time: { created: 1_000, updated: 1_000 },
+          },
+        },
+      } as unknown as Event);
+
+      emit({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "subtask-topic-failed-1",
+            sessionID: "session-1",
+            messageID: "root-topic-failed-1",
+            type: "subtask",
+            prompt: "Inspect artifact",
+            description: "Inspect artifact",
+            agent: "explore",
+          },
+        },
+      } as unknown as Event);
+
+      await vi.waitFor(() =>
+        expect(createForumTopicMock).toHaveBeenCalledWith(123, "Inspect artifact"),
+      );
+
+      emit({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "child-message-topic-failed-1",
+            sessionID: "child-session-topic-failed-1",
+            role: "assistant",
+            time: { created: 1_300 },
+          },
+        },
+      } as unknown as Event);
+      emit({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "child-text-topic-failed-1",
+            sessionID: "child-session-topic-failed-1",
+            messageID: "child-message-topic-failed-1",
+            type: "text",
+            text: "This child final answer should fail to send.",
+            time: { start: 1_350 },
+          },
+        },
+      } as unknown as Event);
+      emit({
+        type: "session.idle",
+        properties: { sessionID: "child-session-topic-failed-1" },
+      } as unknown as Event);
+      emit({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "child-message-topic-failed-1",
+            sessionID: "child-session-topic-failed-1",
+            role: "assistant",
+            time: { created: 1_300, completed: 1_400 },
+          },
+        },
+      } as unknown as Event);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
+      expect(deleteForumTopicMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("falls back to the parent route when dedicated child topic routing is unavailable", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    createForumTopicMock.mockClear();
+    getSubagentTopicsEnabledMock.mockReturnValue(true);
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 0),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
+      getSubagentTopicsEnabled: getSubagentTopicsEnabledMock,
+      getSubagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutesMock,
+      getUserLocale: vi.fn(() => "en"),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+    const bot = createIsolatedBot() as any;
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    await promptHandler({
+      message: {
+        text: "route child fallback",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "subtask-fallback-route-1",
+          sessionID: "session-1",
+          messageID: "root-fallback-route-1",
+          type: "subtask",
+          prompt: "Fallback helper",
+          description: "Fallback helper",
+          agent: "explore",
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "child-session-fallback-route-1",
+          parentID: "session-1",
+          title: "Fallback helper (@explore subagent)",
+          directory: "/repo",
+          time: { created: 2_000, updated: 2_000 },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "child-message-fallback-route-1",
+          sessionID: "child-session-fallback-route-1",
+          role: "assistant",
+          time: { created: 2_100 },
+        },
+      },
+    } as unknown as Event);
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "child-text-fallback-route-1",
+          sessionID: "child-session-fallback-route-1",
+          messageID: "child-message-fallback-route-1",
+          type: "text",
+          text: "Fallback child output stays on the parent route.",
+          time: { start: 2_150 },
+        },
+      },
+    } as unknown as Event);
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "child-message-fallback-route-1",
+          sessionID: "child-session-fallback-route-1",
+          role: "assistant",
+          time: { created: 2_100, completed: 2_200 },
+        },
+      },
+    } as unknown as Event);
+
+    emit({ type: "session.idle", properties: { sessionID: "child-session-fallback-route-1" } } as unknown as Event);
+    emit({ type: "session.idle", properties: { sessionID: "session-1" } } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(
+        sendMessageMock.mock.calls.some(
+          (call) =>
+            call[1] === "Fallback child output stays on the parent route." &&
+            call[2]?.message_thread_id === 1,
+        ),
+      ).toBe(true),
+    );
+    expect(createForumTopicMock).not.toHaveBeenCalled();
   });
 
   it("streams assistant text in one evolving message during reasoning mode and sends the final answer last", async () => {

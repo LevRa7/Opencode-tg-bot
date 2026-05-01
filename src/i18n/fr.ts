@@ -65,6 +65,11 @@ export const fr: I18nDictionary = {
   "settings.hide_thinking_messages": "{state} Réflexion",
   "settings.hide_tool_call_messages": "{state} Outils",
   "settings.hide_tool_file_messages": "{state} Modifs fichiers",
+  "settings.subagent_topics": "{state} Sujets de sous-agent",
+  "settings.subagent_topic_timeout": "Suppression auto du sujet de sous-agent : {minutes} min",
+  "settings.subagent_topic_timeout.title":
+    "Choisir le délai de suppression auto du sujet de sous-agent",
+  "settings.subagent_topic_timeout.option": "{minutes} min",
   "settings.state.on": "✅",
   "settings.state.off": "X",
   "settings.close": "Fermer",

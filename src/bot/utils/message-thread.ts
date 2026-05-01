@@ -5,6 +5,10 @@ export interface TelegramThreadTarget {
   messageThreadId?: number;
 }
 
+export interface TelegramDeliveryTarget extends TelegramThreadTarget {
+  disableNotification?: boolean;
+}
+
 type WithMessageThreadId = {
   message_thread_id?: number;
 };
@@ -120,5 +124,20 @@ export function withMessageThreadId<T extends object>(
   return {
     ...(options ?? ({} as T)),
     message_thread_id: messageThreadId,
+  };
+}
+
+export function withTelegramDeliveryTarget<T extends object>(
+  options: T | undefined,
+  target: TelegramDeliveryTarget | null | undefined,
+): T & WithMessageThreadId & { disable_notification?: true } {
+  const withThread = withMessageThreadId(options, target?.messageThreadId);
+  if (!target?.disableNotification) {
+    return withThread;
+  }
+
+  return {
+    ...withThread,
+    disable_notification: true,
   };
 }

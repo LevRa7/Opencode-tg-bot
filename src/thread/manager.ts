@@ -6,7 +6,7 @@ import {
   getThreadContextBindings,
   setConversationCurrentAgent,
   setConversationCurrentModel,
-  setCurrentProject,
+  setConversationCurrentProject,
   setThreadContextBindings,
   type ProjectInfo as SettingsProjectInfo,
   type ThreadContextBinding,
@@ -249,7 +249,7 @@ class ThreadContextManager {
         currentProject.id !== boundProject.id ||
         currentProject.worktree !== boundProject.worktree)
     ) {
-      setCurrentProject(cloneProject(boundProject));
+      setConversationCurrentProject(cloneProject(boundProject));
     }
 
     if (!boundProject && currentProject) {

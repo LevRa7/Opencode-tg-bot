@@ -101,6 +101,9 @@ export interface ScopedUserSettings {
   hideThinkingMessages?: boolean;
   hideToolCallMessages?: boolean;
   hideToolFileMessages?: boolean;
+  subagentTopicsEnabled?: boolean;
+  subagentTopicAutoDeleteMinutes?: number;
+  defaultProject?: ProjectInfo;
   defaultAgent?: string;
   defaultModel?: ModelInfo;
 }
@@ -310,6 +313,9 @@ function cloneScopedUserSettings(
     hideThinkingMessages: settings.hideThinkingMessages,
     hideToolCallMessages: settings.hideToolCallMessages,
     hideToolFileMessages: settings.hideToolFileMessages,
+    subagentTopicsEnabled: settings.subagentTopicsEnabled,
+    subagentTopicAutoDeleteMinutes: settings.subagentTopicAutoDeleteMinutes,
+    defaultProject: cloneProjectInfo(settings.defaultProject),
     defaultAgent: settings.defaultAgent,
     defaultModel: cloneModelInfo(settings.defaultModel),
   };
@@ -354,9 +360,41 @@ function isScopedUserSettingsEmpty(settings: ScopedUserSettings | undefined): bo
       settings.hideThinkingMessages === undefined &&
       settings.hideToolCallMessages === undefined &&
       settings.hideToolFileMessages === undefined &&
+      settings.subagentTopicsEnabled === undefined &&
+      settings.subagentTopicAutoDeleteMinutes === undefined &&
+      settings.defaultProject === undefined &&
       settings.defaultAgent === undefined &&
       settings.defaultModel === undefined)
   );
+}
+
+const DEFAULT_SUBAGENT_TOPIC_AUTO_DELETE_MINUTES = 10;
+
+function isPositiveInteger(value: number): boolean {
+  return Number.isInteger(value) && value > 0;
+}
+
+function normalizeSubagentTopicAutoDeleteMinutes(value: unknown): number | undefined {
+  return typeof value === "number" && isPositiveInteger(value) ? value : undefined;
+}
+
+function assertSubagentTopicAutoDeleteMinutes(minutes: number): void {
+  if (!isPositiveInteger(minutes)) {
+    throw new Error("Subagent topic auto-delete timeout must be a positive integer");
+  }
+}
+
+function getUserDefaultProject(): ProjectInfo | undefined {
+  return cloneProjectInfo(getUserScopedSettings()?.defaultProject);
+}
+
+function setUserDefaultProject(projectInfo: ProjectInfo): void {
+  const scopedSettings = getOrCreateUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.defaultProject = cloneProjectInfo(projectInfo);
 }
 
 function getUserDefaultAgent(): string | undefined {
@@ -554,9 +592,18 @@ function pruneScopedSessionDirectoryCache(): void {
 }
 
 export function getCurrentProject(): ProjectInfo | undefined {
+  if (isMainThreadGlobalDefaultScope()) {
+    return cloneProjectInfo(currentSettings.currentProject) ?? getUserDefaultProject();
+  }
+
   const scopedSettings = getConversationScopedSettings();
-  if (scopedSettings) {
+  if (scopedSettings?.currentProject) {
     return cloneProjectInfo(scopedSettings.currentProject);
+  }
+
+  const userDefaultProject = getUserDefaultProject();
+  if (userDefaultProject) {
+    return userDefaultProject;
   }
 
   if (getActiveConversationScopeKey()) {
@@ -567,9 +614,29 @@ export function getCurrentProject(): ProjectInfo | undefined {
 }
 
 export function setCurrentProject(projectInfo: ProjectInfo): void {
+  setCurrentProjectSelection(projectInfo, { persistAsUserDefault: true });
+}
+
+export function setConversationCurrentProject(projectInfo: ProjectInfo): void {
+  setCurrentProjectSelection(projectInfo, { persistAsUserDefault: false });
+}
+
+function setCurrentProjectSelection(projectInfo: ProjectInfo, options: DefaultSelectionOptions): void {
+  if (isMainThreadGlobalDefaultScope()) {
+    if (options.persistAsUserDefault) {
+      setUserDefaultProject(projectInfo);
+    }
+    currentSettings.currentProject = cloneProjectInfo(projectInfo);
+    void writeSettingsFile(currentSettings);
+    return;
+  }
+
   const scopedSettings = getOrCreateConversationScopedSettings();
   if (scopedSettings) {
     scopedSettings.currentProject = cloneProjectInfo(projectInfo);
+    if (options.persistAsUserDefault) {
+      setUserDefaultProject(projectInfo);
+    }
   } else {
     currentSettings.currentProject = cloneProjectInfo(projectInfo);
   }
@@ -578,6 +645,12 @@ export function setCurrentProject(projectInfo: ProjectInfo): void {
 }
 
 export function clearProject(): void {
+  if (isMainThreadGlobalDefaultScope()) {
+    currentSettings.currentProject = undefined;
+    void writeSettingsFile(currentSettings);
+    return;
+  }
+
   const scopedSettings = getOrCreateConversationScopedSettings();
   if (scopedSettings) {
     scopedSettings.currentProject = undefined;
@@ -745,6 +818,43 @@ export function setHideToolFileMessages(enabled: boolean): void {
   }
 
   scopedSettings.hideToolFileMessages = enabled;
+  pruneUserScopedSettings();
+
+  void writeSettingsFile(currentSettings);
+}
+
+export function getSubagentTopicsEnabled(): boolean {
+  return getUserScopedSettings()?.subagentTopicsEnabled ?? false;
+}
+
+export function setSubagentTopicsEnabled(enabled: boolean): void {
+  const scopedSettings = getOrCreateUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.subagentTopicsEnabled = enabled;
+  pruneUserScopedSettings();
+
+  void writeSettingsFile(currentSettings);
+}
+
+export function getSubagentTopicAutoDeleteMinutes(): number {
+  return (
+    getUserScopedSettings()?.subagentTopicAutoDeleteMinutes ??
+    DEFAULT_SUBAGENT_TOPIC_AUTO_DELETE_MINUTES
+  );
+}
+
+export function setSubagentTopicAutoDeleteMinutes(minutes: number): void {
+  assertSubagentTopicAutoDeleteMinutes(minutes);
+
+  const scopedSettings = getOrCreateUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.subagentTopicAutoDeleteMinutes = minutes;
   pruneUserScopedSettings();
 
   void writeSettingsFile(currentSettings);
@@ -1137,4 +1247,16 @@ export async function loadSettings(): Promise<void> {
     approvedTelegramUserIds: normalizeTelegramUserIds(loadedSettings.approvedTelegramUserIds),
     pendingAccessRequests: cloneAccessApprovalRequests(loadedSettings.pendingAccessRequests) ?? [],
   };
+
+  if (currentSettings.scopedUserSettings) {
+    for (const settings of Object.values(currentSettings.scopedUserSettings)) {
+      if (settings.subagentTopicsEnabled !== undefined) {
+        settings.subagentTopicsEnabled = settings.subagentTopicsEnabled === true;
+      }
+
+      settings.subagentTopicAutoDeleteMinutes = normalizeSubagentTopicAutoDeleteMinutes(
+        settings.subagentTopicAutoDeleteMinutes,
+      );
+    }
+  }
 }

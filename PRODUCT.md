@@ -38,6 +38,7 @@ No public inbound ports are required for normal usage.
 - Fetch available projects from OpenCode API (name + path)
 - Select and switch projects
 - Persist selected project between restarts (`settings.json`)
+- Reuse the user's `/projects` selection as the default project in that user's new chats or forum topics without leaking it to other users
 
 ### Session management
 
@@ -47,6 +48,7 @@ No public inbound ports are required for normal usage.
 - Use OpenCode-generated session title (based on conversation)
 - When a session is selected inside a Telegram forum topic, sync the topic name with the selected session title
 - Keep attached-session routing isolated per private chat or forum topic so follow-up updates, external input, and restored interactive controls return to the correct scope
+- Route forum child sessions into dedicated per-user subagent topics when topic routing is enabled, keep child final answers silent in those topics, and auto-delete the topic only after the final child answer is delivered and the configured timeout expires
 
 ### Task handling
 
@@ -173,6 +175,7 @@ Model picker behavior:
 - [x] Optional global audio replies with `/tts` via OpenAI-compatible and Google Cloud TTS providers, including Markdown stripping before speech synthesis
 - [x] Short Telegram video and video-note attachments support (persist saved copies, use automatic local analysis fallback when the selected model lacks video input, and locally compress oversized videos up to 61 seconds before analysis)
 - [x] Topic-scoped session attach/follow routing, pinned status isolation, and external-input/busy-state isolation for multi-user and forum workflows
+- [x] Per-user forum subagent topic routing with silent child-session delivery, timed topic deletion after final delivery, and `/projects` user-default persistence across new topics
 
 ## Current Task List
 

@@ -1781,6 +1781,21 @@ class SummaryAggregator {
     if (this.isTrackedChildSession(sessionID)) {
       logger.info(`[Aggregator] Subagent session became idle: ${sessionID}`);
       this.setSubagentTerminalStatus(sessionID, "completed");
+      if (this.onSessionIdleCallback) {
+        const callback = this.onSessionIdleCallback;
+        setImmediate(() => {
+          try {
+            const result = callback(sessionID);
+            if (result instanceof Promise) {
+              result.catch((err) => {
+                logger.error("[Aggregator] Error in child session idle callback:", err);
+              });
+            }
+          } catch (err) {
+            logger.error("[Aggregator] Error in child session idle callback:", err);
+          }
+        });
+      }
       return;
     }
 
@@ -1863,6 +1878,12 @@ class SummaryAggregator {
     if (sessionID && this.isTrackedChildSession(sessionID)) {
       logger.warn(`[Aggregator] Subagent session error: ${sessionID}: ${message}`);
       this.setSubagentTerminalStatus(sessionID, "error", message);
+      if (this.onSessionErrorCallback) {
+        const callback = this.onSessionErrorCallback;
+        setImmediate(() => {
+          callback(sessionID, message);
+        });
+      }
       return;
     }
 
@@ -1888,7 +1909,7 @@ class SummaryAggregator {
   ): void {
     const { id, sessionID, questions } = event.properties;
 
-    if (!this.isTrackedRootSession(sessionID)) {
+    if (!this.isTrackedRootSession(sessionID) && !this.isTrackedChildSession(sessionID)) {
       logger.debug(
         `[Aggregator] Ignoring question.asked for different session: ${sessionID} (current: ${this.currentSessionId})`,
       );
@@ -1942,7 +1963,7 @@ class SummaryAggregator {
   ): void {
     const request = event.properties;
 
-    if (!this.isTrackedRootSession(request.sessionID)) {
+    if (!this.isTrackedRootSession(request.sessionID) && !this.isTrackedChildSession(request.sessionID)) {
       logger.debug(
         `[Aggregator] Ignoring permission.asked for different session: ${request.sessionID} (current: ${this.currentSessionId})`,
       );

@@ -10,7 +10,10 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { PermissionRequest, PermissionReply } from "../../permission/types.js";
 import type { I18nKey } from "../../i18n/en.js";
 import { t } from "../../i18n/index.js";
-import { withMessageThreadId } from "../utils/message-thread.js";
+import {
+  withTelegramDeliveryTarget,
+  type TelegramDeliveryTarget,
+} from "../utils/message-thread.js";
 
 // Permission type display names
 const PERMISSION_NAME_KEYS: Record<string, I18nKey> = {
@@ -238,6 +241,7 @@ export async function showPermissionRequest(
   request: PermissionRequest,
   messageThreadId?: number,
   scopeKey?: string,
+  deliveryTarget?: TelegramDeliveryTarget | null,
 ): Promise<void> {
   logger.info(
     `[PermissionHandler] Sending permission request: permission=${request.permission}, requestID=${request.id}, chatId=${chatId}, threadId=${messageThreadId ?? "none"}, patterns=${request.patterns.length}`,
@@ -247,14 +251,18 @@ export async function showPermissionRequest(
   const keyboard = buildPermissionKeyboard();
 
   try {
+    const targetChatId = deliveryTarget?.chatId ?? chatId;
     const message = await bot.sendMessage(
-      chatId,
+      targetChatId,
       text,
-      withMessageThreadId(
+      withTelegramDeliveryTarget(
         {
           reply_markup: keyboard,
         },
-        messageThreadId,
+        deliveryTarget ??
+          (typeof messageThreadId === "number"
+            ? { chatId: targetChatId, messageThreadId }
+            : null),
       ),
     );
 

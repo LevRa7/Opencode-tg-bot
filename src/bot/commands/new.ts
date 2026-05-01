@@ -2,7 +2,7 @@ import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { setCurrentSession, SessionInfo } from "../../session/manager.js";
 import { ingestSessionInfoForCache } from "../../session/cache-manager.js";
-import { getCurrentProject, setCurrentProject } from "../../settings/manager.js";
+import { getCurrentProject, setConversationCurrentProject } from "../../settings/manager.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
 import { summaryAggregator } from "../../summary/aggregator.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
@@ -40,7 +40,7 @@ export async function newCommand(ctx: CommandContext<Context>) {
       currentProject = defaultProject;
     }
 
-    setCurrentProject(currentProject);
+    setConversationCurrentProject(currentProject);
     threadContextManager.bindProjectToActiveContext(currentProject);
 
     logger.debug("[Bot] Creating new session for directory:", currentProject.worktree);

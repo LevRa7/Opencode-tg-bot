@@ -47,6 +47,9 @@ Documentation rule:
 
 ### Changed
 
+- Changed forum subagent delivery to route each child session through a dedicated per-user topic when available, keep child-session final answers silent in that topic, delete the topic only after the final child answer is actually delivered and the configured timeout elapses, and preserve `/projects` selections as user defaults across new topics.
+  - Why: forum subagents need isolated child-session output that does not leak across users or topics, topic cleanup must not race ahead of the final answer, and project selection should follow the same user-default model as other scoped preferences.
+  - Affects: `src/bot/index.ts`, `src/bot/subagent-topics/service.ts`, `src/settings/manager.ts`, `tests/bot/index.local-file-follow-up.test.ts`, `tests/bot/subagent-topics/service.test.ts`, `tests/settings/manager.test.ts`, `PRODUCT.md`
 - Changed assistant reply delivery to use a local Telegram MarkdownV2 formatter for user-visible `MESSAGE_FORMAT_MODE=markdown` rendering.
   - Why: Telegram MarkdownV2 is stricter than generic markdown, so a local formatter reduces broken escaping and makes streamed/final replies more predictable.
   - Affects: `src/telegram/render/*`, `src/bot/utils/assistant-rendering.ts`, `tests/telegram/render/*.test.ts`, `README.md`

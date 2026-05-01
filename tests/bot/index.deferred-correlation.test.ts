@@ -531,6 +531,7 @@ vi.mock("../../src/bot/utils/message-thread.js", () => ({
   withMessageThreadId: vi.fn((value: Record<string, unknown> = {}, messageThreadId?: number) =>
     typeof messageThreadId === "number" ? { ...value, message_thread_id: messageThreadId } : value,
   ),
+  isForumChat: vi.fn(() => false),
   extractMessageThreadIdFromContext: vi.fn((ctx: any) => ctx.message?.message_thread_id),
   extractThreadTargetFromContext: vi.fn((ctx: any) => ({
     chatId: ctx.chat?.id ?? 123,

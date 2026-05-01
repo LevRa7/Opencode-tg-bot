@@ -17,6 +17,7 @@ const mocked = vi.hoisted(() => ({
   createMainKeyboardMock: vi.fn(),
   extractMessageThreadIdFromContextMock: vi.fn(),
   extractThreadTargetFromContextMock: vi.fn(),
+  isForumChatMock: vi.fn(),
   withMessageThreadIdMock: vi.fn(),
   keyboardInitializeMock: vi.fn(),
   keyboardClearContextMock: vi.fn(),
@@ -105,6 +106,7 @@ vi.mock("../../../src/bot/utils/keyboard.js", () => ({
 vi.mock("../../../src/bot/utils/message-thread.js", () => ({
   extractMessageThreadIdFromContext: mocked.extractMessageThreadIdFromContextMock,
   extractThreadTargetFromContext: mocked.extractThreadTargetFromContextMock,
+  isForumChat: mocked.isForumChatMock,
   withMessageThreadId: mocked.withMessageThreadIdMock,
 }));
 
@@ -278,6 +280,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     mocked.createMainKeyboardMock.mockReset();
     mocked.extractMessageThreadIdFromContextMock.mockReset();
     mocked.extractThreadTargetFromContextMock.mockReset();
+    mocked.isForumChatMock.mockReset();
     mocked.withMessageThreadIdMock.mockReset();
     mocked.keyboardInitializeMock.mockReset();
     mocked.keyboardClearContextMock.mockReset();
@@ -338,6 +341,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     mocked.resolveTelegramConversationScopeKeyMock.mockImplementation((scope?: string | null) => scope ?? "global");
     mocked.runWithTelegramConversationScopeMock.mockImplementation(async (_scope, task) => task());
     mocked.attachManagerGetScopeForSessionMock.mockReturnValue(null);
+    mocked.isForumChatMock.mockReturnValue(false);
     mocked.pinnedIsInitializedMock.mockReturnValue(true);
     mocked.pinnedGetStateMock.mockReturnValue({ messageId: 55 });
     mocked.pinnedGetContextInfoMock.mockReturnValue(null);

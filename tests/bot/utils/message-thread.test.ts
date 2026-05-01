@@ -5,6 +5,7 @@ import {
   extractThreadTargetFromContext,
   isForumMainThreadContext,
   resolveReplyKeyboardActionThreadId,
+  withTelegramDeliveryTarget,
   withMessageThreadId,
 } from "../../../src/bot/utils/message-thread.js";
 
@@ -84,6 +85,27 @@ describe("bot/utils/message-thread", () => {
     });
     expect(withMessageThreadId({ disable_notification: true }, -3)).toEqual({
       disable_notification: true,
+    });
+  });
+
+  it("merges a delivery target into Telegram send options", () => {
+    expect(
+      withTelegramDeliveryTarget(
+        { parse_mode: "HTML" },
+        {
+          chatId: -100123,
+          messageThreadId: 44,
+          disableNotification: true,
+        },
+      ),
+    ).toEqual({
+      parse_mode: "HTML",
+      message_thread_id: 44,
+      disable_notification: true,
+    });
+
+    expect(withTelegramDeliveryTarget({ parse_mode: "HTML" }, null)).toEqual({
+      parse_mode: "HTML",
     });
   });
 });

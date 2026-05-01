@@ -195,4 +195,31 @@ describe("bot/handlers/question", () => {
     expect(questionManager.isActive()).toBe(false);
     expect(api.deleteMessage).toHaveBeenCalledWith(123, 500);
   });
+
+  it("sends child-topic questions silently when a dedicated delivery target is provided", async () => {
+    const api = createApi([600]);
+
+    questionManager.startQuestions([QUESTION_ONE], "req-7");
+    await (showCurrentQuestion as unknown as (...args: unknown[]) => Promise<void>)(
+      api,
+      -100123,
+      undefined,
+      undefined,
+      {
+        chatId: -100123,
+        messageThreadId: 321,
+        disableNotification: true,
+      },
+    );
+
+    expect(api.sendMessage).toHaveBeenCalledWith(
+      -100123,
+      "1/1 Q1\n\nPick one",
+      expect.objectContaining({
+        message_thread_id: 321,
+        disable_notification: true,
+        reply_markup: expect.anything(),
+      }),
+    );
+  });
 });

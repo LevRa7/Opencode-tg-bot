@@ -5,7 +5,7 @@ import {
   sendMessageDraftWithMarkdownFallback,
   sendMessageWithMarkdownFallback,
 } from "./send-with-markdown-fallback.js";
-import { withMessageThreadId } from "./message-thread.js";
+import { withTelegramDeliveryTarget, type TelegramDeliveryTarget } from "./message-thread.js";
 
 type SendMessageApi = Pick<Api<RawApi>, "sendMessage">;
 type SendMessageDraftApi = Pick<Api<RawApi>, "sendMessageDraft">;
@@ -26,6 +26,7 @@ interface SendBotTextParams {
   options?: TelegramSendMessageOptions;
   format?: TelegramTextFormat;
   messageThreadId?: number;
+  deliveryTarget?: TelegramDeliveryTarget | null;
 }
 
 interface EditBotTextParams {
@@ -84,6 +85,7 @@ export async function sendBotText({
   options,
   format = "raw",
   messageThreadId,
+  deliveryTarget,
 }: SendBotTextParams): Promise<number | null> {
   logger.debug(
     `[TelegramText] sendBotText: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, format=${format}, textLength=${text.length}`,
@@ -102,7 +104,13 @@ export async function sendBotText({
       chatId,
       text,
       rawFallbackText: format === "html" ? text : rawFallbackText,
-      options: withMessageThreadId(options, messageThreadId),
+      options: withTelegramDeliveryTarget(
+        options,
+        deliveryTarget ??
+          (typeof chatId === "number" && typeof messageThreadId === "number"
+            ? { chatId, messageThreadId }
+            : undefined),
+      ),
       parseMode: format === "html" ? "HTML" : resolveMarkdownParseMode(format),
       messageThreadId,
     });

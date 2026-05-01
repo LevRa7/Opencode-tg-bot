@@ -3,7 +3,7 @@ import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2";
 import { opencodeClient } from "../../opencode/client.js";
 import { clearSession, getCurrentSession, setCurrentSession } from "../../session/manager.js";
 import { ingestSessionInfoForCache } from "../../session/cache-manager.js";
-import { getCurrentProject, setCurrentProject } from "../../settings/manager.js";
+import { getCurrentProject, setConversationCurrentProject } from "../../settings/manager.js";
 import { getStoredAgent } from "../../agent/manager.js";
 import { getStoredModel } from "../../model/manager.js";
 import { formatVariantForButton } from "../../variant/manager.js";
@@ -11,6 +11,7 @@ import { createMainKeyboard } from "../utils/keyboard.js";
 import {
   extractMessageThreadIdFromContext,
   extractThreadTargetFromContext,
+  isForumChat,
   type TelegramThreadTarget,
   withMessageThreadId,
 } from "../utils/message-thread.js";
@@ -131,6 +132,7 @@ interface PromptRoutingContext {
   bot: Bot<Context>;
   target: TelegramThreadTarget;
   scope: TelegramConversationScope | null;
+  isForumChat: boolean;
   sourceMessageId?: number;
   suppressSendErrorMessage: boolean;
 }
@@ -402,7 +404,7 @@ export async function processUserPrompt(
     }
 
     currentProject = defaultProject;
-    setCurrentProject(defaultProject);
+    setConversationCurrentProject(defaultProject);
     threadContextManager.bindProjectToActiveContext(defaultProject);
   }
 
@@ -513,7 +515,7 @@ export async function processUserPrompt(
     }
   }
 
-  await ensureEventSubscription(currentSession.directory);
+  void ensureEventSubscription(currentSession.directory);
 
   // Atomic session claim: only one call proceeds past the busy check
   const claimRunId = tryClaimSession(currentSession.id);
@@ -639,6 +641,7 @@ export async function processUserPrompt(
       bot,
       target,
       scope,
+      isForumChat: isForumChat(ctx),
       sourceMessageId:
         typeof ctx.message?.message_id === "number" ? ctx.message.message_id : undefined,
       suppressSendErrorMessage,
@@ -654,9 +657,18 @@ export async function processUserPrompt(
     // If we wait, the handler will not finish and grammY will not call getUpdates,
     // which blocks receiving button callback_query updates.
     // The processing result will arrive via SSE events.
+    let promptDispatchPromise: Promise<Awaited<ReturnType<typeof opencodeClient.session.promptAsync>>>;
+    try {
+      promptDispatchPromise = wrapPromptDispatchWithTimeout(
+        opencodeClient.session.promptAsync(promptOptions),
+      );
+    } catch (error) {
+      promptDispatchPromise = Promise.reject(error);
+    }
+
     safeBackgroundTask({
       taskName: "session.promptAsync",
-      task: () => wrapPromptDispatchWithTimeout(opencodeClient.session.promptAsync(promptOptions)),
+      task: () => promptDispatchPromise,
       onSuccess: async (result) => {
         const error = getSdkResponseError(result);
         if (error) {

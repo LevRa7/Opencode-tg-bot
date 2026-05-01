@@ -7,10 +7,13 @@ import { t } from "../../../src/i18n/index.js";
 const mocked = vi.hoisted(() => ({
   sessionCreateMock: vi.fn(),
   getCurrentProjectMock: vi.fn(),
+  setCurrentProjectMock: vi.fn(),
+  setConversationCurrentProjectMock: vi.fn(),
   threadBindProjectMock: vi.fn(),
   threadBindSessionMock: vi.fn(),
   threadGetActiveScopeMock: vi.fn(),
   attachSessionForScopeMock: vi.fn(),
+  getDefaultProjectMock: vi.fn(),
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -23,9 +26,14 @@ vi.mock("../../../src/opencode/client.js", () => ({
 
 vi.mock("../../../src/settings/manager.js", () => ({
   getCurrentProject: mocked.getCurrentProjectMock,
-  setCurrentProject: vi.fn(),
+  setCurrentProject: mocked.setCurrentProjectMock,
+  setConversationCurrentProject: mocked.setConversationCurrentProjectMock,
   getThreadContextBindings: vi.fn(() => []),
   setThreadContextBindings: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../../../src/project/manager.js", () => ({
+  getDefaultProject: mocked.getDefaultProjectMock,
 }));
 
 vi.mock("../../../src/session/manager.js", () => ({
@@ -102,11 +110,15 @@ describe("bot/commands/new", () => {
     foregroundSessionState.__resetForTests();
     mocked.sessionCreateMock.mockReset();
     mocked.getCurrentProjectMock.mockReset();
+    mocked.setCurrentProjectMock.mockReset();
+    mocked.setConversationCurrentProjectMock.mockReset();
     mocked.threadBindProjectMock.mockReset();
     mocked.threadBindSessionMock.mockReset();
     mocked.threadGetActiveScopeMock.mockReset();
     mocked.attachSessionForScopeMock.mockReset();
+    mocked.getDefaultProjectMock.mockReset();
     mocked.getCurrentProjectMock.mockReturnValue({ id: "project-1", worktree: "/repo" });
+    mocked.getDefaultProjectMock.mockResolvedValue({ id: "default-project", worktree: "/default" });
     mocked.threadGetActiveScopeMock.mockReturnValue(null);
     mocked.attachSessionForScopeMock.mockResolvedValue(undefined);
   });
@@ -158,5 +170,50 @@ describe("bot/commands/new", () => {
         reason: "new_session",
       }),
     );
+  });
+
+  it("does not persist the user default project when /new auto-selects a fallback project", async () => {
+    mocked.getCurrentProjectMock.mockReturnValue(undefined);
+    mocked.getDefaultProjectMock.mockResolvedValue({ id: "fallback-project", worktree: "/fallback" });
+    mocked.sessionCreateMock.mockResolvedValue({
+      data: { id: "session-1", title: "Fallback Session" },
+      error: null,
+    });
+
+    const ctx = createContext();
+    await newCommand(ctx as never);
+
+    expect(mocked.setConversationCurrentProjectMock).toHaveBeenCalledWith({
+      id: "fallback-project",
+      worktree: "/fallback",
+    });
+    expect(mocked.setCurrentProjectMock).not.toHaveBeenCalled();
+    expect(mocked.threadBindProjectMock).toHaveBeenCalledWith({
+      id: "fallback-project",
+      worktree: "/fallback",
+    });
+    expect(mocked.sessionCreateMock).toHaveBeenCalledWith({ directory: "/fallback" });
+  });
+
+  it("does not persist the user default project when /new uses a restored active conversation project", async () => {
+    mocked.getCurrentProjectMock.mockReturnValue({ id: "restored-project", worktree: "/restored" });
+    mocked.sessionCreateMock.mockResolvedValue({
+      data: { id: "session-1", title: "Restored Session" },
+      error: null,
+    });
+
+    const ctx = createContext();
+    await newCommand(ctx as never);
+
+    expect(mocked.setConversationCurrentProjectMock).toHaveBeenCalledWith({
+      id: "restored-project",
+      worktree: "/restored",
+    });
+    expect(mocked.setCurrentProjectMock).not.toHaveBeenCalled();
+    expect(mocked.threadBindProjectMock).toHaveBeenCalledWith({
+      id: "restored-project",
+      worktree: "/restored",
+    });
+    expect(mocked.sessionCreateMock).toHaveBeenCalledWith({ directory: "/restored" });
   });
 });

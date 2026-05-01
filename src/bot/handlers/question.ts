@@ -8,7 +8,12 @@ import { interactionManager } from "../../interaction/manager.js";
 import { logger } from "../../utils/logger.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { t } from "../../i18n/index.js";
-import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import {
+  extractMessageThreadIdFromContext,
+  withMessageThreadId,
+  withTelegramDeliveryTarget,
+  type TelegramDeliveryTarget,
+} from "../utils/message-thread.js";
 
 const MAX_BUTTON_LENGTH = 60;
 
@@ -269,6 +274,7 @@ export async function showCurrentQuestion(
   chatId: number,
   messageThreadId?: number,
   scopeKey?: string,
+  deliveryTarget?: TelegramDeliveryTarget | null,
 ): Promise<void> {
   const question = questionManager.getCurrentQuestion(scopeKey);
 
@@ -293,16 +299,20 @@ export async function showCurrentQuestion(
   );
 
   try {
+    const targetChatId = deliveryTarget?.chatId ?? chatId;
     const message = await bot.sendMessage(
-      chatId,
+      targetChatId,
       text,
-      withMessageThreadId(
+      withTelegramDeliveryTarget(
         keyboard
           ? {
               reply_markup: keyboard,
             }
           : undefined,
-        messageThreadId,
+        deliveryTarget ??
+          (typeof messageThreadId === "number"
+            ? { chatId: targetChatId, messageThreadId }
+            : null),
       ),
     );
 

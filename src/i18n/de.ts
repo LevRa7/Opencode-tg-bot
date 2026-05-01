@@ -65,6 +65,11 @@ export const de: I18nDictionary = {
   "settings.hide_thinking_messages": "{state} Denken",
   "settings.hide_tool_call_messages": "{state} Werkzeuge",
   "settings.hide_tool_file_messages": "{state} Dateiänderungen",
+  "settings.subagent_topics": "{state} Subagent-Themen",
+  "settings.subagent_topic_timeout": "Auto-Löschen für Subagent-Themen: {minutes} Min.",
+  "settings.subagent_topic_timeout.title":
+    "Timeout für automatisches Löschen von Subagent-Themen wählen",
+  "settings.subagent_topic_timeout.option": "{minutes} Min.",
   "settings.state.on": "✅",
   "settings.state.off": "X",
   "settings.close": "Schließen",

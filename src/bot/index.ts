@@ -129,13 +129,20 @@ import {
   sendMessageWithMarkdownFallback,
 } from "./utils/send-with-markdown-fallback.js";
 import { threadContextManager } from "../thread/manager.js";
-import { withMessageThreadId } from "./utils/message-thread.js";
+import {
+  withMessageThreadId,
+  withTelegramDeliveryTarget,
+  type TelegramDeliveryTarget,
+} from "./utils/message-thread.js";
+import { SubagentTopicService } from "./subagent-topics/service.js";
 import {
   getApprovedTelegramUserIds,
   getHideThinkingMessages,
   getHideToolCallMessages,
   getHideToolFileMessages,
   getReasoningMode,
+  getSubagentTopicAutoDeleteMinutes,
+  getSubagentTopicsEnabled,
   getTenantRuntimeInfo,
   getThinkingClearMode,
   getUserLocale,
@@ -195,6 +202,28 @@ const finalAssistantDeliveryOrchestrator = new SessionDeliveryOrchestrator({
     );
   },
 });
+const subagentTopicService = new SubagentTopicService({
+  createForumTopic: async ({ chatId, name }) => {
+    if (!activeBotInstance) {
+      throw new Error("Bot not initialized for subagent topic creation");
+    }
+
+    const result = await activeBotInstance.api.createForumTopic(chatId, name);
+    return {
+      messageThreadId:
+        (result as { message_thread_id?: number; messageThreadId?: number }).message_thread_id ??
+        (result as { message_thread_id?: number; messageThreadId?: number }).messageThreadId ??
+        0,
+    };
+  },
+  deleteForumTopic: async ({ chatId, messageThreadId }) => {
+    if (!activeBotInstance) {
+      throw new Error("Bot not initialized for subagent topic deletion");
+    }
+
+    await activeBotInstance.api.deleteForumTopic(chatId, messageThreadId);
+  },
+});
 
 function clearExpiredExternalInputNotificationDedupe(now = Date.now()): void {
   for (const [key, expiresAt] of externalInputNotificationExpiresAtByKey.entries()) {
@@ -228,6 +257,7 @@ interface SessionRoutingContext {
     chatId: number;
     messageThreadId?: number;
   };
+  deliveryTarget?: TelegramDeliveryTarget | null;
   scope: TelegramConversationScope | null;
   targetSource: "attached" | "prompt";
   sourceMessageId?: number;
@@ -246,7 +276,130 @@ interface DeferredValue<T> {
 
 const routingBySessionId = new Map<string, SessionRoutingContext>();
 export { routingBySessionId };
+const managedChildSessionIds = new Set<string>();
+const pendingChildRoutingSetupBySessionId = new Map<string, Promise<boolean>>();
+const childSessionsAwaitingIdleCleanup = new Set<string>();
+const childTopicDeletionBlockedSessions = new Set<string>();
+interface ChildAssistantMessageState {
+  orderedPartIds: string[];
+  partTexts: Map<string, string>;
+  delivered: boolean;
+  pendingDeletionTerminalStatus?: string;
+}
 
+const childAssistantMessagesBySessionId = new Map<string, Map<string, ChildAssistantMessageState>>();
+
+function isManagedChildSession(sessionId: string): boolean {
+  return managedChildSessionIds.has(sessionId);
+}
+
+function clearChildAssistantSession(sessionId: string): void {
+  childAssistantMessagesBySessionId.delete(sessionId);
+  pendingChildRoutingSetupBySessionId.delete(sessionId);
+  childSessionsAwaitingIdleCleanup.delete(sessionId);
+  childTopicDeletionBlockedSessions.delete(sessionId);
+  managedChildSessionIds.delete(sessionId);
+}
+
+function setChildAssistantTextPart(
+  sessionId: string,
+  messageId: string,
+  partId: string,
+  text: string,
+): void {
+  const messages =
+    childAssistantMessagesBySessionId.get(sessionId) ?? new Map<string, ChildAssistantMessageState>();
+  if (!childAssistantMessagesBySessionId.has(sessionId)) {
+    childAssistantMessagesBySessionId.set(sessionId, messages);
+  }
+
+  const existing = messages.get(messageId) ?? {
+    orderedPartIds: [],
+    partTexts: new Map<string, string>(),
+    delivered: false,
+  };
+
+  if (!messages.has(messageId)) {
+    messages.set(messageId, existing);
+  }
+
+  if (!existing.partTexts.has(partId)) {
+    existing.orderedPartIds.push(partId);
+  }
+
+  existing.partTexts.set(partId, text);
+}
+
+function markChildAssistantDelivered(sessionId: string, messageId: string): boolean {
+  const state = childAssistantMessagesBySessionId.get(sessionId)?.get(messageId);
+  if (!state || state.delivered) {
+    return false;
+  }
+
+  state.delivered = true;
+  return true;
+}
+
+function getCombinedChildAssistantText(sessionId: string, messageId: string): string {
+  const state = childAssistantMessagesBySessionId.get(sessionId)?.get(messageId);
+  if (!state) {
+    return "";
+  }
+
+  return state.orderedPartIds
+    .map((partId) => state.partTexts.get(partId) ?? "")
+    .filter((partText) => partText.length > 0)
+    .join("");
+}
+
+async function scheduleChildTopicDeletionAfterFinalDelivery(
+  sessionId: string,
+  terminalStatus: string,
+): Promise<void> {
+  if (childTopicDeletionBlockedSessions.has(sessionId)) {
+    return;
+  }
+
+  const autoDeleteMinutes = await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
+    getSubagentTopicAutoDeleteMinutes(),
+  );
+  subagentTopicService.markFinalResponseDelivered(sessionId, {
+    terminalStatus,
+    autoDeleteMinutes,
+  });
+}
+
+function hasPendingChildAssistantDelivery(sessionId: string): boolean {
+  const sessionMessages = childAssistantMessagesBySessionId.get(sessionId);
+  if (!sessionMessages) {
+    return false;
+  }
+
+  return [...sessionMessages.values()].some((state) => !state.delivered);
+}
+
+async function scheduleChildTopicDeletionWhenDeliveryCompletes(
+  sessionId: string,
+  terminalStatus: string,
+): Promise<void> {
+  const sessionMessages = childAssistantMessagesBySessionId.get(sessionId);
+  if (!sessionMessages || sessionMessages.size === 0) {
+    await scheduleChildTopicDeletionAfterFinalDelivery(sessionId, terminalStatus);
+    return;
+  }
+
+  let markedPending = false;
+  for (const state of sessionMessages.values()) {
+    if (!state.delivered) {
+      state.pendingDeletionTerminalStatus = terminalStatus;
+      markedPending = true;
+    }
+  }
+
+  if (!markedPending) {
+    await scheduleChildTopicDeletionAfterFinalDelivery(sessionId, terminalStatus);
+  }
+}
 function setSessionRoutingContext(sessionId: string, routing: SessionRoutingContext): void {
   routingBySessionId.set(sessionId, routing);
 }
@@ -263,6 +416,7 @@ function syncSessionRoutingContext(sessionId: string): SessionRoutingContext | n
   const routing: SessionRoutingContext = {
     bot: promptRouting.bot,
     target: attachedTarget ?? promptRouting.target,
+    deliveryTarget: attachedTarget ?? promptRouting.target,
     scope: attachedScope ?? promptRouting.scope,
     targetSource: attachedTarget ? "attached" : "prompt",
     sourceMessageId: promptRouting.sourceMessageId,
@@ -308,6 +462,16 @@ function getSessionRoutingTarget(sessionId: string) {
   return resolveAttachedSessionTarget(sessionId) ?? getSessionRoutingContext(sessionId)?.target;
 }
 
+function getSessionDeliveryTarget(sessionId: string): TelegramDeliveryTarget | null {
+  const routing = getSessionRoutingContext(sessionId);
+  if (routing?.deliveryTarget) {
+    return routing.deliveryTarget;
+  }
+
+  const target = getSessionRoutingTarget(sessionId);
+  return target ? { ...target } : null;
+}
+
 function getSessionRoutingApi(sessionId: string) {
   const routing = getSessionRoutingContext(sessionId);
   if (routing) {
@@ -332,8 +496,154 @@ function getSessionRoutingScopeKey(sessionId: string): string {
   return buildTelegramConversationScopeKey(getSessionRoutingScope(sessionId));
 }
 
+function cloneRoutingContextForChildSession(options: {
+  parentSessionId: string;
+  childSessionId: string;
+  target: { chatId: number; messageThreadId?: number };
+  deliveryTarget?: TelegramDeliveryTarget | null;
+}): boolean {
+  const parentScope = getSessionRoutingScope(options.parentSessionId);
+  const parentRouting = getSessionRoutingContext(options.parentSessionId);
+  if (!parentRouting) {
+    return false;
+  }
+
+  setSessionRoutingContext(options.childSessionId, {
+    bot: parentRouting.bot,
+    target: options.target,
+    deliveryTarget: options.deliveryTarget ?? options.target,
+    scope: routeTargetToScope(parentScope, options.target),
+    targetSource: parentRouting.targetSource,
+    sourceMessageId: parentRouting.sourceMessageId,
+  });
+
+  managedChildSessionIds.add(options.childSessionId);
+
+  return true;
+}
+
+function seedChildRoutingFromSubagent(options: {
+  parentSessionId: string;
+  childSessionId: string;
+  topicName: string;
+}): boolean {
+  const parentTarget = getSessionRoutingTarget(options.parentSessionId);
+  if (!parentTarget) {
+    return false;
+  }
+
+  const cloned = cloneRoutingContextForChildSession({
+    parentSessionId: options.parentSessionId,
+    childSessionId: options.childSessionId,
+    target: {
+      chatId: parentTarget.chatId,
+      messageThreadId: parentTarget.messageThreadId,
+    },
+    deliveryTarget: {
+      chatId: parentTarget.chatId,
+      messageThreadId: parentTarget.messageThreadId,
+    },
+  });
+
+  return cloned;
+}
+
+function routeTargetToScope(
+  parentScope: TelegramConversationScope | null,
+  target: { chatId: number; messageThreadId?: number },
+): TelegramConversationScope | null {
+  if (!parentScope) {
+    return null;
+  }
+
+  return {
+    userId: parentScope.userId,
+    chatId: target.chatId,
+    ...(target.messageThreadId === undefined ? {} : { messageThreadId: target.messageThreadId }),
+  };
+}
+
 function getBusyScopeForSession(sessionId: string): TelegramConversationScope | null {
   return getSessionRoutingScope(sessionId);
+}
+
+function isForumScope(scope: TelegramConversationScope | null): boolean {
+  return typeof scope?.messageThreadId === "number";
+}
+
+function isForumParentSession(sessionId: string): boolean {
+  const promptRouting = getPromptRoutingContext(sessionId);
+  if (promptRouting) {
+    return promptRouting.isForumChat;
+  }
+
+  return isForumScope(getSessionRoutingScope(sessionId));
+}
+
+async function syncSubagentDeliveryContextForSession(options: {
+  childSessionId: string;
+  parentSessionId: string;
+  topicName: string;
+}): Promise<boolean> {
+  const parentPromptRouting = getPromptRoutingContext(options.parentSessionId);
+  const parentRouting =
+    routingBySessionId.get(options.parentSessionId) ??
+    (parentPromptRouting
+      ? {
+          bot: parentPromptRouting.bot,
+          target: parentPromptRouting.target,
+          deliveryTarget: parentPromptRouting.target,
+          scope: parentPromptRouting.scope,
+          targetSource: "prompt" as const,
+          sourceMessageId: parentPromptRouting.sourceMessageId,
+        }
+      : null);
+  const parentScope =
+    parentRouting?.scope ?? parentPromptRouting?.scope ?? threadContextManager.getActiveScope();
+  const parentTarget =
+    parentRouting?.target ??
+    parentPromptRouting?.target ??
+    resolveAttachedSessionTarget(options.parentSessionId) ??
+    threadContextManager.getSessionTarget(options.parentSessionId);
+  const parentBot = parentRouting?.bot ?? parentPromptRouting?.bot ?? activeBotInstance;
+  if (!parentScope || !parentTarget || !parentBot) {
+    return false;
+  }
+
+  const topicsEnabled = await runWithTelegramConversationScope(parentScope, () => getSubagentTopicsEnabled());
+  if (!topicsEnabled) {
+    return false;
+  }
+
+  const topicScope = await subagentTopicService.syncSubagent({
+    childSessionId: options.childSessionId,
+    topicName: options.topicName,
+    parent: {
+      chatId: parentTarget.chatId,
+      isForum: parentPromptRouting?.isForumChat ?? isForumParentSession(options.parentSessionId),
+    },
+  });
+
+  const topicTarget = subagentTopicService.getTargetForSession(options.childSessionId);
+  if (!topicTarget || topicScope.kind !== "topic") {
+    return false;
+  }
+
+  setSessionRoutingContext(options.childSessionId, {
+    bot: parentBot,
+    target: {
+      chatId: topicTarget.chatId,
+      messageThreadId: topicTarget.messageThreadId,
+    },
+    deliveryTarget: topicTarget,
+    scope: routeTargetToScope(parentScope, topicTarget),
+    targetSource: parentRouting?.targetSource ?? "prompt",
+    sourceMessageId: parentRouting?.sourceMessageId ?? parentPromptRouting?.sourceMessageId,
+  });
+
+  managedChildSessionIds.add(options.childSessionId);
+
+  return true;
 }
 
 function buildThinkingRoutingIdentity(target: {
@@ -341,6 +651,27 @@ function buildThinkingRoutingIdentity(target: {
   messageThreadId?: number;
 }): string {
   return `${target.chatId}:${target.messageThreadId ?? "main"}`;
+}
+
+function renderChildAssistantFinalParts(
+  text: string,
+  format: "raw" | "markdown_v2",
+): TelegramRenderedPart[] {
+  if (format === "markdown_v2" && config.bot.messageFormatMode === "markdown") {
+    return renderAssistantFinalPartsSafe(text, RESPONSE_STREAM_TEXT_LIMIT);
+  }
+
+  return createPlainRenderedParts(text, RESPONSE_STREAM_TEXT_LIMIT);
+}
+
+function deriveSubagentTopicNameFromSessionTitle(title?: string): string {
+  const trimmedTitle = title?.trim();
+  if (!trimmedTitle) {
+    return "Subagent";
+  }
+
+  const match = trimmedTitle.match(/^(.*?)(?:\s+\(@[^\s)]+\s+subagent\))?$/i);
+  return match?.[1]?.trim() || trimmedTitle;
 }
 
 function createDeferredValue<T>(): DeferredValue<T> {
@@ -435,6 +766,10 @@ function isMessageStreamingEnabledForSession(sessionId: string): boolean {
   );
 }
 
+interface SessionIdleHandlingOptions {
+  skipPendingCompletionWait?: boolean;
+}
+
 async function getHideThinkingMessagesForSession(sessionId: string): Promise<boolean> {
   return await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
     getHideThinkingMessages(),
@@ -455,6 +790,7 @@ async function getHideToolFileMessagesForSession(sessionId: string): Promise<boo
 
 function isSessionCurrent(sessionId: string): boolean {
   const routing = getSessionRoutingContext(sessionId);
+  const deliveryTarget = getSessionDeliveryTarget(sessionId);
   if (getSessionRoutingApi(sessionId) === null) {
     return false;
   }
@@ -464,6 +800,10 @@ function isSessionCurrent(sessionId: string): boolean {
   }
 
   if (routing.targetSource === "prompt") {
+    return true;
+  }
+
+  if (deliveryTarget?.disableNotification) {
     return true;
   }
 
@@ -492,10 +832,7 @@ interface TelegramMediaApi {
 
 interface LocalFileFollowUpDeliveryRoute {
   api: TelegramMediaApi;
-  target: {
-    chatId: number;
-    messageThreadId?: number;
-  };
+  target: TelegramDeliveryTarget;
   routingIdentity: string;
 }
 
@@ -577,7 +914,7 @@ function getSessionLocalFilePathResolver(
 
 async function sendPreparedLocalFileFollowUp(
   api: TelegramMediaApi,
-  target: { chatId: number; messageThreadId?: number },
+  target: TelegramDeliveryTarget,
   followUp: PreparedLocalFileFollowUp,
 ): Promise<void> {
   // Что делает этот код:
@@ -625,17 +962,14 @@ async function enqueueLocalFileFollowUpsFromText(sessionId: string, text: string
   }
 
   const botApi = getSessionRoutingApi(sessionId);
-  const target = getSessionRoutingTarget(sessionId);
+  const target = getSessionDeliveryTarget(sessionId);
   if (!botApi || !target || !isSessionCurrent(sessionId)) {
     return;
   }
 
   const deliveryRoute: LocalFileFollowUpDeliveryRoute = {
     api: botApi,
-    target: {
-      chatId: target.chatId,
-      messageThreadId: target.messageThreadId,
-    },
+    target,
     routingIdentity: buildThinkingRoutingIdentity(target),
   };
 
@@ -717,7 +1051,7 @@ const toolMessageBatcher = new ToolMessageBatcher({
   intervalSeconds: config.bot.serviceMessagesIntervalSec,
   sendText: async (sessionId, text, format) => {
     const botApi = getSessionRoutingApi(sessionId);
-    const target = getSessionRoutingTarget(sessionId);
+    const target = getSessionDeliveryTarget(sessionId);
     if (!botApi || !target || !isSessionCurrent(sessionId)) {
       return;
     }
@@ -738,7 +1072,7 @@ const toolMessageBatcher = new ToolMessageBatcher({
   },
   sendFile: async (sessionId, fileData) => {
     const botApi = getSessionRoutingApi(sessionId);
-    const target = getSessionRoutingTarget(sessionId);
+    const target = getSessionDeliveryTarget(sessionId);
     if (!botApi || !target || !isSessionCurrent(sessionId)) {
       return;
     }
@@ -780,6 +1114,7 @@ const responseStreamer = new ResponseStreamer({
     // Ensure format and entities are propagated
     const botApi = getSessionRoutingApi(sessionId);
     const target = getSessionRoutingTarget(sessionId);
+    const deliveryTarget = getSessionDeliveryTarget(sessionId);
     if (!botApi || !target || target.chatId <= 0) {
       throw new Error("Bot context missing for streamed send");
     }
@@ -790,9 +1125,9 @@ const responseStreamer = new ResponseStreamer({
       api: botApi,
       chatId: target.chatId,
       text,
-      options,
+      options: withTelegramDeliveryTarget(options, deliveryTarget),
       parseMode,
-      messageThreadId: target.messageThreadId,
+      messageThreadId: deliveryTarget?.messageThreadId ?? target.messageThreadId,
     });
 
     return sentMessage.message_id;
@@ -989,12 +1324,14 @@ export function createSendRenderedPart({
   sessionId,
   finalParseMode,
   messageThreadId,
+  deliveryTarget,
 }: {
   botApi: Api<RawApi>;
   chatId: number;
   sessionId: string;
   finalParseMode: "html" | "raw" | "markdown_v2";
   messageThreadId?: number;
+  deliveryTarget?: TelegramDeliveryTarget | null;
 }) {
   return async (
     part: TelegramRenderedPart,
@@ -1032,7 +1369,8 @@ export function createSendRenderedPart({
       rawFallbackText: part.fallbackText,
       options: sendOptions as Parameters<typeof sendBotText>[0]["options"],
       format: finalParseMode,
-      messageThreadId,
+      messageThreadId: deliveryTarget?.messageThreadId ?? messageThreadId,
+      deliveryTarget,
     });
   };
 }
@@ -1056,6 +1394,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     clearAllThinkingBlockStreams();
     localFileFollowUpTracker.clearAll();
     assistantRunState.clearAll("summary_aggregator_clear");
+    managedChildSessionIds.clear();
+    childAssistantMessagesBySessionId.clear();
+    pendingChildRoutingSetupBySessionId.clear();
+    childSessionsAwaitingIdleCleanup.clear();
+    childTopicDeletionBlockedSessions.clear();
+    subagentTopicService.clearAll();
   });
 
   summaryAggregator.setOnPartial(
@@ -1067,6 +1411,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       syncSessionRoutingContext(sessionId);
       const botApi = getSessionRoutingApi(sessionId);
       const target = getSessionRoutingTarget(sessionId);
+      const deliveryTarget = getSessionDeliveryTarget(sessionId);
       if (!botApi || !target) {
         return;
       }
@@ -1119,7 +1464,13 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           });
         }
       } else {
-        messageDraftStreamManager.enqueue(sessionId, botApi, target, messageText, assistantFormat);
+        messageDraftStreamManager.enqueue(
+          sessionId,
+          botApi,
+          deliveryTarget ?? target,
+          messageText,
+          assistantFormat,
+        );
       }
 
       void enqueueLocalFileFollowUpsFromText(
@@ -1286,6 +1637,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                   sessionId,
                   finalParseMode,
                   messageThreadId: target.messageThreadId,
+                  deliveryTarget: getSessionDeliveryTarget(sessionId),
                 }),
               });
               assistantRunState.markFinalResponsePublished(sessionId, {
@@ -1318,14 +1670,30 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     },
   );
 
-  summaryAggregator.setOnSessionIdle(async (sessionId) => {
+  async function handleSessionIdle(
+    sessionId: string,
+    options: SessionIdleHandlingOptions = {},
+  ): Promise<void> {
+    const isDedicatedTopicSession = getSessionDeliveryTarget(sessionId)?.disableNotification === true;
     logger.debug("[Bot] setOnSessionIdle called", { sessionId });
-    const pendingCompletionTask = sessionCompletionTasks.get(sessionId);
-    if (pendingCompletionTask) {
-      // 2026-04-19: message.updated(completed) schedules final delivery work through
-      // the per-session completion queue. session.idle can arrive in the same tick,
-      // so wait for that queued finalization before clearing routing/prompt state.
-      await pendingCompletionTask.catch(() => undefined);
+    if (
+      isDedicatedTopicSession &&
+      hasPendingChildAssistantDelivery(sessionId) &&
+      !sessionCompletionTasks.has(sessionId)
+    ) {
+      childSessionsAwaitingIdleCleanup.add(sessionId);
+      await scheduleChildTopicDeletionWhenDeliveryCompletes(sessionId, "completed");
+      return;
+    }
+
+    if (!options.skipPendingCompletionWait) {
+      const pendingCompletionTask = sessionCompletionTasks.get(sessionId);
+      if (pendingCompletionTask) {
+        // 2026-04-19: message.updated(completed) schedules final delivery work through
+        // the per-session completion queue. session.idle can arrive in the same tick,
+        // so wait for that queued finalization before clearing routing/prompt state.
+        await pendingCompletionTask.catch(() => undefined);
+      }
     }
 
     const completedRun = assistantRunState.finishRun(sessionId, "session_idle");
@@ -1335,7 +1703,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     const botApi = getSessionRoutingApi(sessionId);
     const target = getSessionRoutingTarget(sessionId);
-    if (!botApi || !target || !hasLiveSessionTarget(sessionId)) {
+    if (!botApi || !target || (!hasLiveSessionTarget(sessionId) && !isDedicatedTopicSession)) {
       finalAssistantDeliveryOrchestrator.clearSession(sessionId);
       toolMessageBatcher.clearSession(sessionId, "session_idle_missing_routing");
       toolCallStreamer.clearSession(sessionId, "session_idle_missing_routing");
@@ -1397,14 +1765,22 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     } catch (err) {
       logger.error("[Bot] Failed to send session idle footer:", err);
     } finally {
+      if (isDedicatedTopicSession) {
+        await scheduleChildTopicDeletionWhenDeliveryCompletes(sessionId, "completed");
+      }
       finalAssistantDeliveryOrchestrator.clearSession(sessionId);
       await clearThinkingBlockStream(sessionId, false);
+      clearChildAssistantSession(sessionId);
       clearSessionRoutingContext(sessionId);
       localFileFollowUpTracker.clearSession(sessionId);
       messageDraftStreamManager.clearSession(sessionId);
       foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
       await scheduledTaskRuntime.flushDeferredDeliveries();
     }
+  }
+
+  summaryAggregator.setOnSessionIdle(async (sessionId) => {
+    await handleSessionIdle(sessionId);
   });
 
   summaryAggregator.setOnTool(async (toolInfo) => {
@@ -1475,12 +1851,44 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
 
     try {
+      const unresolvedSubagents = [...subagents];
+      for (const subagent of subagents) {
+        if (!subagent.sessionId) {
+          continue;
+        }
+
+        const seededFallback = seedChildRoutingFromSubagent({
+          parentSessionId: sessionId,
+          childSessionId: subagent.sessionId,
+          topicName: subagent.description || subagent.prompt || subagent.agent || "Subagent",
+        });
+
+        const routingSetup = syncSubagentDeliveryContextForSession({
+          childSessionId: subagent.sessionId,
+          parentSessionId: sessionId,
+          topicName: subagent.description || subagent.prompt || subagent.agent || "Subagent",
+        }).catch(() => false);
+        pendingChildRoutingSetupBySessionId.set(subagent.sessionId, routingSetup);
+
+        const synchronized = await routingSetup;
+        pendingChildRoutingSetupBySessionId.delete(subagent.sessionId);
+
+        if (seededFallback && !synchronized) {
+          continue;
+        }
+
+        const index = unresolvedSubagents.findIndex((item) => item.cardId === subagent.cardId);
+        if (index >= 0) {
+          unresolvedSubagents.splice(index, 1);
+        }
+      }
+
       if (await getHideToolCallMessagesForSession(sessionId)) {
         orderedPublication.resolve(null);
         return;
       }
 
-      const renderedCards = await renderSubagentCards(subagents);
+      const renderedCards = await renderSubagentCards(unresolvedSubagents);
       if (!renderedCards) {
         orderedPublication.resolve(null);
         return;
@@ -1529,6 +1937,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   });
 
   summaryAggregator.setOnQuestion(async (sessionId, questions, requestID) => {
+    const pendingRoutingSetup = pendingChildRoutingSetupBySessionId.get(sessionId);
+    if (pendingRoutingSetup) {
+      await pendingRoutingSetup.catch(() => false);
+    }
+
     syncSessionRoutingContext(sessionId);
     const botApi = getSessionRoutingApi(sessionId);
     const target = getSessionRoutingTarget(sessionId);
@@ -1556,8 +1969,15 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     logger.info(`[Bot] Received ${questions.length} questions from agent, requestID=${requestID}`);
     questionManager.startQuestions(questions, requestID, scopeKey, sessionId);
+    const deliveryTarget = getSessionDeliveryTarget(sessionId);
     await runWithSessionRoutingScope(sessionId, () =>
-      showCurrentQuestion(botApi, target.chatId, target.messageThreadId),
+      showCurrentQuestion(
+        botApi,
+        target.chatId,
+        target.messageThreadId,
+        undefined,
+        deliveryTarget,
+      ),
     );
   });
 
@@ -1582,6 +2002,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   });
 
   summaryAggregator.setOnPermission(async (request) => {
+    const pendingRoutingSetup = pendingChildRoutingSetupBySessionId.get(request.sessionID);
+    if (pendingRoutingSetup) {
+      await pendingRoutingSetup.catch(() => false);
+    }
+
     syncSessionRoutingContext(request.sessionID);
     const botApi = getSessionRoutingApi(request.sessionID);
     const target = getSessionRoutingTarget(request.sessionID);
@@ -1598,8 +2023,16 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     logger.info(
       `[Bot] Received permission request from agent: type=${request.permission}, requestID=${request.id}`,
     );
+    const deliveryTarget = getSessionDeliveryTarget(request.sessionID);
     await runWithSessionRoutingScope(request.sessionID, () =>
-      showPermissionRequest(botApi, target.chatId, request, target.messageThreadId),
+      showPermissionRequest(
+        botApi,
+        target.chatId,
+        request,
+        target.messageThreadId,
+        undefined,
+        deliveryTarget,
+      ),
     );
   });
 
@@ -1692,7 +2125,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     syncSessionRoutingContext(sessionId);
     const routing = getPromptRoutingContext(sessionId) ?? getSessionRoutingContext(sessionId);
     const target = getSessionRoutingTarget(sessionId);
-    const hasLiveTarget = hasLiveSessionTarget(sessionId);
+    const hasDedicatedTopicTarget = getSessionDeliveryTarget(sessionId)?.disableNotification === true;
+    const hasLiveTarget = hasLiveSessionTarget(sessionId) || hasDedicatedTopicTarget;
     const shouldClearThinkingBlock = await runWithSessionRoutingScope(sessionId, async () =>
       getThinkingClearMode(),
     );
@@ -1766,7 +2200,19 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         }),
     );
 
+    if (hasDedicatedTopicTarget) {
+      const autoDeleteMinutes = await runWithTelegramConversationScope(
+        getSessionRoutingScope(sessionId),
+        () => getSubagentTopicAutoDeleteMinutes(),
+      );
+      subagentTopicService.markFinalResponseDelivered(sessionId, {
+        terminalStatus: "errored",
+        autoDeleteMinutes,
+      });
+    }
+
     clearSessionRoutingContext(sessionId);
+    clearChildAssistantSession(sessionId);
     localFileFollowUpTracker.clearSession(sessionId);
     foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
     await scheduledTaskRuntime.flushDeferredDeliveries();
@@ -1819,15 +2265,185 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
   logger.info(`[Bot] Subscribing to OpenCode events for project: ${directory}`);
   subscribeToEvents(directory, (event) => {
+    if (event.type === "message.part.updated") {
+      const part = (event.properties as {
+        part?: {
+          sessionID?: string;
+          messageID?: string;
+          id?: string;
+          type?: string;
+          text?: string;
+        };
+      }).part;
+      if (
+        part?.sessionID &&
+        part.messageID &&
+        part.id &&
+        part.type === "text" &&
+        typeof part.text === "string" &&
+        isManagedChildSession(part.sessionID)
+      ) {
+        setChildAssistantTextPart(part.sessionID, part.messageID, part.id, part.text);
+      }
+    }
+
+    if (event.type === "message.updated") {
+      const info = (event.properties as {
+        info?: {
+          id?: string;
+          sessionID?: string;
+          role?: string;
+          time?: { completed?: number };
+        };
+      }).info;
+      if (
+        info?.sessionID &&
+        info.id &&
+        info.role === "assistant" &&
+        typeof info.time?.completed === "number" &&
+        isManagedChildSession(info.sessionID) &&
+        markChildAssistantDelivered(info.sessionID, info.id)
+      ) {
+        const childSessionId = info.sessionID;
+        const childMessageId = info.id;
+        const childCompletedAt = info.time.completed;
+        void enqueueSessionCompletionTask(childSessionId, async () => {
+          const pendingDeletionTerminalStatus =
+            childAssistantMessagesBySessionId
+              .get(childSessionId)
+              ?.get(childMessageId)?.pendingDeletionTerminalStatus ?? null;
+          const pendingRoutingSetup = pendingChildRoutingSetupBySessionId.get(childSessionId);
+          if (pendingRoutingSetup) {
+            await pendingRoutingSetup.catch(() => false);
+          }
+
+          const childText = getCombinedChildAssistantText(childSessionId, childMessageId).trim();
+          if (childText) {
+            const botApi = getSessionRoutingApi(childSessionId);
+            const target = getSessionDeliveryTarget(childSessionId);
+            if (botApi && target) {
+              const childFormat =
+                getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : ("raw" as const);
+              let childDeliverySucceeded = false;
+              const finalChildDelivery = finalAssistantDeliveryOrchestrator.enqueue({
+                sessionId: childSessionId,
+                channel: "durable",
+                eventTimeMs: childCompletedAt,
+                logicalMessageId: childMessageId,
+                deliver: async () => {
+                  for (const part of renderChildAssistantFinalParts(childText, childFormat)) {
+                    await sendBotText({
+                      api: botApi,
+                      chatId: target.chatId,
+                      text: part.text,
+                      rawFallbackText: part.fallbackText,
+                      format: childFormat,
+                      messageThreadId: target.messageThreadId,
+                      deliveryTarget: target,
+                      options: part.entities?.length ? { entities: part.entities } : undefined,
+                    });
+                  }
+                },
+              });
+
+              await finalAssistantDeliveryOrchestrator.flushSession(childSessionId);
+              await finalChildDelivery
+                .then(() => {
+                  childDeliverySucceeded = true;
+                  childTopicDeletionBlockedSessions.delete(childSessionId);
+                })
+                .catch((error) => {
+                  childDeliverySucceeded = false;
+                  childTopicDeletionBlockedSessions.add(childSessionId);
+                  subagentTopicService.cancelPendingDeletion(childSessionId);
+                  logger.warn("[Bot] Failed to deliver child-session assistant output", error);
+                });
+
+              if (!childDeliverySucceeded) {
+                childSessionsAwaitingIdleCleanup.delete(childSessionId);
+                finalAssistantDeliveryOrchestrator.clearSession(childSessionId);
+                toolMessageBatcher.clearSession(childSessionId, "child_final_delivery_failed");
+                toolCallStreamer.clearSession(childSessionId, "child_final_delivery_failed");
+                messageDraftStreamManager.clearSession(childSessionId);
+                responseStreamer.clearSession(childSessionId, "child_final_delivery_failed");
+                localFileFollowUpTracker.clearSession(childSessionId);
+                assistantRunState.clearRun(childSessionId, "child_final_delivery_failed");
+                clearPromptResponseMode(childSessionId);
+                await clearThinkingBlockStream(childSessionId, false);
+                subagentTopicService.clearSession(childSessionId);
+                clearSessionRoutingContext(childSessionId);
+                clearChildAssistantSession(childSessionId);
+                foregroundSessionState.markIdle(childSessionId, getBusyScopeForSession(childSessionId));
+                await scheduledTaskRuntime.flushDeferredDeliveries();
+                return;
+              }
+
+              if (pendingDeletionTerminalStatus) {
+                await scheduleChildTopicDeletionAfterFinalDelivery(
+                  childSessionId,
+                  pendingDeletionTerminalStatus,
+                );
+              }
+            }
+          }
+
+          if (childSessionsAwaitingIdleCleanup.has(childSessionId)) {
+            childSessionsAwaitingIdleCleanup.delete(childSessionId);
+            await handleSessionIdle(childSessionId, { skipPendingCompletionWait: true });
+          }
+
+          const sessionMessages = childAssistantMessagesBySessionId.get(childSessionId);
+          sessionMessages?.delete(childMessageId);
+          if (sessionMessages && sessionMessages.size === 0) {
+            childAssistantMessagesBySessionId.delete(childSessionId);
+          }
+        }).catch((error) => {
+          logger.warn("[Bot] Child-session completion task failed", error);
+        });
+      }
+    }
+
     if (event.type === "session.created" || event.type === "session.updated") {
       const info = (
-        event.properties as { info?: { directory?: string; time?: { updated?: number } } }
+        event.properties as {
+          info?: {
+            id?: string;
+            parentID?: string;
+            title?: string;
+            directory?: string;
+            time?: { updated?: number };
+          };
+        }
       ).info;
 
       if (info?.directory) {
         safeBackgroundTask({
           taskName: `session.cache.${event.type}`,
           task: () => ingestSessionInfoForCache(info),
+        });
+      }
+
+      if (
+        typeof info?.id === "string" &&
+        typeof info.parentID === "string" &&
+        info.parentID !== info.id
+      ) {
+        seedChildRoutingFromSubagent({
+          parentSessionId: info.parentID,
+          childSessionId: info.id,
+          topicName: deriveSubagentTopicNameFromSessionTitle(info.title),
+        });
+
+        const routingSetup = syncSubagentDeliveryContextForSession({
+          childSessionId: info.id,
+          parentSessionId: info.parentID,
+          topicName: deriveSubagentTopicNameFromSessionTitle(info.title),
+        }).catch(() => false);
+        pendingChildRoutingSetupBySessionId.set(info.id, routingSetup);
+        void routingSetup.finally(() => {
+          if (pendingChildRoutingSetupBySessionId.get(info.id!) === routingSetup) {
+            pendingChildRoutingSetupBySessionId.delete(info.id!);
+          }
         });
       }
     }
@@ -1882,6 +2498,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 export function createBot(): Bot<Context> {
   clearAllInteractionState("bot_startup");
   setUserLocaleResolver(getUserLocale);
+  subagentTopicService.clearAll();
+  managedChildSessionIds.clear();
+  childAssistantMessagesBySessionId.clear();
+  pendingChildRoutingSetupBySessionId.clear();
+  childSessionsAwaitingIdleCleanup.clear();
+  childTopicDeletionBlockedSessions.clear();
 
   const botOptions: ConstructorParameters<typeof Bot<Context>>[1] = {};
 

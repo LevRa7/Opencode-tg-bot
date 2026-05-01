@@ -45,6 +45,7 @@ import {
   clearSession,
   setConversationCurrentAgent,
   setConversationCurrentModel,
+  setConversationCurrentProject,
   getCurrentAgent,
   getCurrentModel,
   getCurrentProject,
@@ -53,6 +54,8 @@ import {
   getHideToolCallMessages,
   getHideToolFileMessages,
   getReasoningMode,
+  getSubagentTopicAutoDeleteMinutes,
+  getSubagentTopicsEnabled,
   getThinkingClearMode,
   getUserLocale,
   getPinnedMessageId,
@@ -65,6 +68,8 @@ import {
   setHideToolCallMessages,
   setHideToolFileMessages,
   setReasoningMode,
+  setSubagentTopicAutoDeleteMinutes,
+  setSubagentTopicsEnabled,
   setThinkingClearMode,
   setUserLocale,
   setPinnedMessageId,
@@ -249,6 +254,58 @@ describe("settings/manager scoped state", () => {
     ).toEqual({
       agent: undefined,
       model: undefined,
+    });
+  });
+
+  it("uses the user default project across new topics without leaking across users", () => {
+    runWithTelegramConversationScope(scopeA, () => {
+      setCurrentProject({ id: "project-a", worktree: "/repo-a" });
+    });
+
+    expect(runWithTelegramConversationScope(scopeAOtherTopic, () => getCurrentProject())).toEqual({
+      id: "project-a",
+      worktree: "/repo-a",
+    });
+
+    expect(runWithTelegramConversationScope(scopeB, () => getCurrentProject())).toBeUndefined();
+  });
+
+  it("does not rewrite the stored user default project when a conversation-only project is restored", () => {
+    runWithTelegramConversationScope(scopeA, () => {
+      setCurrentProject({ id: "project-a", worktree: "/repo-a" });
+    });
+
+    runWithTelegramConversationScope(scopeAOtherTopic, () => {
+      setConversationCurrentProject({ id: "project-b", worktree: "/repo-b" });
+    });
+
+    expect(runWithTelegramConversationScope(scopeAMainThread, () => getCurrentProject())).toEqual({
+      id: "project-a",
+      worktree: "/repo-a",
+    });
+  });
+
+  it("uses the conversation-only main-thread project while preserving the user default fallback", () => {
+    runWithTelegramConversationScope(scopeAMainThread, () => {
+      setCurrentProject({ id: "project-a", worktree: "/repo-a" });
+    });
+
+    runWithTelegramConversationScope(scopeAMainThread, () => {
+      setConversationCurrentProject({ id: "project-b", worktree: "/repo-b" });
+    });
+
+    expect(runWithTelegramConversationScope(scopeAMainThread, () => getCurrentProject())).toEqual({
+      id: "project-b",
+      worktree: "/repo-b",
+    });
+
+    runWithTelegramConversationScope(scopeAMainThread, () => {
+      clearProject();
+    });
+
+    expect(runWithTelegramConversationScope(scopeAMainThread, () => getCurrentProject())).toEqual({
+      id: "project-a",
+      worktree: "/repo-a",
     });
   });
 
@@ -442,7 +499,7 @@ describe("settings/manager scoped state", () => {
     });
   });
 
-  it("clears only the active scoped state", async () => {
+  it("clears only the active scoped state without erasing the user default project", async () => {
     runWithTelegramConversationScope(scopeA, () => {
       setCurrentProject({ id: "project-a", worktree: "/repo-a" });
       setCurrentSession({ id: "session-a", title: "A", directory: "/repo-a" });
@@ -463,11 +520,18 @@ describe("settings/manager scoped state", () => {
       clearCurrentModel();
     });
 
-    expect(runWithTelegramConversationScope(scopeA, () => getCurrentProject())).toBeUndefined();
+    expect(runWithTelegramConversationScope(scopeA, () => getCurrentProject())).toEqual({
+      id: "project-a",
+      worktree: "/repo-a",
+    });
     expect(runWithTelegramConversationScope(scopeA, () => getCurrentSession())).toBeUndefined();
     expect(runWithTelegramConversationScope(scopeA, () => getCurrentAgent())).toBeUndefined();
     expect(runWithTelegramConversationScope(scopeA, () => getCurrentModel())).toBeUndefined();
     expect(runWithTelegramConversationScope(scopeA, () => getReasoningMode())).toBe(2);
+    expect(runWithTelegramConversationScope(scopeAOtherTopic, () => getCurrentProject())).toEqual({
+      id: "project-a",
+      worktree: "/repo-a",
+    });
     expect(runWithTelegramConversationScope(scopeB, () => getCurrentProject())).toEqual({
       id: "project-b",
       worktree: "/repo-b",
@@ -514,6 +578,41 @@ describe("settings/manager scoped state", () => {
     });
 
     expect(runWithTelegramConversationScope(scopeB, () => getThinkingClearMode())).toBe(false);
+  });
+
+  it("stores subagent topic preferences per user across topics", () => {
+    runWithTelegramConversationScope(scopeA, () => {
+      setSubagentTopicsEnabled(true);
+      setSubagentTopicAutoDeleteMinutes(15);
+    });
+
+    expect(
+      runWithTelegramConversationScope(scopeAOtherTopic, () => ({
+        enabled: getSubagentTopicsEnabled(),
+        timeout: getSubagentTopicAutoDeleteMinutes(),
+      })),
+    ).toEqual({ enabled: true, timeout: 15 });
+
+    expect(
+      runWithTelegramConversationScope(scopeB, () => ({
+        enabled: getSubagentTopicsEnabled(),
+        timeout: getSubagentTopicAutoDeleteMinutes(),
+      })),
+    ).toEqual({ enabled: false, timeout: 10 });
+  });
+
+  it("rejects invalid subagent topic auto-delete timeouts", () => {
+    expect(() =>
+      runWithTelegramConversationScope(scopeA, () => setSubagentTopicAutoDeleteMinutes(0)),
+    ).toThrow("Subagent topic auto-delete timeout must be a positive integer");
+
+    expect(() =>
+      runWithTelegramConversationScope(scopeA, () => setSubagentTopicAutoDeleteMinutes(-5)),
+    ).toThrow("Subagent topic auto-delete timeout must be a positive integer");
+
+    expect(() =>
+      runWithTelegramConversationScope(scopeA, () => setSubagentTopicAutoDeleteMinutes(1.5)),
+    ).toThrow("Subagent topic auto-delete timeout must be a positive integer");
   });
 
   it("keeps reasoning mode after scoped project and session are cleared", () => {

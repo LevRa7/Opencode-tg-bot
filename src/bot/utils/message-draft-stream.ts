@@ -1,5 +1,8 @@
 import type { Api, RawApi } from "grammy";
-import { withMessageThreadId, type TelegramThreadTarget } from "./message-thread.js";
+import {
+  withTelegramDeliveryTarget,
+  type TelegramDeliveryTarget,
+} from "./message-thread.js";
 import { editBotText, sendBotText, sendBotTextDraft, type TelegramTextFormat } from "./telegram-text.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -26,7 +29,7 @@ interface DraftStreamState {
   pendingFormat: TelegramTextFormat;
   pendingOptions: TelegramSendMessageDraftOptions | null;
   timer: ReturnType<typeof setTimeout> | null;
-  target: TelegramThreadTarget | null;
+  target: TelegramDeliveryTarget | null;
   api: DraftApi | null;
   sendApi: SendApi | null;
   editApi: EditApi | null;
@@ -128,7 +131,7 @@ export class MessageDraftStreamManager {
   enqueue(
     sessionId: string,
     api: DraftApi,
-    target: TelegramThreadTarget,
+    target: TelegramDeliveryTarget,
     text: string,
     format: TelegramTextFormat = "raw",
     options?: TelegramSendMessageDraftOptions,
@@ -311,8 +314,8 @@ export class MessageDraftStreamManager {
       const targetMessageId = state.lastSentMessageId;
       const canEdit = targetMessageId !== null && state.editApi !== null;
       const finalOptions = (options
-        ? withMessageThreadId(options, state.target!.messageThreadId)
-        : withMessageThreadId(undefined, state.target!.messageThreadId)) as TelegramSendMessageDraftOptions;
+        ? withTelegramDeliveryTarget(options, state.target!)
+        : withTelegramDeliveryTarget(undefined, state.target!)) as TelegramSendMessageDraftOptions;
 
       if (canEdit) {
         await editBotText({
@@ -331,6 +334,7 @@ export class MessageDraftStreamManager {
           options: finalOptions as TelegramSendMessageOptions,
           format,
           messageThreadId: state.target!.messageThreadId,
+          deliveryTarget: state.target,
         });
         if (messageId) {
           state.lastSentMessageId = messageId;

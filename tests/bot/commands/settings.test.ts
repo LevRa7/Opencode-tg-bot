@@ -8,10 +8,14 @@ const mocked = vi.hoisted(() => ({
   hideThinkingMessages: false,
   hideToolCallMessages: false,
   hideToolFileMessages: false,
+  subagentTopicsEnabled: false,
+  subagentTopicAutoDeleteMinutes: 10,
   setUserLocaleMock: vi.fn(),
   setHideThinkingMessagesMock: vi.fn(),
   setHideToolCallMessagesMock: vi.fn(),
   setHideToolFileMessagesMock: vi.fn(),
+  setSubagentTopicsEnabledMock: vi.fn(),
+  setSubagentTopicAutoDeleteMinutesMock: vi.fn(),
 }));
 
 vi.mock("../../../src/settings/manager.js", () => ({
@@ -34,6 +38,16 @@ vi.mock("../../../src/settings/manager.js", () => ({
   setHideToolFileMessages: vi.fn((enabled: boolean) => {
     mocked.setHideToolFileMessagesMock(enabled);
     mocked.hideToolFileMessages = enabled;
+  }),
+  getSubagentTopicsEnabled: vi.fn(() => mocked.subagentTopicsEnabled),
+  setSubagentTopicsEnabled: vi.fn((enabled: boolean) => {
+    mocked.setSubagentTopicsEnabledMock(enabled);
+    mocked.subagentTopicsEnabled = enabled;
+  }),
+  getSubagentTopicAutoDeleteMinutes: vi.fn(() => mocked.subagentTopicAutoDeleteMinutes),
+  setSubagentTopicAutoDeleteMinutes: vi.fn((minutes: number) => {
+    mocked.setSubagentTopicAutoDeleteMinutesMock(minutes);
+    mocked.subagentTopicAutoDeleteMinutes = minutes;
   }),
 }));
 
@@ -93,10 +107,14 @@ describe("bot/commands/settings", () => {
     mocked.hideThinkingMessages = false;
     mocked.hideToolCallMessages = false;
     mocked.hideToolFileMessages = false;
+    mocked.subagentTopicsEnabled = false;
+    mocked.subagentTopicAutoDeleteMinutes = 10;
     mocked.setUserLocaleMock.mockClear();
     mocked.setHideThinkingMessagesMock.mockClear();
     mocked.setHideToolCallMessagesMock.mockClear();
     mocked.setHideToolFileMessagesMock.mockClear();
+    mocked.setSubagentTopicsEnabledMock.mockClear();
+    mocked.setSubagentTopicAutoDeleteMinutesMock.mockClear();
   });
 
   it("replies with the settings title and root menu", async () => {
@@ -114,10 +132,14 @@ describe("bot/commands/settings", () => {
       "settings:toggle:hide_thinking",
       "settings:toggle:hide_tool_calls",
       "settings:toggle:hide_tool_files",
+      "settings:toggle:subagent_topics",
+      "settings:subagent_timeout",
       "inline:cancel:settings",
     ]);
     expect(rows[0]?.[0]?.text).toBe("🌐 🇬🇧 English");
     expect(rows[1]?.[0]?.text).toBe("✅ Thinking");
+    expect(rows[4]?.[0]?.text).toBe("✅ Subagent topics");
+    expect(rows[5]?.[0]?.text).toBe("Subagent topic auto-delete: 10 min");
     expect(rows[rows.length - 1]?.[0]?.text).toBe(t("settings.close"));
   });
 
@@ -230,6 +252,62 @@ describe("bot/commands/settings", () => {
       unknown,
     ];
     expect(getInlineRows(options)[3]?.[0]?.text).toBe("X File changes");
+  });
+
+  it("toggles subagent topics", async () => {
+    startActiveSettingsMenu();
+    const ctx = createCallbackContext("settings:toggle:subagent_topics");
+
+    const handled = await handleSettingsCallback(ctx);
+
+    expect(handled).toBe(true);
+
+    expect(mocked.setSubagentTopicsEnabledMock).toHaveBeenCalledWith(true);
+    const [, options] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      unknown,
+    ];
+    expect(getInlineRows(options)[4]?.[0]?.text).toBe("X Subagent topics");
+  });
+
+  it("edits to the subagent timeout submenu", async () => {
+    startActiveSettingsMenu();
+    const ctx = createCallbackContext("settings:subagent_timeout");
+
+    const handled = await handleSettingsCallback(ctx);
+
+    expect(handled).toBe(true);
+    const [text, options] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      unknown,
+    ];
+    const rows = getInlineRows(options);
+
+    expect(text).toBe(t("settings.subagent_topic_timeout.title"));
+    expect(rows.slice(0, 5).map((row) => row[0]?.callback_data)).toEqual([
+      "settings:subagent_timeout:5",
+      "settings:subagent_timeout:10",
+      "settings:subagent_timeout:15",
+      "settings:subagent_timeout:30",
+      "settings:subagent_timeout:60",
+    ]);
+  });
+
+  it("updates the subagent timeout and redraws the root menu", async () => {
+    startActiveSettingsMenu();
+    const ctx = createCallbackContext("settings:subagent_timeout:30");
+
+    const handled = await handleSettingsCallback(ctx);
+
+    expect(handled).toBe(true);
+    expect(mocked.setSubagentTopicAutoDeleteMinutesMock).toHaveBeenCalledWith(30);
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: t("settings.updated_callback") });
+
+    const [, options] = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      unknown,
+    ];
+    expect(getInlineRows(options)[5]?.[0]?.text).toBe("Subagent topic auto-delete: 30 min");
   });
 
   it("returns false for unknown and non-settings callbacks", async () => {

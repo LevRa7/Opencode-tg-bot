@@ -338,4 +338,31 @@ describe("bot/handlers/permission", () => {
     expect(text).toContain("• D:/data/my_project");
     expect(options).not.toHaveProperty("parse_mode");
   });
+
+  it("sends child-topic permission requests silently when a dedicated delivery target is provided", async () => {
+    const botApi = createBotApi(810);
+
+    await (showPermissionRequest as unknown as (...args: unknown[]) => Promise<void>)(
+      botApi,
+      -100123,
+      createPermissionRequest("perm-child-topic"),
+      undefined,
+      undefined,
+      {
+        chatId: -100123,
+        messageThreadId: 654,
+        disableNotification: true,
+      },
+    );
+
+    expect(botApi.sendMessage).toHaveBeenCalledWith(
+      -100123,
+      expect.any(String),
+      expect.objectContaining({
+        message_thread_id: 654,
+        disable_notification: true,
+        reply_markup: expect.anything(),
+      }),
+    );
+  });
 });

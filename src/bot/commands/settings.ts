@@ -8,10 +8,14 @@ import {
   getHideThinkingMessages,
   getHideToolCallMessages,
   getHideToolFileMessages,
+  getSubagentTopicAutoDeleteMinutes,
+  getSubagentTopicsEnabled,
   getUserLocale,
   setHideThinkingMessages,
   setHideToolCallMessages,
   setHideToolFileMessages,
+  setSubagentTopicAutoDeleteMinutes,
+  setSubagentTopicsEnabled,
   setUserLocale,
 } from "../../settings/manager.js";
 import { getLocaleOptions, resolveSupportedLocale, t, type Locale } from "../../i18n/index.js";
@@ -21,9 +25,16 @@ export const SETTINGS_CALLBACK_PREFIX = "settings:";
 
 const SETTINGS_CALLBACK_LANGUAGE = `${SETTINGS_CALLBACK_PREFIX}language`;
 const SETTINGS_CALLBACK_LANGUAGE_PREFIX = `${SETTINGS_CALLBACK_LANGUAGE}:`;
+const SETTINGS_CALLBACK_SUBAGENT_TIMEOUT = `${SETTINGS_CALLBACK_PREFIX}subagent_timeout`;
+const SETTINGS_CALLBACK_SUBAGENT_TIMEOUT_PREFIX = `${SETTINGS_CALLBACK_SUBAGENT_TIMEOUT}:`;
 const SETTINGS_CALLBACK_TOGGLE_PREFIX = `${SETTINGS_CALLBACK_PREFIX}toggle:`;
+const SUBAGENT_TOPIC_TIMEOUT_OPTIONS = [5, 10, 15, 30, 60] as const;
 
-type ToggleSettingId = "hide_thinking" | "hide_tool_calls" | "hide_tool_files";
+type ToggleSettingId =
+  | "hide_thinking"
+  | "hide_tool_calls"
+  | "hide_tool_files"
+  | "subagent_topics";
 
 interface SettingsRenderState {
   locale: Locale;
@@ -31,6 +42,8 @@ interface SettingsRenderState {
   hideThinkingMessages: boolean;
   hideToolCallMessages: boolean;
   hideToolFileMessages: boolean;
+  subagentTopicsEnabled: boolean;
+  subagentTopicAutoDeleteMinutes: number;
 }
 
 function getActiveLocale(): Locale {
@@ -50,6 +63,8 @@ function getSettingsRenderState(localeOverride?: Locale): SettingsRenderState {
     hideThinkingMessages: getHideThinkingMessages(),
     hideToolCallMessages: getHideToolCallMessages(),
     hideToolFileMessages: getHideToolFileMessages(),
+    subagentTopicsEnabled: getSubagentTopicsEnabled(),
+    subagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutes(),
   };
 }
 
@@ -89,6 +104,24 @@ function buildSettingsRootKeyboard(state: SettingsRenderState): InlineKeyboard {
         state.locale,
       ),
       `${SETTINGS_CALLBACK_TOGGLE_PREFIX}hide_tool_files`,
+    )
+    .row()
+    .text(
+      t(
+        "settings.subagent_topics",
+        { state: formatToggleState(state.subagentTopicsEnabled, state.locale) },
+        state.locale,
+      ),
+      `${SETTINGS_CALLBACK_TOGGLE_PREFIX}subagent_topics`,
+    )
+    .row()
+    .text(
+      t(
+        "settings.subagent_topic_timeout",
+        { minutes: state.subagentTopicAutoDeleteMinutes },
+        state.locale,
+      ),
+      SETTINGS_CALLBACK_SUBAGENT_TIMEOUT,
     );
 }
 
@@ -98,6 +131,21 @@ function buildLanguageKeyboard(_locale: Locale): InlineKeyboard {
   for (const option of getLocaleOptions()) {
     keyboard
       .text(`${option.flag} ${option.label}`, `${SETTINGS_CALLBACK_LANGUAGE_PREFIX}${option.code}`)
+      .row();
+  }
+
+  return keyboard;
+}
+
+function buildSubagentTimeoutKeyboard(locale: Locale): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  for (const minutes of SUBAGENT_TOPIC_TIMEOUT_OPTIONS) {
+    keyboard
+      .text(
+        t("settings.subagent_topic_timeout.option", { minutes }, locale),
+        `${SETTINGS_CALLBACK_SUBAGENT_TIMEOUT_PREFIX}${minutes}`,
+      )
       .row();
   }
 
@@ -138,11 +186,19 @@ function toggleSetting(settingId: ToggleSettingId): void {
     case "hide_tool_files":
       setHideToolFileMessages(!getHideToolFileMessages());
       return;
+    case "subagent_topics":
+      setSubagentTopicsEnabled(!getSubagentTopicsEnabled());
+      return;
   }
 }
 
 function isToggleSettingId(value: string): value is ToggleSettingId {
-  return value === "hide_thinking" || value === "hide_tool_calls" || value === "hide_tool_files";
+  return (
+    value === "hide_thinking" ||
+    value === "hide_tool_calls" ||
+    value === "hide_tool_files" ||
+    value === "subagent_topics"
+  );
 }
 
 async function handleSettingsError(ctx: Context, error: unknown): Promise<boolean> {
@@ -192,6 +248,36 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
         text: t("settings.language_updated_callback", undefined, locale),
       });
       await redrawRootMenu(ctx, locale);
+      return true;
+    }
+
+    if (data === SETTINGS_CALLBACK_SUBAGENT_TIMEOUT) {
+      const isActiveMenu = await ensureActiveInlineMenu(ctx, "settings");
+      if (!isActiveMenu) {
+        return true;
+      }
+
+      const locale = getActiveLocale();
+      await ctx.editMessageText(t("settings.subagent_topic_timeout.title", undefined, locale), {
+        reply_markup: appendSettingsCloseButton(buildSubagentTimeoutKeyboard(locale), locale),
+      });
+      return true;
+    }
+
+    if (data.startsWith(SETTINGS_CALLBACK_SUBAGENT_TIMEOUT_PREFIX)) {
+      const minutes = Number.parseInt(data.slice(SETTINGS_CALLBACK_SUBAGENT_TIMEOUT_PREFIX.length), 10);
+      if (!SUBAGENT_TOPIC_TIMEOUT_OPTIONS.includes(minutes as (typeof SUBAGENT_TOPIC_TIMEOUT_OPTIONS)[number])) {
+        return false;
+      }
+
+      const isActiveMenu = await ensureActiveInlineMenu(ctx, "settings");
+      if (!isActiveMenu) {
+        return true;
+      }
+
+      setSubagentTopicAutoDeleteMinutes(minutes);
+      await ctx.answerCallbackQuery({ text: t("settings.updated_callback") });
+      await redrawRootMenu(ctx);
       return true;
     }
 

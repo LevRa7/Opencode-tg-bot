@@ -40,6 +40,10 @@ vi.mock("../../src/settings/manager.js", () => ({
     mocked.currentProject = project;
     mocked.setCurrentProjectMock(project);
   }),
+  setConversationCurrentProject: vi.fn((project) => {
+    mocked.currentProject = project;
+    mocked.setCurrentProjectMock(project);
+  }),
   setCurrentAgent: vi.fn((agent) => {
     mocked.currentAgent = agent;
     mocked.setCurrentAgentMock(agent);

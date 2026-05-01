@@ -186,6 +186,130 @@ describe("summary/aggregator", () => {
     );
   });
 
+  it("delivers question and permission events for tracked child sessions", async () => {
+    const onQuestion = vi.fn();
+    const onPermission = vi.fn();
+    summaryAggregator.setOnQuestion(onQuestion);
+    summaryAggregator.setOnPermission(onPermission);
+    summaryAggregator.setSession("root-session");
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "subtask-child-1",
+          sessionID: "root-session",
+          messageID: "root-message",
+          type: "subtask",
+          prompt: "Inspect artifact",
+          description: "Inspect artifact",
+          agent: "explore",
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "child-session-1",
+          parentID: "root-session",
+          title: "Inspect artifact (@explore subagent)",
+          directory: "D:/repo",
+          time: { created: Date.now(), updated: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "question.asked",
+      properties: {
+        id: "question-child-1",
+        sessionID: "child-session-1",
+        questions: [{ header: "Question", options: [], multiple: false, question: "Child Q?" }],
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "permission.asked",
+      properties: {
+        id: "permission-child-1",
+        sessionID: "child-session-1",
+        permission: "bash",
+        patterns: [],
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onQuestion).toHaveBeenCalledWith(
+      "child-session-1",
+      expect.arrayContaining([expect.objectContaining({ question: "Child Q?" })]),
+      "question-child-1",
+    );
+    expect(onPermission).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "permission-child-1", sessionID: "child-session-1" }),
+    );
+  });
+
+  it("propagates child session idle and error callbacks after subagent status updates", async () => {
+    const onSessionIdle = vi.fn();
+    const onSessionError = vi.fn();
+    summaryAggregator.setOnSessionIdle(onSessionIdle);
+    summaryAggregator.setOnSessionError(onSessionError);
+    summaryAggregator.setSession("root-session");
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "subtask-child-lifecycle",
+          sessionID: "root-session",
+          messageID: "root-message",
+          type: "subtask",
+          prompt: "Inspect artifact",
+          description: "Inspect artifact",
+          agent: "explore",
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "child-session-lifecycle",
+          parentID: "root-session",
+          title: "Inspect artifact (@explore subagent)",
+          directory: "D:/repo",
+          time: { created: Date.now(), updated: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "session.idle",
+      properties: {
+        sessionID: "child-session-lifecycle",
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "session.error",
+      properties: {
+        sessionID: "child-session-lifecycle",
+        error: {
+          data: { message: "Child task failed" },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(onSessionIdle).toHaveBeenCalledWith("child-session-lifecycle");
+    expect(onSessionError).toHaveBeenCalledWith("child-session-lifecycle", "Child task failed");
+  });
+
   it("includes sessionId in tool callback payload", () => {
     const onTool = vi.fn();
     summaryAggregator.setOnTool(onTool);

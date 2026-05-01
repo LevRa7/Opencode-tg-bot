@@ -2801,6 +2801,45 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       }
     }
 
+    if (event.type === "session.diff") {
+      const diffEvent = event as unknown as {
+        properties?: {
+          sessionID?: string;
+          diff?: Array<{ file?: string; additions?: number; deletions?: number }>;
+        };
+      };
+      const diffSessionId = diffEvent.properties?.sessionID;
+      const diffs = diffEvent.properties?.diff;
+      if (diffSessionId && diffs && diffs.length > 0 && isManagedChildSession(diffSessionId)) {
+        const childId = diffSessionId;
+        safeBackgroundTask({
+          taskName: `child-diff.${childId}`,
+          task: async () => {
+            const target = getSessionDeliveryTarget(childId);
+            const botApi = getSessionRoutingApi(childId);
+            if (!botApi || !target) return;
+
+            const parts = diffs!.map((d) => {
+              const filePath = d.file ?? "unknown";
+              const adds = d.additions ?? 0;
+              const dels = d.deletions ?? 0;
+              const icon = adds > 0 && dels > 0 ? "🔄" : adds > 0 ? "➕" : "➖";
+              return `${icon} <code>${escapeHtml(filePath)}</code> (${adds ? `+${adds}` : ""}${adds && dels ? " " : ""}${dels ? `-${dels}` : ""})`;
+            });
+
+            await sendBotText({
+              api: botApi,
+              chatId: target.chatId,
+              text: `<blockquote>${parts.join("\n")}</blockquote>`,
+              format: "html",
+              messageThreadId: target.messageThreadId,
+              deliveryTarget: target,
+            });
+          },
+        });
+      }
+    }
+
     summaryAggregator.processEvent(event);
   }).catch((err) => {
     logger.error("Failed to subscribe to events:", err);

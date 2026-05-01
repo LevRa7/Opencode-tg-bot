@@ -286,6 +286,7 @@ const childTopicDeletionBlockedSessions = new Set<string>();
 const childTopicPromptSent = new Set<string>();
 const childReasoningBuffer = new Map<string, { messageId: string; text: string }>();
 const childProcessedToolIds = new Set<string>();
+const childTypingIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
 interface ChildSessionMeta {
   agent: string;
@@ -329,6 +330,11 @@ function clearChildAssistantSession(sessionId: string): void {
   childTopicPromptSent.delete(sessionId);
   childSessionMeta.delete(sessionId);
   childReasoningBuffer.delete(sessionId);
+  const typingInterval = childTypingIntervals.get(sessionId);
+  if (typingInterval) {
+    clearInterval(typingInterval);
+    childTypingIntervals.delete(sessionId);
+  }
   managedChildSessionIds.delete(sessionId);
 }
 
@@ -2573,12 +2579,20 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             const target = getSessionDeliveryTarget(startSessionId);
             const botApi = getSessionRoutingApi(startSessionId);
             if (!botApi || !target) return;
-            try {
-              await botApi.sendChatAction(target.chatId, "typing", {
-                message_thread_id: target.messageThreadId,
-              });
-            } catch {
-              // best-effort
+
+            const doTyping = () => {
+              botApi
+                .sendChatAction(target.chatId, "typing", {
+                  message_thread_id: target.messageThreadId,
+                })
+                .catch(() => {});
+            };
+
+            doTyping();
+
+            if (!childTypingIntervals.has(startSessionId)) {
+              const interval = setInterval(doTyping, 5000);
+              childTypingIntervals.set(startSessionId, interval);
             }
           },
         });
@@ -2659,6 +2673,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                 .then(async () => {
                   childDeliverySucceeded = true;
                   childTopicDeletionBlockedSessions.delete(childSessionId);
+
+                  const typingInterval = childTypingIntervals.get(childSessionId);
+                  if (typingInterval) {
+                    clearInterval(typingInterval);
+                    childTypingIntervals.delete(childSessionId);
+                  }
 
                   // Unpin topic on completion
                   const pinnedId = childTopicPinnedMessageId.get(childSessionId);

@@ -2507,6 +2507,30 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       ).info;
       if (
         info?.sessionID &&
+        info.role === "assistant" &&
+        !info.time?.completed &&
+        isManagedChildSession(info.sessionID)
+      ) {
+        const startSessionId = info.sessionID;
+        safeBackgroundTask({
+          taskName: `child-typing.${startSessionId}`,
+          task: async () => {
+            const target = getSessionDeliveryTarget(startSessionId);
+            const botApi = getSessionRoutingApi(startSessionId);
+            if (!botApi || !target) return;
+            try {
+              await botApi.sendChatAction(target.chatId, "typing", {
+                message_thread_id: target.messageThreadId,
+              });
+            } catch {
+              // best-effort
+            }
+          },
+        });
+      }
+
+      if (
+        info?.sessionID &&
         info.id &&
         info.role === "assistant" &&
         typeof info.time?.completed === "number" &&

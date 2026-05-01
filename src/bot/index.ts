@@ -287,6 +287,7 @@ const childTopicPromptSent = new Set<string>();
 const childReasoningBuffer = new Map<string, { messageId: string; text: string }>();
 const childProcessedToolIds = new Set<string>();
 const childTypingIntervals = new Map<string, ReturnType<typeof setInterval>>();
+const childSessionTitle = new Map<string, string>();
 
 interface ChildSessionMeta {
   agent: string;
@@ -329,6 +330,7 @@ function clearChildAssistantSession(sessionId: string): void {
   childTopicDeletionBlockedSessions.delete(sessionId);
   childTopicPromptSent.delete(sessionId);
   childSessionMeta.delete(sessionId);
+  childSessionTitle.delete(sessionId);
   childReasoningBuffer.delete(sessionId);
   const typingInterval = childTypingIntervals.get(sessionId);
   if (typingInterval) {
@@ -2726,6 +2728,38 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                       });
                     }
                   }
+
+                  // Sync topic name from OpenCode session title
+                  const childScope = subagentTopicService.getScopeForSession(childSessionId);
+                  if (childScope?.kind === "topic") {
+                    const sessionTitle = childSessionTitle.get(childSessionId);
+                    if (sessionTitle) {
+                      const derivedName = deriveSubagentTopicNameFromSessionTitle(sessionTitle);
+                      if (derivedName && derivedName !== childScope.topicName) {
+                        const currentScope = childScope;
+                        safeBackgroundTask({
+                          taskName: `child-topic-sync-name.${childSessionId}`,
+                          task: async () => {
+                            const botApi = getSessionRoutingApi(childSessionId);
+                            if (!botApi) return;
+                            try {
+                              await botApi.editForumTopic(
+                                currentScope.chatId,
+                                currentScope.messageThreadId,
+                                { name: derivedName },
+                              );
+                              currentScope.topicName = derivedName;
+                            } catch (error) {
+                              logger.warn("[Bot] Failed to sync subagent topic name", {
+                                childSessionId,
+                                error,
+                              });
+                            }
+                          },
+                        });
+                      }
+                    }
+                  }
                 })
                 .catch((error) => {
                   childDeliverySucceeded = false;
@@ -2799,6 +2833,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           taskName: `session.cache.${event.type}`,
           task: () => ingestSessionInfoForCache(info),
         });
+      }
+
+      if (info?.id && info.title) {
+        childSessionTitle.set(info.id, info.title);
       }
 
       if (

@@ -284,6 +284,8 @@ const childRoutingInProgress = new Map<string, Promise<boolean>>();
 const childSessionsAwaitingIdleCleanup = new Set<string>();
 const childTopicDeletionBlockedSessions = new Set<string>();
 const childTopicPromptSent = new Set<string>();
+const childReasoningBuffer = new Map<string, { messageId: string; text: string }>();
+const childProcessedToolIds = new Set<string>();
 
 interface ChildSessionMeta {
   agent: string;
@@ -326,6 +328,7 @@ function clearChildAssistantSession(sessionId: string): void {
   childTopicDeletionBlockedSessions.delete(sessionId);
   childTopicPromptSent.delete(sessionId);
   childSessionMeta.delete(sessionId);
+  childReasoningBuffer.delete(sessionId);
   managedChildSessionIds.delete(sessionId);
 }
 
@@ -2444,34 +2447,50 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
       if (
         part?.sessionID &&
+        part.messageID &&
         part.id &&
         part.type === "reasoning" &&
         typeof part.text === "string" &&
         isManagedChildSession(part.sessionID)
       ) {
         const sessionId = part.sessionID;
-        const partReasoningText = part.text;
+        const msgId = part.messageID;
+        childReasoningBuffer.set(sessionId, { messageId: msgId, text: part.text });
+      }
 
-        safeBackgroundTask({
-          taskName: `child-reasoning.${part.id}`,
-          task: async () => {
-            const target = getSessionDeliveryTarget(sessionId);
-            const botApi = getSessionRoutingApi(sessionId);
-            if (!botApi || !target) {
-              return;
-            }
+      if (
+        part?.sessionID &&
+        part.messageID &&
+        part.id &&
+        part.type === "text" &&
+        typeof part.text === "string" &&
+        isManagedChildSession(part.sessionID)
+      ) {
+        const bufKey = part.sessionID;
+        const buffered = childReasoningBuffer.get(bufKey);
+        if (buffered && buffered.messageId && buffered.text) {
+          const reasoningText = buffered.text;
+          childReasoningBuffer.delete(bufKey);
 
-            const formatted = formatReasoningBlock(partReasoningText);
-            await sendBotText({
-              api: botApi,
-              chatId: target.chatId,
-              text: formatted,
-              format: "html",
-              messageThreadId: target.messageThreadId,
-              deliveryTarget: target,
-            });
-          },
-        });
+          safeBackgroundTask({
+            taskName: `child-reasoning-flush.${bufKey}`,
+            task: async () => {
+              const target = getSessionDeliveryTarget(bufKey);
+              const botApi = getSessionRoutingApi(bufKey);
+              if (!botApi || !target) return;
+
+              const formatted = formatReasoningBlock(reasoningText);
+              await sendBotText({
+                api: botApi,
+                chatId: target.chatId,
+                text: formatted,
+                format: "html",
+                messageThreadId: target.messageThreadId,
+                deliveryTarget: target,
+              });
+            },
+          });
+        }
       }
 
       if (
@@ -2482,28 +2501,45 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       ) {
         const sessionId = part.sessionID;
         const partId = part.id;
+        const toolPart = part as {
+          tool?: string;
+          state?: { status?: string; input?: Record<string, unknown> };
+        };
+        const toolStatus = toolPart.state?.status;
 
-        safeBackgroundTask({
-          taskName: `child-tool.${partId}`,
-          task: async () => {
-            const target = getSessionDeliveryTarget(sessionId);
-            const botApi = getSessionRoutingApi(sessionId);
-            if (!botApi || !target) {
-              return;
-            }
+        if (toolStatus !== "completed" || childProcessedToolIds.has(partId)) {
+          // Skip: only send completed tools once
+        } else {
+          childProcessedToolIds.add(partId);
 
-            const toolLabel = (part as { tool?: string }).tool ?? "tool";
-            const toolTooltip = `⚙️ <b>${escapeHtml(toolLabel)}</b>`;
-            await sendBotText({
-              api: botApi,
-              chatId: target.chatId,
-              text: toolTooltip,
-              format: "html",
-              messageThreadId: target.messageThreadId,
-              deliveryTarget: target,
-            });
-          },
-        });
+          safeBackgroundTask({
+            taskName: `child-tool.${partId}`,
+            task: async () => {
+              const target = getSessionDeliveryTarget(sessionId);
+              const botApi = getSessionRoutingApi(sessionId);
+              if (!botApi || !target) {
+                return;
+              }
+
+              const toolLabel = toolPart.tool ?? "tool";
+              const toolInput = toolPart.state?.input;
+              let inputSummary = "";
+              if (toolInput) {
+                const inputStr = JSON.stringify(toolInput).slice(0, 200);
+                inputSummary = `\n<code>${escapeHtml(inputStr)}</code>`;
+              }
+
+              await sendBotText({
+                api: botApi,
+                chatId: target.chatId,
+                text: `⚙️ <b>${escapeHtml(toolLabel)}</b>${inputSummary}`,
+                format: "html",
+                messageThreadId: target.messageThreadId,
+                deliveryTarget: target,
+              });
+            },
+          });
+        }
       }
     }
 

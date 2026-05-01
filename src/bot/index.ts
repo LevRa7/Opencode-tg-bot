@@ -149,6 +149,7 @@ import {
   isMessageStreamingEnabled,
 } from "../settings/manager.js";
 import {
+  escapeHtml,
   formatReasoningForTelegramHtml,
   formatToolCallAsSpoiler,
   markdownToHtml,
@@ -278,8 +279,10 @@ const routingBySessionId = new Map<string, SessionRoutingContext>();
 export { routingBySessionId };
 const managedChildSessionIds = new Set<string>();
 const pendingChildRoutingSetupBySessionId = new Map<string, Promise<boolean>>();
+const childRoutingInProgress = new Map<string, Promise<boolean>>();
 const childSessionsAwaitingIdleCleanup = new Set<string>();
 const childTopicDeletionBlockedSessions = new Set<string>();
+const childTopicPromptSent = new Set<string>();
 interface ChildAssistantMessageState {
   orderedPartIds: string[];
   partTexts: Map<string, string>;
@@ -287,7 +290,10 @@ interface ChildAssistantMessageState {
   pendingDeletionTerminalStatus?: string;
 }
 
-const childAssistantMessagesBySessionId = new Map<string, Map<string, ChildAssistantMessageState>>();
+const childAssistantMessagesBySessionId = new Map<
+  string,
+  Map<string, ChildAssistantMessageState>
+>();
 
 function isManagedChildSession(sessionId: string): boolean {
   return managedChildSessionIds.has(sessionId);
@@ -298,6 +304,7 @@ function clearChildAssistantSession(sessionId: string): void {
   pendingChildRoutingSetupBySessionId.delete(sessionId);
   childSessionsAwaitingIdleCleanup.delete(sessionId);
   childTopicDeletionBlockedSessions.delete(sessionId);
+  childTopicPromptSent.delete(sessionId);
   managedChildSessionIds.delete(sessionId);
 }
 
@@ -308,7 +315,8 @@ function setChildAssistantTextPart(
   text: string,
 ): void {
   const messages =
-    childAssistantMessagesBySessionId.get(sessionId) ?? new Map<string, ChildAssistantMessageState>();
+    childAssistantMessagesBySessionId.get(sessionId) ??
+    new Map<string, ChildAssistantMessageState>();
   if (!childAssistantMessagesBySessionId.has(sessionId)) {
     childAssistantMessagesBySessionId.set(sessionId, messages);
   }
@@ -360,8 +368,9 @@ async function scheduleChildTopicDeletionAfterFinalDelivery(
     return;
   }
 
-  const autoDeleteMinutes = await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
-    getSubagentTopicAutoDeleteMinutes(),
+  const autoDeleteMinutes = await runWithTelegramConversationScope(
+    getSessionRoutingScope(sessionId),
+    () => getSubagentTopicAutoDeleteMinutes(),
   );
   subagentTopicService.markFinalResponseDelivered(sessionId, {
     terminalStatus,
@@ -527,6 +536,11 @@ function seedChildRoutingFromSubagent(options: {
   childSessionId: string;
   topicName: string;
 }): boolean {
+  const existingScope = subagentTopicService.getScopeForSession(options.childSessionId);
+  if (existingScope?.kind === "topic") {
+    return true;
+  }
+
   const parentTarget = getSessionRoutingTarget(options.parentSessionId);
   if (!parentTarget) {
     return false;
@@ -584,6 +598,7 @@ async function syncSubagentDeliveryContextForSession(options: {
   childSessionId: string;
   parentSessionId: string;
   topicName: string;
+  promptMessage?: string;
 }): Promise<boolean> {
   const parentPromptRouting = getPromptRoutingContext(options.parentSessionId);
   const parentRouting =
@@ -610,17 +625,23 @@ async function syncSubagentDeliveryContextForSession(options: {
     return false;
   }
 
-  const topicsEnabled = await runWithTelegramConversationScope(parentScope, () => getSubagentTopicsEnabled());
+  const topicsEnabled = await runWithTelegramConversationScope(parentScope, () =>
+    getSubagentTopicsEnabled(),
+  );
   if (!topicsEnabled) {
     return false;
   }
+
+  const isForum = parentPromptRouting?.isForumChat ?? isForumParentSession(options.parentSessionId);
+  const botHasTopicsInPrivate = activeBotInstance?.botInfo?.has_topics_enabled === true;
+  const effectiveIsForum = isForum || botHasTopicsInPrivate;
 
   const topicScope = await subagentTopicService.syncSubagent({
     childSessionId: options.childSessionId,
     topicName: options.topicName,
     parent: {
       chatId: parentTarget.chatId,
-      isForum: parentPromptRouting?.isForumChat ?? isForumParentSession(options.parentSessionId),
+      isForum: effectiveIsForum,
     },
   });
 
@@ -643,7 +664,56 @@ async function syncSubagentDeliveryContextForSession(options: {
 
   managedChildSessionIds.add(options.childSessionId);
 
+  if (options.promptMessage && !childTopicPromptSent.has(options.childSessionId)) {
+    childTopicPromptSent.add(options.childSessionId);
+
+    safeBackgroundTask({
+      taskName: `subagent-topic-initial-msg.${options.childSessionId}`,
+      task: async () => {
+        try {
+          await parentBot.api.sendMessage(
+            topicTarget.chatId,
+            options.promptMessage!,
+            {
+              message_thread_id: topicTarget.messageThreadId,
+              parse_mode: "HTML",
+              disable_notification: true,
+            },
+          );
+        } catch (error) {
+          logger.warn(
+            "[Bot] Failed to send initial subagent prompt message to topic",
+            { childSessionId: options.childSessionId, error },
+          );
+        }
+      },
+    });
+  }
+
   return true;
+}
+
+async function syncSubagentDeliverySerialized(options: {
+  childSessionId: string;
+  parentSessionId: string;
+  topicName: string;
+  promptMessage?: string;
+}): Promise<boolean> {
+  const existing = childRoutingInProgress.get(options.childSessionId);
+  if (existing) {
+    return existing;
+  }
+
+  const promise = syncSubagentDeliveryContextForSession(options).catch(() => false);
+  childRoutingInProgress.set(options.childSessionId, promise);
+
+  try {
+    return await promise;
+  } finally {
+    if (childRoutingInProgress.get(options.childSessionId) === promise) {
+      childRoutingInProgress.delete(options.childSessionId);
+    }
+  }
 }
 
 function buildThinkingRoutingIdentity(target: {
@@ -1399,6 +1469,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     pendingChildRoutingSetupBySessionId.clear();
     childSessionsAwaitingIdleCleanup.clear();
     childTopicDeletionBlockedSessions.clear();
+    childTopicPromptSent.clear();
     subagentTopicService.clearAll();
   });
 
@@ -1674,7 +1745,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     sessionId: string,
     options: SessionIdleHandlingOptions = {},
   ): Promise<void> {
-    const isDedicatedTopicSession = getSessionDeliveryTarget(sessionId)?.disableNotification === true;
+    const isDedicatedTopicSession =
+      getSessionDeliveryTarget(sessionId)?.disableNotification === true;
     logger.debug("[Bot] setOnSessionIdle called", { sessionId });
     if (
       isDedicatedTopicSession &&
@@ -1851,36 +1923,32 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
 
     try {
-      const unresolvedSubagents = [...subagents];
       for (const subagent of subagents) {
         if (!subagent.sessionId) {
           continue;
         }
 
-        const seededFallback = seedChildRoutingFromSubagent({
+        seedChildRoutingFromSubagent({
           parentSessionId: sessionId,
           childSessionId: subagent.sessionId,
           topicName: subagent.description || subagent.prompt || subagent.agent || "Subagent",
         });
 
-        const routingSetup = syncSubagentDeliveryContextForSession({
+        const promptText = subagent.prompt || subagent.description || "";
+        const promptMessage = promptText
+          ? `🧩 <b>${escapeHtml(subagent.agent || "Subagent")}</b>\n\n<code>${escapeHtml(promptText)}</code>`
+          : undefined;
+
+        const routingSetup = syncSubagentDeliverySerialized({
           childSessionId: subagent.sessionId,
           parentSessionId: sessionId,
           topicName: subagent.description || subagent.prompt || subagent.agent || "Subagent",
-        }).catch(() => false);
+          promptMessage,
+        });
         pendingChildRoutingSetupBySessionId.set(subagent.sessionId, routingSetup);
 
-        const synchronized = await routingSetup;
+        await routingSetup.catch(() => false);
         pendingChildRoutingSetupBySessionId.delete(subagent.sessionId);
-
-        if (seededFallback && !synchronized) {
-          continue;
-        }
-
-        const index = unresolvedSubagents.findIndex((item) => item.cardId === subagent.cardId);
-        if (index >= 0) {
-          unresolvedSubagents.splice(index, 1);
-        }
       }
 
       if (await getHideToolCallMessagesForSession(sessionId)) {
@@ -1888,7 +1956,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         return;
       }
 
-      const renderedCards = await renderSubagentCards(unresolvedSubagents);
+      const renderedCards = await renderSubagentCards(subagents);
       if (!renderedCards) {
         orderedPublication.resolve(null);
         return;
@@ -1971,13 +2039,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     questionManager.startQuestions(questions, requestID, scopeKey, sessionId);
     const deliveryTarget = getSessionDeliveryTarget(sessionId);
     await runWithSessionRoutingScope(sessionId, () =>
-      showCurrentQuestion(
-        botApi,
-        target.chatId,
-        target.messageThreadId,
-        undefined,
-        deliveryTarget,
-      ),
+      showCurrentQuestion(botApi, target.chatId, target.messageThreadId, undefined, deliveryTarget),
     );
   });
 
@@ -2125,7 +2187,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     syncSessionRoutingContext(sessionId);
     const routing = getPromptRoutingContext(sessionId) ?? getSessionRoutingContext(sessionId);
     const target = getSessionRoutingTarget(sessionId);
-    const hasDedicatedTopicTarget = getSessionDeliveryTarget(sessionId)?.disableNotification === true;
+    const hasDedicatedTopicTarget =
+      getSessionDeliveryTarget(sessionId)?.disableNotification === true;
     const hasLiveTarget = hasLiveSessionTarget(sessionId) || hasDedicatedTopicTarget;
     const shouldClearThinkingBlock = await runWithSessionRoutingScope(sessionId, async () =>
       getThinkingClearMode(),
@@ -2266,15 +2329,17 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   logger.info(`[Bot] Subscribing to OpenCode events for project: ${directory}`);
   subscribeToEvents(directory, (event) => {
     if (event.type === "message.part.updated") {
-      const part = (event.properties as {
-        part?: {
-          sessionID?: string;
-          messageID?: string;
-          id?: string;
-          type?: string;
-          text?: string;
-        };
-      }).part;
+      const part = (
+        event.properties as {
+          part?: {
+            sessionID?: string;
+            messageID?: string;
+            id?: string;
+            type?: string;
+            text?: string;
+          };
+        }
+      ).part;
       if (
         part?.sessionID &&
         part.messageID &&
@@ -2288,14 +2353,16 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
 
     if (event.type === "message.updated") {
-      const info = (event.properties as {
-        info?: {
-          id?: string;
-          sessionID?: string;
-          role?: string;
-          time?: { completed?: number };
-        };
-      }).info;
+      const info = (
+        event.properties as {
+          info?: {
+            id?: string;
+            sessionID?: string;
+            role?: string;
+            time?: { completed?: number };
+          };
+        }
+      ).info;
       if (
         info?.sessionID &&
         info.id &&
@@ -2309,9 +2376,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         const childCompletedAt = info.time.completed;
         void enqueueSessionCompletionTask(childSessionId, async () => {
           const pendingDeletionTerminalStatus =
-            childAssistantMessagesBySessionId
-              .get(childSessionId)
-              ?.get(childMessageId)?.pendingDeletionTerminalStatus ?? null;
+            childAssistantMessagesBySessionId.get(childSessionId)?.get(childMessageId)
+              ?.pendingDeletionTerminalStatus ?? null;
           const pendingRoutingSetup = pendingChildRoutingSetupBySessionId.get(childSessionId);
           if (pendingRoutingSetup) {
             await pendingRoutingSetup.catch(() => false);
@@ -2320,8 +2386,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           const childText = getCombinedChildAssistantText(childSessionId, childMessageId).trim();
           if (childText) {
             const botApi = getSessionRoutingApi(childSessionId);
-            const target = getSessionDeliveryTarget(childSessionId);
-            if (botApi && target) {
+            if (botApi) {
               const childFormat =
                 getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : ("raw" as const);
               let childDeliverySucceeded = false;
@@ -2331,6 +2396,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                 eventTimeMs: childCompletedAt,
                 logicalMessageId: childMessageId,
                 deliver: async () => {
+                  const target = getSessionDeliveryTarget(childSessionId);
+                  if (!target) {
+                    return;
+                  }
+
                   for (const part of renderChildAssistantFinalParts(childText, childFormat)) {
                     await sendBotText({
                       api: botApi,
@@ -2373,7 +2443,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                 subagentTopicService.clearSession(childSessionId);
                 clearSessionRoutingContext(childSessionId);
                 clearChildAssistantSession(childSessionId);
-                foregroundSessionState.markIdle(childSessionId, getBusyScopeForSession(childSessionId));
+                foregroundSessionState.markIdle(
+                  childSessionId,
+                  getBusyScopeForSession(childSessionId),
+                );
                 await scheduledTaskRuntime.flushDeferredDeliveries();
                 return;
               }
@@ -2426,7 +2499,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       if (
         typeof info?.id === "string" &&
         typeof info.parentID === "string" &&
-        info.parentID !== info.id
+        info.parentID !== info.id &&
+        !isManagedChildSession(info.id)
       ) {
         seedChildRoutingFromSubagent({
           parentSessionId: info.parentID,
@@ -2434,11 +2508,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           topicName: deriveSubagentTopicNameFromSessionTitle(info.title),
         });
 
-        const routingSetup = syncSubagentDeliveryContextForSession({
+        const routingSetup = syncSubagentDeliverySerialized({
           childSessionId: info.id,
           parentSessionId: info.parentID,
           topicName: deriveSubagentTopicNameFromSessionTitle(info.title),
-        }).catch(() => false);
+        });
         pendingChildRoutingSetupBySessionId.set(info.id, routingSetup);
         void routingSetup.finally(() => {
           if (pendingChildRoutingSetupBySessionId.get(info.id!) === routingSetup) {

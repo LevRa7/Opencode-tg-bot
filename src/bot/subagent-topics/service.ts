@@ -71,7 +71,7 @@ function createDefaultDeletionScheduler(): SubagentTopicScheduler {
 }
 
 function toDeletionDelayMs(autoDeleteMinutes: number | undefined): number | null {
-  if (typeof autoDeleteMinutes !== "number" || !Number.isFinite(autoDeleteMinutes) || autoDeleteMinutes <= 0) {
+  if (typeof autoDeleteMinutes !== "number" || !Number.isFinite(autoDeleteMinutes) || autoDeleteMinutes < 0) {
     return null;
   }
 
@@ -147,32 +147,71 @@ export class SubagentTopicService {
 
   markFinalResponseDelivered(sessionId: string, input: MarkFinalResponseDeliveredInput): void {
     if (!TERMINAL_STATUSES.has(input.terminalStatus)) {
+      logger.debug("[SubagentTopicService] markFinalResponseDelivered skipped: non-terminal status", {
+        sessionId,
+        terminalStatus: input.terminalStatus,
+      });
       return;
     }
 
     const entry = this.registry.get(sessionId);
-    if (!entry || entry.scope.kind !== "topic" || entry.deletionHandle) {
+    if (!entry) {
+      logger.debug("[SubagentTopicService] markFinalResponseDelivered skipped: no registry entry", {
+        sessionId,
+      });
+      return;
+    }
+
+    if (entry.scope.kind !== "topic") {
+      logger.debug("[SubagentTopicService] markFinalResponseDelivered skipped: not a topic scope", {
+        sessionId,
+        scopeKind: entry.scope.kind,
+      });
+      return;
+    }
+
+    if (entry.deletionHandle) {
+      logger.debug("[SubagentTopicService] markFinalResponseDelivered skipped: deletion already scheduled", {
+        sessionId,
+      });
       return;
     }
 
     const delayMs = toDeletionDelayMs(input.autoDeleteMinutes);
     if (delayMs === null) {
+      logger.debug("[SubagentTopicService] markFinalResponseDelivered skipped: null delay", {
+        sessionId,
+        autoDeleteMinutes: input.autoDeleteMinutes,
+      });
       return;
     }
+
+    logger.debug("[SubagentTopicService] Scheduling subagent topic deletion", {
+      sessionId,
+      chatId: entry.scope.chatId,
+      messageThreadId: "messageThreadId" in entry.scope ? entry.scope.messageThreadId : undefined,
+      delayMs,
+    });
 
     const topicScope = entry.scope;
     entry.deletionHandle = this.scheduleDeletion(async () => {
       try {
+        logger.debug("[SubagentTopicService] Deleting subagent topic", {
+          sessionId,
+          chatId: topicScope.chatId,
+          messageThreadId: "messageThreadId" in topicScope ? topicScope.messageThreadId : undefined,
+        });
         await this.deleteForumTopic({
           chatId: topicScope.chatId,
-          messageThreadId: topicScope.messageThreadId,
+          messageThreadId: (topicScope as SubagentTopicScope).messageThreadId,
         });
         this.registry.delete(sessionId);
+        logger.debug("[SubagentTopicService] Subagent topic deleted", { sessionId });
       } catch (error) {
         logger.error("[SubagentTopicService] Failed to delete scheduled subagent topic", {
           sessionId,
           chatId: topicScope.chatId,
-          messageThreadId: topicScope.messageThreadId,
+          messageThreadId: "messageThreadId" in topicScope ? topicScope.messageThreadId : undefined,
           error,
         });
         entry.deletionHandle = null;

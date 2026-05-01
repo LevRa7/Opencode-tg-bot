@@ -4,6 +4,7 @@ import {
   extractMessageThreadIdFromContext,
   extractThreadTargetFromContext,
   isForumMainThreadContext,
+  isTopicCapableChat,
   resolveReplyKeyboardActionThreadId,
   withTelegramDeliveryTarget,
   withMessageThreadId,
@@ -85,6 +86,45 @@ describe("bot/utils/message-thread", () => {
     });
     expect(withMessageThreadId({ disable_notification: true }, -3)).toEqual({
       disable_notification: true,
+    });
+  });
+
+  describe("isTopicCapableChat", () => {
+    it("returns true for forum supergroups", () => {
+      const ctx = {
+        chat: { id: -100123, type: "supergroup", is_forum: true },
+        message: { chat: { id: -100123, type: "supergroup", is_forum: true } },
+      } as unknown as Context;
+
+      expect(isTopicCapableChat(ctx)).toBe(true);
+    });
+
+    it("returns true for private chats when bot has topics enabled", () => {
+      const ctx = {
+        chat: { id: 12345, type: "private" },
+        message: { chat: { id: 12345, type: "private" } },
+      } as unknown as Context;
+
+      expect(isTopicCapableChat(ctx, { has_topics_enabled: true })).toBe(true);
+    });
+
+    it("returns false for private chats when bot does not have topics enabled", () => {
+      const ctx = {
+        chat: { id: 12345, type: "private" },
+        message: { chat: { id: 12345, type: "private" } },
+      } as unknown as Context;
+
+      expect(isTopicCapableChat(ctx)).toBe(false);
+      expect(isTopicCapableChat(ctx, { has_topics_enabled: false })).toBe(false);
+    });
+
+    it("returns false for regular groups without forum mode", () => {
+      const ctx = {
+        chat: { id: -100123, type: "group" },
+        message: { chat: { id: -100123, type: "group" } },
+      } as unknown as Context;
+
+      expect(isTopicCapableChat(ctx)).toBe(false);
     });
   });
 

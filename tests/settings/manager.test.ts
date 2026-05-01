@@ -598,21 +598,17 @@ describe("settings/manager scoped state", () => {
         enabled: getSubagentTopicsEnabled(),
         timeout: getSubagentTopicAutoDeleteMinutes(),
       })),
-    ).toEqual({ enabled: false, timeout: 10 });
+    ).toEqual({ enabled: true, timeout: 1 });
   });
 
   it("rejects invalid subagent topic auto-delete timeouts", () => {
     expect(() =>
-      runWithTelegramConversationScope(scopeA, () => setSubagentTopicAutoDeleteMinutes(0)),
-    ).toThrow("Subagent topic auto-delete timeout must be a positive integer");
-
-    expect(() =>
       runWithTelegramConversationScope(scopeA, () => setSubagentTopicAutoDeleteMinutes(-5)),
-    ).toThrow("Subagent topic auto-delete timeout must be a positive integer");
+    ).toThrow("Subagent topic auto-delete timeout must be a non-negative integer");
 
     expect(() =>
       runWithTelegramConversationScope(scopeA, () => setSubagentTopicAutoDeleteMinutes(1.5)),
-    ).toThrow("Subagent topic auto-delete timeout must be a positive integer");
+    ).toThrow("Subagent topic auto-delete timeout must be a non-negative integer");
   });
 
   it("keeps reasoning mode after scoped project and session are cleared", () => {

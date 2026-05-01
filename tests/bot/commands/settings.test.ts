@@ -9,7 +9,7 @@ const mocked = vi.hoisted(() => ({
   hideToolCallMessages: false,
   hideToolFileMessages: false,
   subagentTopicsEnabled: false,
-  subagentTopicAutoDeleteMinutes: 10,
+  subagentTopicAutoDeleteMinutes: 1,
   setUserLocaleMock: vi.fn(),
   setHideThinkingMessagesMock: vi.fn(),
   setHideToolCallMessagesMock: vi.fn(),
@@ -108,7 +108,7 @@ describe("bot/commands/settings", () => {
     mocked.hideToolCallMessages = false;
     mocked.hideToolFileMessages = false;
     mocked.subagentTopicsEnabled = false;
-    mocked.subagentTopicAutoDeleteMinutes = 10;
+    mocked.subagentTopicAutoDeleteMinutes = 1;
     mocked.setUserLocaleMock.mockClear();
     mocked.setHideThinkingMessagesMock.mockClear();
     mocked.setHideToolCallMessagesMock.mockClear();
@@ -139,7 +139,7 @@ describe("bot/commands/settings", () => {
     expect(rows[0]?.[0]?.text).toBe("🌐 🇬🇧 English");
     expect(rows[1]?.[0]?.text).toBe("✅ Thinking");
     expect(rows[4]?.[0]?.text).toBe("✅ Subagent topics");
-    expect(rows[5]?.[0]?.text).toBe("Subagent topic auto-delete: 10 min");
+    expect(rows[5]?.[0]?.text).toBe("Subagent topic auto-delete: 1 min");
     expect(rows[rows.length - 1]?.[0]?.text).toBe(t("settings.close"));
   });
 
@@ -284,12 +284,13 @@ describe("bot/commands/settings", () => {
     const rows = getInlineRows(options);
 
     expect(text).toBe(t("settings.subagent_topic_timeout.title"));
-    expect(rows.slice(0, 5).map((row) => row[0]?.callback_data)).toEqual([
+    expect(rows.slice(0, 6).map((row) => row[0]?.callback_data)).toEqual([
+      "settings:subagent_timeout:0",
+      "settings:subagent_timeout:1",
       "settings:subagent_timeout:5",
       "settings:subagent_timeout:10",
       "settings:subagent_timeout:15",
       "settings:subagent_timeout:30",
-      "settings:subagent_timeout:60",
     ]);
   });
 

@@ -1,5 +1,9 @@
 import type { Context } from "grammy";
 
+export interface BotTopicCapability {
+  has_topics_enabled?: boolean;
+}
+
 export interface TelegramThreadTarget {
   chatId: number;
   messageThreadId?: number;
@@ -61,6 +65,18 @@ export function isForumChat(ctx: Context): boolean {
   }
 
   return ctx.chat?.is_forum === true;
+}
+
+export function isTopicCapableChat(ctx: Context, botInfo?: BotTopicCapability): boolean {
+  if (isForumChat(ctx)) {
+    return true;
+  }
+
+  if (ctx.chat?.type === "private" && botInfo?.has_topics_enabled === true) {
+    return true;
+  }
+
+  return false;
 }
 
 export function extractMessageThreadIdFromContext(ctx: Context): number | undefined {

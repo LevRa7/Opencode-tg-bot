@@ -368,19 +368,19 @@ function isScopedUserSettingsEmpty(settings: ScopedUserSettings | undefined): bo
   );
 }
 
-const DEFAULT_SUBAGENT_TOPIC_AUTO_DELETE_MINUTES = 10;
+const DEFAULT_SUBAGENT_TOPIC_AUTO_DELETE_MINUTES = 1;
 
-function isPositiveInteger(value: number): boolean {
-  return Number.isInteger(value) && value > 0;
+function isNonNegativeInteger(value: number): boolean {
+  return Number.isInteger(value) && value >= 0;
 }
 
 function normalizeSubagentTopicAutoDeleteMinutes(value: unknown): number | undefined {
-  return typeof value === "number" && isPositiveInteger(value) ? value : undefined;
+  return typeof value === "number" && isNonNegativeInteger(value) ? value : undefined;
 }
 
 function assertSubagentTopicAutoDeleteMinutes(minutes: number): void {
-  if (!isPositiveInteger(minutes)) {
-    throw new Error("Subagent topic auto-delete timeout must be a positive integer");
+  if (!isNonNegativeInteger(minutes)) {
+    throw new Error("Subagent topic auto-delete timeout must be a non-negative integer");
   }
 }
 
@@ -621,7 +621,10 @@ export function setConversationCurrentProject(projectInfo: ProjectInfo): void {
   setCurrentProjectSelection(projectInfo, { persistAsUserDefault: false });
 }
 
-function setCurrentProjectSelection(projectInfo: ProjectInfo, options: DefaultSelectionOptions): void {
+function setCurrentProjectSelection(
+  projectInfo: ProjectInfo,
+  options: DefaultSelectionOptions,
+): void {
   if (isMainThreadGlobalDefaultScope()) {
     if (options.persistAsUserDefault) {
       setUserDefaultProject(projectInfo);
@@ -824,7 +827,7 @@ export function setHideToolFileMessages(enabled: boolean): void {
 }
 
 export function getSubagentTopicsEnabled(): boolean {
-  return getUserScopedSettings()?.subagentTopicsEnabled ?? false;
+  return getUserScopedSettings()?.subagentTopicsEnabled ?? true;
 }
 
 export function setSubagentTopicsEnabled(enabled: boolean): void {

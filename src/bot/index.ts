@@ -700,14 +700,27 @@ async function syncSubagentDeliveryContextForSession(options: {
 
           childTopicPinnedMessageId.set(options.childSessionId, sent.message_id);
 
+          logger.debug("[Bot] Pinning subagent topic", {
+            childSessionId: options.childSessionId,
+            chatId: topicTarget.chatId,
+            messageId: sent.message_id,
+            messageThreadId: topicTarget.messageThreadId,
+          });
+
           try {
             await parentBot.api.pinChatMessage(topicTarget.chatId, sent.message_id, {
               disable_notification: true,
             });
+            logger.debug("[Bot] Subagent topic pinned successfully", {
+              childSessionId: options.childSessionId,
+            });
           } catch (pinError) {
             logger.warn("[Bot] Failed to pin subagent topic message", {
               childSessionId: options.childSessionId,
-              error: pinError,
+              chatId: topicTarget.chatId,
+              messageId: sent.message_id,
+              messageThreadId: topicTarget.messageThreadId,
+              error: String(pinError),
             });
           }
         } catch (error) {
@@ -2512,9 +2525,15 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         isManagedChildSession(info.sessionID)
       ) {
         const startSessionId = info.sessionID;
+        const pendingRoutingSetup = pendingChildRoutingSetupBySessionId.get(startSessionId);
+        const routingReady = pendingRoutingSetup
+          ? pendingRoutingSetup.then(() => true).catch(() => false)
+          : Promise.resolve(true);
+
         safeBackgroundTask({
           taskName: `child-typing.${startSessionId}`,
           task: async () => {
+            if (!(await routingReady)) return;
             const target = getSessionDeliveryTarget(startSessionId);
             const botApi = getSessionRoutingApi(startSessionId);
             if (!botApi || !target) return;

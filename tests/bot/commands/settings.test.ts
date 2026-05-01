@@ -96,8 +96,11 @@ function startActiveSettingsMenu(messageId = 10): void {
 }
 
 function getInlineRows(options: unknown): Array<Array<{ text: string; callback_data?: string }>> {
-  return (options as { reply_markup: { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> } })
-    .reply_markup.inline_keyboard;
+  return (
+    options as {
+      reply_markup: { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> };
+    }
+  ).reply_markup.inline_keyboard;
 }
 
 describe("bot/commands/settings", () => {
@@ -123,7 +126,10 @@ describe("bot/commands/settings", () => {
     await settingsCommand(ctx as never);
 
     expect(ctx.reply).toHaveBeenCalledTimes(1);
-    const [text, options] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [string, unknown];
+    const [text, options] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      unknown,
+    ];
     const rows = getInlineRows(options);
 
     expect(text).toBe(t("settings.title"));
@@ -138,7 +144,7 @@ describe("bot/commands/settings", () => {
     ]);
     expect(rows[0]?.[0]?.text).toBe("🌐 🇬🇧 English");
     expect(rows[1]?.[0]?.text).toBe("✅ Thinking");
-    expect(rows[4]?.[0]?.text).toBe("✅ Subagent topics");
+    expect(rows[4]?.[0]?.text).toBe("X Subagent topics");
     expect(rows[5]?.[0]?.text).toBe("Subagent topic auto-delete: 1 min");
     expect(rows[rows.length - 1]?.[0]?.text).toBe(t("settings.close"));
   });
@@ -158,7 +164,10 @@ describe("bot/commands/settings", () => {
     const rows = getInlineRows(options);
 
     expect(text).toBe(t("settings.language.title"));
-    expect(rows[0]?.[0]).toMatchObject({ text: "🇬🇧 English", callback_data: "settings:language:en" });
+    expect(rows[0]?.[0]).toMatchObject({
+      text: "🇬🇧 English",
+      callback_data: "settings:language:en",
+    });
     expect(rows.some((row) => row[0]?.text === "🇷🇺 Русский")).toBe(true);
     expect(rows[rows.length - 1]?.[0]?.callback_data).toBe("inline:cancel:settings");
   });
@@ -267,7 +276,7 @@ describe("bot/commands/settings", () => {
       string,
       unknown,
     ];
-    expect(getInlineRows(options)[4]?.[0]?.text).toBe("X Subagent topics");
+    expect(getInlineRows(options)[4]?.[0]?.text).toBe("✅ Subagent topics");
   });
 
   it("edits to the subagent timeout submenu", async () => {
@@ -313,7 +322,9 @@ describe("bot/commands/settings", () => {
 
   it("returns false for unknown and non-settings callbacks", async () => {
     expect(await handleSettingsCallback(createCallbackContext("model:select:0"))).toBe(false);
-    expect(await handleSettingsCallback(createCallbackContext("inline:cancel:settings"))).toBe(false);
+    expect(await handleSettingsCallback(createCallbackContext("inline:cancel:settings"))).toBe(
+      false,
+    );
     expect(await handleSettingsCallback(createCallbackContext("settings:unknown"))).toBe(false);
   });
 

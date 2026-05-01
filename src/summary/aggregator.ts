@@ -461,8 +461,19 @@ class SummaryAggregator {
   }
 
   getActiveSubagents(parentSessionId: string): SubagentInfo[] {
-    return this.buildSubagentInfoList(parentSessionId)
-      .filter((state) => state.status !== "completed" && state.status !== "error");
+    return this.buildSubagentInfoList(parentSessionId).filter(
+      (state) => state.status !== "completed" && state.status !== "error",
+    );
+  }
+
+  clearSession(sessionId: string): void {
+    this.activeRootSessionIds.delete(sessionId);
+    this.trackedSessionParents.delete(sessionId);
+    this.subagentCardIdBySessionId.delete(sessionId);
+
+    if (this.currentSessionId === sessionId) {
+      this.currentSessionId = [...this.activeRootSessionIds].at(-1) ?? null;
+    }
   }
 
   clear(): void {
@@ -502,7 +513,10 @@ class SummaryAggregator {
   }
 
   private isTrackedRootSession(sessionId: string): boolean {
-    return this.trackedSessionParents.has(sessionId) && this.trackedSessionParents.get(sessionId) === null;
+    return (
+      this.trackedSessionParents.has(sessionId) &&
+      this.trackedSessionParents.get(sessionId) === null
+    );
   }
 
   private finishTrackedRootSession(sessionId: string): void {
@@ -1506,7 +1520,13 @@ class SummaryAggregator {
     }
 
     try {
-      const result = this.onPartialCallback(sessionId, messageId, messageText, reasoningText, toolCalls);
+      const result = this.onPartialCallback(
+        sessionId,
+        messageId,
+        messageText,
+        reasoningText,
+        toolCalls,
+      );
       if (result instanceof Promise) {
         result.catch((err) => {
           logger.error("[Aggregator] Error in partial callback:", err);
@@ -1985,7 +2005,10 @@ class SummaryAggregator {
   ): void {
     const request = event.properties;
 
-    if (!this.isTrackedRootSession(request.sessionID) && !this.isTrackedChildSession(request.sessionID)) {
+    if (
+      !this.isTrackedRootSession(request.sessionID) &&
+      !this.isTrackedChildSession(request.sessionID)
+    ) {
       logger.debug(
         `[Aggregator] Ignoring permission.asked for different session: ${request.sessionID} (current: ${this.currentSessionId})`,
       );

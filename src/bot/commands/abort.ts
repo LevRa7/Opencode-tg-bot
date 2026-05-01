@@ -1,14 +1,14 @@
 import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
-import { stopEventListening } from "../../opencode/events.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
-import { summaryAggregator } from "../../summary/aggregator.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
+import { attachManager } from "../../attach/manager.js";
 import { resolveScopedSessionFromContext } from "../runtime/scope-session-resolver.js";
 import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
+import { getCurrentTelegramConversationScopeKey } from "../../telegram/scope.js";
 
 type SessionState = "idle" | "busy" | "not-found";
 
@@ -72,15 +72,15 @@ export async function abortCurrentOperation(
         directory: resolved.session.directory,
         scope: resolved.scope,
       });
-    } else {
-      stopEventListening();
-      clearAllInteractionState("abort_command");
     }
-    summaryAggregator.clear();
 
     if (!resolved) {
+      clearAllInteractionState("abort_command", getCurrentTelegramConversationScopeKey());
       if (notifyUser) {
-        await ctx.reply(t("stop.no_active_session"), withMessageThreadId(undefined, messageThreadId));
+        await ctx.reply(
+          t("stop.no_active_session"),
+          withMessageThreadId(undefined, messageThreadId),
+        );
       }
       return;
     }
@@ -166,7 +166,10 @@ export async function abortCurrentOperation(
     }
   } catch (error) {
     logger.error("[Abort] Unexpected error:", error);
-    await ctx.reply(t("stop.error"), withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)));
+    await ctx.reply(
+      t("stop.error"),
+      withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
+    );
   }
 }
 

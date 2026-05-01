@@ -150,6 +150,7 @@ import {
 } from "../settings/manager.js";
 import {
   escapeHtml,
+  formatReasoningBlock,
   formatReasoningForTelegramHtml,
   formatToolCallAsSpoiler,
   markdownToHtml,
@@ -671,20 +672,16 @@ async function syncSubagentDeliveryContextForSession(options: {
       taskName: `subagent-topic-initial-msg.${options.childSessionId}`,
       task: async () => {
         try {
-          await parentBot.api.sendMessage(
-            topicTarget.chatId,
-            options.promptMessage!,
-            {
-              message_thread_id: topicTarget.messageThreadId,
-              parse_mode: "HTML",
-              disable_notification: true,
-            },
-          );
+          await parentBot.api.sendMessage(topicTarget.chatId, options.promptMessage!, {
+            message_thread_id: topicTarget.messageThreadId,
+            parse_mode: "HTML",
+            disable_notification: true,
+          });
         } catch (error) {
-          logger.warn(
-            "[Bot] Failed to send initial subagent prompt message to topic",
-            { childSessionId: options.childSessionId, error },
-          );
+          logger.warn("[Bot] Failed to send initial subagent prompt message to topic", {
+            childSessionId: options.childSessionId,
+            error,
+          });
         }
       },
     });
@@ -1735,7 +1732,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           assistantRunState.clearRun(sessionId, "assistant_finalize_failed");
           logger.error("Failed to send message to Telegram:", err);
           logger.error("[Bot] CRITICAL: Stopping event processing due to error");
-          summaryAggregator.clear();
+          summaryAggregator.clearSession(sessionId);
         }
       });
     },
@@ -2363,6 +2360,70 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         isManagedChildSession(part.sessionID)
       ) {
         setChildAssistantTextPart(part.sessionID, part.messageID, part.id, part.text);
+      }
+
+      if (
+        part?.sessionID &&
+        part.id &&
+        part.type === "reasoning" &&
+        typeof part.text === "string" &&
+        isManagedChildSession(part.sessionID)
+      ) {
+        const sessionId = part.sessionID;
+        const partReasoningText = part.text;
+
+        safeBackgroundTask({
+          taskName: `child-reasoning.${part.id}`,
+          task: async () => {
+            const target = getSessionDeliveryTarget(sessionId);
+            const botApi = getSessionRoutingApi(sessionId);
+            if (!botApi || !target) {
+              return;
+            }
+
+            const formatted = formatReasoningBlock(partReasoningText);
+            await sendBotText({
+              api: botApi,
+              chatId: target.chatId,
+              text: formatted,
+              format: "html",
+              messageThreadId: target.messageThreadId,
+              deliveryTarget: target,
+            });
+          },
+        });
+      }
+
+      if (
+        part?.sessionID &&
+        part.id &&
+        part.type === "tool" &&
+        isManagedChildSession(part.sessionID)
+      ) {
+        const sessionId = part.sessionID;
+        const partId = part.id;
+
+        safeBackgroundTask({
+          taskName: `child-tool.${partId}`,
+          task: async () => {
+            const target = getSessionDeliveryTarget(sessionId);
+            const botApi = getSessionRoutingApi(sessionId);
+            if (!botApi || !target) {
+              return;
+            }
+
+            const toolLabel = (part as { tool?: string }).tool ?? "tool";
+            const toolTooltip = `⚙️ <b>${escapeHtml(toolLabel)}</b>`;
+            await sendBotText({
+              api: botApi,
+              chatId: target.chatId,
+              text: toolTooltip,
+              format: "html",
+              messageThreadId: target.messageThreadId,
+              deliveryTarget: target,
+            });
+          },
+        });
       }
     }
 

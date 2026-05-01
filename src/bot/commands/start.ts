@@ -12,6 +12,7 @@ import { abortCurrentOperation } from "./abort.js";
 import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import { getCurrentTelegramConversationScope } from "../../telegram/scope.js";
 
 export async function startCommand(ctx: Context): Promise<void> {
   if (ctx.chat) {
@@ -22,7 +23,7 @@ export async function startCommand(ctx: Context): Promise<void> {
   }
 
   await abortCurrentOperation(ctx, { notifyUser: false });
-  foregroundSessionState.clearAll("start_command_reset");
+  foregroundSessionState.clearAll("start_command_reset", getCurrentTelegramConversationScope());
 
   clearSession();
   clearProject();

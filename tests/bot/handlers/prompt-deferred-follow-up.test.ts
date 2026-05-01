@@ -131,6 +131,7 @@ vi.mock("../../../src/pinned/manager.js", () => ({
 vi.mock("../../../src/summary/aggregator.js", () => ({
   summaryAggregator: {
     setSession: mocked.summarySetSessionMock,
+    clearSession: mocked.clearSessionMock,
     clear: mocked.summaryClearMock,
   },
 }));
@@ -227,7 +228,8 @@ vi.mock("../../../src/telegram/scope.js", () => ({
       return `${scope.userId}:${scope.chatId}:${scope.messageThreadId ?? 0}`;
     },
   ),
-  extractTelegramConversationScopeFromContext: mocked.extractTelegramConversationScopeFromContextMock,
+  extractTelegramConversationScopeFromContext:
+    mocked.extractTelegramConversationScopeFromContextMock,
   getCurrentTelegramConversationScope: mocked.getCurrentTelegramConversationScopeMock,
   resolveTelegramConversationScopeKey: mocked.resolveTelegramConversationScopeKeyMock,
   runWithTelegramConversationScope: mocked.runWithTelegramConversationScopeMock,
@@ -236,7 +238,10 @@ vi.mock("../../../src/telegram/scope.js", () => ({
 import { processUserPrompt, type ProcessPromptDeps } from "../../../src/bot/handlers/prompt.js";
 import { externalInputSuppression } from "../../../src/external-input/suppression.js";
 
-function createContext(messageThreadId?: number): { ctx: Context; replyMock: ReturnType<typeof vi.fn> } {
+function createContext(messageThreadId?: number): {
+  ctx: Context;
+  replyMock: ReturnType<typeof vi.fn>;
+} {
   const replyMock = vi.fn().mockResolvedValue({ message_id: 500 });
   const ctx = {
     chat: { id: 777 },
@@ -323,7 +328,11 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     mocked.attachManagerGetScopeForSessionMock.mockReset();
 
     mocked.getCurrentProjectMock.mockReturnValue({ id: "p1", worktree: "/repo", name: "Repo" });
-    mocked.getCurrentSessionMock.mockReturnValue({ id: "s1", title: "Session 1", directory: "/repo" });
+    mocked.getCurrentSessionMock.mockReturnValue({
+      id: "s1",
+      title: "Session 1",
+      directory: "/repo",
+    });
     mocked.getStoredAgentMock.mockReturnValue("builder");
     mocked.getStoredModelMock.mockReturnValue({
       providerID: "openai",
@@ -338,7 +347,9 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     }));
     mocked.extractTelegramConversationScopeFromContextMock.mockReturnValue(null);
     mocked.getCurrentTelegramConversationScopeMock.mockReturnValue(null);
-    mocked.resolveTelegramConversationScopeKeyMock.mockImplementation((scope?: string | null) => scope ?? "global");
+    mocked.resolveTelegramConversationScopeKeyMock.mockImplementation(
+      (scope?: string | null) => scope ?? "global",
+    );
     mocked.runWithTelegramConversationScopeMock.mockImplementation(async (_scope, task) => task());
     mocked.attachManagerGetScopeForSessionMock.mockReturnValue(null);
     mocked.isForumChatMock.mockReturnValue(false);
@@ -352,30 +363,38 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     mocked.threadGetActiveScopeMock.mockReturnValue(null);
     mocked.attachSessionForScopeMock.mockResolvedValue(undefined);
     mocked.tMock.mockImplementation((key: string) => key);
-    mocked.withMessageThreadIdMock.mockImplementation((value: unknown, messageThreadId?: number) => {
-      if (typeof messageThreadId !== "number" || messageThreadId <= 0) {
-        return value;
-      }
-
-      return {
-        ...(typeof value === "object" && value !== null ? value : {}),
-        message_thread_id: messageThreadId,
-      };
-    });
-    mocked.safeBackgroundTaskMock.mockImplementation(async ({ task, onSuccess, onError }: {
-      task: () => Promise<unknown>;
-      onSuccess: (result: unknown) => Promise<void>;
-      onError?: (error: unknown) => Promise<void>;
-    }) => {
-      try {
-        const result = await task();
-        await onSuccess(result);
-      } catch (error) {
-        if (onError) {
-          await onError(error);
+    mocked.withMessageThreadIdMock.mockImplementation(
+      (value: unknown, messageThreadId?: number) => {
+        if (typeof messageThreadId !== "number" || messageThreadId <= 0) {
+          return value;
         }
-      }
-    });
+
+        return {
+          ...(typeof value === "object" && value !== null ? value : {}),
+          message_thread_id: messageThreadId,
+        };
+      },
+    );
+    mocked.safeBackgroundTaskMock.mockImplementation(
+      async ({
+        task,
+        onSuccess,
+        onError,
+      }: {
+        task: () => Promise<unknown>;
+        onSuccess: (result: unknown) => Promise<void>;
+        onError?: (error: unknown) => Promise<void>;
+      }) => {
+        try {
+          const result = await task();
+          await onSuccess(result);
+        } catch (error) {
+          if (onError) {
+            await onError(error);
+          }
+        }
+      },
+    );
 
     externalInputSuppression.__resetForTests();
   });
@@ -384,13 +403,9 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     const { ctx, replyMock } = createContext();
     const deps = createDeps();
 
-    const dispatched = await processUserPrompt(
-      ctx,
-      "deferred follow-up",
-      deps,
-      [],
-      { suppressSendErrorMessage: true },
-    );
+    const dispatched = await processUserPrompt(ctx, "deferred follow-up", deps, [], {
+      suppressSendErrorMessage: true,
+    });
 
     expect(dispatched).toBe(false);
     expect(replyMock).toHaveBeenCalledWith("bot.session_busy");
@@ -485,8 +500,16 @@ describe("bot/handlers/prompt deferred follow-up", () => {
   });
 
   it("clears busy state for the actual mismatched session instead of using a broad reset", async () => {
-    mocked.getCurrentProjectMock.mockReturnValue({ id: "p2", worktree: "/other-repo", name: "Other Repo" });
-    mocked.getCurrentSessionMock.mockReturnValue({ id: "s1", title: "Session 1", directory: "/repo" });
+    mocked.getCurrentProjectMock.mockReturnValue({
+      id: "p2",
+      worktree: "/other-repo",
+      name: "Other Repo",
+    });
+    mocked.getCurrentSessionMock.mockReturnValue({
+      id: "s1",
+      title: "Session 1",
+      directory: "/repo",
+    });
     mocked.attachManagerGetScopeForSessionMock.mockReturnValue({
       userId: 10,
       chatId: 777,
@@ -628,12 +651,9 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     const { ctx } = createContext(42);
     const deps = createDeps();
 
-    const dispatched = await processUserPrompt(
-      ctx,
-      "",
-      deps,
-      [{ type: "file", filename: "report.txt", mime: "text/plain", url: "file:///tmp/report.txt" }],
-    );
+    const dispatched = await processUserPrompt(ctx, "", deps, [
+      { type: "file", filename: "report.txt", mime: "text/plain", url: "file:///tmp/report.txt" },
+    ]);
 
     expect(dispatched).toBe(true);
     expect(

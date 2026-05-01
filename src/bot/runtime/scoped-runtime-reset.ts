@@ -11,7 +11,10 @@ export function clearScopedSessionRuntime(
   reason: string,
   options?: { directory?: string; scope?: TelegramConversationScope },
 ): void {
-  stopEventListening(options?.directory);
+  summaryAggregator.clearSession(sessionId);
+  if (options?.directory) {
+    stopEventListening(options.directory);
+  }
   clearAllInteractionState(
     reason,
     options?.scope ? buildTelegramConversationScopeKey(options.scope) : undefined,
@@ -21,7 +24,10 @@ export function clearScopedSessionRuntime(
 export async function clearSessionTreeRuntime(
   rootSessionId: string,
   reason: string,
-  subagentTopicService: { clearSession(sessionId: string): void; markSubagentStopped(sessionId: string): void },
+  subagentTopicService: {
+    clearSession(sessionId: string): void;
+    markSubagentStopped(sessionId: string): void;
+  },
   options?: { directory?: string; scope?: TelegramConversationScope },
 ): Promise<void> {
   const tree = summaryAggregator.getSessionTree(rootSessionId);

@@ -20,8 +20,8 @@ vi.mock("../../../src/telegram/scope.js", async (importOriginal) => {
 });
 
 describe("bot/runtime/scoped-runtime-reset", () => {
-  let clearScopedSessionRuntime: typeof import("../../../src/bot/runtime/scoped-runtime-reset.js")["clearScopedSessionRuntime"];
-  let clearSessionTreeRuntime: typeof import("../../../src/bot/runtime/scoped-runtime-reset.js")["clearSessionTreeRuntime"];
+  let clearScopedSessionRuntime: (typeof import("../../../src/bot/runtime/scoped-runtime-reset.js"))["clearScopedSessionRuntime"];
+  let clearSessionTreeRuntime: (typeof import("../../../src/bot/runtime/scoped-runtime-reset.js"))["clearSessionTreeRuntime"];
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -32,11 +32,19 @@ describe("bot/runtime/scoped-runtime-reset", () => {
 
   describe("clearScopedSessionRuntime", () => {
     it("clears only the addressed session", () => {
-      clearScopedSessionRuntime("session-1", "test-reason");
+      clearScopedSessionRuntime("session-1", "test-reason", { directory: "/repo" });
 
       expect(stopEventListening).toHaveBeenCalledTimes(1);
+      expect(stopEventListening).toHaveBeenCalledWith("/repo");
       expect(clearAllInteractionState).toHaveBeenCalledTimes(1);
       expect(clearAllInteractionState).toHaveBeenCalledWith("test-reason", undefined);
+    });
+
+    it("skips stopEventListening when no directory provided", () => {
+      clearScopedSessionRuntime("session-1", "test-reason");
+
+      expect(stopEventListening).not.toHaveBeenCalled();
+      expect(clearAllInteractionState).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -49,9 +57,12 @@ describe("bot/runtime/scoped-runtime-reset", () => {
 
       const mockTopicService = { clearSession: vi.fn(), markSubagentStopped: vi.fn() };
 
-      await clearSessionTreeRuntime("root-1", "test-reason", mockTopicService);
+      await clearSessionTreeRuntime("root-1", "test-reason", mockTopicService, {
+        directory: "/repo",
+      });
 
       expect(stopEventListening).toHaveBeenCalledTimes(3);
+      expect(stopEventListening).toHaveBeenCalledWith("/repo");
       expect(clearAllInteractionState).toHaveBeenCalledTimes(3);
       expect(clearAllInteractionState).toHaveBeenNthCalledWith(1, "test-reason", undefined);
       expect(clearAllInteractionState).toHaveBeenNthCalledWith(2, "test-reason", undefined);
@@ -82,11 +93,14 @@ describe("bot/runtime/scoped-runtime-reset", () => {
 
       const mockTopicService = { clearSession: vi.fn(), markSubagentStopped: vi.fn() };
 
-      await clearSessionTreeRuntime("root-1", "test-reason", mockTopicService);
+      await clearSessionTreeRuntime("root-1", "test-reason", mockTopicService, {
+        directory: "/repo",
+      });
 
       expect(mockTopicService.markSubagentStopped).not.toHaveBeenCalled();
       expect(mockTopicService.clearSession).not.toHaveBeenCalled();
       expect(stopEventListening).toHaveBeenCalledTimes(1);
+      expect(stopEventListening).toHaveBeenCalledWith("/repo");
       expect(clearAllInteractionState).toHaveBeenCalledTimes(1);
     });
   });

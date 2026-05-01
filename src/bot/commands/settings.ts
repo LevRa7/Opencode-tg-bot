@@ -30,11 +30,7 @@ const SETTINGS_CALLBACK_SUBAGENT_TIMEOUT_PREFIX = `${SETTINGS_CALLBACK_SUBAGENT_
 const SETTINGS_CALLBACK_TOGGLE_PREFIX = `${SETTINGS_CALLBACK_PREFIX}toggle:`;
 const SUBAGENT_TOPIC_TIMEOUT_OPTIONS = [0, 1, 5, 10, 15, 30] as const;
 
-type ToggleSettingId =
-  | "hide_thinking"
-  | "hide_tool_calls"
-  | "hide_tool_files"
-  | "subagent_topics";
+type ToggleSettingId = "hide_thinking" | "hide_tool_calls" | "hide_tool_files" | "subagent_topics";
 
 interface SettingsRenderState {
   locale: Locale;
@@ -109,7 +105,7 @@ function buildSettingsRootKeyboard(state: SettingsRenderState): InlineKeyboard {
     .text(
       t(
         "settings.subagent_topics",
-        { state: formatToggleState(state.subagentTopicsEnabled, state.locale) },
+        { state: formatToggleState(!state.subagentTopicsEnabled, state.locale) },
         state.locale,
       ),
       `${SETTINGS_CALLBACK_TOGGLE_PREFIX}subagent_topics`,
@@ -265,8 +261,15 @@ export async function handleSettingsCallback(ctx: Context): Promise<boolean> {
     }
 
     if (data.startsWith(SETTINGS_CALLBACK_SUBAGENT_TIMEOUT_PREFIX)) {
-      const minutes = Number.parseInt(data.slice(SETTINGS_CALLBACK_SUBAGENT_TIMEOUT_PREFIX.length), 10);
-      if (!SUBAGENT_TOPIC_TIMEOUT_OPTIONS.includes(minutes as (typeof SUBAGENT_TOPIC_TIMEOUT_OPTIONS)[number])) {
+      const minutes = Number.parseInt(
+        data.slice(SETTINGS_CALLBACK_SUBAGENT_TIMEOUT_PREFIX.length),
+        10,
+      );
+      if (
+        !SUBAGENT_TOPIC_TIMEOUT_OPTIONS.includes(
+          minutes as (typeof SUBAGENT_TOPIC_TIMEOUT_OPTIONS)[number],
+        )
+      ) {
         return false;
       }
 

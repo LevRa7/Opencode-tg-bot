@@ -11,6 +11,7 @@ export interface SubagentTopicScope {
   childSessionId: string;
   chatId: number;
   messageThreadId: number;
+  topicName?: string;
 }
 
 export interface SubagentFallbackScope {
@@ -45,7 +46,10 @@ export type SubagentTopicScheduler = (
 ) => SubagentTopicDeletionHandle;
 
 export interface SubagentTopicServiceDependencies {
-  createForumTopic: (input: { chatId: number; name: string }) => Promise<{ messageThreadId: number }>;
+  createForumTopic: (input: {
+    chatId: number;
+    name: string;
+  }) => Promise<{ messageThreadId: number }>;
   deleteForumTopic: (input: { chatId: number; messageThreadId: number }) => Promise<void>;
   scheduleDeletion?: SubagentTopicScheduler;
 }
@@ -60,9 +64,12 @@ const TERMINAL_STATUSES = new Set(["completed", "failed", "aborted", "cancelled"
 
 function createDefaultDeletionScheduler(): SubagentTopicScheduler {
   return (run, delayMs) => {
-    const timeout = setTimeout(() => {
-      void run();
-    }, Math.max(0, delayMs));
+    const timeout = setTimeout(
+      () => {
+        void run();
+      },
+      Math.max(0, delayMs),
+    );
 
     return {
       cancel: () => clearTimeout(timeout),
@@ -71,7 +78,11 @@ function createDefaultDeletionScheduler(): SubagentTopicScheduler {
 }
 
 function toDeletionDelayMs(autoDeleteMinutes: number | undefined): number | null {
-  if (typeof autoDeleteMinutes !== "number" || !Number.isFinite(autoDeleteMinutes) || autoDeleteMinutes < 0) {
+  if (
+    typeof autoDeleteMinutes !== "number" ||
+    !Number.isFinite(autoDeleteMinutes) ||
+    autoDeleteMinutes < 0
+  ) {
     return null;
   }
 
@@ -123,6 +134,7 @@ export class SubagentTopicService {
       childSessionId: input.childSessionId,
       chatId: input.parent.chatId,
       messageThreadId: createdTopic.messageThreadId,
+      topicName: input.topicName,
     };
 
     this.registry.set(input.childSessionId, {
@@ -148,10 +160,13 @@ export class SubagentTopicService {
 
   markFinalResponseDelivered(sessionId: string, input: MarkFinalResponseDeliveredInput): void {
     if (!TERMINAL_STATUSES.has(input.terminalStatus)) {
-      logger.debug("[SubagentTopicService] markFinalResponseDelivered skipped: non-terminal status", {
-        sessionId,
-        terminalStatus: input.terminalStatus,
-      });
+      logger.debug(
+        "[SubagentTopicService] markFinalResponseDelivered skipped: non-terminal status",
+        {
+          sessionId,
+          terminalStatus: input.terminalStatus,
+        },
+      );
       return;
     }
 
@@ -172,9 +187,12 @@ export class SubagentTopicService {
     }
 
     if (entry.deletionHandle) {
-      logger.debug("[SubagentTopicService] markFinalResponseDelivered skipped: deletion already scheduled", {
-        sessionId,
-      });
+      logger.debug(
+        "[SubagentTopicService] markFinalResponseDelivered skipped: deletion already scheduled",
+        {
+          sessionId,
+        },
+      );
       return;
     }
 

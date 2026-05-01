@@ -284,6 +284,25 @@ const childRoutingInProgress = new Map<string, Promise<boolean>>();
 const childSessionsAwaitingIdleCleanup = new Set<string>();
 const childTopicDeletionBlockedSessions = new Set<string>();
 const childTopicPromptSent = new Set<string>();
+
+interface ChildSessionMeta {
+  agent: string;
+  providerID: string;
+  modelID: string;
+  startTime: number;
+  tokens: {
+    input: number;
+    output: number;
+    reasoning: number;
+    cacheRead: number;
+    cacheWrite: number;
+  };
+}
+
+const childSessionMeta = new Map<string, ChildSessionMeta>();
+const subagentTokensByParent = new Map<string, { input: number; output: number }>();
+const childTopicPinnedMessageId = new Map<string, number>();
+
 interface ChildAssistantMessageState {
   orderedPartIds: string[];
   partTexts: Map<string, string>;
@@ -306,6 +325,7 @@ function clearChildAssistantSession(sessionId: string): void {
   childSessionsAwaitingIdleCleanup.delete(sessionId);
   childTopicDeletionBlockedSessions.delete(sessionId);
   childTopicPromptSent.delete(sessionId);
+  childSessionMeta.delete(sessionId);
   managedChildSessionIds.delete(sessionId);
 }
 
@@ -672,11 +692,24 @@ async function syncSubagentDeliveryContextForSession(options: {
       taskName: `subagent-topic-initial-msg.${options.childSessionId}`,
       task: async () => {
         try {
-          await parentBot.api.sendMessage(topicTarget.chatId, options.promptMessage!, {
+          const sent = await parentBot.api.sendMessage(topicTarget.chatId, options.promptMessage!, {
             message_thread_id: topicTarget.messageThreadId,
             parse_mode: "HTML",
             disable_notification: true,
           });
+
+          childTopicPinnedMessageId.set(options.childSessionId, sent.message_id);
+
+          try {
+            await parentBot.api.pinChatMessage(topicTarget.chatId, sent.message_id, {
+              disable_notification: true,
+            });
+          } catch (pinError) {
+            logger.warn("[Bot] Failed to pin subagent topic message", {
+              childSessionId: options.childSessionId,
+              error: pinError,
+            });
+          }
         } catch (error) {
           logger.warn("[Bot] Failed to send initial subagent prompt message to topic", {
             childSessionId: options.childSessionId,
@@ -1813,6 +1846,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                   providerID,
                   modelID,
                   elapsedMs: (completedRun.completedAt ?? Date.now()) - completedRun.startedAt,
+                  inputTokens: subagentTokensByParent.get(sessionId)?.input,
+                  outputTokens: subagentTokensByParent.get(sessionId)?.output,
                 }),
                 withMessageThreadId(
                   {
@@ -1925,10 +1960,42 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           continue;
         }
 
+        const childId = subagent.sessionId;
+
         seedChildRoutingFromSubagent({
           parentSessionId: sessionId,
-          childSessionId: subagent.sessionId,
+          childSessionId: childId,
           topicName: subagent.description || subagent.prompt || subagent.agent || "Subagent",
+        });
+
+        if (!childSessionMeta.has(childId)) {
+          childSessionMeta.set(childId, {
+            agent: subagent.agent || "subagent",
+            providerID: subagent.providerID || "",
+            modelID: subagent.modelID || "",
+            startTime: eventTimeMs ?? Date.now(),
+            tokens: {
+              input: subagent.tokens?.input ?? 0,
+              output: subagent.tokens?.output ?? 0,
+              reasoning: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+            },
+          });
+        } else {
+          const meta = childSessionMeta.get(childId)!;
+          if (subagent.providerID) meta.providerID = subagent.providerID;
+          if (subagent.modelID) meta.modelID = subagent.modelID;
+          meta.tokens.input = Math.max(meta.tokens.input, subagent.tokens?.input ?? 0);
+          meta.tokens.output = Math.max(meta.tokens.output, subagent.tokens?.output ?? 0);
+        }
+        subagentTokensByParent.set(sessionId, {
+          input: [...childSessionMeta.values()]
+            .filter((m) => m.tokens.input > 0 || m.tokens.output > 0)
+            .reduce((sum, m) => sum + m.tokens.input, 0),
+          output: [...childSessionMeta.values()]
+            .filter((m) => m.tokens.input > 0 || m.tokens.output > 0)
+            .reduce((sum, m) => sum + m.tokens.output, 0),
         });
 
         const promptText = subagent.prompt || subagent.description || "";
@@ -2459,6 +2526,15 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           }
 
           const childText = getCombinedChildAssistantText(childSessionId, childMessageId).trim();
+          const msgInfo = info as { tokens?: { input?: number; output?: number } };
+          if (msgInfo.tokens) {
+            const meta = childSessionMeta.get(childSessionId);
+            if (meta) {
+              meta.tokens.input = Math.max(meta.tokens.input, msgInfo.tokens.input ?? 0);
+              meta.tokens.output = Math.max(meta.tokens.output, msgInfo.tokens.output ?? 0);
+            }
+          }
+
           if (childText) {
             const botApi = getSessionRoutingApi(childSessionId);
             if (botApi) {
@@ -2474,6 +2550,14 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                   const target = getSessionDeliveryTarget(childSessionId);
                   if (!target) {
                     return;
+                  }
+
+                  try {
+                    await botApi.sendChatAction(target.chatId, "typing", {
+                      message_thread_id: target.messageThreadId,
+                    });
+                  } catch {
+                    // Typing is best-effort
                   }
 
                   for (const part of renderChildAssistantFinalParts(childText, childFormat)) {
@@ -2493,9 +2577,56 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
               await finalAssistantDeliveryOrchestrator.flushSession(childSessionId);
               await finalChildDelivery
-                .then(() => {
+                .then(async () => {
                   childDeliverySucceeded = true;
                   childTopicDeletionBlockedSessions.delete(childSessionId);
+
+                  // Unpin topic on completion
+                  const pinnedId = childTopicPinnedMessageId.get(childSessionId);
+                  if (pinnedId) {
+                    safeBackgroundTask({
+                      taskName: `child-unpin.${childSessionId}`,
+                      task: async () => {
+                        const botApi = getSessionRoutingApi(childSessionId);
+                        const target = getSessionDeliveryTarget(childSessionId);
+                        if (botApi && target) {
+                          try {
+                            await botApi.unpinChatMessage(target.chatId, pinnedId);
+                            childTopicPinnedMessageId.delete(childSessionId);
+                          } catch (error) {
+                            logger.warn("[Bot] Failed to unpin subagent topic", {
+                              childSessionId,
+                              error,
+                            });
+                          }
+                        }
+                      },
+                    });
+                  }
+
+                  const meta = childSessionMeta.get(childSessionId);
+                  if (meta) {
+                    const botApi = getSessionRoutingApi(childSessionId);
+                    const target = getSessionDeliveryTarget(childSessionId);
+                    if (botApi && target) {
+                      const elapsedMs = Date.now() - meta.startTime;
+                      await sendBotText({
+                        api: botApi,
+                        chatId: target.chatId,
+                        text: `${formatAssistantRunFooter({
+                          agent: meta.agent,
+                          providerID: meta.providerID,
+                          modelID: meta.modelID,
+                          elapsedMs,
+                          inputTokens: meta.tokens.input,
+                          outputTokens: meta.tokens.output,
+                        })}\n📥 ${meta.tokens.input} · 📤 ${meta.tokens.output}`,
+                        format: "html",
+                        messageThreadId: target.messageThreadId,
+                        deliveryTarget: target,
+                      });
+                    }
+                  }
                 })
                 .catch((error) => {
                   childDeliverySucceeded = false;
@@ -2574,26 +2705,58 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       if (
         typeof info?.id === "string" &&
         typeof info.parentID === "string" &&
-        info.parentID !== info.id &&
-        !isManagedChildSession(info.id)
+        info.parentID !== info.id
       ) {
-        seedChildRoutingFromSubagent({
-          parentSessionId: info.parentID,
-          childSessionId: info.id,
-          topicName: deriveSubagentTopicNameFromSessionTitle(info.title),
-        });
+        const topicName = deriveSubagentTopicNameFromSessionTitle(info.title);
+        const childScope = subagentTopicService.getScopeForSession(info.id);
 
-        const routingSetup = syncSubagentDeliverySerialized({
-          childSessionId: info.id,
-          parentSessionId: info.parentID,
-          topicName: deriveSubagentTopicNameFromSessionTitle(info.title),
-        });
-        pendingChildRoutingSetupBySessionId.set(info.id, routingSetup);
-        void routingSetup.finally(() => {
-          if (pendingChildRoutingSetupBySessionId.get(info.id!) === routingSetup) {
-            pendingChildRoutingSetupBySessionId.delete(info.id!);
+        if (childScope?.kind === "topic" && topicName && info.id) {
+          const existingTopicName = childScope.topicName;
+          if (existingTopicName && existingTopicName !== topicName) {
+            const currentScope = childScope;
+            const childId = info.id;
+
+            safeBackgroundTask({
+              taskName: `child-topic-rename.${childId}`,
+              task: async () => {
+                const botApi = getSessionRoutingApi(childId);
+                if (!botApi) return;
+                try {
+                  await botApi.editForumTopic(currentScope.chatId, currentScope.messageThreadId, {
+                    name: topicName,
+                  });
+                  currentScope.topicName = topicName;
+                } catch (error) {
+                  logger.warn("[Bot] Failed to sync subagent topic name", {
+                    childSessionId: childId,
+                    error,
+                  });
+                }
+              },
+            });
           }
-        });
+          return;
+        }
+
+        if (!isManagedChildSession(info.id)) {
+          seedChildRoutingFromSubagent({
+            parentSessionId: info.parentID,
+            childSessionId: info.id,
+            topicName,
+          });
+
+          const routingSetup = syncSubagentDeliverySerialized({
+            childSessionId: info.id,
+            parentSessionId: info.parentID,
+            topicName,
+          });
+          pendingChildRoutingSetupBySessionId.set(info.id, routingSetup);
+          void routingSetup.finally(() => {
+            if (pendingChildRoutingSetupBySessionId.get(info.id!) === routingSetup) {
+              pendingChildRoutingSetupBySessionId.delete(info.id!);
+            }
+          });
+        }
       }
     }
 

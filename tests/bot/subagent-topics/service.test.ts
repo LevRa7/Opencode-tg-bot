@@ -63,6 +63,7 @@ describe("bot/subagent-topics/service", () => {
       childSessionId: "child-1",
       chatId: -100123,
       messageThreadId: 321,
+      topicName: "Research helper",
     });
     expect(service.getScopeForSession("child-1")).toEqual(scope);
     expect(service.getTargetForSession("child-1")).toEqual({
@@ -150,7 +151,10 @@ describe("bot/subagent-topics/service", () => {
 
   it("clears the deletion handle after a scheduled delete failure so cleanup can be retried", async () => {
     const createForumTopic = vi.fn().mockResolvedValue({ messageThreadId: 888 });
-    const deleteForumTopic = vi.fn().mockRejectedValueOnce(new Error("telegram delete failed")).mockResolvedValueOnce(undefined);
+    const deleteForumTopic = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("telegram delete failed"))
+      .mockResolvedValueOnce(undefined);
     const scheduler = createSchedulerSpy();
     const service = new SubagentTopicService({
       createForumTopic,
@@ -179,6 +183,7 @@ describe("bot/subagent-topics/service", () => {
       childSessionId: "child-4",
       chatId: -100123,
       messageThreadId: 888,
+      topicName: "Retry helper",
     });
     expect(service.getTargetForSession("child-4")).toEqual({
       chatId: -100123,

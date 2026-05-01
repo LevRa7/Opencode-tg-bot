@@ -9,6 +9,7 @@ import { attachManager } from "../../attach/manager.js";
 import { resolveScopedSessionFromContext } from "../runtime/scope-session-resolver.js";
 import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { getCurrentTelegramConversationScopeKey } from "../../telegram/scope.js";
+import { assistantRunState } from "../assistant-run-state.js";
 
 type SessionState = "idle" | "busy" | "not-found";
 
@@ -141,7 +142,7 @@ export async function abortCurrentOperation(
 
       if (finalStatus === "idle" || finalStatus === "not-found") {
         foregroundSessionState.markIdle(currentSession.id, currentScope);
-        // Root-tree abort expansion is handled in the post-merge integration slice.
+        assistantRunState.clearRun(currentSession.id, "abort_command");
         if (notifyUser && chatId !== null && waitingMessageId !== null) {
           await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.success"));
         }

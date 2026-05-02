@@ -1,4 +1,3 @@
-import { stopEventListening } from "../../opencode/events.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
 import {
   buildTelegramConversationScopeKey,
@@ -9,27 +8,24 @@ import { summaryAggregator } from "../../summary/aggregator.js";
 export function clearScopedSessionRuntime(
   sessionId: string,
   reason: string,
-  options?: { directory?: string; scope?: TelegramConversationScope },
+  options?: { scope?: TelegramConversationScope },
 ): void {
   summaryAggregator.clearSession(sessionId);
-  if (options?.directory) {
-    stopEventListening(options.directory);
-  }
   clearAllInteractionState(
     reason,
     options?.scope ? buildTelegramConversationScopeKey(options.scope) : undefined,
   );
 }
 
-export async function clearSessionTreeRuntime(
+export function clearSessionTreeRuntime(
   rootSessionId: string,
   reason: string,
   subagentTopicService: {
     clearSession(sessionId: string): void;
     markSubagentStopped(sessionId: string): void;
   },
-  options?: { directory?: string; scope?: TelegramConversationScope },
-): Promise<void> {
+  options?: { scope?: TelegramConversationScope },
+): void {
   const tree = summaryAggregator.getSessionTree(rootSessionId);
 
   for (const childSessionId of tree.childSessionIds) {

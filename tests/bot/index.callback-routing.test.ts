@@ -519,6 +519,10 @@ vi.mock("../../src/settings/manager.js", () => ({
   getTenantRuntimeInfo: vi.fn(() => undefined),
   getThinkingClearMode: vi.fn(() => false),
   isMessageStreamingEnabled: vi.fn(() => true),
+  getCurrentSession: vi.fn(() => ({ id: "session-a", title: "Test", directory: "/repo" })),
+  setCurrentSession: vi.fn(),
+  clearSession: vi.fn(),
+  getCurrentProject: vi.fn(() => ({ id: "project-1", worktree: "/repo" })),
 }));
 vi.mock("../../src/bot/utils/reasoning-format.js", () => ({
   formatReasoningForTelegramHtml: vi.fn(() => []),
@@ -803,8 +807,13 @@ describe("bot/index callback routing", () => {
     expect(questionManager.startQuestions).toHaveBeenCalledWith(
       expect.any(Array),
       "req-1",
-      "scope",
-      "session-a",
+      expect.objectContaining({
+        scopeKey: "scope",
+        sessionId: "session-a",
+        runtimeContext: expect.objectContaining({
+          directory: "/repo",
+        }),
+      }),
     );
   });
 });

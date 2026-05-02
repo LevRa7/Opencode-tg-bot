@@ -347,6 +347,7 @@ export const ru: I18nDictionary = {
   "question.answer_already_received": "Ответ уже получен, подождите...",
   "question.completed_no_answers": "✅ Опрос завершен (без ответов)",
   "question.no_active_project": "❌ Нет активного проекта",
+  "question.no_active_question_runtime": "❌ Нет сохраненного runtime-контекста вопроса",
   "question.no_active_request": "❌ Нет активного запроса",
   "question.send_answers_error": "❌ Не удалось отправить ответы агенту",
   "question.multi_hint": "\n(Можно выбрать несколько вариантов)",

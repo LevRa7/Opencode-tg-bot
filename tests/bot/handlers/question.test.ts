@@ -1,5 +1,55 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
+
+const mocked = vi.hoisted(() => ({
+  questionReplyMock: vi.fn(),
+  currentProject: {
+    id: "project-1",
+    worktree: "D:/repo",
+  } as { id: string; worktree: string } | undefined,
+  currentSession: null as { id: string; title: string; directory: string } | null,
+}));
+
+vi.mock("../../../src/opencode/client.js", () => ({
+  opencodeClient: {
+    question: {
+      reply: mocked.questionReplyMock,
+    },
+  },
+}));
+
+vi.mock("../../../src/settings/manager.js", () => ({
+  getCurrentProject: vi.fn(() => mocked.currentProject),
+}));
+
+vi.mock("../../../src/session/manager.js", () => ({
+  getCurrentSession: vi.fn(() => mocked.currentSession),
+}));
+
+vi.mock("../../../src/utils/safe-background-task.js", () => ({
+  safeBackgroundTask: ({
+    task,
+    onSuccess,
+    onError,
+  }: {
+    task: () => Promise<unknown>;
+    onSuccess?: (value: unknown) => void | Promise<void>;
+    onError?: (error: unknown) => void | Promise<void>;
+  }) => {
+    void task()
+      .then((result) => {
+        if (onSuccess) {
+          void onSuccess(result);
+        }
+      })
+      .catch((error) => {
+        if (onError) {
+          void onError(error);
+        }
+      });
+  },
+}));
+
 import { questionManager } from "../../../src/question/manager.js";
 import { interactionManager } from "../../../src/interaction/manager.js";
 import {
@@ -9,6 +59,7 @@ import {
 } from "../../../src/bot/handlers/question.js";
 import type { Question } from "../../../src/question/types.js";
 import { t } from "../../../src/i18n/index.js";
+import { buildTelegramConversationScopeKey } from "../../../src/telegram/scope.js";
 
 const QUESTION_ONE: Question = {
   header: "Q1",
@@ -85,10 +136,41 @@ function createTextContext(text: string, api: Context["api"]): Context {
   } as unknown as Context;
 }
 
+function createScopedTextContext(
+  text: string,
+  api: Context["api"],
+  userId: number,
+  chatId: number,
+  messageThreadId: number,
+): Context {
+  return {
+    from: { id: userId },
+    chat: { id: chatId, is_forum: true },
+    message: {
+      text,
+      message_thread_id: messageThreadId,
+    } as Context["message"],
+    api,
+    reply: vi.fn().mockResolvedValue(undefined),
+  } as unknown as Context;
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe("bot/handlers/question", () => {
   beforeEach(() => {
     questionManager.clear();
     interactionManager.clear("test_setup");
+    mocked.questionReplyMock.mockReset();
+    mocked.questionReplyMock.mockResolvedValue({ error: null });
+    mocked.currentProject = {
+      id: "project-1",
+      worktree: "D:/repo",
+    };
+    mocked.currentSession = null;
   });
 
   it("starts question interaction in callback mode when showing question", async () => {
@@ -221,5 +303,111 @@ describe("bot/handlers/question", () => {
         reply_markup: expect.anything(),
       }),
     );
+  });
+
+  it("replies with the stored session directory instead of ambient runtime state", async () => {
+    const api = createApi([700]);
+
+    questionManager.startQuestions(
+      [SINGLE_OPTION_QUESTION],
+      "req-8",
+      {
+        sessionId: "session-stored",
+        runtimeContext: {
+          directory: "D:/explicit-runtime",
+        },
+      },
+    );
+    await showCurrentQuestion(api, 123);
+
+    mocked.currentSession = {
+      id: "session-ambient",
+      title: "Ambient session",
+      directory: "D:/ambient-session",
+    };
+    mocked.currentProject = {
+      id: "project-ambient",
+      worktree: "D:/ambient-project",
+    };
+
+    const textCtx = createTextContext("95001", api);
+    await handleQuestionTextAnswer(textCtx);
+    await flushMicrotasks();
+
+    expect(mocked.questionReplyMock).toHaveBeenCalledWith({
+      requestID: "req-8",
+      directory: "D:/explicit-runtime",
+      answers: [["95001"]],
+    });
+  });
+
+  it("reports missing stored runtime directory when question runtime context is absent", async () => {
+    const api = createApi([800, 801]);
+    const scopeKey = buildTelegramConversationScopeKey({
+      userId: 1,
+      chatId: 123,
+      messageThreadId: 10,
+    });
+
+    questionManager.startQuestions([SINGLE_OPTION_QUESTION], "req-9", {
+      scopeKey,
+    });
+    await showCurrentQuestion(api, 123, 10, scopeKey);
+
+    const textCtx = createScopedTextContext("95001", api, 1, 123, 10);
+    await handleQuestionTextAnswer(textCtx);
+
+    expect(api.sendMessage).toHaveBeenCalledWith(
+      123,
+      t("question.no_active_question_runtime"),
+      expect.objectContaining({ message_thread_id: 10 }),
+    );
+    expect(mocked.questionReplyMock).not.toHaveBeenCalled();
+  });
+
+  it("uses stored runtime context after restoring question state into a new scope", async () => {
+    const api = createApi([900]);
+    const sourceScopeKey = buildTelegramConversationScopeKey({
+      userId: 1,
+      chatId: 123,
+      messageThreadId: 10,
+    });
+    const targetScopeKey = buildTelegramConversationScopeKey({
+      userId: 1,
+      chatId: 123,
+      messageThreadId: 20,
+    });
+
+    questionManager.startQuestions([SINGLE_OPTION_QUESTION], "req-10", {
+      scopeKey: sourceScopeKey,
+      sessionId: "session-restored",
+      runtimeContext: {
+        directory: "D:/restored-runtime",
+      },
+    });
+
+    expect(questionManager.restoreSessionToScope("session-restored", targetScopeKey)).toBe(true);
+
+    await showCurrentQuestion(api, 123, undefined, targetScopeKey);
+
+    mocked.currentSession = {
+      id: "session-ambient",
+      title: "Ambient session",
+      directory: "D:/ambient-session",
+    };
+    mocked.currentProject = {
+      id: "project-ambient",
+      worktree: "D:/ambient-project",
+    };
+
+    const textCtx = createScopedTextContext("95001", api, 1, 123, 20);
+    await handleQuestionTextAnswer(textCtx);
+    await flushMicrotasks();
+
+    expect(mocked.questionReplyMock).toHaveBeenCalledWith({
+      requestID: "req-10",
+      directory: "D:/restored-runtime",
+      answers: [["95001"]],
+    });
   });
 });

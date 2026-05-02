@@ -111,7 +111,7 @@ import {
   streamThinkingBlocks,
 } from "./utils/thinking-block-stream.js";
 import { formatAssistantRunFooter } from "./utils/assistant-run-footer.js";
-import { sendBotText } from "./utils/telegram-text.js";
+import { sendBotText, sendStreamedBotText } from "./utils/telegram-text.js";
 import {
   createLocalFileFollowUpTracker,
   extractLocalFilePaths,
@@ -124,18 +124,15 @@ import { scheduledTaskRuntime } from "../scheduled-task/runtime.js";
 import { ResponseStreamer } from "./streaming/response-streamer.js";
 import { ToolCallStreamer } from "./streaming/tool-call-streamer.js";
 import { SessionDeliveryOrchestrator } from "./delivery/session-delivery-orchestrator.js";
-import {
-  editMessageWithMarkdownFallback,
-  sendMessageWithMarkdownFallback,
-} from "./utils/send-with-markdown-fallback.js";
 import { threadContextManager } from "../thread/manager.js";
 import {
   withMessageThreadId,
-  withTelegramDeliveryTarget,
   type TelegramDeliveryTarget,
 } from "./utils/message-thread.js";
 import { SubagentTopicService } from "./subagent-topics/service.js";
+import { deliverChildTopicMessage } from "./subagent-topics/child-delivery.js";
 import {
+  getCurrentProject,
   getApprovedTelegramUserIds,
   getHideThinkingMessages,
   getHideToolCallMessages,
@@ -148,7 +145,6 @@ import {
   getUserLocale,
   isMessageStreamingEnabled,
 } from "../settings/manager.js";
-import { chunkTelegramHtml } from "./utils/telegram-html-chunker.js";
 import {
   escapeHtml,
   formatReasoningBlock,
@@ -205,17 +201,13 @@ const finalAssistantDeliveryOrchestrator = new SessionDeliveryOrchestrator({
     );
   },
 });
-function requireActiveBot(): NonNullable<typeof activeBotInstance> {
-  if (!activeBotInstance) {
-    throw new Error("Bot not initialized");
-  }
-  return activeBotInstance;
-}
-
 const subagentTopicService = new SubagentTopicService({
   createForumTopic: async ({ chatId, name }) => {
-    const bot = requireActiveBot();
-    const result = await bot.api.createForumTopic(chatId, name);
+    if (!activeBotInstance) {
+      throw new Error("Bot not initialized for subagent topic creation");
+    }
+
+    const result = await activeBotInstance.api.createForumTopic(chatId, name);
     return {
       messageThreadId:
         (result as { message_thread_id?: number; messageThreadId?: number }).message_thread_id ??
@@ -224,13 +216,11 @@ const subagentTopicService = new SubagentTopicService({
     };
   },
   deleteForumTopic: async ({ chatId, messageThreadId }) => {
-    await requireActiveBot().api.deleteForumTopic(chatId, messageThreadId);
-  },
-  reopenForumTopic: async ({ chatId, messageThreadId }) => {
-    await requireActiveBot().api.reopenForumTopic(chatId, messageThreadId);
-  },
-  closeForumTopic: async ({ chatId, messageThreadId }) => {
-    await requireActiveBot().api.closeForumTopic(chatId, messageThreadId);
+    if (!activeBotInstance) {
+      throw new Error("Bot not initialized for subagent topic deletion");
+    }
+
+    await activeBotInstance.api.deleteForumTopic(chatId, messageThreadId);
   },
 });
 
@@ -403,10 +393,7 @@ function getCombinedChildAssistantText(sessionId: string, messageId: string): st
     .join("");
 }
 
-async function deliverChildTopicTerminalFooterAndConfirmDelivery(
-  sessionId: string,
-  terminalStatus: string,
-): Promise<void> {
+async function confirmChildTopicFinalDelivery(sessionId: string): Promise<void> {
   if (childTopicDeletionBlockedSessions.has(sessionId)) {
     return;
   }
@@ -415,36 +402,60 @@ async function deliverChildTopicTerminalFooterAndConfirmDelivery(
     getSessionRoutingScope(sessionId),
     () => getSubagentTopicAutoDeleteMinutes(),
   );
+  subagentTopicService.confirmFinalDelivery(sessionId, autoDeleteMinutes);
+}
 
-  subagentTopicService.markTerminalStatus(sessionId, terminalStatus);
-
-  const meta = childSessionMeta.get(sessionId);
-  if (meta) {
-    const botApi = getSessionRoutingApi(sessionId);
-    const target = getSessionDeliveryTarget(sessionId);
-    if (botApi && target) {
-      const elapsedMs = Date.now() - meta.startTime;
-      await subagentTopicService.withTopicReopenClose(sessionId, async () => {
-        await sendBotText({
-          api: botApi,
-          chatId: target.chatId,
-          text: formatAssistantRunFooter({
-            agent: meta.agent,
-            providerID: meta.providerID,
-            modelID: meta.modelID,
-            elapsedMs,
-            inputTokens: meta.tokens.input,
-            outputTokens: meta.tokens.output,
-          }),
-          format: "html",
-          messageThreadId: target.messageThreadId,
-          deliveryTarget: target,
-        });
-      });
-    }
+async function deliverChildTopicTerminalFooterAndConfirmDelivery(
+  sessionId: string,
+  terminalStatus: string,
+): Promise<void> {
+  if (childTopicDeletionBlockedSessions.has(sessionId)) {
+    return;
   }
 
-  subagentTopicService.confirmFinalDelivery(sessionId, autoDeleteMinutes);
+  const lifecycle = subagentTopicService.getLifecycleStateForSession(sessionId);
+  if (!lifecycle || lifecycle.finalDeliveryConfirmed) {
+    return;
+  }
+
+  const effectiveTerminalStatus = lifecycle.terminalStatus ?? terminalStatus;
+  if (!lifecycle.terminalStatus) {
+    subagentTopicService.markTerminalStatus(sessionId, effectiveTerminalStatus);
+  }
+
+  try {
+    const meta = childSessionMeta.get(sessionId);
+    if (meta) {
+      const elapsedMs = Date.now() - meta.startTime;
+      await deliverChildTopicMessage(childTopicDeliveryDependencies, {
+        sessionId,
+        kind: "terminal_footer",
+        text: formatAssistantRunFooter({
+          agent: meta.agent,
+          providerID: meta.providerID,
+          modelID: meta.modelID,
+          elapsedMs,
+          inputTokens: meta.tokens.input,
+          outputTokens: meta.tokens.output,
+        }),
+        format: "html",
+      });
+    }
+
+    await confirmChildTopicFinalDelivery(sessionId);
+  } catch (error) {
+    subagentTopicService.markDeliveryCleanupPending(sessionId, effectiveTerminalStatus);
+    throw error;
+  }
+}
+
+function shouldPreserveChildCleanupState(sessionId: string): boolean {
+  if (childTopicDeletionBlockedSessions.has(sessionId)) {
+    return true;
+  }
+
+  const lifecycle = subagentTopicService.getLifecycleStateForSession(sessionId);
+  return lifecycle?.lifecycleState === "cleanup_pending" && !lifecycle.finalDeliveryConfirmed;
 }
 
 function hasPendingChildAssistantDelivery(sessionId: string): boolean {
@@ -460,6 +471,11 @@ async function scheduleChildTopicDeletionWhenDeliveryCompletes(
   sessionId: string,
   terminalStatus: string,
 ): Promise<void> {
+  const lifecycle = subagentTopicService.getLifecycleStateForSession(sessionId);
+  if (lifecycle?.finalDeliveryConfirmed) {
+    return;
+  }
+
   const sessionMessages = childAssistantMessagesBySessionId.get(sessionId);
   if (!sessionMessages || sessionMessages.size === 0) {
     await deliverChildTopicTerminalFooterAndConfirmDelivery(sessionId, terminalStatus);
@@ -474,9 +490,12 @@ async function scheduleChildTopicDeletionWhenDeliveryCompletes(
     }
   }
 
-  if (!markedPending) {
-    await deliverChildTopicTerminalFooterAndConfirmDelivery(sessionId, terminalStatus);
+  if (markedPending) {
+    subagentTopicService.markTerminalStatus(sessionId, terminalStatus);
+    return;
   }
+
+  await deliverChildTopicTerminalFooterAndConfirmDelivery(sessionId, terminalStatus);
 }
 function setSessionRoutingContext(sessionId: string, routing: SessionRoutingContext): void {
   routingBySessionId.set(sessionId, routing);
@@ -573,6 +592,14 @@ function getSessionRoutingScope(sessionId: string): TelegramConversationScope | 
 function getSessionRoutingScopeKey(sessionId: string): string {
   return buildTelegramConversationScopeKey(getSessionRoutingScope(sessionId));
 }
+
+const childTopicDeliveryDependencies = {
+  getRoutingApi: getSessionRoutingApi,
+  getDeliveryTarget: getSessionDeliveryTarget,
+  withTopicReopenClose: async <T>(_sessionId: string, fn: () => Promise<T>): Promise<T> =>
+    await fn(),
+  sendText: sendBotText,
+};
 
 function cloneRoutingContextForChildSession(options: {
   parentSessionId: string;
@@ -740,16 +767,11 @@ async function syncSubagentDeliveryContextForSession(options: {
       taskName: `subagent-topic-initial-msg.${options.childSessionId}`,
       task: async () => {
         try {
-          const sent = await subagentTopicService.withTopicReopenClose(
-            options.childSessionId,
-            async () => {
-              return parentBot.api.sendMessage(topicTarget.chatId, options.promptMessage!, {
-                message_thread_id: topicTarget.messageThreadId,
-                parse_mode: "HTML",
-                disable_notification: true,
-              });
-            },
-          );
+          const sent = await parentBot.api.sendMessage(topicTarget.chatId, options.promptMessage!, {
+            message_thread_id: topicTarget.messageThreadId,
+            parse_mode: "HTML",
+            disable_notification: true,
+          });
 
           childTopicPinnedMessageId.set(options.childSessionId, sent.message_id);
 
@@ -1277,7 +1299,6 @@ const localFileFollowUpTracker = createLocalFileFollowUpTracker();
 const responseStreamer = new ResponseStreamer({
   throttleMs: RESPONSE_STREAM_THROTTLE_MS,
   sendText: async (sessionId, text, format, options) => {
-    // Ensure format and entities are propagated
     const botApi = getSessionRoutingApi(sessionId);
     const target = getSessionRoutingTarget(sessionId);
     const deliveryTarget = getSessionDeliveryTarget(sessionId);
@@ -1285,38 +1306,37 @@ const responseStreamer = new ResponseStreamer({
       throw new Error("Bot context missing for streamed send");
     }
 
-    const parseMode =
-      format === "html" ? "HTML" : format === "markdown_v2" ? "MarkdownV2" : undefined;
-    const sentMessage = await sendMessageWithMarkdownFallback({
+    const messageId = await sendStreamedBotText({
       api: botApi,
       chatId: target.chatId,
       text,
-      options: withTelegramDeliveryTarget(options, deliveryTarget),
-      parseMode,
+      options,
+      format,
       messageThreadId: deliveryTarget?.messageThreadId ?? target.messageThreadId,
+      deliveryTarget,
     });
 
-    return sentMessage.message_id;
+    if (typeof messageId !== "number") {
+      throw new Error("Streamed send did not return a Telegram message id");
+    }
+
+    return messageId;
   },
   editText: async (sessionId, messageId, text, format, options) => {
-    // Ensure format and entities are propagated
     const botApi = getSessionRoutingApi(sessionId);
     const target = getSessionRoutingTarget(sessionId);
     if (!botApi || !target || target.chatId <= 0) {
       throw new Error("Bot context missing for streamed edit");
     }
 
-    const parseMode =
-      format === "html" ? "HTML" : format === "markdown_v2" ? "MarkdownV2" : undefined;
-
     try {
-      await editMessageWithMarkdownFallback({
+      await sendStreamedBotText({
         api: botApi,
         chatId: target.chatId,
         messageId,
         text,
         options,
-        parseMode,
+        format,
       });
     } catch (error) {
       const errorParts: string[] = [];
@@ -1528,15 +1548,13 @@ export function createSendRenderedPart({
       ...(part.entities?.length ? { entities: part.entities } : {}),
     };
 
-    const partFormat =
-      finalParseMode === "markdown_v2" && !part.entities?.length ? "raw" : finalParseMode;
     await sendBotText({
       api: botApi,
       chatId,
       text: part.text,
       rawFallbackText: part.fallbackText,
       options: sendOptions as Parameters<typeof sendBotText>[0]["options"],
-      format: partFormat,
+      format: finalParseMode,
       messageThreadId: deliveryTarget?.messageThreadId ?? messageThreadId,
       deliveryTarget,
     });
@@ -1876,6 +1894,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         // the per-session completion queue. session.idle can arrive in the same tick,
         // so wait for that queued finalization before clearing routing/prompt state.
         await pendingCompletionTask.catch(() => undefined);
+
+        if (isDedicatedTopicSession && shouldPreserveChildCleanupState(sessionId)) {
+          return;
+        }
       }
     }
 
@@ -2212,7 +2234,13 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
 
     logger.info(`[Bot] Received ${questions.length} questions from agent, requestID=${requestID}`);
-    questionManager.startQuestions(questions, requestID, scopeKey, sessionId);
+    questionManager.startQuestions(questions, requestID, {
+      scopeKey,
+      sessionId,
+      runtimeContext: {
+        directory: getCurrentSession()?.directory ?? getCurrentProject()?.worktree ?? null,
+      },
+    });
     const deliveryTarget = getSessionDeliveryTarget(sessionId);
     await runWithSessionRoutingScope(sessionId, () =>
       showCurrentQuestion(botApi, target.chatId, target.messageThreadId, undefined, deliveryTarget),
@@ -2444,10 +2472,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         getSessionRoutingScope(sessionId),
         () => getSubagentTopicAutoDeleteMinutes(),
       );
-      subagentTopicService.markFinalResponseDelivered(sessionId, {
-        terminalStatus: "errored",
-        autoDeleteMinutes,
-      });
+      subagentTopicService.markTerminalStatus(sessionId, "errored");
+      subagentTopicService.confirmFinalDelivery(sessionId, autoDeleteMinutes);
     }
 
     clearSessionRoutingContext(sessionId);
@@ -2562,18 +2588,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               if (!botApi || !target) return;
 
               const formatted = formatReasoningBlock(reasoningText);
-              const chunks = chunkTelegramHtml(formatted);
-              await subagentTopicService.withTopicReopenClose(bufKey, async () => {
-                for (const chunk of chunks) {
-                  await sendBotText({
-                    api: botApi,
-                    chatId: target.chatId,
-                    text: chunk,
-                    format: "html",
-                    messageThreadId: target.messageThreadId,
-                    deliveryTarget: target,
-                  });
-                }
+              await deliverChildTopicMessage(childTopicDeliveryDependencies, {
+                sessionId: bufKey,
+                kind: "diagnostic",
+                text: formatted,
+                format: "html",
               });
             },
           });
@@ -2616,15 +2635,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                 inputSummary = `\n<code>${escapeHtml(inputStr)}</code>`;
               }
 
-              await subagentTopicService.withTopicReopenClose(sessionId, async () => {
-                await sendBotText({
-                  api: botApi,
-                  chatId: target.chatId,
-                  text: `⚙️ <b>${escapeHtml(toolLabel)}</b>${inputSummary}`,
-                  format: "html",
-                  messageThreadId: target.messageThreadId,
-                  deliveryTarget: target,
-                });
+              await deliverChildTopicMessage(childTopicDeliveryDependencies, {
+                sessionId,
+                kind: "diagnostic",
+                text: `⚙️ <b>${escapeHtml(toolLabel)}</b>${inputSummary}`,
+                format: "html",
               });
             },
           });
@@ -2728,32 +2743,24 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                     return;
                   }
 
-                  await subagentTopicService.withTopicReopenClose(childSessionId, async () => {
-                    try {
-                      await botApi.sendChatAction(target.chatId, "typing", {
-                        message_thread_id: target.messageThreadId,
-                      });
-                    } catch {
-                      // Typing is best-effort
-                    }
+                  try {
+                    await botApi.sendChatAction(target.chatId, "typing", {
+                      message_thread_id: target.messageThreadId,
+                    });
+                  } catch {
+                    // Typing is best-effort
+                  }
 
-                    for (const part of renderChildAssistantFinalParts(childText, childFormat)) {
-                      const partFormat =
-                        childFormat === "markdown_v2" && !part.entities?.length
-                          ? "raw"
-                          : childFormat;
-                      await sendBotText({
-                        api: botApi,
-                        chatId: target.chatId,
-                        text: part.text,
-                        rawFallbackText: part.fallbackText,
-                        format: partFormat,
-                        messageThreadId: target.messageThreadId,
-                        deliveryTarget: target,
-                        options: part.entities?.length ? { entities: part.entities } : undefined,
-                      });
-                    }
-                  });
+                  for (const part of renderChildAssistantFinalParts(childText, childFormat)) {
+                    await deliverChildTopicMessage(childTopicDeliveryDependencies, {
+                      sessionId: childSessionId,
+                      kind: "live_text",
+                      text: part.text,
+                      rawFallbackText: part.fallbackText,
+                      format: childFormat,
+                      options: part.entities?.length ? { entities: part.entities } : undefined,
+                    });
+                  }
                 },
               });
 
@@ -2827,11 +2834,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                 .catch((error) => {
                   childDeliverySucceeded = false;
                   childTopicDeletionBlockedSessions.add(childSessionId);
-                  subagentTopicService.cancelPendingDeletion(childSessionId);
                   subagentTopicService.markDeliveryCleanupPending(
                     childSessionId,
                     pendingDeletionTerminalStatus ?? "completed",
                   );
+                  subagentTopicService.cancelPendingDeletion(childSessionId);
                   logger.warn("[Bot] Failed to deliver child-session assistant output", error);
                 });
 
@@ -2846,9 +2853,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                 assistantRunState.clearRun(childSessionId, "child_final_delivery_failed");
                 clearPromptResponseMode(childSessionId);
                 await clearThinkingBlockStream(childSessionId, false);
-                subagentTopicService.clearSession(childSessionId);
-                clearSessionRoutingContext(childSessionId);
-                clearChildAssistantSession(childSessionId);
                 foregroundSessionState.markIdle(
                   childSessionId,
                   getBusyScopeForSession(childSessionId),
@@ -3031,15 +3035,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               return `${icon} <code>${escapeHtml(filePath)}</code> (${adds ? `+${adds}` : ""}${adds && dels ? " " : ""}${dels ? `-${dels}` : ""})`;
             });
 
-            await subagentTopicService.withTopicReopenClose(childId, async () => {
-              await sendBotText({
-                api: botApi,
-                chatId: target.chatId,
-                text: `<blockquote>${parts.join("\n")}</blockquote>`,
-                format: "html",
-                messageThreadId: target.messageThreadId,
-                deliveryTarget: target,
-              });
+            await deliverChildTopicMessage(childTopicDeliveryDependencies, {
+              sessionId: childId,
+              kind: "diagnostic",
+              text: `<blockquote>${parts.join("\n")}</blockquote>`,
+              format: "html",
             });
           },
         });

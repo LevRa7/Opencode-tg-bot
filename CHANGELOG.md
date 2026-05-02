@@ -126,6 +126,13 @@ Documentation rule:
 
 ### Fixed
 
+- Stabilized subagent topic delivery so child runs now use centralized topic lifecycle tracking, send the run footer only after terminal completion, auto-delete only after confirmed final delivery, and fall back through one safer Telegram text-rendering pipeline.
+  - Why: child-topic replies had accumulated routing, cleanup-timing, and parse-mode regressions that made final delivery and topic cleanup unreliable.
+  - Affects: `src/bot/index.ts`, `src/bot/subagent-topics/child-delivery.ts`, `src/bot/subagent-topics/service.ts`, `src/bot/utils/telegram-text.ts`, `src/bot/utils/send-with-markdown-fallback.ts`, `tests/bot/index.local-file-follow-up.test.ts`, `tests/bot/subagent-topics/service.test.ts`, `tests/bot/utils/send-with-markdown-fallback.test.ts`, `tests/bot/streaming/response-streamer.test.ts`
+- Fixed question and permission replies to use the runtime context captured with the original request instead of whichever session or project is currently active when the user answers.
+  - Why: delayed replies could target the wrong OpenCode runtime after the user switched sessions or projects before responding in Telegram.
+  - Affects: `src/bot/handlers/question.ts`, `src/bot/handlers/permission.ts`, `src/question/manager.ts`, `src/permission/manager.ts`, `tests/bot/handlers/question.test.ts`, `tests/bot/handlers/permission.test.ts`
+
 - Fixed Telegram assistant delivery ordering and resilience so durable assistant outputs now follow OpenCode event timing, active thinking and final reasoning survive Telegram `429 retry_after` without crashing the bot, long thinking HTML is chunked safely, and ordered lists stay readable instead of collapsing into repeated `1.` items.
   - Why: assistant replies, tool/subagent publications, and session footers could race each other, long/active thinking updates could break on Telegram limits or parse edges, ordered lists could render incorrectly in Telegram, and unhandled Telegram delivery failures could terminate the bot process.
   - Affects: `src/bot/index.ts`, `src/bot/delivery/*`, `src/bot/utils/thinking-block-stream.ts`, `src/bot/utils/thinking-draft-lifecycle.ts`, `src/bot/utils/telegram-html-chunker.ts`, `src/bot/utils/reasoning-format.ts`, `src/summary/aggregator.ts`, `src/bot/assistant-run-state.ts`, `tests/bot/index.local-file-follow-up.test.ts`, `tests/bot/delivery/*.test.ts`, `tests/bot/utils/*.test.ts`, `tests/summary/aggregator.test.ts`

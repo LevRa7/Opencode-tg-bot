@@ -35,6 +35,87 @@ function createSchedulerSpy() {
 }
 
 describe("bot/subagent-topics/service", () => {
+  it("normalizes child topic names with Agent prefix and initializes lifecycle state", async () => {
+    const createForumTopic = vi.fn().mockResolvedValue({ messageThreadId: 322 });
+    const service = new SubagentTopicService({
+      createForumTopic,
+      deleteForumTopic: vi.fn().mockResolvedValue(undefined),
+      scheduleDeletion: createSchedulerSpy().scheduleDeletion,
+    });
+
+    await service.syncSubagent({
+      childSessionId: "child-normalized",
+      topicName: "Inspect artifact",
+      parent: {
+        chatId: -100123,
+        isForum: true,
+      },
+    });
+
+    expect(createForumTopic).toHaveBeenCalledWith({
+      chatId: -100123,
+      name: "Agent: Inspect artifact",
+    });
+    expect(service.getLifecycleStateForSession("child-normalized")).toEqual({
+      lifecycleState: "active",
+      terminalStatus: null,
+      finalDeliveryConfirmed: false,
+    });
+  });
+
+  it("does not duplicate the Agent prefix when topic name is already normalized", async () => {
+    const createForumTopic = vi.fn().mockResolvedValue({ messageThreadId: 323 });
+    const service = new SubagentTopicService({
+      createForumTopic,
+      deleteForumTopic: vi.fn().mockResolvedValue(undefined),
+      scheduleDeletion: createSchedulerSpy().scheduleDeletion,
+    });
+
+    await service.syncSubagent({
+      childSessionId: "child-prefixed",
+      topicName: "Agent: Inspect artifact",
+      parent: {
+        chatId: -100123,
+        isForum: true,
+      },
+    });
+
+    expect(createForumTopic).toHaveBeenCalledWith({
+      chatId: -100123,
+      name: "Agent: Inspect artifact",
+    });
+  });
+
+  it("canonicalizes near-prefixed topic names to the exact Agent prefix", async () => {
+    const createForumTopic = vi.fn().mockResolvedValue({ messageThreadId: 324 });
+    const service = new SubagentTopicService({
+      createForumTopic,
+      deleteForumTopic: vi.fn().mockResolvedValue(undefined),
+      scheduleDeletion: createSchedulerSpy().scheduleDeletion,
+    });
+
+    const scope = await service.syncSubagent({
+      childSessionId: "child-near-prefixed",
+      topicName: "  agent:Inspect artifact  ",
+      parent: {
+        chatId: -100123,
+        isForum: true,
+      },
+    });
+
+    expect(createForumTopic).toHaveBeenCalledWith({
+      chatId: -100123,
+      name: "Agent: Inspect artifact",
+    });
+    expect(scope).toEqual({
+      kind: "topic",
+      childSessionId: "child-near-prefixed",
+      chatId: -100123,
+      messageThreadId: 324,
+      topicName: "Agent: Inspect artifact",
+    });
+  });
+
   it("creates a dedicated topic and exposes a silent delivery target for eligible forum subagents", async () => {
     const createForumTopic = vi.fn().mockResolvedValue({ messageThreadId: 321 });
     const deleteForumTopic = vi.fn().mockResolvedValue(undefined);
@@ -56,14 +137,14 @@ describe("bot/subagent-topics/service", () => {
 
     expect(createForumTopic).toHaveBeenCalledWith({
       chatId: -100123,
-      name: "Research helper",
+      name: "Agent: Research helper",
     });
     expect(scope).toEqual({
       kind: "topic",
       childSessionId: "child-1",
       chatId: -100123,
       messageThreadId: 321,
-      topicName: "Research helper",
+      topicName: "Agent: Research helper",
     });
     expect(service.getScopeForSession("child-1")).toEqual(scope);
     expect(service.getTargetForSession("child-1")).toEqual({
@@ -127,6 +208,11 @@ describe("bot/subagent-topics/service", () => {
       autoDeleteMinutes: 5,
     });
 
+    expect(service.getLifecycleStateForSession("child-3")).toEqual({
+      lifecycleState: "cleanup_pending",
+      terminalStatus: "completed",
+      finalDeliveryConfirmed: true,
+    });
     expect(scheduler.scheduled).toHaveLength(1);
     expect(scheduler.scheduled[0]).toMatchObject({
       delayMs: 5 * 60 * 1000,
@@ -147,6 +233,153 @@ describe("bot/subagent-topics/service", () => {
     });
     expect(service.getScopeForSession("child-3")).toBeNull();
     expect(service.getTargetForSession("child-3")).toBeNull();
+  });
+
+  it("does not schedule topic deletion before final delivery confirmation", async () => {
+    const createForumTopic = vi.fn().mockResolvedValue({ messageThreadId: 779 });
+    const scheduler = createSchedulerSpy();
+    const service = new SubagentTopicService({
+      createForumTopic,
+      deleteForumTopic: vi.fn().mockResolvedValue(undefined),
+      scheduleDeletion: scheduler.scheduleDeletion,
+    });
+
+    await service.syncSubagent({
+      childSessionId: "child-terminal-pending",
+      topicName: "Pending helper",
+      parent: {
+        chatId: -100123,
+        isForum: true,
+      },
+    });
+
+    service.markTerminalStatus("child-terminal-pending", "completed");
+
+    expect(service.getLifecycleStateForSession("child-terminal-pending")).toEqual({
+      lifecycleState: "terminal_pending_delivery",
+      terminalStatus: "completed",
+      finalDeliveryConfirmed: false,
+    });
+    expect(scheduler.scheduled).toHaveLength(0);
+
+    service.confirmFinalDelivery("child-terminal-pending", 5);
+
+    expect(service.getLifecycleStateForSession("child-terminal-pending")).toEqual({
+      lifecycleState: "cleanup_pending",
+      terminalStatus: "completed",
+      finalDeliveryConfirmed: true,
+    });
+    expect(scheduler.scheduled).toHaveLength(1);
+    expect(scheduler.scheduled[0]).toMatchObject({
+      delayMs: 5 * 60 * 1000,
+    });
+  });
+
+  it("keeps topic state when terminal delivery failed and cleanup is pending", async () => {
+    const createForumTopic = vi.fn().mockResolvedValue({ messageThreadId: 780 });
+    const service = new SubagentTopicService({
+      createForumTopic,
+      deleteForumTopic: vi.fn().mockResolvedValue(undefined),
+      scheduleDeletion: createSchedulerSpy().scheduleDeletion,
+    });
+
+    await service.syncSubagent({
+      childSessionId: "child-cleanup-pending",
+      topicName: "Cleanup pending helper",
+      parent: {
+        chatId: -100123,
+        isForum: true,
+      },
+    });
+
+    service.markDeliveryCleanupPending("child-cleanup-pending", "errored");
+
+    expect(service.getScopeForSession("child-cleanup-pending")).toEqual({
+      kind: "topic",
+      childSessionId: "child-cleanup-pending",
+      chatId: -100123,
+      messageThreadId: 780,
+      topicName: "Agent: Cleanup pending helper",
+    });
+    expect(service.getTargetForSession("child-cleanup-pending")).toEqual({
+      chatId: -100123,
+      messageThreadId: 780,
+      disableNotification: true,
+    });
+    expect(service.getLifecycleStateForSession("child-cleanup-pending")).toEqual({
+      lifecycleState: "cleanup_pending",
+      terminalStatus: "errored",
+      finalDeliveryConfirmed: false,
+    });
+  });
+
+  it("restores delivery-confirmed state when pending cleanup is canceled", async () => {
+    const createForumTopic = vi.fn().mockResolvedValue({ messageThreadId: 781 });
+    const scheduler = createSchedulerSpy();
+    const service = new SubagentTopicService({
+      createForumTopic,
+      deleteForumTopic: vi.fn().mockResolvedValue(undefined),
+      scheduleDeletion: scheduler.scheduleDeletion,
+    });
+
+    await service.syncSubagent({
+      childSessionId: "child-cancel-pending-deletion",
+      topicName: "Cancel cleanup helper",
+      parent: {
+        chatId: -100123,
+        isForum: true,
+      },
+    });
+
+    service.markFinalResponseDelivered("child-cancel-pending-deletion", {
+      terminalStatus: "completed",
+      autoDeleteMinutes: 5,
+    });
+
+    expect(service.getLifecycleStateForSession("child-cancel-pending-deletion")).toEqual({
+      lifecycleState: "cleanup_pending",
+      terminalStatus: "completed",
+      finalDeliveryConfirmed: true,
+    });
+
+    service.cancelPendingDeletion("child-cancel-pending-deletion");
+
+    expect(scheduler.cancel).toHaveBeenCalledTimes(1);
+    expect(service.getLifecycleStateForSession("child-cancel-pending-deletion")).toEqual({
+      lifecycleState: "delivery_confirmed",
+      terminalStatus: "completed",
+      finalDeliveryConfirmed: true,
+    });
+  });
+
+  it("marks final delivery as confirmed when no auto-delete delay is configured", async () => {
+    const createForumTopic = vi.fn().mockResolvedValue({ messageThreadId: 778 });
+    const scheduler = createSchedulerSpy();
+    const service = new SubagentTopicService({
+      createForumTopic,
+      deleteForumTopic: vi.fn().mockResolvedValue(undefined),
+      scheduleDeletion: scheduler.scheduleDeletion,
+    });
+
+    await service.syncSubagent({
+      childSessionId: "child-no-delay",
+      topicName: "No delay helper",
+      parent: {
+        chatId: -100123,
+        isForum: true,
+      },
+    });
+
+    service.markFinalResponseDelivered("child-no-delay", {
+      terminalStatus: "completed",
+    });
+
+    expect(service.getLifecycleStateForSession("child-no-delay")).toEqual({
+      lifecycleState: "delivery_confirmed",
+      terminalStatus: "completed",
+      finalDeliveryConfirmed: true,
+    });
+    expect(scheduler.scheduled).toHaveLength(0);
   });
 
   it("clears the deletion handle after a scheduled delete failure so cleanup can be retried", async () => {
@@ -183,7 +416,7 @@ describe("bot/subagent-topics/service", () => {
       childSessionId: "child-4",
       chatId: -100123,
       messageThreadId: 888,
-      topicName: "Retry helper",
+      topicName: "Agent: Retry helper",
     });
     expect(service.getTargetForSession("child-4")).toEqual({
       chatId: -100123,
@@ -199,6 +432,11 @@ describe("bot/subagent-topics/service", () => {
         error: expect.any(Error),
       }),
     );
+    expect(service.getLifecycleStateForSession("child-4")).toEqual({
+      lifecycleState: "delivery_confirmed",
+      terminalStatus: "completed",
+      finalDeliveryConfirmed: true,
+    });
 
     service.markFinalResponseDelivered("child-4", {
       terminalStatus: "completed",

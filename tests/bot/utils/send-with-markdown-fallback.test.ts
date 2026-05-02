@@ -5,6 +5,7 @@ import {
   sendMessageDraftWithMarkdownFallback,
   sendMessageWithMarkdownFallback,
 } from "../../../src/bot/utils/send-with-markdown-fallback.js";
+import { sendBotText } from "../../../src/bot/utils/telegram-text.js";
 
 describe("bot/utils/send-with-markdown-fallback", () => {
   it("sends with MarkdownV2 when there is no parse error", async () => {
@@ -109,6 +110,46 @@ describe("bot/utils/send-with-markdown-fallback", () => {
 
     expect(sendMessage).toHaveBeenCalledTimes(3);
     expect(sendMessage).toHaveBeenNthCalledWith(3, 444, "Done.", {});
+  });
+
+  it("keeps the resolved delivery target stable across markdown send fallback retries", async () => {
+    const sendMessage = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error("Bad Request: can't parse entities: Character '.' is reserved"),
+      )
+      .mockRejectedValueOnce(new Error("Bad Request: can't parse entities: unsupported start tag"))
+      .mockResolvedValueOnce({ message_id: 77 });
+
+    await sendBotText({
+      api: { sendMessage },
+      chatId: 900,
+      text: "Done.",
+      rawFallbackText: "Done plain",
+      format: "markdown_v2",
+      messageThreadId: 10,
+      deliveryTarget: {
+        chatId: 900,
+        messageThreadId: 20,
+        disableNotification: true,
+      },
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sendMessage).toHaveBeenNthCalledWith(1, 900, "Done.", {
+      disable_notification: true,
+      message_thread_id: 20,
+      parse_mode: "MarkdownV2",
+    });
+    expect(sendMessage).toHaveBeenNthCalledWith(2, 900, "Done\\.", {
+      disable_notification: true,
+      message_thread_id: 20,
+      parse_mode: "MarkdownV2",
+    });
+    expect(sendMessage).toHaveBeenNthCalledWith(3, 900, "Done plain", {
+      disable_notification: true,
+      message_thread_id: 20,
+    });
   });
 
   it("unescapes MarkdownV2 text for raw send fallback when explicit fallback is not provided", async () => {

@@ -5,7 +5,6 @@ import { clearAllInteractionState } from "../../interaction/cleanup.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
-import { attachManager } from "../../attach/manager.js";
 import { resolveScopedSessionFromContext } from "../runtime/scope-session-resolver.js";
 import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { getCurrentTelegramConversationScopeKey } from "../../telegram/scope.js";
@@ -70,7 +69,6 @@ export async function abortCurrentOperation(
 
     if (resolved) {
       clearScopedSessionRuntime(resolved.session.id, "abort_command", {
-        directory: resolved.session.directory,
         scope: resolved.scope,
       });
     }

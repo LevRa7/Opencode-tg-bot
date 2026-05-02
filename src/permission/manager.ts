@@ -1,9 +1,20 @@
 import { logger } from "../utils/logger.js";
 import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
-import { PermissionRequest, PermissionState } from "./types.js";
+import { PermissionRequest } from "./types.js";
+
+export interface PermissionRuntimeContext {
+  directory: string | null;
+  sessionId: string | null;
+}
+
+interface StoredPermissionRequest {
+  request: PermissionRequest;
+  runtimeContext: PermissionRuntimeContext | null;
+}
 
 interface PermissionRestoreEntry {
   request: PermissionRequest;
+  runtimeContext: PermissionRuntimeContext | null;
   sourceScopeKey: string;
   sourceMessageId: number;
 }
@@ -25,16 +36,26 @@ function clonePermissionRequest(request: PermissionRequest): PermissionRequest {
   };
 }
 
-function createPermissionState(): PermissionState {
+function clonePermissionRuntimeContext(
+  runtimeContext: PermissionRuntimeContext | null,
+): PermissionRuntimeContext | null {
+  return runtimeContext ? { ...runtimeContext } : null;
+}
+
+interface InternalPermissionState {
+  requestsByMessageId: Map<number, StoredPermissionRequest>;
+}
+
+function createPermissionState(): InternalPermissionState {
   return {
     requestsByMessageId: new Map(),
   };
 }
 
 class PermissionManager {
-  private states = new Map<string, PermissionState>();
+  private states = new Map<string, InternalPermissionState>();
 
-  private getScopeState(scopeKey?: string): PermissionState {
+  private getScopeState(scopeKey?: string): InternalPermissionState {
     const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
     const existingState = this.states.get(resolvedScopeKey);
     if (existingState) {
@@ -54,8 +75,8 @@ class PermissionManager {
     const staleTargetMessageIds: number[] = [];
     const targetState = this.getScopeState(targetScopeKey);
 
-    for (const [messageId, request] of targetState.requestsByMessageId.entries()) {
-      if (request.sessionID !== sessionId) {
+    for (const [messageId, storedRequest] of targetState.requestsByMessageId.entries()) {
+      if (storedRequest.request.sessionID !== sessionId) {
         staleTargetMessageIds.push(messageId);
       }
     }
@@ -70,13 +91,14 @@ class PermissionManager {
         continue;
       }
 
-      for (const [messageId, request] of state.requestsByMessageId.entries()) {
-        if (request.sessionID !== sessionId) {
+      for (const [messageId, storedRequest] of state.requestsByMessageId.entries()) {
+        if (storedRequest.request.sessionID !== sessionId) {
           continue;
         }
 
         entries.push({
-          request: clonePermissionRequest(request),
+          request: clonePermissionRequest(storedRequest.request),
+          runtimeContext: clonePermissionRuntimeContext(storedRequest.runtimeContext),
           sourceScopeKey: scopeKey,
           sourceMessageId: messageId,
         });
@@ -93,8 +115,8 @@ class PermissionManager {
 
   clearMismatchedTargetScopeRequests(sessionId: string, targetScopeKey: string): void {
     const state = this.getScopeState(targetScopeKey);
-    for (const [messageId, request] of state.requestsByMessageId.entries()) {
-      if (request.sessionID !== sessionId) {
+    for (const [messageId, storedRequest] of state.requestsByMessageId.entries()) {
+      if (storedRequest.request.sessionID !== sessionId) {
         state.requestsByMessageId.delete(messageId);
       }
     }
@@ -115,13 +137,12 @@ class PermissionManager {
     }
   }
 
-  restoreSessionToScope(sessionId: string, targetScopeKey: string): PermissionRequest[] {
-    const plan = this.previewSessionRestore(sessionId, targetScopeKey);
-    this.commitSessionRestore(plan);
-    return plan.entries.map((entry) => entry.request);
-  }
-
-  startPermission(request: PermissionRequest, messageId: number, scopeKey?: string): void {
+  startPermission(
+    request: PermissionRequest,
+    messageId: number,
+    scopeKey?: string,
+    runtimeContext?: PermissionRuntimeContext | null,
+  ): void {
     const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
     const state = this.getScopeState(resolvedScopeKey);
 
@@ -135,7 +156,10 @@ class PermissionManager {
       );
     }
 
-    state.requestsByMessageId.set(messageId, request);
+    state.requestsByMessageId.set(messageId, {
+      request,
+      runtimeContext: clonePermissionRuntimeContext(runtimeContext ?? null),
+    });
 
     logger.info(
       `[PermissionManager] New permission request: scope=${resolvedScopeKey}, type=${request.permission}, patterns=${request.patterns.join(", ")}, pending=${state.requestsByMessageId.size}`,
@@ -147,7 +171,17 @@ class PermissionManager {
       return null;
     }
 
-    return this.getScopeState(scopeKey).requestsByMessageId.get(messageId) ?? null;
+    return this.getScopeState(scopeKey).requestsByMessageId.get(messageId)?.request ?? null;
+  }
+
+  getRuntimeContext(messageId: number | null, scopeKey?: string): PermissionRuntimeContext | null {
+    if (messageId === null) {
+      return null;
+    }
+
+    return clonePermissionRuntimeContext(
+      this.getScopeState(scopeKey).requestsByMessageId.get(messageId)?.runtimeContext ?? null,
+    );
   }
 
   getRequestID(messageId: number | null, scopeKey?: string): string | null {

@@ -11,6 +11,10 @@ import { PermissionRequest, PermissionReply } from "../../permission/types.js";
 import type { I18nKey } from "../../i18n/en.js";
 import { t } from "../../i18n/index.js";
 import {
+  buildTelegramConversationScopeKey,
+  extractTelegramConversationScopeFromContext,
+} from "../../telegram/scope.js";
+import {
   withTelegramDeliveryTarget,
   type TelegramDeliveryTarget,
 } from "../utils/message-thread.js";
@@ -57,8 +61,9 @@ function getCallbackMessageId(ctx: Context): number | null {
   return typeof messageId === "number" ? messageId : null;
 }
 
-function clearPermissionInteraction(reason: string): void {
-  clearPermissionInteractionForScope(reason);
+function resolveContextScopeKey(ctx: Context): string | undefined {
+  const scope = extractTelegramConversationScopeFromContext(ctx);
+  return scope ? buildTelegramConversationScopeKey(scope) : undefined;
 }
 
 function clearPermissionInteractionForScope(reason: string, scopeKey?: string): void {
@@ -108,25 +113,27 @@ export async function handlePermissionCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   if (!data) return false;
 
+  const scopeKey = resolveContextScopeKey(ctx);
+
   if (!data.startsWith("permission:")) {
     return false;
   }
 
   logger.debug(`[PermissionHandler] Received callback: ${data}`);
 
-  if (!permissionManager.isActive()) {
-    clearPermissionInteraction("permission_inactive_callback");
+  if (!permissionManager.isActive(scopeKey)) {
+    clearPermissionInteractionForScope("permission_inactive_callback", scopeKey);
     await ctx.answerCallbackQuery({ text: t("permission.inactive_callback"), show_alert: true });
     return true;
   }
 
   const callbackMessageId = getCallbackMessageId(ctx);
-  if (!permissionManager.isActiveMessage(callbackMessageId)) {
+  if (!permissionManager.isActiveMessage(callbackMessageId, scopeKey)) {
     await ctx.answerCallbackQuery({ text: t("permission.inactive_callback"), show_alert: true });
     return true;
   }
 
-  const requestID = permissionManager.getRequestID(callbackMessageId);
+  const requestID = permissionManager.getRequestID(callbackMessageId, scopeKey);
   if (!requestID) {
     await ctx.answerCallbackQuery({ text: t("permission.inactive_callback"), show_alert: true });
     return true;
@@ -144,7 +151,7 @@ export async function handlePermissionCallback(ctx: Context): Promise<boolean> {
   }
 
   try {
-    await handlePermissionReply(ctx, action, requestID, callbackMessageId);
+    await handlePermissionReply(ctx, action, requestID, callbackMessageId, scopeKey);
   } catch (err) {
     logger.error("[PermissionHandler] Error handling callback:", err);
     await ctx.answerCallbackQuery({
@@ -164,15 +171,20 @@ async function handlePermissionReply(
   reply: PermissionReply,
   requestID: string,
   callbackMessageId: number | null,
+  scopeKey?: string,
 ): Promise<void> {
-  const currentProject = getCurrentProject();
-  const currentSession = getCurrentSession();
   const chatId = ctx.chat?.id;
-  const directory = currentSession?.directory ?? currentProject?.worktree;
+  const runtimeContext = permissionManager.getRuntimeContext(callbackMessageId, scopeKey);
+  const directory = runtimeContext?.directory ?? null;
 
   if (!directory || !chatId) {
-    permissionManager.clear();
-    clearPermissionInteraction("permission_invalid_runtime_context");
+    permissionManager.removeByMessageId(callbackMessageId, scopeKey);
+
+    if (!permissionManager.isActive(scopeKey)) {
+      clearPermissionInteractionForScope("permission_invalid_runtime_context", scopeKey);
+    } else {
+      syncPermissionInteractionState({}, scopeKey);
+    }
 
     await ctx.answerCallbackQuery({
       text: t("permission.no_active_request_callback"),
@@ -220,16 +232,16 @@ async function handlePermissionReply(
     },
   });
 
-  permissionManager.removeByMessageId(callbackMessageId);
+  permissionManager.removeByMessageId(callbackMessageId, scopeKey);
 
-  if (!permissionManager.isActive()) {
-    clearPermissionInteraction("permission_replied");
+  if (!permissionManager.isActive(scopeKey)) {
+    clearPermissionInteractionForScope("permission_replied", scopeKey);
     return;
   }
 
   syncPermissionInteractionState({
     lastRepliedRequestID: requestID,
-  });
+  }, scopeKey);
 }
 
 /**
@@ -269,7 +281,10 @@ export async function showPermissionRequest(
     logger.info(
       `[PermissionHandler] Permission message sent: permission=${request.permission}, requestID=${request.id}, chatId=${chatId}, threadId=${messageThreadId ?? "none"}, messageId=${message.message_id}`,
     );
-    permissionManager.startPermission(request, message.message_id, scopeKey);
+    permissionManager.startPermission(request, message.message_id, scopeKey, {
+      directory: getCurrentSession()?.directory ?? getCurrentProject()?.worktree ?? null,
+      sessionId: request.sessionID,
+    });
 
     syncPermissionInteractionState({
       requestID: request.id,

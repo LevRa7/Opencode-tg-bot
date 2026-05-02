@@ -361,6 +361,7 @@ export const fr: I18nDictionary = {
   "question.answer_already_received": "Réponse déjà reçue, veuillez patienter...",
   "question.completed_no_answers": "✅ Sondage terminé (aucune réponse)",
   "question.no_active_project": "❌ Aucun projet actif",
+  "question.no_active_question_runtime": "❌ Aucun contexte d'execution de question enregistre",
   "question.no_active_request": "❌ Aucune demande active",
   "question.send_answers_error": "❌ Impossible d'envoyer les réponses à l'agent",
   "question.multi_hint": "\n(Vous pouvez sélectionner plusieurs options)",

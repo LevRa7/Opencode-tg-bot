@@ -306,7 +306,7 @@ describe("bot/streaming/response-streamer", () => {
   });
 
   it("waits for an in-flight first streamed send before finalizing short responses", async () => {
-    let resolveSend: ((messageId: number) => void) | null = null;
+    let resolveSend: ((messageId: number) => void) | undefined;
     const sendText = vi.fn(
       () =>
         new Promise<number>((resolve) => {
@@ -336,7 +336,10 @@ describe("bot/streaming/response-streamer", () => {
     expect(editText).not.toHaveBeenCalled();
     expect(deleteText).not.toHaveBeenCalled();
 
-    resolveSend?.(1);
+    const finishSend = resolveSend;
+    if (finishSend) {
+      finishSend(1);
+    }
 
     const result = await completionPromise;
     expect(result.streamed).toBe(true);
@@ -533,6 +536,49 @@ describe("bot/streaming/response-streamer", () => {
       "s1",
       501,
       "final **bold** and *italic*",
+      "markdown_v2",
+      undefined,
+    );
+  });
+
+  it("uses the same markdown_v2 delivery mode for root and child plain streamed parts", async () => {
+    vi.useFakeTimers();
+
+    let nextMessageId = 601;
+    const sendText = vi.fn(async () => nextMessageId++);
+    const editText = vi.fn().mockResolvedValue(undefined);
+    const deleteText = vi.fn().mockResolvedValue(undefined);
+    const streamer = new ResponseStreamer({
+      throttleMs: 0,
+      sendText,
+      editText,
+      deleteText,
+    });
+
+    streamer.enqueue("root-session", "root-message", {
+      parts: [{ text: "plain.with.punctuation" }],
+      format: "markdown_v2",
+    });
+    streamer.enqueue("child-session", "child-message", {
+      parts: [{ text: "plain.with.punctuation" }],
+      format: "markdown_v2",
+    });
+
+    await vi.waitFor(() => {
+      expect(sendText).toHaveBeenCalledTimes(2);
+    });
+
+    expect(sendText).toHaveBeenNthCalledWith(
+      1,
+      "root-session",
+      "plain.with.punctuation",
+      "markdown_v2",
+      undefined,
+    );
+    expect(sendText).toHaveBeenNthCalledWith(
+      2,
+      "child-session",
+      "plain.with.punctuation",
       "markdown_v2",
       undefined,
     );

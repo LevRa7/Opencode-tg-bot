@@ -1,10 +1,12 @@
 import { Context, InlineKeyboard } from "grammy";
 import { questionManager } from "../../question/manager.js";
 import { opencodeClient } from "../../opencode/client.js";
-import { getCurrentProject } from "../../settings/manager.js";
-import { getCurrentSession } from "../../session/manager.js";
 import { summaryAggregator } from "../../summary/aggregator.js";
 import { interactionManager } from "../../interaction/manager.js";
+import {
+  buildTelegramConversationScopeKey,
+  extractTelegramConversationScopeFromContext,
+} from "../../telegram/scope.js";
 import { logger } from "../../utils/logger.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { t } from "../../i18n/index.js";
@@ -16,6 +18,11 @@ import {
 } from "../utils/message-thread.js";
 
 const MAX_BUTTON_LENGTH = 60;
+
+function resolveContextScopeKey(ctx: Context): string | undefined {
+  const scope = extractTelegramConversationScopeFromContext(ctx);
+  return scope ? buildTelegramConversationScopeKey(scope) : undefined;
+}
 
 function shouldUseDirectTextAnswer(question: {
   options: Array<{ label: string; description: string }>;
@@ -32,10 +39,6 @@ function getCallbackMessageId(ctx: Context): number | null {
 
   const messageId = (message as { message_id?: number }).message_id;
   return typeof messageId === "number" ? messageId : null;
-}
-
-function clearQuestionInteraction(reason: string): void {
-  clearQuestionInteractionForScope(reason);
 }
 
 function clearQuestionInteractionForScope(reason: string, scopeKey?: string): void {
@@ -85,20 +88,22 @@ export async function handleQuestionCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   if (!data) return false;
 
+  const scopeKey = resolveContextScopeKey(ctx);
+
   if (!data.startsWith("question:")) {
     return false;
   }
 
   logger.debug(`[QuestionHandler] Received callback: ${data}`);
 
-  if (!questionManager.isActive()) {
-    clearQuestionInteraction("question_inactive_callback");
+  if (!questionManager.isActive(scopeKey)) {
+    clearQuestionInteractionForScope("question_inactive_callback", scopeKey);
     await ctx.answerCallbackQuery({ text: t("question.inactive_callback"), show_alert: true });
     return true;
   }
 
   const callbackMessageId = getCallbackMessageId(ctx);
-  if (!questionManager.isActiveMessage(callbackMessageId)) {
+  if (!questionManager.isActiveMessage(callbackMessageId, scopeKey)) {
     await ctx.answerCallbackQuery({ text: t("question.inactive_callback"), show_alert: true });
     return true;
   }
@@ -107,7 +112,7 @@ export async function handleQuestionCallback(ctx: Context): Promise<boolean> {
   const action = parts[1];
   const questionIndex = parseInt(parts[2], 10);
 
-  if (Number.isNaN(questionIndex) || questionIndex !== questionManager.getCurrentIndex()) {
+  if (Number.isNaN(questionIndex) || questionIndex !== questionManager.getCurrentIndex(scopeKey)) {
     await ctx.answerCallbackQuery({ text: t("question.inactive_callback"), show_alert: true });
     return true;
   }
@@ -160,32 +165,39 @@ async function handleSelectOption(
   questionIndex: number,
   optionIndex: number,
 ): Promise<void> {
+  const scopeKey = resolveContextScopeKey(ctx);
+
   logger.debug(
     `[QuestionHandler] handleSelectOption: qIndex=${questionIndex}, oIndex=${optionIndex}`,
   );
 
-  const question = questionManager.getCurrentQuestion();
+  const question = questionManager.getCurrentQuestion(scopeKey);
   if (!question) {
     logger.debug("[QuestionHandler] No current question");
     return;
   }
 
-  if (questionManager.isWaitingForCustomInput(questionIndex)) {
-    questionManager.clearCustomInput();
-    syncQuestionInteractionState("callback", questionIndex, questionManager.getActiveMessageId());
+  if (questionManager.isWaitingForCustomInput(questionIndex, scopeKey)) {
+    questionManager.clearCustomInput(scopeKey);
+    syncQuestionInteractionState(
+      "callback",
+      questionIndex,
+      questionManager.getActiveMessageId(scopeKey),
+      scopeKey,
+    );
   }
 
-  questionManager.selectOption(questionIndex, optionIndex);
+  questionManager.selectOption(questionIndex, optionIndex, scopeKey);
 
   if (question.multiple) {
     logger.debug("[QuestionHandler] Multiple choice mode, updating message");
-    await updateQuestionMessage(ctx);
+    await updateQuestionMessage(ctx, scopeKey);
     await ctx.answerCallbackQuery();
   } else {
     logger.debug("[QuestionHandler] Single choice mode, moving to next question");
     await ctx.answerCallbackQuery();
 
-    const answer = questionManager.getSelectedAnswer(questionIndex);
+    const answer = questionManager.getSelectedAnswer(questionIndex, scopeKey);
     logger.debug(`[QuestionHandler] Selected answer for question ${questionIndex}: ${answer}`);
 
     // Delete the question message before showing the next one
@@ -193,17 +205,24 @@ async function handleSelectOption(
 
     // DO NOT send the answer immediately - move to the next question
     // All answers will be sent together after the user answers all questions
-    await showNextQuestion(ctx);
+    await showNextQuestion(ctx, scopeKey);
   }
 }
 
 async function handleSubmitAnswer(ctx: Context, questionIndex: number): Promise<void> {
-  if (questionManager.isWaitingForCustomInput(questionIndex)) {
-    questionManager.clearCustomInput();
-    syncQuestionInteractionState("callback", questionIndex, questionManager.getActiveMessageId());
+  const scopeKey = resolveContextScopeKey(ctx);
+
+  if (questionManager.isWaitingForCustomInput(questionIndex, scopeKey)) {
+    questionManager.clearCustomInput(scopeKey);
+    syncQuestionInteractionState(
+      "callback",
+      questionIndex,
+      questionManager.getActiveMessageId(scopeKey),
+      scopeKey,
+    );
   }
 
-  const answer = questionManager.getSelectedAnswer(questionIndex);
+  const answer = questionManager.getSelectedAnswer(questionIndex, scopeKey);
 
   if (!answer) {
     await ctx.answerCallbackQuery({
@@ -222,12 +241,14 @@ async function handleSubmitAnswer(ctx: Context, questionIndex: number): Promise<
 
   // DO NOT send the answer immediately - move to the next question
   // All answers will be sent together after the user answers all questions
-  await showNextQuestion(ctx);
+  await showNextQuestion(ctx, scopeKey);
 }
 
 async function handleCustomAnswer(ctx: Context, questionIndex: number): Promise<void> {
-  questionManager.startCustomInput(questionIndex);
-  syncQuestionInteractionState("mixed", questionIndex, questionManager.getActiveMessageId());
+  const scopeKey = resolveContextScopeKey(ctx);
+
+  questionManager.startCustomInput(questionIndex, scopeKey);
+  syncQuestionInteractionState("mixed", questionIndex, questionManager.getActiveMessageId(scopeKey), scopeKey);
 
   await ctx.answerCallbackQuery({
     text: t("question.enter_custom_callback"),
@@ -236,26 +257,29 @@ async function handleCustomAnswer(ctx: Context, questionIndex: number): Promise<
 }
 
 async function handleCancelPoll(ctx: Context): Promise<void> {
-  questionManager.cancel();
-  clearQuestionInteraction("question_cancelled");
+  const scopeKey = resolveContextScopeKey(ctx);
+
+  questionManager.cancel(scopeKey);
+  clearQuestionInteractionForScope("question_cancelled", scopeKey);
 
   await ctx.editMessageText(t("question.cancelled")).catch(() => {});
   await ctx.answerCallbackQuery();
 
-  questionManager.clear();
+  questionManager.clear(scopeKey);
 }
 
-async function updateQuestionMessage(ctx: Context): Promise<void> {
-  const question = questionManager.getCurrentQuestion();
+async function updateQuestionMessage(ctx: Context, scopeKey?: string): Promise<void> {
+  const question = questionManager.getCurrentQuestion(scopeKey);
   if (!question) {
     logger.debug("[QuestionHandler] updateQuestionMessage: no current question");
     return;
   }
 
-  const text = formatQuestionText(question);
+  const text = formatQuestionText(question, scopeKey);
   const keyboard = buildQuestionKeyboard(
     question,
-    questionManager.getSelectedOptions(questionManager.getCurrentIndex()),
+    questionManager.getSelectedOptions(questionManager.getCurrentIndex(scopeKey), scopeKey),
+    scopeKey,
   );
 
   logger.debug("[QuestionHandler] Updating question message");
@@ -279,19 +303,20 @@ export async function showCurrentQuestion(
   const question = questionManager.getCurrentQuestion(scopeKey);
 
   if (!question) {
-    await showPollSummary(bot, chatId, messageThreadId);
+    await showPollSummary(bot, chatId, messageThreadId, scopeKey);
     return;
   }
 
   logger.debug(`[QuestionHandler] Showing question: ${question.header} - ${question.question}`);
 
-  const text = formatQuestionText(question);
+  const text = formatQuestionText(question, scopeKey);
   const useDirectTextAnswer = shouldUseDirectTextAnswer(question);
   const keyboard = useDirectTextAnswer
     ? undefined
     : buildQuestionKeyboard(
         question,
         questionManager.getSelectedOptions(questionManager.getCurrentIndex(scopeKey), scopeKey),
+        scopeKey,
       );
 
   logger.info(
@@ -346,39 +371,40 @@ export async function handleQuestionTextAnswer(ctx: Context): Promise<void> {
   const text = ctx.message?.text;
   if (!text) return;
 
-  const currentIndex = questionManager.getCurrentIndex();
+  const scopeKey = resolveContextScopeKey(ctx);
+  const currentIndex = questionManager.getCurrentIndex(scopeKey);
 
-  const question = questionManager.getCurrentQuestion();
+  const question = questionManager.getCurrentQuestion(scopeKey);
   const directTextAnswer = question ? shouldUseDirectTextAnswer(question) : false;
 
-  if (!questionManager.isWaitingForCustomInput(currentIndex) && !directTextAnswer) {
+  if (!questionManager.isWaitingForCustomInput(currentIndex, scopeKey) && !directTextAnswer) {
     await ctx.reply(t("question.use_custom_button_first"));
     return;
   }
 
-  if (questionManager.hasCustomAnswer(currentIndex)) {
+  if (questionManager.hasCustomAnswer(currentIndex, scopeKey)) {
     await ctx.reply(t("question.answer_already_received"));
     return;
   }
 
   logger.debug(`[QuestionHandler] Custom text answer for question ${currentIndex}: ${text}`);
 
-  questionManager.setCustomAnswer(currentIndex, text);
-  questionManager.clearCustomInput();
+  questionManager.setCustomAnswer(currentIndex, text, scopeKey);
+  questionManager.clearCustomInput(scopeKey);
 
   // Delete the previous question message
-  const activeMessageId = questionManager.getActiveMessageId();
+  const activeMessageId = questionManager.getActiveMessageId(scopeKey);
   if (activeMessageId !== null && ctx.chat) {
     await ctx.api.deleteMessage(ctx.chat.id, activeMessageId).catch(() => {});
   }
 
   // DO NOT send the answer immediately - move to the next question
   // All answers will be sent together after the user answers all questions
-  await showNextQuestion(ctx);
+  await showNextQuestion(ctx, scopeKey);
 }
 
-async function showNextQuestion(ctx: Context): Promise<void> {
-  questionManager.nextQuestion();
+async function showNextQuestion(ctx: Context, scopeKey?: string): Promise<void> {
+  questionManager.nextQuestion(scopeKey);
 
   if (!ctx.chat) {
     return;
@@ -386,10 +412,10 @@ async function showNextQuestion(ctx: Context): Promise<void> {
 
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
 
-  if (questionManager.hasNextQuestion()) {
-    await showCurrentQuestion(ctx.api, ctx.chat.id, messageThreadId);
+  if (questionManager.hasNextQuestion(scopeKey)) {
+    await showCurrentQuestion(ctx.api, ctx.chat.id, messageThreadId, scopeKey);
   } else {
-    await showPollSummary(ctx.api, ctx.chat.id, messageThreadId);
+    await showPollSummary(ctx.api, ctx.chat.id, messageThreadId, scopeKey);
   }
 }
 
@@ -397,16 +423,17 @@ async function showPollSummary(
   bot: Context["api"],
   chatId: number,
   messageThreadId?: number,
+  scopeKey?: string,
 ): Promise<void> {
-  const answers = questionManager.getAllAnswers();
-  const totalQuestions = questionManager.getTotalQuestions();
+  const answers = questionManager.getAllAnswers(scopeKey);
+  const totalQuestions = questionManager.getTotalQuestions(scopeKey);
 
   logger.info(
     `[QuestionHandler] Poll completed: ${answers.length}/${totalQuestions} questions answered`,
   );
 
   // Send all answers to the OpenCode API
-  await sendAllAnswersToAgent(bot, chatId, messageThreadId);
+  await sendAllAnswersToAgent(bot, chatId, messageThreadId, scopeKey);
 
   if (answers.length === 0) {
     await bot.sendMessage(
@@ -419,8 +446,8 @@ async function showPollSummary(
     await bot.sendMessage(chatId, summary, withMessageThreadId(undefined, messageThreadId));
   }
 
-  clearQuestionInteraction("question_completed");
-  questionManager.clear();
+  clearQuestionInteractionForScope("question_completed", scopeKey);
+  questionManager.clear(scopeKey);
   logger.debug("[QuestionHandler] Poll completed and cleared");
 }
 
@@ -428,18 +455,18 @@ async function sendAllAnswersToAgent(
   bot: Context["api"],
   chatId: number,
   messageThreadId?: number,
+  scopeKey?: string,
 ): Promise<void> {
-  const currentProject = getCurrentProject();
-  const currentSession = getCurrentSession();
-  const requestID = questionManager.getRequestID();
-  const totalQuestions = questionManager.getTotalQuestions();
-  const directory = currentSession?.directory ?? currentProject?.worktree;
+  const runtimeContext = questionManager.getRuntimeContext(scopeKey);
+  const requestID = questionManager.getRequestID(scopeKey);
+  const totalQuestions = questionManager.getTotalQuestions(scopeKey);
+  const directory = runtimeContext?.directory ?? null;
 
   if (!directory) {
-    logger.error("[QuestionHandler] No project for sending answers");
+    logger.error("[QuestionHandler] Missing stored runtime directory for question reply");
     await bot.sendMessage(
       chatId,
-      t("question.no_active_project"),
+      t("question.no_active_question_runtime"),
       withMessageThreadId(undefined, messageThreadId),
     );
     return;
@@ -460,8 +487,8 @@ async function sendAllAnswersToAgent(
   const allAnswers: string[][] = [];
 
   for (let i = 0; i < totalQuestions; i++) {
-    const customAnswer = questionManager.getCustomAnswer(i);
-    const selectedAnswer = questionManager.getSelectedAnswer(i);
+    const customAnswer = questionManager.getCustomAnswer(i, scopeKey);
+    const selectedAnswer = questionManager.getSelectedAnswer(i, scopeKey);
 
     // Priority: custom answer > selected options
     const answer = customAnswer || selectedAnswer || "";
@@ -510,13 +537,16 @@ async function sendAllAnswersToAgent(
   });
 }
 
-function formatQuestionText(question: {
+function formatQuestionText(
+  question: {
   header: string;
   question: string;
   multiple?: boolean;
-}): string {
-  const currentIndex = questionManager.getCurrentIndex();
-  const totalQuestions = questionManager.getTotalQuestions();
+  },
+  scopeKey?: string,
+): string {
+  const currentIndex = questionManager.getCurrentIndex(scopeKey);
+  const totalQuestions = questionManager.getTotalQuestions(scopeKey);
   const progressText = totalQuestions > 0 ? `${currentIndex + 1}/${totalQuestions}` : "";
 
   const headerTitle = [progressText, question.header].filter(Boolean).join(" ");
@@ -528,10 +558,11 @@ function formatQuestionText(question: {
 function buildQuestionKeyboard(
   question: { options: Array<{ label: string; description: string }>; multiple?: boolean },
   selectedOptions: Set<number>,
+  scopeKey?: string,
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
 
-  const questionIndex = questionManager.getCurrentIndex();
+  const questionIndex = questionManager.getCurrentIndex(scopeKey);
 
   logger.debug(`[QuestionHandler] Building keyboard for question ${questionIndex}`);
 

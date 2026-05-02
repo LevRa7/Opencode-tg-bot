@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { editBotText, sendBotText, sendBotTextDraft } from "../../../src/bot/utils/telegram-text.js";
+import {
+  editBotText,
+  sendBotText,
+  sendBotTextDraft,
+  sendStreamedBotText,
+} from "../../../src/bot/utils/telegram-text.js";
 import { logger } from "../../../src/utils/logger.js";
 
 vi.mock("../../../src/utils/logger.js", () => ({
@@ -120,5 +125,73 @@ describe("bot/utils/telegram-text", () => {
 
     expect(logger.debug).toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalled();
+  });
+
+  it("uses the same streamed send pipeline for root and child targets", async () => {
+    const sendMessage = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error("Bad Request: can't parse entities: Character '.' is reserved"),
+      )
+      .mockRejectedValueOnce(new Error("Bad Request: can't parse entities: unsupported start tag"))
+      .mockResolvedValueOnce({ message_id: 301 });
+
+    await sendStreamedBotText({
+      api: { sendMessage },
+      chatId: 700,
+      text: "Build.",
+      format: "markdown_v2",
+      rawFallbackText: "Build plain",
+      messageThreadId: 11,
+      deliveryTarget: {
+        chatId: 700,
+        messageThreadId: 21,
+        disableNotification: true,
+      },
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sendMessage).toHaveBeenNthCalledWith(1, 700, "Build.", {
+      disable_notification: true,
+      message_thread_id: 21,
+      parse_mode: "MarkdownV2",
+    });
+    expect(sendMessage).toHaveBeenNthCalledWith(2, 700, "Build\\.", {
+      disable_notification: true,
+      message_thread_id: 21,
+      parse_mode: "MarkdownV2",
+    });
+    expect(sendMessage).toHaveBeenNthCalledWith(3, 700, "Build plain", {
+      disable_notification: true,
+      message_thread_id: 21,
+    });
+  });
+
+  it("uses the same streamed edit pipeline as top-level edits", async () => {
+    const editMessageText = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error("Bad Request: can't parse entities: Character '.' is reserved"),
+      )
+      .mockRejectedValueOnce(new Error("Bad Request: can't parse entities: unsupported start tag"))
+      .mockResolvedValueOnce(undefined);
+
+    await sendStreamedBotText({
+      api: { editMessageText },
+      chatId: 701,
+      messageId: 99,
+      text: "Edit.",
+      format: "markdown_v2",
+      rawFallbackText: "Edit plain",
+    });
+
+    expect(editMessageText).toHaveBeenCalledTimes(3);
+    expect(editMessageText).toHaveBeenNthCalledWith(1, 701, 99, "Edit.", {
+      parse_mode: "MarkdownV2",
+    });
+    expect(editMessageText).toHaveBeenNthCalledWith(2, 701, 99, "Edit\\.", {
+      parse_mode: "MarkdownV2",
+    });
+    expect(editMessageText).toHaveBeenNthCalledWith(3, 701, 99, "Edit plain", {});
   });
 });

@@ -345,6 +345,7 @@ export const en = {
   "question.answer_already_received": "Answer already received, please wait...",
   "question.completed_no_answers": "✅ Poll completed (no answers)",
   "question.no_active_project": "❌ No active project",
+  "question.no_active_question_runtime": "❌ No stored question runtime context",
   "question.no_active_request": "❌ No active request",
   "question.send_answers_error": "❌ Failed to send answers to agent",
   "question.multi_hint": "\n(You can select multiple options)",

@@ -2,8 +2,19 @@ import { logger } from "../utils/logger.js";
 import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
 import { Question, QuestionAnswer, QuestionState } from "./types.js";
 
+export interface QuestionRuntimeContext {
+  directory: string | null;
+}
+
+export interface StartQuestionsOptions {
+  scopeKey?: string;
+  sessionId?: string;
+  runtimeContext?: QuestionRuntimeContext | null;
+}
+
 interface InternalQuestionState extends QuestionState {
   sessionId: string | null;
+  runtimeContext: QuestionRuntimeContext | null;
 }
 
 interface QuestionRestorePlan {
@@ -35,6 +46,7 @@ function cloneQuestionState(state: InternalQuestionState): InternalQuestionState
     isActive: state.isActive,
     requestID: state.requestID,
     sessionId: state.sessionId,
+    runtimeContext: state.runtimeContext ? { ...state.runtimeContext } : null,
   };
 }
 
@@ -50,6 +62,7 @@ function createQuestionState(): InternalQuestionState {
     isActive: false,
     requestID: null,
     sessionId: null,
+    runtimeContext: null,
   };
 }
 
@@ -80,8 +93,8 @@ class QuestionManager {
     }
   }
 
-  startQuestions(questions: Question[], requestID: string, scopeKey?: string, sessionId?: string): void {
-    const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
+  startQuestions(questions: Question[], requestID: string, options: StartQuestionsOptions = {}): void {
+    const resolvedScopeKey = resolveTelegramConversationScopeKey(options.scopeKey);
     const state = this.getScopeState(resolvedScopeKey);
 
     logger.debug(
@@ -111,11 +124,12 @@ class QuestionManager {
       messageIds: [],
       isActive: true,
       requestID,
-      sessionId: sessionId ?? null,
+      sessionId: options.sessionId ?? null,
+      runtimeContext: options.runtimeContext ? { ...options.runtimeContext } : null,
     });
 
-    if (sessionId) {
-      this.scopeKeyBySessionId.set(sessionId, resolvedScopeKey);
+    if (options.sessionId) {
+      this.scopeKeyBySessionId.set(options.sessionId, resolvedScopeKey);
     }
   }
 
@@ -131,6 +145,7 @@ class QuestionManager {
       isActive: sourceState.isActive,
       requestID: sourceState.requestID,
       sessionId,
+      runtimeContext: sourceState.runtimeContext ? { ...sourceState.runtimeContext } : null,
     };
   }
 
@@ -203,6 +218,11 @@ class QuestionManager {
 
   getRequestID(scopeKey?: string): string | null {
     return this.getScopeState(scopeKey).requestID;
+  }
+
+  getRuntimeContext(scopeKey?: string): QuestionRuntimeContext | null {
+    const runtimeContext = this.getScopeState(scopeKey).runtimeContext;
+    return runtimeContext ? { ...runtimeContext } : null;
   }
 
   getCurrentQuestion(scopeKey?: string): Question | null {

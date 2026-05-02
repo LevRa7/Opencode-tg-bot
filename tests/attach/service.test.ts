@@ -126,7 +126,10 @@ describe("attachSessionForScope", () => {
     const restorers = createRestorers(botApi, targetScopeKey, 2);
 
     // Seed pending interaction state as if session-a was previously active in another topic.
-    questionManager.startQuestions([PENDING_QUESTION], "req-attach", sourceScopeKey, "session-a");
+    questionManager.startQuestions([PENDING_QUESTION], "req-attach", {
+      scopeKey: sourceScopeKey,
+      sessionId: "session-a",
+    });
     questionManager.selectOption(0, 0, sourceScopeKey);
     questionManager.addMessageId(701, sourceScopeKey);
     questionManager.setActiveMessageId(701, sourceScopeKey);
@@ -179,7 +182,10 @@ describe("attachSessionForScope", () => {
     const sessionBScopeKey = buildTelegramConversationScopeKey(sessionBScope);
     const botApi = createBotApi([901]);
 
-    questionManager.startQuestions([PENDING_QUESTION], "req-session-a", sessionAScopeKey, "session-a");
+    questionManager.startQuestions([PENDING_QUESTION], "req-session-a", {
+      scopeKey: sessionAScopeKey,
+      sessionId: "session-a",
+    });
     permissionManager.startPermission(
       {
         id: "perm-session-a",
@@ -220,7 +226,10 @@ describe("attachSessionForScope", () => {
     const botApi = createBotApi([911, 912]);
     const restorers = createRestorers(botApi, targetScopeKey, 12);
 
-    questionManager.startQuestions([PENDING_QUESTION], "req-cross-user", sourceScopeKey, "session-a");
+    questionManager.startQuestions([PENDING_QUESTION], "req-cross-user", {
+      scopeKey: sourceScopeKey,
+      sessionId: "session-a",
+    });
     questionManager.selectOption(0, 1, sourceScopeKey);
 
     permissionManager.startPermission(
@@ -281,7 +290,10 @@ describe("attachSessionForScope", () => {
       );
     });
 
-    questionManager.startQuestions([PENDING_QUESTION], "req-restorer", sourceScopeKey, "session-a");
+    questionManager.startQuestions([PENDING_QUESTION], "req-restorer", {
+      scopeKey: sourceScopeKey,
+      sessionId: "session-a",
+    });
     permissionManager.startPermission(
       {
         id: "perm-restored",
@@ -409,7 +421,10 @@ describe("attachSessionForScope", () => {
       8,
     );
 
-    questionManager.startQuestions([PENDING_QUESTION], "req-question-fail", sourceScopeKey, "session-a");
+    questionManager.startQuestions([PENDING_QUESTION], "req-question-fail", {
+      scopeKey: sourceScopeKey,
+      sessionId: "session-a",
+    });
     questionManager.selectOption(0, 1, sourceScopeKey);
 
     await expect(

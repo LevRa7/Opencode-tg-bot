@@ -81,13 +81,27 @@ function createBotApi(messageId: number = 500): Context["api"] {
   } as unknown as Context["api"];
 }
 
-function createPermissionCallbackContext(data: string, messageId: number): Context {
+function createPermissionCallbackContext(
+  data: string,
+  messageId: number,
+  options?: {
+    userId?: number;
+    chatId?: number;
+    messageThreadId?: number;
+  },
+): Context {
+  const chatId = options?.chatId ?? 777;
+
   return {
-    chat: { id: 777 },
+    chat: { id: chatId },
+    from: options?.userId ? { id: options.userId } : undefined,
     callbackQuery: {
       data,
       message: {
         message_id: messageId,
+        ...(typeof options?.messageThreadId === "number"
+          ? { message_thread_id: options.messageThreadId }
+          : {}),
       },
     } as Context["callbackQuery"],
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
@@ -251,6 +265,117 @@ describe("bot/handlers/permission", () => {
 
     expect(permissionManager.isActive()).toBe(false);
     expect(interactionManager.getSnapshot()).toBeNull();
+  });
+
+  it("uses stored permission runtime context when replying", async () => {
+    const botApi = createBotApi(650);
+
+    mocked.currentSession = {
+      id: "session-stored",
+      title: "Stored session",
+      directory: "D:/stored-runtime",
+    };
+
+    await showPermissionRequest(botApi, 777, createPermissionRequest("perm-stored-runtime"));
+
+    mocked.currentSession = {
+      id: "session-ambient",
+      title: "Ambient session",
+      directory: "D:/ambient-runtime",
+    };
+    mocked.currentProject = {
+      id: "project-ambient",
+      worktree: "D:/ambient-project",
+    };
+
+    const ctx = createPermissionCallbackContext("permission:once", 650);
+    const handled = await handlePermissionCallback(ctx);
+
+    expect(handled).toBe(true);
+
+    await flushMicrotasks();
+
+    expect(mocked.permissionReplyMock).toHaveBeenCalledWith({
+      requestID: "perm-stored-runtime",
+      directory: "D:/stored-runtime",
+      reply: "once",
+    });
+  });
+
+  it("handles scoped permission callbacks using the stored scope state", async () => {
+    const botApi = createBotApi(660);
+    const scopeKey = buildTelegramConversationScopeKey({
+      userId: 5,
+      chatId: 777,
+      messageThreadId: 199,
+    });
+
+    await showPermissionRequest(botApi, 777, createPermissionRequest("perm-scoped-callback"), 199, scopeKey);
+
+    const ctx = createPermissionCallbackContext("permission:always", 660, {
+      userId: 5,
+      chatId: 777,
+      messageThreadId: 199,
+    });
+
+    const handled = await handlePermissionCallback(ctx);
+
+    expect(handled).toBe(true);
+
+    await flushMicrotasks();
+
+    expect(mocked.permissionReplyMock).toHaveBeenCalledWith({
+      requestID: "perm-scoped-callback",
+      directory: "D:/repo",
+      reply: "always",
+    });
+    expect(permissionManager.isActive(scopeKey)).toBe(false);
+    expect(interactionManager.getSnapshot(scopeKey)).toBeNull();
+  });
+
+  it("removes only the bad request when stored runtime context is absent", async () => {
+    const botApi = createBotApi(670);
+    const scopeKey = buildTelegramConversationScopeKey({
+      userId: 7,
+      chatId: 777,
+      messageThreadId: 22,
+    });
+
+    mocked.currentProject = undefined;
+    mocked.currentSession = null;
+    await showPermissionRequest(botApi, 777, createPermissionRequest("perm-missing-runtime"), 22, scopeKey);
+
+    const sendMessageMock = botApi.sendMessage as unknown as ReturnType<typeof vi.fn>;
+    sendMessageMock.mockResolvedValueOnce({ message_id: 671 });
+
+    mocked.currentProject = {
+      id: "project-1",
+      worktree: "D:/repo",
+    };
+    await showPermissionRequest(botApi, 777, createPermissionRequest("perm-valid-runtime"), 22, scopeKey);
+
+    const ctx = createPermissionCallbackContext("permission:reject", 670, {
+      userId: 7,
+      chatId: 777,
+      messageThreadId: 22,
+    });
+
+    const handled = await handlePermissionCallback(ctx);
+
+    expect(handled).toBe(true);
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({
+      text: t("permission.no_active_request_callback"),
+      show_alert: true,
+    });
+    expect(mocked.permissionReplyMock).not.toHaveBeenCalled();
+
+    expect(permissionManager.getRequestID(670, scopeKey)).toBeNull();
+    expect(permissionManager.getRequestID(671, scopeKey)).toBe("perm-valid-runtime");
+    expect(permissionManager.getPendingCount(scopeKey)).toBe(1);
+
+    const state = interactionManager.getSnapshot(scopeKey);
+    expect(state?.kind).toBe("permission");
+    expect(state?.metadata.pendingCount).toBe(1);
   });
 
   it("keeps permission interaction active until all requests are replied", async () => {

@@ -139,7 +139,10 @@ describe("questionManager", () => {
     });
 
     // The source scope represents the original Telegram topic where the agent asked the question.
-    questionManager.startQuestions([SINGLE_QUESTION, MULTIPLE_QUESTION], "req-restore", sourceScopeKey, "session-a");
+    questionManager.startQuestions([SINGLE_QUESTION, MULTIPLE_QUESTION], "req-restore", {
+      scopeKey: sourceScopeKey,
+      sessionId: "session-a",
+    });
     questionManager.selectOption(0, 1, sourceScopeKey);
     questionManager.addMessageId(501, sourceScopeKey);
     questionManager.setActiveMessageId(501, sourceScopeKey);

@@ -54,13 +54,38 @@ export interface SubagentTopicServiceDependencies {
   scheduleDeletion?: SubagentTopicScheduler;
 }
 
+type TopicLifecycleState =
+  | "active"
+  | "terminal_pending_delivery"
+  | "delivery_confirmed"
+  | "cleanup_pending"
+  | "deleted";
+
+export interface SubagentTopicLifecycleSnapshot {
+  lifecycleState: TopicLifecycleState;
+  terminalStatus: string | null;
+  finalDeliveryConfirmed: boolean;
+}
+
 interface SubagentTopicRegistryEntry {
   scope: SubagentSessionScope;
   target: SubagentTopicDeliveryTarget | null;
   deletionHandle: SubagentTopicDeletionHandle | null;
+  lifecycleState: TopicLifecycleState;
+  terminalStatus: string | null;
+  finalDeliveryConfirmed: boolean;
 }
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "aborted", "cancelled", "errored"]);
+const SUBAGENT_TOPIC_PREFIX = "Agent: ";
+const LEADING_AGENT_PREFIX = /^agent\s*:\s*/i;
+
+function normalizeSubagentTopicName(name: string): string {
+  const trimmedName = name.trim();
+  const withoutPrefix = trimmedName.replace(LEADING_AGENT_PREFIX, "").trim();
+  const canonicalName = withoutPrefix || "Subagent";
+  return `${SUBAGENT_TOPIC_PREFIX}${canonicalName}`;
+}
 
 function createDefaultDeletionScheduler(): SubagentTopicScheduler {
   return (run, delayMs) => {
@@ -89,6 +114,20 @@ function toDeletionDelayMs(autoDeleteMinutes: number | undefined): number | null
   return Math.floor(autoDeleteMinutes * 60 * 1000);
 }
 
+function deriveLifecycleStateAfterCleanupCancellation(
+  entry: Pick<SubagentTopicRegistryEntry, "finalDeliveryConfirmed" | "terminalStatus">,
+): Exclude<TopicLifecycleState, "cleanup_pending" | "deleted"> {
+  if (entry.finalDeliveryConfirmed) {
+    return "delivery_confirmed";
+  }
+
+  if (entry.terminalStatus) {
+    return "terminal_pending_delivery";
+  }
+
+  return "active";
+}
+
 export class SubagentTopicService {
   private readonly createForumTopic: SubagentTopicServiceDependencies["createForumTopic"];
   private readonly deleteForumTopic: SubagentTopicServiceDependencies["deleteForumTopic"];
@@ -108,6 +147,8 @@ export class SubagentTopicService {
       return existingEntry.scope;
     }
 
+    const normalizedTopicName = normalizeSubagentTopicName(input.topicName);
+
     if (!input.parent.isForum) {
       const fallbackScope: SubagentFallbackScope = {
         kind: "fallback",
@@ -119,6 +160,9 @@ export class SubagentTopicService {
         scope: fallbackScope,
         target: null,
         deletionHandle: null,
+        lifecycleState: "active",
+        terminalStatus: null,
+        finalDeliveryConfirmed: false,
       });
 
       return fallbackScope;
@@ -126,7 +170,7 @@ export class SubagentTopicService {
 
     const createdTopic = await this.createForumTopic({
       chatId: input.parent.chatId,
-      name: input.topicName,
+      name: normalizedTopicName,
     });
 
     const topicScope: SubagentTopicScope = {
@@ -134,7 +178,7 @@ export class SubagentTopicService {
       childSessionId: input.childSessionId,
       chatId: input.parent.chatId,
       messageThreadId: createdTopic.messageThreadId,
-      topicName: input.topicName,
+      topicName: normalizedTopicName,
     };
 
     this.registry.set(input.childSessionId, {
@@ -145,6 +189,9 @@ export class SubagentTopicService {
         disableNotification: true,
       },
       deletionHandle: null,
+      lifecycleState: "active",
+      terminalStatus: null,
+      finalDeliveryConfirmed: false,
     });
 
     return topicScope;
@@ -158,37 +205,78 @@ export class SubagentTopicService {
     return this.registry.get(sessionId)?.target ?? null;
   }
 
-  markFinalResponseDelivered(sessionId: string, input: MarkFinalResponseDeliveredInput): void {
-    if (!TERMINAL_STATUSES.has(input.terminalStatus)) {
-      logger.debug(
-        "[SubagentTopicService] markFinalResponseDelivered skipped: non-terminal status",
-        {
-          sessionId,
-          terminalStatus: input.terminalStatus,
-        },
-      );
+  getLifecycleStateForSession(sessionId: string): SubagentTopicLifecycleSnapshot | null {
+    const entry = this.registry.get(sessionId);
+    if (!entry) {
+      return null;
+    }
+
+    return {
+      lifecycleState: entry.lifecycleState,
+      terminalStatus: entry.terminalStatus,
+      finalDeliveryConfirmed: entry.finalDeliveryConfirmed,
+    };
+  }
+
+  markTerminalStatus(sessionId: string, terminalStatus: string): void {
+    if (!TERMINAL_STATUSES.has(terminalStatus)) {
+      logger.debug("[SubagentTopicService] markTerminalStatus skipped: non-terminal status", {
+        sessionId,
+        terminalStatus,
+      });
       return;
     }
 
     const entry = this.registry.get(sessionId);
     if (!entry) {
-      logger.debug("[SubagentTopicService] markFinalResponseDelivered skipped: no registry entry", {
+      logger.debug("[SubagentTopicService] markTerminalStatus skipped: no registry entry", {
         sessionId,
       });
       return;
     }
 
     if (entry.scope.kind !== "topic") {
-      logger.debug("[SubagentTopicService] markFinalResponseDelivered skipped: not a topic scope", {
+      logger.debug("[SubagentTopicService] markTerminalStatus skipped: not a topic scope", {
         sessionId,
         scopeKind: entry.scope.kind,
       });
       return;
     }
 
+    entry.terminalStatus = terminalStatus;
+    entry.lifecycleState = "terminal_pending_delivery";
+  }
+
+  confirmFinalDelivery(sessionId: string, autoDeleteMinutes?: number): void {
+    const entry = this.registry.get(sessionId);
+    if (!entry) {
+      logger.debug("[SubagentTopicService] confirmFinalDelivery skipped: no registry entry", {
+        sessionId,
+      });
+      return;
+    }
+
+    if (entry.scope.kind !== "topic") {
+      logger.debug("[SubagentTopicService] confirmFinalDelivery skipped: not a topic scope", {
+        sessionId,
+        scopeKind: entry.scope.kind,
+      });
+      return;
+    }
+
+    if (!entry.terminalStatus || !TERMINAL_STATUSES.has(entry.terminalStatus)) {
+      logger.debug("[SubagentTopicService] confirmFinalDelivery skipped: terminal status missing", {
+        sessionId,
+        terminalStatus: entry.terminalStatus,
+      });
+      return;
+    }
+
     if (entry.deletionHandle) {
+      entry.finalDeliveryConfirmed = true;
+      entry.lifecycleState = "cleanup_pending";
       logger.debug(
-        "[SubagentTopicService] markFinalResponseDelivered skipped: deletion already scheduled",
+        "[SubagentTopicService] confirmFinalDelivery skipped: deletion already scheduled",
         {
           sessionId,
         },
@@ -196,11 +284,14 @@ export class SubagentTopicService {
       return;
     }
 
-    const delayMs = toDeletionDelayMs(input.autoDeleteMinutes);
+    entry.finalDeliveryConfirmed = true;
+    entry.lifecycleState = "delivery_confirmed";
+
+    const delayMs = toDeletionDelayMs(autoDeleteMinutes);
     if (delayMs === null) {
-      logger.debug("[SubagentTopicService] markFinalResponseDelivered skipped: null delay", {
+      logger.debug("[SubagentTopicService] confirmFinalDelivery skipped: null delay", {
         sessionId,
-        autoDeleteMinutes: input.autoDeleteMinutes,
+        autoDeleteMinutes,
       });
       return;
     }
@@ -213,6 +304,7 @@ export class SubagentTopicService {
     });
 
     const topicScope = entry.scope;
+    entry.lifecycleState = "cleanup_pending";
     entry.deletionHandle = this.scheduleDeletion(async () => {
       try {
         logger.debug("[SubagentTopicService] Deleting subagent topic", {
@@ -224,6 +316,7 @@ export class SubagentTopicService {
           chatId: topicScope.chatId,
           messageThreadId: (topicScope as SubagentTopicScope).messageThreadId,
         });
+        entry.lifecycleState = "deleted";
         this.registry.delete(sessionId);
         logger.debug("[SubagentTopicService] Subagent topic deleted", { sessionId });
       } catch (error) {
@@ -234,8 +327,49 @@ export class SubagentTopicService {
           error,
         });
         entry.deletionHandle = null;
+        entry.lifecycleState = "delivery_confirmed";
       }
     }, delayMs);
+  }
+
+  markDeliveryCleanupPending(sessionId: string, terminalStatus: string): void {
+    if (!TERMINAL_STATUSES.has(terminalStatus)) {
+      logger.debug(
+        "[SubagentTopicService] markDeliveryCleanupPending skipped: non-terminal status",
+        {
+          sessionId,
+          terminalStatus,
+        },
+      );
+      return;
+    }
+
+    const entry = this.registry.get(sessionId);
+    if (!entry) {
+      logger.debug("[SubagentTopicService] markDeliveryCleanupPending skipped: no registry entry", {
+        sessionId,
+      });
+      return;
+    }
+
+    if (entry.scope.kind !== "topic") {
+      logger.debug(
+        "[SubagentTopicService] markDeliveryCleanupPending skipped: not a topic scope",
+        {
+          sessionId,
+          scopeKind: entry.scope.kind,
+        },
+      );
+      return;
+    }
+
+    entry.terminalStatus = terminalStatus;
+    entry.lifecycleState = "cleanup_pending";
+  }
+
+  markFinalResponseDelivered(sessionId: string, input: MarkFinalResponseDeliveredInput): void {
+    this.markTerminalStatus(sessionId, input.terminalStatus);
+    this.confirmFinalDelivery(sessionId, input.autoDeleteMinutes);
   }
 
   markSubagentStopped(sessionId: string): void {
@@ -273,6 +407,7 @@ export class SubagentTopicService {
 
     entry.deletionHandle.cancel();
     entry.deletionHandle = null;
+    entry.lifecycleState = deriveLifecycleStateAfterCleanupCancellation(entry);
   }
 
   clearAll(): void {

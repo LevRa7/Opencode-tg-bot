@@ -17,7 +17,7 @@ type TelegramEditMessageOptions = Parameters<EditMessageApi["editMessageText"]>[
 
 export type TelegramTextFormat = "raw" | "markdown_v2" | "html";
 
-interface SendBotTextParams {
+export interface SendBotTextParams {
   api: SendMessageApi;
   chatId: Parameters<SendMessageApi["sendMessage"]>[0];
   text: string;
@@ -36,6 +36,27 @@ interface EditBotTextParams {
   text: string;
   rawFallbackText?: string;
   /** Telegram editMessageText options, including entities */
+  options?: TelegramEditMessageOptions;
+  format?: TelegramTextFormat;
+}
+
+interface SendStreamedBotTextSendParams {
+  api: SendMessageApi;
+  chatId: Parameters<SendMessageApi["sendMessage"]>[0];
+  text: string;
+  rawFallbackText?: string;
+  options?: TelegramSendMessageOptions;
+  format?: TelegramTextFormat;
+  messageThreadId?: number;
+  deliveryTarget?: TelegramDeliveryTarget | null;
+}
+
+interface SendStreamedBotTextEditParams {
+  api: EditMessageApi;
+  chatId: Parameters<EditMessageApi["editMessageText"]>[0];
+  messageId: Parameters<EditMessageApi["editMessageText"]>[1];
+  text: string;
+  rawFallbackText?: string;
   options?: TelegramEditMessageOptions;
   format?: TelegramTextFormat;
 }
@@ -77,6 +98,70 @@ function resolveMarkdownParseMode(
   return undefined;
 }
 
+function resolveSafeRenderConfig(
+  format: TelegramTextFormat,
+  rawFallbackText: string | undefined,
+): {
+  parseMode: "MarkdownV2" | "HTML" | undefined;
+  fallbackText: string | undefined;
+} {
+  if (format === "html") {
+    return {
+      parseMode: "HTML",
+      fallbackText: rawFallbackText,
+    };
+  }
+
+  return {
+    parseMode: resolveMarkdownParseMode(format),
+    fallbackText: rawFallbackText,
+  };
+}
+
+export async function sendStreamedBotText(
+  params: SendStreamedBotTextSendParams,
+): Promise<number | null>;
+export async function sendStreamedBotText(
+  params: SendStreamedBotTextEditParams,
+): Promise<void>;
+export async function sendStreamedBotText(
+  params: SendStreamedBotTextSendParams | SendStreamedBotTextEditParams,
+): Promise<number | null | void> {
+  const format = params.format ?? "raw";
+  const renderConfig = resolveSafeRenderConfig(format, params.rawFallbackText);
+
+  if ("messageId" in params) {
+    await editMessageWithMarkdownFallback({
+      api: params.api,
+      chatId: params.chatId,
+      messageId: params.messageId,
+      text: params.text,
+      rawFallbackText: renderConfig.fallbackText,
+      options: params.options,
+      parseMode: renderConfig.parseMode,
+    });
+    return;
+  }
+
+  const result = await sendMessageWithMarkdownFallback({
+    api: params.api,
+    chatId: params.chatId,
+    text: params.text,
+    rawFallbackText: renderConfig.fallbackText,
+    options: withTelegramDeliveryTarget(
+      params.options,
+      params.deliveryTarget ??
+        (typeof params.chatId === "number" && typeof params.messageThreadId === "number"
+          ? { chatId: params.chatId, messageThreadId: params.messageThreadId }
+          : undefined),
+    ),
+    parseMode: renderConfig.parseMode,
+    messageThreadId: params.messageThreadId,
+  });
+
+  return (result as { message_id?: number })?.message_id ?? null;
+}
+
 export async function sendBotText({
   api,
   chatId,
@@ -99,22 +184,16 @@ export async function sendBotText({
   }
 
   try {
-    const result = await sendMessageWithMarkdownFallback({
+    return await sendStreamedBotText({
       api,
       chatId,
       text,
-      rawFallbackText: format === "html" ? text : rawFallbackText,
-      options: withTelegramDeliveryTarget(
-        options,
-        deliveryTarget ??
-          (typeof chatId === "number" && typeof messageThreadId === "number"
-            ? { chatId, messageThreadId }
-            : undefined),
-      ),
-      parseMode: format === "html" ? "HTML" : resolveMarkdownParseMode(format),
+      rawFallbackText,
+      options,
+      format,
       messageThreadId,
+      deliveryTarget,
     });
-    return (result as { message_id?: number })?.message_id ?? null;
   } catch (error) {
     logger.error(
       `[TelegramText] sendBotText failed: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, format=${format}, textLength=${text.length}`,
@@ -145,14 +224,14 @@ export async function editBotText({
   }
 
   try {
-    await editMessageWithMarkdownFallback({
+    await sendStreamedBotText({
       api,
       chatId,
       messageId,
       text,
-      rawFallbackText: format === "html" ? text : rawFallbackText,
+      rawFallbackText,
       options,
-      parseMode: format === "html" ? "HTML" : resolveMarkdownParseMode(format),
+      format,
     });
   } catch (error) {
     const errorText = getFullErrorText(error);
@@ -185,7 +264,7 @@ export async function sendBotTextDraft({
     return;
   }
 
-  const parseMode = format === "html" ? "HTML" : resolveMarkdownParseMode(format);
+  const renderConfig = resolveSafeRenderConfig(format, undefined);
 
   logger.debug(
     `[TelegramText] sendBotTextDraft: chatId=${chatId}, draftId=${draftId}, format=${format}, textLength=${text.length}`,
@@ -197,9 +276,9 @@ export async function sendBotTextDraft({
       chatId,
       draftId,
       text,
-      rawFallbackText: format === "html" ? text : undefined,
+      rawFallbackText: renderConfig.fallbackText,
       options,
-      parseMode,
+      parseMode: renderConfig.parseMode,
     });
   } catch (error) {
     logger.error(

@@ -17,6 +17,8 @@ const sendChatActionMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const editMessageTextMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 const createForumTopicMock = vi.hoisted(() => vi.fn().mockResolvedValue({ messageThreadId: 321 }));
 const deleteForumTopicMock = vi.hoisted(() => vi.fn().mockResolvedValue(true));
+const reopenForumTopicMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const closeForumTopicMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const keyboardGetKeyboardMock = vi.hoisted(() => vi.fn(() => undefined));
 const keyboardIsInitializedMock = vi.hoisted(() => vi.fn(() => false));
 const getSessionTargetMock = vi.hoisted(() => vi.fn(() => null));
@@ -107,6 +109,8 @@ vi.mock("grammy", () => {
       editMessageText: editMessageTextMock,
       createForumTopic: createForumTopicMock,
       deleteForumTopic: deleteForumTopicMock,
+      reopenForumTopic: reopenForumTopicMock,
+      closeForumTopic: closeForumTopicMock,
     };
 
     public readonly onHandlers: Array<{
@@ -199,13 +203,13 @@ vi.mock("../../src/settings/manager.js", () => ({
   getReasoningMode: vi.fn(() => 0),
   getTenantRuntimeInfo: vi.fn(() => undefined),
   getThinkingClearMode: vi.fn(() => false),
-      getHideThinkingMessages: getHideThinkingMessagesMock,
-      getHideToolCallMessages: getHideToolCallMessagesMock,
-      getHideToolFileMessages: getHideToolFileMessagesMock,
-      getSubagentTopicsEnabled: getSubagentTopicsEnabledMock,
-      getSubagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutesMock,
-      getUserLocale: vi.fn(() => "en"),
-      isMessageStreamingEnabled: vi.fn(() => true),
+  getHideThinkingMessages: getHideThinkingMessagesMock,
+  getHideToolCallMessages: getHideToolCallMessagesMock,
+  getHideToolFileMessages: getHideToolFileMessagesMock,
+  getSubagentTopicsEnabled: getSubagentTopicsEnabledMock,
+  getSubagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutesMock,
+  getUserLocale: vi.fn(() => "en"),
+  isMessageStreamingEnabled: vi.fn(() => true),
 }));
 
 vi.mock("../../src/agent/manager.js", () => ({
@@ -2447,13 +2451,17 @@ describe("bot/index local file follow-up orchestration", () => {
       },
     } as unknown as Event);
 
-    emit({ type: "session.idle", properties: { sessionID: "child-session-topic-1" } } as unknown as Event);
+    emit({
+      type: "session.idle",
+      properties: { sessionID: "child-session-topic-1" },
+    } as unknown as Event);
     emit({ type: "session.idle", properties: { sessionID: "session-1" } } as unknown as Event);
 
     await vi.waitFor(() =>
       expect(
         sendMessageMock.mock.calls.some(
-          (call) => call[1] === "Root reply stays in parent thread." && call[2]?.message_thread_id === 1,
+          (call) =>
+            call[1] === "Root reply stays in parent thread." && call[2]?.message_thread_id === 1,
         ),
       ).toBe(true),
     );
@@ -2608,6 +2616,277 @@ describe("bot/index local file follow-up orchestration", () => {
     }
   });
 
+  it("routes child footer delivery through the new deliverChildTopicTerminalFooterAndConfirmDelivery path after completion", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    createForumTopicMock.mockClear();
+    getSubagentTopicsEnabledMock.mockReturnValue(true);
+    getSubagentTopicAutoDeleteMinutesMock.mockReturnValue(10);
+    createForumTopicMock.mockResolvedValue({ messageThreadId: 456 });
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 0),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
+      getSubagentTopicsEnabled: getSubagentTopicsEnabledMock,
+      getSubagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutesMock,
+      getUserLocale: vi.fn(() => "en"),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+    const bot = createIsolatedBot() as any;
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    await promptHandler({
+      message: {
+        text: "footer delivery path",
+        chat: { id: 123, is_forum: true },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "supergroup", is_forum: true },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    // Create child session
+    emit({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "child-session-footer-path-1",
+          parentID: "session-1",
+          title: "Footer test (@explore subagent)",
+          directory: "/repo",
+          time: { created: 1_000, updated: 1_000 },
+        },
+      },
+    } as unknown as Event);
+
+    // Emit subagent part (populates childSessionMeta via summaryAggregator → setOnSubagent)
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "subtask-footer-path-1",
+          sessionID: "session-1",
+          messageID: "root-footer-path-1",
+          type: "subtask",
+          prompt: "Footer test",
+          description: "Footer test",
+          agent: "explore",
+          providerID: "test-provider",
+          modelID: "test-model",
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(createForumTopicMock).toHaveBeenCalledWith(123, "Footer test"),
+    );
+
+    sendMessageMock.mockClear();
+
+    // Emit child message created + text + completed
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "child-message-footer-path-1",
+          sessionID: "child-session-footer-path-1",
+          role: "assistant",
+          time: { created: 1_300 },
+        },
+      },
+    } as unknown as Event);
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "child-text-footer-path-1",
+          sessionID: "child-session-footer-path-1",
+          messageID: "child-message-footer-path-1",
+          type: "text",
+          text: "Child answer text.",
+          time: { start: 1_350 },
+        },
+      },
+    } as unknown as Event);
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "child-message-footer-path-1",
+          sessionID: "child-session-footer-path-1",
+          role: "assistant",
+          time: { created: 1_300, completed: 1_500 },
+        },
+      },
+    } as unknown as Event);
+
+    // After message.completed triggers the completion task, deliverChildTopicTerminalFooterAndConfirmDelivery
+    // is called in the success path, which sends the footer.
+    await vi.waitFor(
+      () => {
+        const footerCalls = sendMessageMock.mock.calls.filter(
+          (call) =>
+            call[2]?.message_thread_id === 456 &&
+            String(call[1]).includes("Agent:") &&
+            String(call[1]).includes("test-provider"),
+        );
+        return footerCalls.length === 1;
+      },
+      { timeout: 5000 },
+    );
+  });
+
+  it("keeps topic cleanup state after failed final delivery instead of clearing it immediately", async () => {
+    vi.resetModules();
+    capturedEventCallbacksByDirectory.clear();
+    sendMessageMock.mockClear();
+    createForumTopicMock.mockClear();
+    deleteForumTopicMock.mockClear();
+    getSubagentTopicsEnabledMock.mockReturnValue(true);
+    getSubagentTopicAutoDeleteMinutesMock.mockReturnValue(10);
+    createForumTopicMock.mockResolvedValue({ messageThreadId: 789 });
+
+    sendMessageMock.mockImplementationOnce(() => {
+      throw new Error("Simulated delivery failure");
+    });
+
+    vi.doMock("../../src/settings/manager.js", () => ({
+      getCurrentProject: getCurrentProjectMock,
+      setCurrentProject: vi.fn(),
+      getReasoningMode: vi.fn(() => 0),
+      getTenantRuntimeInfo: vi.fn(() => undefined),
+      getThinkingClearMode: vi.fn(() => false),
+      getHideThinkingMessages: vi.fn(() => false),
+      getHideToolCallMessages: vi.fn(() => false),
+      getHideToolFileMessages: vi.fn(() => false),
+      getSubagentTopicsEnabled: getSubagentTopicsEnabledMock,
+      getSubagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutesMock,
+      getUserLocale: vi.fn(() => "en"),
+      isMessageStreamingEnabled: vi.fn(() => true),
+    }));
+
+    const { createBot: createIsolatedBot } = await import("../../src/bot/index.js");
+    const bot = createIsolatedBot() as any;
+    const textHandlers = bot.onHandlers.filter(
+      (entry: { event: string | string[] }) => entry.event === "message:text",
+    );
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    await promptHandler({
+      message: {
+        text: "failure cleanup state",
+        chat: { id: 123, is_forum: true },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "supergroup", is_forum: true },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "session.created",
+      properties: {
+        info: {
+          id: "child-session-failure-cleanup-1",
+          parentID: "session-1",
+          title: "Failing task (@explore subagent)",
+          directory: "/repo",
+          time: { created: 1_000, updated: 1_000 },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "subtask-failure-cleanup-1",
+          sessionID: "session-1",
+          messageID: "root-failure-cleanup-1",
+          type: "subtask",
+          prompt: "Failing task",
+          description: "Failing task",
+          agent: "explore",
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(createForumTopicMock).toHaveBeenCalledWith(123, "Failing task"),
+    );
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "child-message-failure-cleanup-1",
+          sessionID: "child-session-failure-cleanup-1",
+          role: "assistant",
+          time: { created: 1_300 },
+        },
+      },
+    } as unknown as Event);
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "child-text-failure-cleanup-1",
+          sessionID: "child-session-failure-cleanup-1",
+          messageID: "child-message-failure-cleanup-1",
+          type: "text",
+          text: "This answer will fail to deliver.",
+          time: { start: 1_350 },
+        },
+      },
+    } as unknown as Event);
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "child-message-failure-cleanup-1",
+          sessionID: "child-session-failure-cleanup-1",
+          role: "assistant",
+          time: { created: 1_300, completed: 1_500 },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() => {
+      expect(deleteForumTopicMock).not.toHaveBeenCalled();
+    });
+
+    const footerCalls = sendMessageMock.mock.calls.filter(
+      (call) =>
+        call[2]?.message_thread_id === 789 &&
+        String(call[1]).includes("Agent:") &&
+        String(call[1]).includes("test-provider"),
+    );
+    expect(footerCalls.length).toBe(0);
+  });
+
   it("falls back to the parent route when dedicated child topic routing is unavailable", async () => {
     vi.resetModules();
     capturedEventCallbacksByDirectory.clear();
@@ -2717,7 +2996,10 @@ describe("bot/index local file follow-up orchestration", () => {
       },
     } as unknown as Event);
 
-    emit({ type: "session.idle", properties: { sessionID: "child-session-fallback-route-1" } } as unknown as Event);
+    emit({
+      type: "session.idle",
+      properties: { sessionID: "child-session-fallback-route-1" },
+    } as unknown as Event);
     emit({ type: "session.idle", properties: { sessionID: "session-1" } } as unknown as Event);
 
     await vi.waitFor(() =>
@@ -3398,9 +3680,7 @@ describe("bot/index local file follow-up orchestration", () => {
         },
       } as unknown as Event);
 
-      await vi.waitFor(() =>
-        expect(hasFooterMessage()).toBe(true),
-      );
+      await vi.waitFor(() => expect(hasFooterMessage()).toBe(true));
 
       await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -6595,7 +6875,14 @@ describe("bot/index local file follow-up orchestration", () => {
 
     const renderAssistantFinalPartsSafeSpy = vi
       .spyOn(assistantRendering, "renderAssistantFinalPartsSafe")
-      .mockReturnValue([{ text: "**formatted**", fallbackText: "formatted", source: "entities" }]);
+      .mockReturnValue([
+        {
+          text: "formatted",
+          fallbackText: "formatted",
+          entities: [{ type: "bold", offset: 0, length: 9 }],
+          source: "entities",
+        },
+      ]);
     const prepareAssistantFinalStreamingPayloadSpy = vi
       .spyOn(assistantRendering, "prepareAssistantFinalStreamingPayload")
       .mockReturnValue({
@@ -6689,9 +6976,9 @@ describe("bot/index local file follow-up orchestration", () => {
     );
     expect(sendMessageMock).toHaveBeenCalledWith(
       123,
-      "**formatted**",
+      "formatted",
       expect.objectContaining({
-        parse_mode: "MarkdownV2",
+        entities: [{ type: "bold", offset: 0, length: 9 }],
         disable_notification: true,
         message_thread_id: 1,
       }),

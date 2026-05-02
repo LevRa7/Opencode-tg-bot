@@ -59,8 +59,8 @@ describe("bot/streaming/response-streamer", () => {
       expect(sendText).toHaveBeenCalledTimes(2);
     });
 
-    expect(sendText).toHaveBeenNthCalledWith(1, "s1", "part-1", "markdown_v2", undefined);
-    expect(sendText).toHaveBeenNthCalledWith(2, "s1", "part-2", "markdown_v2", undefined);
+    expect(sendText).toHaveBeenNthCalledWith(1, "s1", "part-1", "raw", undefined);
+    expect(sendText).toHaveBeenNthCalledWith(2, "s1", "part-2", "raw", undefined);
     expect(editText).not.toHaveBeenCalled();
     expect(deleteText).not.toHaveBeenCalled();
   });
@@ -93,7 +93,7 @@ describe("bot/streaming/response-streamer", () => {
     expect(sendText).toHaveBeenNthCalledWith(1, "s1", "rich", "markdown_v2", {
       entities: richEntities,
     });
-    expect(sendText).toHaveBeenNthCalledWith(2, "s1", "plain-tail", "markdown_v2", undefined);
+    expect(sendText).toHaveBeenNthCalledWith(2, "s1", "plain-tail", "raw", undefined);
     expect(editText).not.toHaveBeenCalled();
   });
 
@@ -134,14 +134,7 @@ describe("bot/streaming/response-streamer", () => {
     expect(editText).toHaveBeenNthCalledWith(1, "s1", 401, "rich updated", "markdown_v2", {
       entities: richEntities,
     });
-    expect(editText).toHaveBeenNthCalledWith(
-      2,
-      "s1",
-      402,
-      "plain-tail-updated",
-      "markdown_v2",
-      undefined,
-    );
+    expect(editText).toHaveBeenNthCalledWith(2, "s1", 402, "plain-tail-updated", "raw", undefined);
     expect(deleteText).not.toHaveBeenCalled();
   });
 
@@ -502,7 +495,7 @@ describe("bot/streaming/response-streamer", () => {
     expect(secondResult).toEqual({ streamed: true, telegramMessageIds: [201] });
   });
 
-  it("keeps markdown_v2 format for plain parts on complete to preserve parse_mode", async () => {
+  it("uses raw format for plain parts without entities on complete to avoid MarkdownV2 parse errors", async () => {
     vi.useFakeTimers();
 
     let nextMessageId = 501;
@@ -536,12 +529,12 @@ describe("bot/streaming/response-streamer", () => {
       "s1",
       501,
       "final **bold** and *italic*",
-      "markdown_v2",
+      "raw",
       undefined,
     );
   });
 
-  it("uses the same markdown_v2 delivery mode for root and child plain streamed parts", async () => {
+  it("uses raw delivery mode for root and child plain streamed parts without entities", async () => {
     vi.useFakeTimers();
 
     let nextMessageId = 601;
@@ -572,14 +565,14 @@ describe("bot/streaming/response-streamer", () => {
       1,
       "root-session",
       "plain.with.punctuation",
-      "markdown_v2",
+      "raw",
       undefined,
     );
     expect(sendText).toHaveBeenNthCalledWith(
       2,
       "child-session",
       "plain.with.punctuation",
-      "markdown_v2",
+      "raw",
       undefined,
     );
   });

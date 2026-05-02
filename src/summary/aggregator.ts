@@ -1205,6 +1205,56 @@ class SummaryAggregator {
         const input = "input" in state ? (state.input as { [key: string]: unknown }) : undefined;
         const title = "title" in state ? state.title : undefined;
         this.updateSubagentToolState(part.sessionID, state, part.tool, input, title);
+
+        const isTerminalToolState =
+          "status" in state && (state.status === "completed" || state.status === "error");
+
+        if (isTerminalToolState) {
+          if (state.status === "completed") {
+            const completedKey = `completed-${part.callID}`;
+            this.lastRunningToolOutputHashes.delete(`running-${part.callID}`);
+
+            if (!this.processedToolStates.has(completedKey)) {
+              this.processedToolStates.add(completedKey);
+
+              const preparedFileContext = this.prepareToolFileContext(
+                part.tool,
+                input,
+                title,
+                state.metadata as { [key: string]: unknown } | undefined,
+              );
+
+              const toolData: ToolInfo = {
+                sessionId: part.sessionID,
+                messageId: part.messageID,
+                callId: part.callID,
+                tool: part.tool,
+                state: part.state,
+                input,
+                title,
+                metadata: state.metadata as { [key: string]: unknown },
+                hasFileAttachment: !!preparedFileContext.fileData,
+                eventTimeMs: this.getToolEventTimeMs(state),
+              };
+
+              if (this.onToolCallback) {
+                this.onToolCallback(toolData);
+              }
+
+              if (preparedFileContext.fileData && this.onToolFileCallback) {
+                this.onToolFileCallback({
+                  ...toolData,
+                  hasFileAttachment: true,
+                  fileData: preparedFileContext.fileData,
+                });
+              }
+
+              if (preparedFileContext.fileChange && this.onFileChangeCallback) {
+                this.onFileChangeCallback(preparedFileContext.fileChange);
+              }
+            }
+          }
+        }
       }
 
       if (part.type === "step-start") {

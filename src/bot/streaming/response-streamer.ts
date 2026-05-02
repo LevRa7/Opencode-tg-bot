@@ -137,7 +137,8 @@ function resolvePartFormat(
     return payloadFormat;
   }
 
-  return "markdown_v2";
+  const entities = typeof part === "string" ? undefined : part.entities;
+  return entities?.length ? "markdown_v2" : "raw";
 }
 
 function delay(ms: number): Promise<void> {

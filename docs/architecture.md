@@ -1,5 +1,7 @@
 # Architecture
 
+![OpenCode-Telegram Cyberpunk Architecture](../assets/architecture-cyberpunk.png)
+
 This document describes the real module structure of the bot, how runtime state is coordinated, and how Telegram, OpenCode, and optional STT APIs interact during execution.
 
 Related docs:

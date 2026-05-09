@@ -96,6 +96,11 @@ if [[ ! -f "$GEMINI_MEDIA_ENV_FILE" && -f "${HOME}/.gemini/.env" ]]; then
   fi
 fi
 
+# Telegraph config — read from project .env
+TELEGRAPH_ENABLED="${TELEGRAPH_ENABLED:-true}"
+TELEGRAPH_ACCESS_TOKEN="${TELEGRAPH_ACCESS_TOKEN:-$(read_env_value "${SCRIPT_DIR}/../.env" TELEGRAPH_ACCESS_TOKEN || true)}"
+TELEGRAPH_AUTHOR_NAME="${TELEGRAPH_AUTHOR_NAME:-opencode-tg}"
+
 if ! [[ "$HOST_PORT" =~ ^[0-9]+$ ]] || (( HOST_PORT < 49600 || HOST_PORT > 49999 )); then
   echo "HOST_PORT must be in range 49600-49999" >&2
   exit 1
@@ -229,6 +234,16 @@ if (typeof host.model === "string") {
 
 if (host.provider && typeof host.provider === "object") {
   config.provider = { ...host.provider };
+}
+
+// Map host plugin paths to container paths
+if (Array.isArray(host.plugin)) {
+  config.plugin = host.plugin.map(p => {
+    if (typeof p === "string" && p.includes("/plugin/cliproxy-api")) {
+      return "/opencode-plugins/cliproxy-api";
+    }
+    return p;
+  });
 }
 
 // Ensure skills object exists and set paths for container
@@ -433,6 +448,11 @@ docker run --rm "${TTY_FLAGS[@]}" \
   -e GEMINI_MEDIA_MODEL="${GEMINI_MEDIA_MODEL}" \
   -e GPT_IMAGE_MODEL="${GPT_IMAGE_MODEL}" \
   -e TG_CONFIG_DIR="/state/tg-cli" \
+  -e CLIPROXYAPI_BASE_URL="${CLIPROXYAPI_BASE_URL}" \
+  -e CLIPROXYAPI_KEY_FILE="/workspace/.config/opencode/cliproxyapi.key" \
+  -e TELEGRAPH_ENABLED="${TELEGRAPH_ENABLED}" \
+  -e TELEGRAPH_ACCESS_TOKEN="${TELEGRAPH_ACCESS_TOKEN}" \
+  -e TELEGRAPH_AUTHOR_NAME="${TELEGRAPH_AUTHOR_NAME}" \
   -v "${XDG_CONFIG_DIR}:/bootstrap/opencode-config:ro" \
   -v "${HOST_AUTH_FILE}:/bootstrap/opencode-auth/auth.json:ro" \
   -v "${GEMINI_MEDIA_ENV_FILE}:/run/opencode-secrets/gemini-media.env:ro" \
@@ -440,6 +460,7 @@ docker run --rm "${TTY_FLAGS[@]}" \
   -v "${WORKSPACE}:/workspace" \
   -v "${STATE_DIR}:/state" \
   -v "${GLOBAL_AGENTS_FILE}:/etc/opencode/AGENTS.md:ro" \
+  -v "${CONFIG_DIR}/plugin/cliproxy-api:/opencode-plugins/cliproxy-api" \
   -w /workspace \
   --name "$CONTAINER_NAME" \
   "$IMAGE" \

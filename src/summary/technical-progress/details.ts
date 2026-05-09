@@ -40,9 +40,18 @@ function buildBody(toolInfo: TechnicalProgressToolInfo): string | null {
     return todoBody;
   }
 
-  const fileDiffBody = formatFileDiff(toolInfo.metadata?.filediff);
+  const fileDiffBody = formatFileDiff(toolInfo.metadata?.filediff, toolInfo.metadata?.diff);
   if (fileDiffBody) {
     return fileDiffBody;
+  }
+
+  if (toolInfo.tool === "write") {
+    const filePath = typeof input.filePath === "string" ? input.filePath.trim() : "";
+    const content = typeof input.content === "string" ? input.content : "";
+    if (filePath && content) {
+      const lines = content.split("\n");
+      return [`📄 ${filePath}  +${lines.length} −0`, "", "```", content, "```"].join("\n");
+    }
   }
 
   if (toolInfo.tool === "bash") {
@@ -138,21 +147,32 @@ function formatTodos(value: unknown): string | null {
   return lines.join("\n");
 }
 
-function formatFileDiff(value: unknown): string | null {
-  if (typeof value !== "object" || value === null) {
+function formatFileDiff(filediff: unknown, diffText: unknown): string | null {
+  if (typeof filediff !== "object" || filediff === null) {
     return null;
   }
 
-  const diff = value as Record<string, unknown>;
-  const file = typeof diff.file === "string" ? diff.file.trim() : "";
-  const additions = typeof diff.additions === "number" ? diff.additions : null;
-  const deletions = typeof diff.deletions === "number" ? diff.deletions : null;
+  const fd = filediff as Record<string, unknown>;
+  const file = typeof fd.file === "string" ? fd.file.trim() : "";
+  const additions = typeof fd.additions === "number" ? fd.additions : null;
+  const deletions = typeof fd.deletions === "number" ? fd.deletions : null;
   if (!file && additions === null && deletions === null) {
     return null;
   }
 
+  const parts: string[] = [];
   const metric = additions !== null && deletions !== null ? `+${additions} −${deletions}` : "";
-  return [file, metric].filter(Boolean).join("\n");
+  parts.push(`${file}  ${metric}`.trim());
+  parts.push("");
+
+  const diff = typeof diffText === "string" ? diffText.trim() : "";
+  if (diff) {
+    parts.push("```diff");
+    parts.push(diff);
+    parts.push("```");
+  }
+
+  return parts.join("\n");
 }
 
 function isTodoItem(value: unknown): value is TodoItem {

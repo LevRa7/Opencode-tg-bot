@@ -160,11 +160,11 @@ describe("summary/formatter", () => {
 
     expect(text).toBe(
       [
-        '📝 "todowrite" (3)',
+        "📝 Updated task list — 3 tasks",
         "",
-        "[done]         Done item",
-        "[in_progress]  In progress item",
-        "[pending]      Pending item",
+        "✅ Done item",
+        "⏳ In progress item",
+        "⬜ Pending item",
       ].join("\n"),
     );
   });
@@ -182,7 +182,7 @@ describe("summary/formatter", () => {
       },
     });
 
-    expect(writeText).toContain('✍️ "write" `src/example.ts` (+2 lines)');
+    expect(writeText).toContain("✍️ Wrote file — example.ts (2 lines)");
 
     const editText = formatToolInfo({
       sessionId: "s1",
@@ -201,7 +201,7 @@ describe("summary/formatter", () => {
       },
     });
 
-    expect(editText).toContain('✏️ "edit" `src/example.ts` (+3 -1 lines)');
+    expect(editText).toContain("✍️ Edited file — example.ts (+3 −1)");
   });
 
   it("formats bash tool using description and command", () => {
@@ -217,7 +217,7 @@ describe("summary/formatter", () => {
       },
     });
 
-    expect(text).toBe('💻 Run tests\n"bash" `npm test`');
+    expect(text).toBe("💻 Ran command — npm test");
   });
 
   it("formats apply_patch tool details without dumping full patch", () => {
@@ -240,10 +240,10 @@ describe("summary/formatter", () => {
       },
     });
 
-    expect(text).toBe('🩹 "apply_patch" `src/one.ts` (+2 -1 lines)');
+    expect(text).toBe("🧩 Applied patch — one.ts (+2 −1)");
   });
 
-  it("formats apply_patch line info from patchText fallback", () => {
+  it("formats apply_patch title from patchText fallback without dumping full patch", () => {
     const text = formatToolInfo({
       sessionId: "s1",
       messageId: "m6",
@@ -264,7 +264,7 @@ describe("summary/formatter", () => {
       },
     });
 
-    expect(text).toBe('🩹 "apply_patch" `README.md` (+3 lines)');
+    expect(text).toBe("🧩 Applied patch — README.md");
   });
 
   it("prepares file payloads for write/edit and skips oversized content", () => {
@@ -310,7 +310,7 @@ describe("summary/formatter", () => {
       },
     });
 
-    expect(writeText).toContain('✍️ "write" `src/absolute-write.ts` (+1 lines)');
+    expect(writeText).toContain("✍️ Wrote file — absolute-write.ts (1 line)");
 
     const editText = formatToolInfo({
       sessionId: "s1",
@@ -330,7 +330,7 @@ describe("summary/formatter", () => {
       },
     });
 
-    expect(editText).toContain('✏️ "edit" `README.md` (+3 lines)');
+    expect(editText).toContain("✍️ Edited file — README.md (+3 −0)");
   
     const writeFile = prepareCodeFile("content", "D:/repo/src/absolute-write.ts", "write");
     expect(writeFile?.buffer.toString("utf8")).toContain("Write File/Path: src/absolute-write.ts");

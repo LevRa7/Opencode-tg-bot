@@ -333,6 +333,22 @@ vi.mock("../../src/i18n/index.js", () => ({
       return `Model: ${String(params?.model ?? "")}`;
     }
 
+    if (key === "technical_progress.command.running") {
+      return "Running command";
+    }
+
+    if (key === "technical_progress.command.success") {
+      return "Ran command";
+    }
+
+    if (key === "technical_progress.command.failure") {
+      return "Command failed";
+    }
+
+    if (key === "technical_progress.command.empty") {
+      return "Ran command";
+    }
+
     return key;
   }),
   setUserLocaleResolver: vi.fn(),
@@ -1706,7 +1722,7 @@ describe("bot/index local file follow-up orchestration", () => {
             title: "Created /tmp/report.txt",
             input: {
               command: "touch /tmp/report.txt",
-              description: "Saved report",
+              description: "Saved /tmp/report.txt",
             },
             metadata: {},
             time: { start: Date.now(), end: Date.now() },
@@ -1715,6 +1731,11 @@ describe("bot/index local file follow-up orchestration", () => {
       },
     } as unknown as Event);
 
+    await vi.waitFor(() =>
+      expect(sendMessageMock.mock.calls.map((call) => String(call[1] ?? "")).join("\n")).toContain(
+        "/tmp/report.txt",
+      ),
+    );
     await vi.waitFor(() => expect(sendDocumentMock).toHaveBeenCalledTimes(1));
 
     emit({
@@ -2008,7 +2029,8 @@ describe("bot/index local file follow-up orchestration", () => {
     toolVisibilityDeferred.resolve(false);
 
     await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(2));
-    expect(String(sendMessageMock.mock.calls[0]?.[1] ?? "")).toContain("Check tool ordering");
+    expect(String(sendMessageMock.mock.calls[0]?.[1] ?? "")).toContain("💻");
+    expect(String(sendMessageMock.mock.calls[0]?.[1] ?? "")).toContain("pwd");
     expect(String(sendMessageMock.mock.calls[1]?.[1] ?? "")).toContain(
       "Final answer should wait for the tool publication.",
     );
@@ -2669,29 +2691,23 @@ describe("bot/index local file follow-up orchestration", () => {
         const kinds = deliverChildTopicMessageMock.mock.calls.map(([, request]) => request.kind);
         expect(kinds).toEqual(
           expect.arrayContaining([
-            "diagnostic",
             "live_text",
             "terminal_footer",
           ]),
         );
       });
 
+      // 2026-05-09: Raw JSON diagnostic tool messages are no longer sent to child topics.
+      // The aggregator's setOnTool handler formats them via formatTechnicalProgressSync
+      // and streams them through ToolCallStreamer instead.
       expect(
         sendMessageMock.mock.calls.some(
           (call) =>
-            String(call[1]) === "Child answer in the dedicated topic." &&
-            call[2]?.message_thread_id === 321 &&
-            call[2]?.disable_notification === true,
+            String(call[1]).includes("<code>") &&
+            String(call[1]).includes("\"") &&
+            call[2]?.message_thread_id === 321,
         ),
-      ).toBe(true);
-      expect(
-        sendMessageMock.mock.calls.some(
-          (call) =>
-            String(call[1]).includes("⚙️") &&
-            call[2]?.message_thread_id === 321 &&
-            call[2]?.disable_notification === true,
-        ),
-      ).toBe(true);
+      ).toBe(false);
       expect(
         sendMessageMock.mock.calls.some(
           (call) =>
@@ -3200,6 +3216,278 @@ describe("bot/index local file follow-up orchestration", () => {
         }),
       );
       expect(deleteForumTopicMock).not.toHaveBeenCalled();
+
+      emit({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "child-message-topic-delayed-1",
+            sessionID: "child-session-topic-delayed-1",
+            role: "assistant",
+            time: { created: 1_300, completed: 1_500 },
+          },
+        },
+      } as unknown as Event);
+
+      deferredChildFinalMessage.resolve({ message_id: 555 });
+      await vi.waitFor(() => expect(deleteForumTopicMock).not.toHaveBeenCalled());
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(deleteForumTopicMock).toHaveBeenCalledWith(123, 321);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still schedules child topic deletion when routing disappears after queued final delivery", async () => {
+    vi.useFakeTimers();
+
+    try {
+      vi.resetModules();
+      capturedEventCallbacksByDirectory.clear();
+      sendMessageMock.mockClear();
+      createForumTopicMock.mockClear();
+      deleteForumTopicMock.mockClear();
+      getSubagentTopicsEnabledMock.mockReturnValue(true);
+      getSubagentTopicAutoDeleteMinutesMock.mockReturnValue(1);
+      createForumTopicMock.mockResolvedValue({ messageThreadId: 321 });
+
+      vi.doMock("../../src/settings/manager.js", () => ({
+        getCurrentProject: getCurrentProjectMock,
+        setCurrentProject: vi.fn(),
+        getReasoningMode: vi.fn(() => 0),
+        getTenantRuntimeInfo: vi.fn(() => undefined),
+        getThinkingClearMode: vi.fn(() => false),
+        getHideThinkingMessages: vi.fn(() => false),
+        getHideToolCallMessages: vi.fn(() => false),
+        getHideToolFileMessages: vi.fn(() => false),
+        getSubagentTopicsEnabled: getSubagentTopicsEnabledMock,
+        getSubagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutesMock,
+        getUserLocale: vi.fn(() => "en"),
+        isMessageStreamingEnabled: vi.fn(() => true),
+      }));
+
+      const { createBot: createIsolatedBot, routingBySessionId } =
+        await import("../../src/bot/index.js");
+      const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
+      const bot = createIsolatedBot() as any;
+      const textHandlers = bot.onHandlers.filter(
+        (entry: { event: string | string[] }) => entry.event === "message:text",
+      );
+      const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+      await promptHandler({
+        message: {
+          text: "route child topic with routing loss after final delivery",
+          chat: { id: 123, is_forum: true },
+          message_thread_id: 1,
+        },
+        chat: { id: 123, type: "supergroup", is_forum: true },
+        from: { id: 777 },
+        api: bot.api,
+        reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+      });
+
+      const emit = (event: Event) => {
+        capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+      };
+
+      emit({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "child-session-topic-routing-lost-1",
+            parentID: "session-1",
+            title: "Inspect routing loss (@explore subagent)",
+            directory: "/repo",
+            time: { created: 1_000, updated: 1_000 },
+          },
+        },
+      } as unknown as Event);
+
+      emit({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "subtask-topic-routing-lost-1",
+            sessionID: "session-1",
+            messageID: "root-topic-routing-lost-1",
+            type: "subtask",
+            prompt: "Inspect routing loss",
+            description: "Inspect routing loss",
+            agent: "explore",
+          },
+        },
+      } as unknown as Event);
+
+      await vi.waitFor(() =>
+        expect(createForumTopicMock).toHaveBeenCalledWith(123, "Agent: Inspect routing loss"),
+      );
+
+      sendMessageMock.mockClear();
+
+      const deferredChildFinalMessage = createDeferred<{ message_id: number }>();
+      sendMessageMock.mockImplementation((_, text) => {
+        if (String(text ?? "").includes("Deliver this child answer")) {
+          return deferredChildFinalMessage.promise;
+        }
+
+        return Promise.resolve({ message_id: 42 });
+      });
+
+      emit({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "child-message-topic-routing-lost-1",
+            sessionID: "child-session-topic-routing-lost-1",
+            role: "assistant",
+            time: { created: 1_300 },
+          },
+        },
+      } as unknown as Event);
+      emit({
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "child-text-topic-routing-lost-1",
+            sessionID: "child-session-topic-routing-lost-1",
+            messageID: "child-message-topic-routing-lost-1",
+            type: "text",
+            text: "Deliver this child answer before routing disappears.",
+            time: { start: 1_350 },
+          },
+        },
+      } as unknown as Event);
+      emit({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "child-message-topic-routing-lost-1",
+            sessionID: "child-session-topic-routing-lost-1",
+            role: "assistant",
+            time: { created: 1_300, completed: 1_500 },
+          },
+        },
+      } as unknown as Event);
+
+      await vi.waitFor(() =>
+        expect(sendMessageMock).toHaveBeenCalledWith(
+          123,
+          expect.stringContaining("Deliver this child answer"),
+          expect.objectContaining({
+            message_thread_id: 321,
+            disable_notification: true,
+          }),
+        ),
+      );
+
+      emit({
+        type: "session.idle",
+        properties: { sessionID: "child-session-topic-routing-lost-1" },
+      } as unknown as Event);
+
+      routingBySessionId.delete("child-session-topic-routing-lost-1");
+      clearPromptRouting("child-session-topic-routing-lost-1");
+      deferredChildFinalMessage.resolve({ message_id: 556 });
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(deleteForumTopicMock).toHaveBeenCalledWith(123, 321);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("schedules child topic deletion from idle cleanup even when the child routing API is gone", async () => {
+    vi.useFakeTimers();
+
+    try {
+      vi.resetModules();
+      capturedEventCallbacksByDirectory.clear();
+      createForumTopicMock.mockClear();
+      deleteForumTopicMock.mockClear();
+      getSubagentTopicsEnabledMock.mockReturnValue(true);
+      getSubagentTopicAutoDeleteMinutesMock.mockReturnValue(1);
+      createForumTopicMock.mockResolvedValue({ messageThreadId: 321 });
+
+      vi.doMock("../../src/settings/manager.js", () => ({
+        getCurrentProject: getCurrentProjectMock,
+        setCurrentProject: vi.fn(),
+        getReasoningMode: vi.fn(() => 0),
+        getTenantRuntimeInfo: vi.fn(() => undefined),
+        getThinkingClearMode: vi.fn(() => false),
+        getHideThinkingMessages: vi.fn(() => false),
+        getHideToolCallMessages: vi.fn(() => false),
+        getHideToolFileMessages: vi.fn(() => false),
+        getSubagentTopicsEnabled: getSubagentTopicsEnabledMock,
+        getSubagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutesMock,
+        getUserLocale: vi.fn(() => "en"),
+        isMessageStreamingEnabled: vi.fn(() => true),
+      }));
+
+      const { createBot: createIsolatedBot, routingBySessionId } =
+        await import("../../src/bot/index.js");
+      const { clearPromptRouting } = await import("../../src/bot/handlers/prompt.js");
+      const bot = createIsolatedBot() as any;
+      const textHandlers = bot.onHandlers.filter(
+        (entry: { event: string | string[] }) => entry.event === "message:text",
+      );
+      const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+      await promptHandler({
+        message: {
+          text: "route child topic with missing api on idle",
+          chat: { id: 123, is_forum: true },
+          message_thread_id: 1,
+        },
+        chat: { id: 123, type: "supergroup", is_forum: true },
+        from: { id: 777 },
+        api: bot.api,
+        reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+      });
+
+      const emit = (event: Event) => {
+        capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+      };
+
+      emit({
+        type: "session.created",
+        properties: {
+          info: {
+            id: "child-session-topic-missing-api-1",
+            parentID: "session-1",
+            title: "Inspect missing API (@explore subagent)",
+            directory: "/repo",
+            time: { created: 1_000, updated: 1_000 },
+          },
+        },
+      } as unknown as Event);
+
+      await vi.waitFor(() =>
+        expect(createForumTopicMock).toHaveBeenCalledWith(123, "Agent: Inspect missing API"),
+      );
+
+      const routing = routingBySessionId.get("child-session-topic-missing-api-1");
+      expect(routing?.deliveryTarget).toEqual(
+        expect.objectContaining({ chatId: 123, messageThreadId: 321, disableNotification: true }),
+      );
+
+      routingBySessionId.set("child-session-topic-missing-api-1", {
+        ...routing!,
+        bot: { api: undefined } as never,
+      });
+      clearPromptRouting("child-session-topic-missing-api-1");
+
+      emit({
+        type: "session.idle",
+        properties: { sessionID: "child-session-topic-missing-api-1" },
+      } as unknown as Event);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(deleteForumTopicMock).toHaveBeenCalledWith(123, 321);
     } finally {
       vi.useRealTimers();
     }
@@ -3869,16 +4157,16 @@ describe("bot/index local file follow-up orchestration", () => {
     expect(sendMessageDraftMock).toHaveBeenCalledWith(
       123,
       expect.any(Number),
-      expect.stringContaining("bot.thinking"),
+      expect.stringContaining("Planning the response"),
       expect.objectContaining({
         parse_mode: "HTML",
         disable_notification: true,
         message_thread_id: 1,
       }),
     );
-    expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).toContain(
-      "Planning the response carefully.",
-    );
+    expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).toContain("💭");
+    expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).toContain("Planning the response");
+    expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).not.toContain("bot.thinking");
 
     emit({
       type: "message.part.updated",
@@ -3970,8 +4258,8 @@ describe("bot/index local file follow-up orchestration", () => {
     const assistantMessages = sendMessageMock.mock.calls.map((call) => String(call[1] ?? ""));
     expect(assistantMessages).toHaveLength(3);
     expect(assistantMessages[0]).toContain("С");
-    expect(assistantMessages[1]).toContain("bot.thinking");
-    expect(assistantMessages[1]).toContain("Planning the response carefully.");
+    expect(assistantMessages[1]).toContain("Planning the response");
+    expect(assistantMessages[1]).not.toContain("bot.thinking");
     expect(assistantMessages[2]).toContain("📋 Plan Mode · 🤖 openai/gpt-5.4 · 🕒 ");
     expect(sendMessageMock).toHaveBeenLastCalledWith(
       123,
@@ -4206,8 +4494,9 @@ describe("bot/index local file follow-up orchestration", () => {
     } as unknown as Event);
 
     await vi.waitFor(() => expect(sendMessageDraftMock).toHaveBeenCalledTimes(1));
+    expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).toContain("💭");
     expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).toContain(
-      "Still thinking through the failure path.",
+      "Still thinking through the failure",
     );
 
     emit({
@@ -4709,7 +4998,7 @@ describe("bot/index local file follow-up orchestration", () => {
     vi.mocked(getThinkingClearMode).mockReturnValue(false);
   });
 
-  it("sends the visible placeholder thinking message when reasoning mode is off", async () => {
+  it("does not send placeholder thinking message when reasoning mode is off", async () => {
     const originalHideThinkingMessages = config.bot.hideThinkingMessages;
     config.bot.hideThinkingMessages = false;
     vi.mocked(getReasoningMode).mockReturnValue(0);
@@ -4764,12 +5053,8 @@ describe("bot/index local file follow-up orchestration", () => {
       },
     } as unknown as Event);
 
-    await vi.waitFor(() => expect(sendMessageMock).toHaveBeenCalledTimes(1));
-    const placeholderMessage = String(sendMessageMock.mock.calls[0]?.[1] ?? "");
-    expect(placeholderMessage).toContain("bot.thinking");
-    expect(placeholderMessage).not.toContain(
-      "Reasoning text should not replace the placeholder in mode 0.",
-    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sendMessageMock).not.toHaveBeenCalled();
 
     config.bot.hideThinkingMessages = originalHideThinkingMessages;
   });
@@ -4832,7 +5117,7 @@ describe("bot/index local file follow-up orchestration", () => {
 
     expect(sendMessageMock).not.toHaveBeenCalledWith(
       123,
-      expect.stringContaining("bot.thinking"),
+      expect.stringContaining("This should not trigger"),
       expect.any(Object),
     );
 
@@ -4906,6 +5191,257 @@ describe("bot/index local file follow-up orchestration", () => {
     config.bot.hideThinkingMessages = originalHideThinkingMessages;
     vi.mocked(getReasoningMode).mockReturnValue(0);
     vi.mocked(getHideThinkingMessages).mockReturnValue(false);
+  });
+
+  it("does not publish a reasoning-only final answer when thinking visibility is hidden", async () => {
+    const originalHideThinkingMessages = config.bot.hideThinkingMessages;
+    config.bot.hideThinkingMessages = false;
+    vi.mocked(getReasoningMode).mockReturnValue(1);
+    vi.mocked(getHideThinkingMessages).mockReturnValue(true);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "hidden reasoning-only final",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-hidden-reasoning-only-final-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reasoning-hidden-reasoning-only-final-part-1",
+          sessionID: "session-1",
+          messageID: "message-hidden-reasoning-only-final-1",
+          type: "reasoning",
+          text: "Hidden reasoning-only content must not become a final answer.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-hidden-reasoning-only-final-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    expect(sendMessageDraftMock).not.toHaveBeenCalled();
+
+    config.bot.hideThinkingMessages = originalHideThinkingMessages;
+    vi.mocked(getReasoningMode).mockReturnValue(0);
+    vi.mocked(getHideThinkingMessages).mockReturnValue(false);
+  });
+
+  it("does not append tool technical summaries to the reasoning-mode final answer", async () => {
+    vi.mocked(getReasoningMode).mockReturnValue(2);
+    vi.mocked(getHideThinkingMessages).mockReturnValue(true);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "reasoning final with tools",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-reasoning-final-tools-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-reasoning-final-tools-part-1",
+          sessionID: "session-1",
+          messageID: "message-reasoning-final-tools-1",
+          type: "tool",
+          callID: "call-bash-reasoning-final-tools-1",
+          tool: "bash",
+          state: {
+            status: "completed",
+            title: "Run tests",
+            input: {
+              command: "npm test",
+              description: "Run tests",
+            },
+            metadata: {},
+            time: { start: Date.now(), end: Date.now() },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "text-reasoning-final-tools-part-1",
+          sessionID: "session-1",
+          messageID: "message-reasoning-final-tools-1",
+          type: "text",
+          text: "Final answer only.",
+          time: { start: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    emit({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "message-reasoning-final-tools-1",
+          sessionID: "session-1",
+          role: "assistant",
+          time: { created: Date.now(), completed: Date.now() },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(
+        sendMessageMock.mock.calls.some((call) => String(call[1] ?? "") === "Final answer only."),
+      ).toBe(true),
+    );
+
+    const finalAnswerMessages = sendMessageMock.mock.calls
+      .map((call) => String(call[1] ?? ""))
+      .filter((text) => text.includes("Final answer only."));
+
+    expect(finalAnswerMessages).not.toContain(
+      expect.stringContaining("npm test") as unknown as string,
+    );
+    expect(finalAnswerMessages).not.toContain(
+      expect.stringContaining("blockquote") as unknown as string,
+    );
+
+    vi.mocked(getReasoningMode).mockReturnValue(0);
+    vi.mocked(getHideThinkingMessages).mockReturnValue(false);
+  });
+
+  it("publishes completed subagent task progress so the parent chat gets the action log", async () => {
+    vi.mocked(getHideToolCallMessages).mockReturnValue(false);
+
+    const bot = createBot() as unknown as FakeBot;
+    const textHandlers = bot.onHandlers.filter((entry) => entry.event === "message:text");
+    const promptHandler = textHandlers[textHandlers.length - 1]?.handler;
+
+    expect(promptHandler).toBeTypeOf("function");
+
+    await promptHandler({
+      message: {
+        text: "run subagent task progress",
+        chat: { id: 123 },
+        message_thread_id: 1,
+      },
+      chat: { id: 123, type: "private" },
+      from: { id: 777 },
+      api: bot.api,
+      reply: vi.fn().mockResolvedValue({ message_id: 99 }),
+    });
+
+    const emit = (event: Event) => {
+      capturedEventCallbacksByDirectory.get("/repo")?.[0]?.(event);
+    };
+
+    emit({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "subagent-task-progress-part-1",
+          sessionID: "session-1",
+          messageID: "message-subagent-task-progress-1",
+          type: "tool",
+          callID: "call-subagent-task-progress-1",
+          tool: "task",
+          state: {
+            status: "completed",
+            title: "Inspect summary code",
+            input: {
+              description: "Inspect summary code",
+              subagent_type: "explore",
+            },
+            output: "task_id: child-session-progress-1\n\n<task_result>Found summary files.</task_result>",
+            metadata: {
+              output: "task_id: child-session-progress-1\n\n<task_result>Found summary files.</task_result>",
+            },
+            time: { start: Date.now(), end: Date.now() },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    await vi.waitFor(() =>
+      expect(
+        sendMessageMock.mock.calls.some(
+          (call) =>
+            String(call[1] ?? "").includes("🤖") &&
+            String(call[1] ?? "").includes("Inspect summary code") &&
+            call[2]?.message_thread_id === 1,
+        ),
+      ).toBe(true),
+    );
+
+    vi.mocked(getHideToolCallMessages).mockReturnValue(false);
   });
 
   it("suppresses tool call notifications when user-scoped tool call visibility is hidden", async () => {
@@ -5178,7 +5714,7 @@ describe("bot/index local file follow-up orchestration", () => {
       () =>
         expect(sendMessageMock).toHaveBeenCalledWith(
           123,
-          expect.stringContaining("Check directory before file"),
+          expect.stringContaining("pwd"),
           expect.objectContaining({
             parse_mode: "HTML",
             message_thread_id: 1,
@@ -6936,8 +7472,9 @@ describe("bot/index local file follow-up orchestration", () => {
     await vi.waitFor(() => expect(sendMessageDraftMock).toHaveBeenCalledTimes(1));
     expect(editMessageTextMock).not.toHaveBeenCalled();
     expect(deleteMessageMock).toHaveBeenCalledWith(123, firstThinkingDraftId);
+    expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).toContain("💭");
     expect(String(sendMessageDraftMock.mock.calls[0]?.[2] ?? "")).toContain(
-      "Fresh thinking block after completion routing loss.",
+      "Fresh thinking block after completion",
     );
   });
 

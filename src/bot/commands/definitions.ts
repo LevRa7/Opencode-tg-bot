@@ -19,6 +19,7 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "sessions", descriptionKey: "cmd.description.sessions" },
   { command: "model", descriptionKey: "cmd.description.model" },
   { command: "variant", descriptionKey: "cmd.description.variant" },
+  { command: "compact", descriptionKey: "cmd.description.compact" },
   { command: "settings", descriptionKey: "cmd.description.settings" },
   { command: "tts", descriptionKey: "cmd.description.tts" },
   { command: "projects", descriptionKey: "cmd.description.projects" },

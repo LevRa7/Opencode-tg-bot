@@ -2,7 +2,6 @@ import { Context, InlineKeyboard } from "grammy";
 import { selectAgent, getAvailableAgents, fetchCurrentAgent } from "../../agent/manager.js";
 import { getAgentDisplayName, getAgentEmoji } from "../../agent/types.js";
 import { getStoredModel } from "../../model/manager.js";
-import { formatVariantForButton } from "../../variant/manager.js";
 import { logger } from "../../utils/logger.js";
 import { createMainKeyboard } from "../utils/keyboard.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
@@ -13,6 +12,7 @@ import {
   replyWithInlineMenu,
 } from "./inline-menu.js";
 import { t } from "../../i18n/index.js";
+import type { I18nKey } from "../../i18n/en.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 
@@ -46,14 +46,11 @@ export async function handleAgentSelect(ctx: Context): Promise<boolean> {
 
     const agentName = callbackQuery.data.replace("agent:", "");
 
-    // Select agent and persist
     selectAgent(agentName);
     threadContextManager.bindAgentToActiveContext(agentName);
 
-    // Update keyboard manager state
     keyboardManager.updateAgent(agentName);
 
-    // Update Reply Keyboard with new agent, current model, and context
     const currentModel = getStoredModel();
     const contextInfo =
       pinnedMessageManager.getContextInfo() ??
@@ -66,27 +63,17 @@ export async function handleAgentSelect(ctx: Context): Promise<boolean> {
       keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
     }
 
-    const state = keyboardManager.getState();
-    const variantName =
-      state?.variantName ?? formatVariantForButton(currentModel.variant || "default");
-    const keyboard = createMainKeyboard(
-      agentName,
-      currentModel,
-      contextInfo ?? undefined,
-      variantName,
-    );
+    const keyboard = createMainKeyboard(agentName, currentModel, contextInfo ?? undefined);
     const displayName = getAgentDisplayName(agentName);
 
     clearActiveInlineMenu("agent_selected");
 
-    // Send confirmation message with updated keyboard
     await ctx.answerCallbackQuery({ text: t("agent.changed_callback", { name: displayName }) });
     await ctx.reply(
       t("agent.changed_message", { name: displayName }),
       withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
     );
 
-    // Delete the inline menu message
     await ctx.deleteMessage().catch(() => {});
 
     return true;
@@ -151,6 +138,75 @@ export async function showAgentSelectionMenu(ctx: Context): Promise<void> {
     });
   } catch (err) {
     logger.error("[AgentHandler] Error showing agent menu:", err);
+    await ctx.reply(t("agent.menu.error"));
+  }
+}
+
+function getAgentModeDescription(agentName: string, fallback?: string): string {
+  if (fallback?.trim()) {
+    return fallback.trim();
+  }
+
+  const knownModes = new Set(["plan", "build", "general", "explore", "title", "summary", "compaction"]);
+  if (!knownModes.has(agentName)) {
+    return t("agent.mode.custom");
+  }
+
+  const key = `agent.mode.${agentName}` as I18nKey;
+  return t(key);
+}
+
+export async function cycleAgentMode(ctx: Context): Promise<void> {
+  try {
+    if (ctx.chat) {
+      keyboardManager.initialize(ctx.api, ctx.chat.id);
+    }
+
+    if (pinnedMessageManager.getContextLimit() === 0) {
+      await pinnedMessageManager.refreshContextLimit();
+    }
+
+    const currentAgent = await fetchCurrentAgent();
+    const agents = await getAvailableAgents();
+
+    if (agents.length === 0) {
+      logger.warn("[AgentHandler] No available agents for cycling");
+      return;
+    }
+
+    const currentIndex = agents.findIndex((agent) => agent.name === currentAgent);
+    const nextIndex = (currentIndex + 1) % agents.length;
+    const nextAgentInfo = agents[nextIndex];
+    const nextAgent = nextAgentInfo.name;
+
+    selectAgent(nextAgent);
+    threadContextManager.bindAgentToActiveContext(nextAgent);
+    keyboardManager.updateAgent(nextAgent);
+
+    const currentModel = getStoredModel();
+    const contextInfo =
+      pinnedMessageManager.getContextInfo() ??
+      (pinnedMessageManager.getContextLimit() > 0
+        ? { tokensUsed: 0, tokensLimit: pinnedMessageManager.getContextLimit() }
+        : null);
+
+    keyboardManager.updateModel(currentModel);
+    if (contextInfo) {
+      keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
+    }
+
+    const keyboard = createMainKeyboard(nextAgent, currentModel, contextInfo ?? undefined);
+    const displayName = getAgentDisplayName(nextAgent);
+    const description = getAgentModeDescription(nextAgent, nextAgentInfo.description);
+
+    await ctx.reply(
+      t("agent.cycled", { name: displayName, description }),
+      withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+    );
+
+    logger.info(`[AgentHandler] Agent cycled to: ${nextAgent}`);
+  } catch (err) {
+    logger.error("[AgentHandler] Error cycling agent mode:", err);
     await ctx.reply(t("agent.menu.error"));
   }
 }

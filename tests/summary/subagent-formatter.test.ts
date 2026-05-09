@@ -47,7 +47,7 @@ describe("summary/subagent-formatter", () => {
     expect(text).toContain("Model: openai/gpt-5.4");
     expect(text).not.toContain("Context:");
     expect(text).not.toContain("Cost:");
-    expect(text).toContain('📖 &quot;read&quot; `src/pinned/manager.ts`');
+    expect(text).toContain("📄 Reading file — manager.ts");
     expect(text).not.toContain("Reading pinned manager");
     expect(text).not.toContain("Working:");
   });
@@ -173,7 +173,7 @@ describe("summary/subagent-formatter", () => {
       },
     ]);
 
-    expect(text).toContain('📖 &quot;read&quot;');
+    expect(text).toContain("📄 Reading file — read");
     expect(text).not.toContain("⚙️ Working...");
   });
 
@@ -208,7 +208,7 @@ describe("summary/subagent-formatter", () => {
       },
     ]);
 
-    expect(text).toContain("src/summary/subagent-formatter.ts");
+    expect(text).toContain("subagent-formatter.ts");
     expect(text).not.toContain("Reading subagent formatter");
   });
 
@@ -430,7 +430,6 @@ describe("summary/subagent-formatter", () => {
       },
     ]);
 
-    expect(text).toContain('&lt;a href=&quot;https://evil.example&quot;&gt;Run tests&lt;/a&gt;');
     expect(text).toContain('&lt;b&gt;npm test&lt;/b&gt;');
     expect(text).not.toContain('<a href="https://evil.example">Run tests</a>');
     expect(text).not.toContain('<b>npm test</b>');

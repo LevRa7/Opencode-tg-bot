@@ -411,7 +411,7 @@ async function waitForScheduledTaskResult(
 
     completedEmptyResultReadCount = 0;
 
-    const { data: statuses, error: statusError } = await opencodeClient.session.status({
+    const { data: statuses } = await opencodeClient.session.status({
       directory,
     });
     const currentSession = (statuses as Record<string, { type?: string }> | undefined)?.[

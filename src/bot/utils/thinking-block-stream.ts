@@ -10,7 +10,13 @@ import {
   type ThinkingDraftClearOutcome,
   type ThinkingDraftTransport,
 } from "./thinking-draft-lifecycle.js";
-import { formatThinkingMessageWithReasoning } from "./thinking-message.js";
+import { NoopDetailsPublisher } from "../../telegraph/noop-details-publisher.js";
+import type { TechnicalDetailsPublisher } from "../../telegraph/details-publisher.js";
+import {
+  formatThinkingCompletionMessage,
+  formatThinkingCompletionWithDetails,
+  formatThinkingMessageWithReasoning,
+} from "./thinking-message.js";
 
 type SendApi = Pick<Api<RawApi>, "sendMessageDraft" | "sendMessage" | "deleteMessage">;
 
@@ -23,6 +29,7 @@ interface LegacyThinkingCleanupTransport {
 
 interface ActiveThinkingBlockState {
   lastRenderedText: string;
+  lastReasoningText: string;
   draftId: number;
   routingIdentity: string;
   sendApi: SendApi;
@@ -49,6 +56,8 @@ interface FinalizeThinkingBlockStreamOptions {
   sendApi: SendApi;
   target: TelegramThreadTarget;
   title: string;
+  reasoningText?: string;
+  publisher?: TechnicalDetailsPublisher;
 }
 
 export type ThinkingBlockFinalizeOutcome = "finalized" | "failed" | "cleared";
@@ -70,6 +79,7 @@ function createDeliveryOrchestrator(): ThinkingBlockDeliveryOrchestrator {
 }
 
 const lifecycleManager = new ThinkingDraftLifecycle();
+const fallbackDetailsPublisher = new NoopDetailsPublisher();
 let deliveryOrchestrator: ThinkingBlockDeliveryOrchestrator = createDeliveryOrchestrator();
 const activeThinkingBlocks = new Map<string, ActiveThinkingBlockState>();
 const sessionTasks = new Map<string, SessionStreamTaskState>();
@@ -228,6 +238,10 @@ export async function streamThinkingBlocks(options: StreamThinkingBlocksOptions)
       existing.routingIdentity === routingIdentity &&
       !existing.requiresReplay
     ) {
+      activeThinkingBlocks.set(options.sessionId, {
+        ...existing,
+        lastReasoningText: options.reasoningText,
+      });
       return;
     }
 
@@ -246,12 +260,14 @@ export async function streamThinkingBlocks(options: StreamThinkingBlocksOptions)
       );
     }
 
-    const draftId =
-      existing?.routingIdentity === routingIdentity ? existing.draftId : reserveThinkingDraftId();
+    // 2026-05-09: Telegram treats sendMessageDraft's id as a one-shot random_id;
+    // reusing it for later draft updates causes RANDOM_ID_INVALID in live chats.
+    const draftId = reserveThinkingDraftId();
     const transport = createTransport(options.sendApi, options.target, draftId, routingIdentity);
 
     activeThinkingBlocks.set(options.sessionId, {
       lastRenderedText: rendered.text,
+      lastReasoningText: options.reasoningText,
       draftId,
       routingIdentity,
       sendApi: options.sendApi,
@@ -311,8 +327,24 @@ export async function finalizeThinkingBlockStream(
 
     const sendApi = activeState?.sendApi ?? options.sendApi;
     const target = activeState?.target ?? options.target;
-    const draftId = activeState?.draftId ?? 0;
+    const draftId = reserveThinkingDraftId();
     const routingIdentity = activeState?.routingIdentity ?? currentRoutingIdentity;
+    const completionReasoningText = options.reasoningText?.trim() || activeState?.lastReasoningText || "";
+    const completion = formatThinkingCompletionMessage(options.title, completionReasoningText);
+    let completionText = completion.text;
+    try {
+      const linkedCompletion = await formatThinkingCompletionWithDetails(
+        options.title,
+        completionReasoningText,
+        options.publisher ?? fallbackDetailsPublisher,
+      );
+      completionText = linkedCompletion.text;
+    } catch (error) {
+      logger.warn(
+        `[ThinkingBlockStream] Final thinking details publication failed: session=${options.sessionId}`,
+        error,
+      );
+    }
     const transport = createTransport(sendApi, target, draftId, routingIdentity);
     const logicalMessageId = resolveThinkingLogicalMessageId(
       options.sessionId,
@@ -333,6 +365,7 @@ export async function finalizeThinkingBlockStream(
         channel: "durable",
         waitForLogicalMessageLiveTerminal: logicalMessageId,
         deliver: async () => {
+          await lifecycleManager.renderActiveDraft(options.sessionId, completionText, transport);
           await lifecycleManager.finalizeDraft(options.sessionId, transport);
         },
       });

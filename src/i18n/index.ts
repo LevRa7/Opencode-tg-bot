@@ -157,6 +157,10 @@ export function setRuntimeLocale(locale: Locale): void {
   runtimeLocaleOverride = locale;
 }
 
+export function setRuntimeLocaleOverride(locale: Locale): void {
+  setRuntimeLocale(locale);
+}
+
 export function resetRuntimeLocale(): void {
   runtimeLocaleOverride = null;
 }

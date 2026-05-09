@@ -239,6 +239,15 @@ export class ToolCallStreamer {
     logger.debug(`[ToolCallStreamer] Broke session stream: session=${sessionId}, reason=${reason}`);
   }
 
+  hasPrefix(sessionId: string, prefix: string): boolean {
+    const state = this.states.get(sessionId);
+    if (!state || state.isBroken || state.isBreaking || state.cancelled) {
+      return false;
+    }
+    const normalizedPrefix = prefix.trim();
+    return state.entries.some((entry) => entry.prefix === normalizedPrefix);
+  }
+
   clearSession(sessionId: string, reason: string): void {
     let clearedAny = false;
     for (const state of Array.from(this.allStates)) {

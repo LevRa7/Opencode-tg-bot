@@ -12,6 +12,15 @@ Documentation rule:
 
 ### Added
 
+- Added localized one-line technical progress messages with concise reasoning/thinking output, todo status icons with collapse-friendly summaries, and optional Telegraph detail links for verbose tool/reasoning details.
+  - Why: Telegram users need readable live progress in their selected language without flooding chats, while still having access to full technical output when configured.
+  - Affects: `src/summary/technical-progress/*`, `src/telegraph/*`, `src/bot/utils/thinking-message.ts`, `src/bot/utils/thinking-block-stream.ts`, `src/bot/index.ts`, `src/i18n/*.ts`, `README.md`, `.env.example`, `PRODUCT.md`
+- Added Telegraph configuration via `TELEGRAPH_ENABLED`, `TELEGRAPH_ACCESS_TOKEN`, `TELEGRAPH_AUTHOR_NAME`, `TELEGRAPH_TIMEOUT_MS`, and `TELEGRAPH_MAX_CHARS` for publishing optional technical detail pages.
+  - Why: long command output, reasoning, and todo details should be available by link without forcing every progress update into Telegram message bodies.
+  - Affects: `src/config.ts`, `src/telegraph/*`, `README.md`, `.env.example`, `PRODUCT.md`
+- Hardened technical detail redaction before Telegraph publishing to cover private-key blocks, cookie headers, and common standalone token formats.
+  - Why: tool output and diffs can contain credentials that are not expressed as simple `KEY=value` assignments.
+  - Affects: `src/summary/technical-progress/redact.ts`, `tests/summary/technical-progress/redact.test.ts`
 - Added `/model`, `/variant`, and `/settings` commands for user-scoped defaults, direct model/variant updates, language selection, and message visibility preferences.
 - Added topic-scoped session attach/follow behavior for multi-user and forum-thread workflows, keeping attached-session restores, follow-up routing, and startup pinned status isolated per private chat or Telegram topic.
   - Why: one shared global route caused attached-session events and pinned state to bleed across users or topics, which made concurrent remote work hard to trust.
@@ -56,6 +65,20 @@ Documentation rule:
 
 ### Changed
 
+- Removed raw JSON diagnostic tool messages in subagent forum topics in favor of the localized `formatTechnicalProgressSync`/`WithDetails` pipeline already used for the main chat.
+  - Why: subagent topics showed duplicate raw JSON like `⚙️ grep {"include":"*.ts",...}` alongside formatted messages. The aggregator already formats and delivers tool progress through `setOnTool`, so the raw diagnostic path was redundant.
+  - Affects: `src/bot/index.ts` (removed lines 2651-2696), `tests/bot/index.local-file-follow-up.test.ts`
+  - Why: live Telegram rejects repeated `sendMessageDraft` ids with `RANDOM_ID_INVALID`, which could drop the final linked thinking summary.
+  - Affects: `src/bot/utils/thinking-block-stream.ts`, `tests/bot/utils/thinking-block-stream.test.ts`
+- Changed directory-read progress detection to inspect OpenCode's top-level tool `output` as well as structured metadata.
+  - Why: live `read` directory events place `<type>directory</type>` in `output`, so Telegram could label directory reads as file reads.
+  - Affects: `src/summary/technical-progress/formatter.ts`, `tests/summary/technical-progress/formatter.test.ts`
+- Fixed Telegraph detail pages for `read` tool events showing only the file path instead of actual file/directory content.
+  - Why: OpenCode places `read` output at the top-level tool `state.output`, but `buildTechnicalDetails` only checked `metadata.output`. Now inspects `state.output` as well and strips the XML wrapper from read tool output before publishing.
+  - Affects: `src/summary/technical-progress/details.ts`, `tests/summary/technical-progress/details.test.ts`
+- Hardened Telegraph publishing: added per-request diagnostic logging of Telegraph API error codes and filtering of empty/whitespace-only lines from content nodes to reduce API rejections.
+  - Why: silent API failures (e.g. large empty-lines content, title limits) were undiagnosable and could waste createPage calls.
+  - Affects: `src/telegraph/telegraph-client.ts`, `tests/telegraph/telegraph-client.test.ts`
 - Changed session/project switch cleanup from global `summaryAggregator.clear()` to scope-scoped `clearScopedSessionRuntime()` so switching sessions or projects in one topic does not reset summary state for another topic.
   - Why: `summaryAggregator.clear()` was global and could discard summary data for active sessions in other topics.
   - Affects: `src/bot/utils/switch-project.ts`, `src/bot/commands/sessions.ts`, `src/bot/commands/new.ts`, `src/bot/commands/projects.ts`, `tests/bot/utils/switch-project.test.ts`, `tests/bot/commands/sessions.test.ts`, `tests/bot/commands/new.test.ts`, `tests/bot/commands/projects.handle-project-select.test.ts`

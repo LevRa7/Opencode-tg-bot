@@ -1,5 +1,5 @@
 import { Keyboard } from "grammy";
-import { getAgentDisplayName } from "../../agent/types.js";
+import { getAgentEmoji } from "../../agent/types.js";
 import { formatModelForButton } from "../../model/types.js";
 import type { ModelInfo } from "../../model/types.js";
 import type { ContextInfo } from "../../keyboard/types.js";
@@ -28,38 +28,36 @@ function formatContextForButton(contextInfo: ContextInfo): string {
 }
 
 /**
- * Create Reply Keyboard with agent, model, variant, and context indicators
+ * Create Reply Keyboard with model and agent mode/context indicators.
  * @param currentAgent Current agent name (e.g., "build", "plan")
  * @param currentModel Current model info
  * @param contextInfo Optional context information (tokens used/limit)
- * @param variantName Optional variant display name (e.g., "💭 Default")
- * @returns Reply Keyboard with agent and context in row 1, model and variant in row 2
+ * @param _variantName Ignored; variant is read from currentModel.variant.
+ * @returns Reply Keyboard with model and agent+context in one row.
  */
 export function createMainKeyboard(
   currentAgent: string,
   currentModel: ModelInfo,
   contextInfo?: ContextInfo,
-  variantName?: string,
+  _variantName?: string,
 ): Keyboard {
   const keyboard = new Keyboard();
-  const agentText = getAgentDisplayName(currentAgent);
+  const agentEmoji = getAgentEmoji(currentAgent);
 
-  // Format model with compact provider/model text and icon
-  const modelText = formatModelForButton(currentModel.providerID, currentModel.modelID);
-
-  // Context text - show "0" if no data available
   const contextText = contextInfo
     ? formatContextForButton(contextInfo)
     : t("keyboard.context_empty");
+  const contextWithoutEmoji = contextText.replace(/^📊\s*/, "");
 
-  // Variant text - default to "💭 Default" if not provided
-  const variantText = variantName || t("keyboard.variant_default");
+  let modelText = formatModelForButton(currentModel.providerID, currentModel.modelID);
 
-  // Row 1: agent and context buttons
-  keyboard.text(agentText).text(contextText).row();
+  const variant = currentModel.variant;
+  if (variant && variant !== "default" && variant !== "none") {
+    const shortVariant = variant.length > 10 ? `${variant.substring(0, 7)}...` : variant;
+    modelText = `${modelText} (${shortVariant})`;
+  }
 
-  // Row 2: model and variant buttons
-  keyboard.text(modelText).text(variantText).row();
+  keyboard.text(modelText).text(`${agentEmoji} ${contextWithoutEmoji}`).row();
 
   return keyboard.resized();
 }
@@ -72,10 +70,9 @@ export function createMainKeyboard(
  */
 export function createAgentKeyboard(currentAgent: string): Keyboard {
   const keyboard = new Keyboard();
-  const displayName = getAgentDisplayName(currentAgent);
+  const emoji = getAgentEmoji(currentAgent);
 
-  // Single button with current agent mode
-  keyboard.text(displayName).row();
+  keyboard.text(emoji).row();
 
   return keyboard.resized();
 }

@@ -3,9 +3,9 @@ import {
   buildThinkingMessageHtml,
   deliverThinkingMessage,
   formatThinkingMessageWithReasoning,
+  getVisibleReasoningText,
 } from "../../../src/bot/utils/thinking-message.js";
 import { t } from "../../../src/i18n/index.js";
-import { escapeHtml } from "../../../src/bot/utils/reasoning-format.js";
 
 describe("bot/utils/thinking-message", () => {
   it("sends thinking immediately as a separate bold title when visible", () => {
@@ -20,9 +20,9 @@ describe("bot/utils/thinking-message", () => {
 
     expect(batcher.sendTextNow).toHaveBeenCalledWith(
       "s1",
-      `<b>${escapeHtml(t("bot.thinking"))}</b>`,
+      `💭 ${t("bot.thinking")}`,
       "thinking_started",
-      "html",
+      undefined,
     );
     expect(batcher.enqueue).not.toHaveBeenCalled();
   });
@@ -54,42 +54,55 @@ describe("bot/utils/thinking-message", () => {
 
     expect(batcher.sendTextNow).toHaveBeenCalledWith(
       "s1",
-      '<b>think &lt;fast&gt; &amp; &quot;safe&quot;</b>',
+      '💭 think <fast> & "safe"',
       "thinking_started",
-      "html",
+      undefined,
     );
   });
 
-  it("builds a full thinking html payload with plain title and expandable body quote", () => {
+  it("builds a compact technical progress payload without reasoning body", () => {
     const html = buildThinkingMessageHtml("Thinking...", "**Plan**\n\nNeed to verify formatting.");
 
-    expect(html).toBe(
-      "<b>Thinking...</b>\n\n<blockquote expandable><b>Plan</b>\n\n<i><b>Need to verify formatting.</b></i></blockquote>",
+    expect(html).toBe("💭 Thinking...");
+    expect(html).not.toContain("**Plan**");
+    expect(html).not.toContain("Need to verify formatting.");
+    expect(html).not.toContain("<blockquote");
+  });
+
+  it("formats thinking message with title only", () => {
+    const result = formatThinkingMessageWithReasoning("Думаю...", "First step\n\nSecond step");
+
+    expect(result.format).toBeUndefined();
+    expect(result.text).toBe("💭 Думаю...");
+    expect(result.text).not.toContain("First step");
+    expect(result.text).not.toContain("Second step");
+    expect(result.text).not.toContain("<blockquote");
+  });
+
+  it("formats thinking message without reasoning as one-line technical progress", () => {
+    const result = formatThinkingMessageWithReasoning("Думаю...", "");
+
+    expect(result.format).toBeUndefined();
+    expect(result.text).toBe("💭 Думаю...");
+  });
+
+  it("drops synthetic thinking placeholders instead of publishing them as reasoning", () => {
+    expect(getVisibleReasoningText("💭 Думаю...\n\n💭 Думаю...")).toBeUndefined();
+    expect(getVisibleReasoningText("💭 Thinking...\nThinking...")).toBeUndefined();
+  });
+
+  it("keeps explicit reasoning while removing synthetic placeholder lines", () => {
+    expect(getVisibleReasoningText("💭 Думаю...\n\nNeed to inspect the file.")).toBe(
+      "Need to inspect the file.",
     );
   });
 
-  it("formats thinking message with reasoning content as expandable quote", () => {
-    const result = formatThinkingMessageWithReasoning("Думаю...", "First step\n\nSecond step");
-
-    expect(result.format).toBe("html");
-    expect(result.text).toContain("<b>Думаю...</b>");
-    expect(result.text).toContain("<blockquote expandable>");
-    expect(result.text).toContain("First step");
-    expect(result.text).toContain("Second step");
-  });
-
-  it("formats thinking message without reasoning when reasoning is empty", () => {
-    const result = formatThinkingMessageWithReasoning("Думаю...", "");
-
-    expect(result.format).toBe("html");
-    expect(result.text).toBe("<b>Думаю...</b>");
-  });
-
-  it("escapes html in reasoning content", () => {
+  it("keeps reasoning content out of the visible message", () => {
     const result = formatThinkingMessageWithReasoning("Думаю...", '<script>alert("xss")</script>');
 
-    expect(result.text).not.toContain("<script>");
-    expect(result.text).toContain("&lt;script&gt;");
+    expect(result.text).toBe("💭 Думаю...");
+    expect(result.text).not.toContain("alert");
+    expect(result.text).not.toContain("<blockquote");
   });
 
   it("keeps thinking delivery on the service-message path instead of the assistant response path", () => {

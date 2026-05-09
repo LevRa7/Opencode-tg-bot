@@ -9,6 +9,8 @@ const mocked = vi.hoisted(() => ({
   getModelSelectionListsMock: vi.fn(),
   selectModelMock: vi.fn(),
   formatVariantForButtonMock: vi.fn(() => "Default"),
+  getAvailableVariantsMock: vi.fn(),
+  showVariantSelectionMenuMock: vi.fn().mockResolvedValue(undefined),
   createMainKeyboardMock: vi.fn(() => ({ keyboard: "main" })),
   getStoredAgentMock: vi.fn(() => "assistant"),
   refreshContextLimitMock: vi.fn().mockResolvedValue(undefined),
@@ -37,6 +39,11 @@ vi.mock("../../../src/model/manager.js", () => ({
 
 vi.mock("../../../src/variant/manager.js", () => ({
   formatVariantForButton: mocked.formatVariantForButtonMock,
+  getAvailableVariants: mocked.getAvailableVariantsMock,
+}));
+
+vi.mock("../../../src/bot/handlers/variant.js", () => ({
+  showVariantSelectionMenu: mocked.showVariantSelectionMenuMock,
 }));
 
 vi.mock("../../../src/bot/utils/keyboard.js", () => ({
@@ -212,6 +219,9 @@ describe("bot/handlers/model", () => {
     mocked.getModelSelectionListsMock.mockResolvedValue({ favorites: [], recent: [] });
     mocked.selectModelMock.mockReset();
     mocked.formatVariantForButtonMock.mockClear();
+    mocked.getAvailableVariantsMock.mockReset();
+    mocked.getAvailableVariantsMock.mockResolvedValue([{ id: "default" }]);
+    mocked.showVariantSelectionMenuMock.mockClear();
     mocked.createMainKeyboardMock.mockClear();
     mocked.getStoredAgentMock.mockClear();
     mocked.refreshContextLimitMock.mockClear();
@@ -370,6 +380,21 @@ describe("bot/handlers/model", () => {
     );
     expect(mocked.clearActiveInlineMenuMock).toHaveBeenCalledWith("model_selected");
     expect(ctx.deleteMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens variant selection after choosing a model with multiple enabled variants", async () => {
+    const ctx = createCallbackContext("model:openai:gpt-4.11");
+    mocked.getAvailableVariantsMock.mockResolvedValue([
+      { id: "default" },
+      { id: "high" },
+      { id: "disabled", disabled: true },
+    ]);
+
+    const handled = await handleModelSelect(ctx);
+
+    expect(handled).toBe(true);
+    expect(mocked.getAvailableVariantsMock).toHaveBeenCalledWith("openai", "gpt-4.11");
+    expect(mocked.showVariantSelectionMenuMock).toHaveBeenCalledWith(ctx);
   });
 
   it("confirms model change in forum main thread without message_thread_id", async () => {

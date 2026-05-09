@@ -1,6 +1,11 @@
 import type { ToolMessageBatcher } from "../../summary/tool-message-batcher.js";
 import { t } from "../../i18n/index.js";
-import { escapeHtml, formatReasoningBlock } from "./reasoning-format.js";
+import {
+  formatTechnicalProgressSync,
+  formatTechnicalProgressWithDetails,
+} from "../../summary/technical-progress/formatter.js";
+import type { TechnicalProgressToolInfo } from "../../summary/technical-progress/types.js";
+import type { TechnicalDetailsPublisher } from "../../telegraph/details-publisher.js";
 import type { TelegramTextFormat } from "./telegram-text.js";
 
 interface ThinkingMessageOptions {
@@ -10,26 +15,80 @@ interface ThinkingMessageOptions {
 
 type ThinkingBatcher = Pick<ToolMessageBatcher, "enqueue" | "sendTextNow">;
 
-export function buildThinkingMessageHtml(title: string, reasoningText: string): string {
-  const renderedReasoning = formatReasoningBlock(reasoningText);
-  if (!renderedReasoning) {
-    return `<b>${escapeHtml(title)}</b>`;
-  }
+const SYNTHETIC_THINKING_PLACEHOLDERS = new Set([
+  "bot.thinking",
+  "thinking...",
+  "думаю...",
+  "pensando...",
+  "denke...",
+  "réflexion en cours...",
+  "思考中...",
+]);
 
-  return `<b>${escapeHtml(title)}</b>\n\n<blockquote expandable>${renderedReasoning}</blockquote>`;
+function normalizeThinkingLine(line: string): string {
+  return line
+    .trim()
+    .replace(/^(?:💭\s*)+/, "")
+    .trim()
+    .toLowerCase();
 }
 
-/**
- * Format a thinking message with optional reasoning content.
- * The reasoning is rendered as an expandable quote block inside the thinking message.
- * When reasoningText is empty, returns only the title.
- */
+function isSyntheticThinkingPlaceholderLine(line: string): boolean {
+  return SYNTHETIC_THINKING_PLACEHOLDERS.has(normalizeThinkingLine(line));
+}
+
+export function getVisibleReasoningText(reasoningText?: string): string | undefined {
+  const visibleLines = (reasoningText ?? "")
+    .split(/\r?\n/)
+    .filter((line) => !isSyntheticThinkingPlaceholderLine(line));
+  const visibleText = visibleLines.join("\n").trim();
+
+  return visibleText || undefined;
+}
+
+function buildReasoningToolInfo(
+  title: string,
+  reasoningText: string,
+  status: "running" | "completed",
+): TechnicalProgressToolInfo {
+  return {
+    sessionId: "thinking",
+    messageId: "thinking",
+    callId: "thinking",
+    tool: "reasoning",
+    title,
+    state: { status },
+    metadata: reasoningText.trim() ? { reasoningText } : undefined,
+  } as TechnicalProgressToolInfo;
+}
+
+export function buildThinkingMessageHtml(title: string, reasoningText: string): string {
+  return formatTechnicalProgressSync(buildReasoningToolInfo(title, reasoningText, "running")).text;
+}
+
 export function formatThinkingMessageWithReasoning(
   title: string,
   reasoningText: string,
-): { text: string; format: TelegramTextFormat } {
-  const html = buildThinkingMessageHtml(title, reasoningText);
-  return { text: html, format: "html" };
+): { text: string; format?: TelegramTextFormat } {
+  return formatTechnicalProgressSync(buildReasoningToolInfo(title, reasoningText, "running"));
+}
+
+export function formatThinkingCompletionMessage(
+  title: string,
+  reasoningText: string,
+): { text: string; format?: TelegramTextFormat } {
+  return formatTechnicalProgressSync(buildReasoningToolInfo(title, reasoningText, "completed"));
+}
+
+export async function formatThinkingCompletionWithDetails(
+  title: string,
+  reasoningText: string,
+  publisher: TechnicalDetailsPublisher,
+): Promise<{ text: string; format?: TelegramTextFormat }> {
+  return await formatTechnicalProgressWithDetails(
+    buildReasoningToolInfo(title, reasoningText, "completed"),
+    publisher,
+  );
 }
 
 export function deliverThinkingMessage(

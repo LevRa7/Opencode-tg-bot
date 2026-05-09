@@ -184,6 +184,11 @@ When installed via npm, the configuration wizard handles the initial setup. The 
 | `RESPONSE_STREAMING`            | Stream assistant replies while they are generated across one or more Telegram messages                       |    No    | `true`                   |
 | `RESPONSE_STREAM_THROTTLE_MS`   | Throttle interval between streaming messages (milliseconds)                                                  |    No    | `500`                    |
 | `MESSAGE_FORMAT_MODE`           | Assistant reply formatting mode: `markdown` (Telegram MarkdownV2) or `raw`                                   |    No    | `markdown`               |
+| `TELEGRAPH_ENABLED`             | Publish verbose technical progress details to Telegraph and link them from concise Telegram messages          |    No    | `false`                  |
+| `TELEGRAPH_ACCESS_TOKEN`        | Telegraph API access token used when Telegraph detail publishing is enabled                                   |    No    | —                        |
+| `TELEGRAPH_AUTHOR_NAME`         | Author name shown on generated Telegraph detail pages                                                         |    No    | `opencode-tg`            |
+| `TELEGRAPH_TIMEOUT_MS`          | Telegraph publish request timeout in milliseconds                                                            |    No    | `3000`                   |
+| `TELEGRAPH_MAX_CHARS`           | Maximum technical detail body length sent to Telegraph                                                       |    No    | `60000`                  |
 | `CODE_FILE_MAX_SIZE_KB`         | Max file size (KB) to send as document                                                                       |    No    | `100`                    |
 | `STT_API_URL`                   | Whisper-compatible API base URL (enables voice/audio transcription)                                          |    No    | —                        |
 | `STT_API_KEY`                   | API key for your STT provider                                                                                |    No    | —                        |
@@ -200,6 +205,8 @@ When installed via npm, the configuration wizard handles the initial setup. The 
 | `LOG_RETENTION`                 | Number of log files to keep                                                                                  |    No    | `10`                     |
 
 > **Keep your `.env` file private.** It contains your bot token. Never commit it to version control.
+
+Telegraph detail publishing is optional. When enabled, concise localized tool, todo, and reasoning progress lines stay in Telegram, while longer technical details are published to Telegraph and linked from the progress line.
 
 ### Voice and Audio Transcription (Optional)
 

@@ -51,6 +51,11 @@ class AssistantRunState {
     return this.runs.has(sessionId);
   }
 
+  isFinalResponsePublished(sessionId: string): boolean {
+    const run = this.runs.get(sessionId);
+    return run?.hasPublishedFinalResponse === true;
+  }
+
   markResponseCompleted(sessionId: string, info?: AssistantRunResolvedInfo): void {
     const run = this.runs.get(sessionId);
     if (!run) {

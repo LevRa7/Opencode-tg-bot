@@ -1,4 +1,5 @@
 import { ToolInfo } from "./aggregator.js";
+import { formatTechnicalProgressSync } from "./technical-progress/formatter.js";
 import * as path from "path";
 import { config } from "../config.js";
 import type { MessageFormatMode } from "../config.js";
@@ -9,18 +10,6 @@ import { convertMarkdownToTelegramV2 } from "./markdown-to-telegram-v2.js";
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 const MARKDOWN_V2_RESERVED_CHARS = /([_\*\[\]\(\)~`>#+\-=|{}.!\\])/g;
-
-function truncateWithEllipsis(text: string, maxLength: number): string {
-  if (text.length <= maxLength) {
-    return text;
-  }
-
-  if (maxLength <= 3) {
-    return ".".repeat(Math.max(0, maxLength));
-  }
-
-  return `${text.slice(0, maxLength - 3).trimEnd()}...`;
-}
 
 interface SplitTextOptions {
   avoidTrailingMarkdownEscape?: boolean;
@@ -225,122 +214,6 @@ export function formatSummaryWithMode(
   return formattedParts;
 }
 
-function getToolDetails(tool: string, input?: { [key: string]: unknown }): string {
-  if (!input) {
-    return "";
-  }
-
-  // First, check fields specific to known tools
-  switch (tool) {
-    case "read":
-    case "edit":
-    case "write":
-    case "apply_patch":
-      const filePath = input.path || input.filePath;
-      if (typeof filePath === "string") return normalizePathForDisplay(filePath);
-      break;
-    case "bash":
-      if (typeof input.command === "string") return input.command;
-      break;
-    case "grep":
-    case "glob":
-      if (typeof input.pattern === "string") return input.pattern;
-      break;
-  }
-
-  // Generic search for MCP and other tools
-  // Look for common fields: query, url, name, prompt
-  const commonFields = ["query", "url", "name", "prompt", "text"];
-  for (const field of commonFields) {
-    if (typeof input[field] === "string") {
-      return input[field];
-    }
-  }
-
-  // If nothing matched but string fields exist, take the first one (except description)
-  for (const [key, value] of Object.entries(input)) {
-    if (key !== "description" && typeof value === "string" && value.length > 0) {
-      return value;
-    }
-  }
-
-  return "";
-}
-
-function getToolIcon(tool: string): string {
-  switch (tool) {
-    case "read":
-      return "📖";
-    case "write":
-      return "✍️";
-    case "edit":
-      return "✏️";
-    case "apply_patch":
-      return "🩹";
-    case "bash":
-      return "💻";
-    case "glob":
-      return "📁";
-    case "grep":
-      return "🔍";
-    case "task":
-      return "🤖";
-    case "question":
-      return "❓";
-    case "todoread":
-      return "📋";
-    case "todowrite":
-      return "📝";
-    case "webfetch":
-      return "🌐";
-    case "web-search_tavily_search":
-      return "🔎";
-    case "web-search_tavily_extract":
-      return "📄";
-    case "skill":
-      return "🎓";
-    default:
-      return "🛠️";
-  }
-}
-
-function formatTodos(todos: Array<{ id: string; content: string; status: string }>): string {
-  const MAX_TODOS = 20;
-
-  const statusToTag: Record<string, string> = {
-    completed: "[done]",
-    in_progress: "[in_progress]",
-    pending: "[pending]",
-  };
-
-  const formattedTodos: string[] = [];
-
-  for (let i = 0; i < Math.min(todos.length, MAX_TODOS); i++) {
-    const todo = todos[i];
-    const tag = statusToTag[todo.status] ?? "[pending]";
-    formattedTodos.push(`${tag.padEnd(14, " ")} ${todo.content}`);
-  }
-
-  let result = formattedTodos.join("\n");
-
-  if (todos.length > MAX_TODOS) {
-    result += `\n${t("tool.todo.overflow", { count: todos.length - MAX_TODOS })}`;
-  }
-
-  return result;
-}
-
-function formatDiffLineInfo(filediff: { additions?: number; deletions?: number }): string {
-  const parts = [];
-  if (filediff.additions && filediff.additions > 0) parts.push(`+${filediff.additions}`);
-  if (filediff.deletions && filediff.deletions > 0) parts.push(`-${filediff.deletions}`);
-  return parts.length > 0 ? ` (${parts.join(" ")} lines)` : "";
-}
-
-function formatLineCountInfo(lines: number): string {
-  return ` (+${lines} lines)`;
-}
-
 export function countDiffChangesFromText(text: string): { additions: number; deletions: number } {
   let additions = 0;
   let deletions = 0;
@@ -370,82 +243,7 @@ export function extractFirstUpdatedFileFromTitle(title: string): string {
 }
 
 export function formatToolInfo(toolInfo: ToolInfo): string | null {
-  const { tool, input, title } = toolInfo;
-  logger.debug(
-    `[Formatter] formatToolInfo: tool=${tool}, hasMetadata=${!!toolInfo.metadata}, hasFilediff=${!!toolInfo.metadata?.filediff}`,
-  );
-
-  if (tool === "todowrite" && toolInfo.metadata?.todos) {
-    const todos = toolInfo.metadata.todos as Array<{
-      id: string;
-      content: string;
-      status: string;
-      priority?: string;
-    }>;
-    const toolIcon = getToolIcon(tool);
-    const todosList = formatTodos(todos);
-    return `${toolIcon} "${tool}" (${todos.length})\n\n${todosList}`;
-  }
-
-  let details = title || getToolDetails(tool, input);
-  const toolIcon = getToolIcon(tool);
-
-  let description = "";
-  if (input && typeof input.description === "string") {
-    description = `${input.description}\n`;
-  }
-
-  if (tool === "bash" && input && typeof input.command === "string") {
-    details = truncateWithEllipsis(input.command, config.bot.bashToolDisplayMaxLength);
-  }
-
-  if (tool === "apply_patch") {
-    const filediff =
-      toolInfo.metadata && "filediff" in toolInfo.metadata
-        ? (toolInfo.metadata.filediff as { file?: string })
-        : undefined;
-    if (filediff?.file) {
-      details = normalizePathForDisplay(filediff.file);
-    } else if (title) {
-      const fileFromTitle = extractFirstUpdatedFileFromTitle(title);
-      if (fileFromTitle) {
-        details = normalizePathForDisplay(fileFromTitle);
-      }
-    }
-  }
-
-  const detailsStr = details ? ` \`${details}\`` : "";
-  let lineInfo = "";
-
-  if (tool === "write" && input && "content" in input && typeof input.content === "string") {
-    const lines = countLines(input.content);
-    lineInfo = formatLineCountInfo(lines);
-  }
-
-  if (
-    (tool === "edit" || tool === "apply_patch") &&
-    toolInfo.metadata &&
-    "filediff" in toolInfo.metadata
-  ) {
-    const filediff = toolInfo.metadata.filediff as { additions?: number; deletions?: number };
-    logger.debug("[Formatter] Diff metadata:", JSON.stringify(toolInfo.metadata, null, 2));
-    lineInfo = formatDiffLineInfo(filediff);
-  }
-
-  if (tool === "apply_patch" && !lineInfo) {
-    const diffText =
-      toolInfo.metadata && typeof toolInfo.metadata.diff === "string"
-        ? toolInfo.metadata.diff
-        : input && typeof input.patchText === "string"
-          ? input.patchText
-          : "";
-
-    if (diffText) {
-      lineInfo = formatDiffLineInfo(countDiffChangesFromText(diffText));
-    }
-  }
-
-  return `${toolIcon} ${description}"${tool}"${detailsStr}${lineInfo}`;
+  return formatTechnicalProgressSync(toolInfo).text;
 }
 
 export function formatCompactToolInfo(toolInfo: ToolInfo, maxLength = 64, fallback = "-"): string {
@@ -463,14 +261,11 @@ export function formatCompactToolInfo(toolInfo: ToolInfo, maxLength = 64, fallba
   return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
-function countLines(text: string): number {
-  return text.split("\n").length;
-}
-
 export interface CodeFileData {
   buffer: Buffer;
   filename: string;
   caption: string;
+  captionFormat?: "html";
 }
 
 function formatDiff(diff: string): string {

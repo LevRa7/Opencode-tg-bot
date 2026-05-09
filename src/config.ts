@@ -245,6 +245,13 @@ export const config = {
   server: {
     logLevel: getEnvVar("LOG_LEVEL", false) || "info",
   },
+  telegraph: {
+    enabled: getOptionalBooleanEnvVar("TELEGRAPH_ENABLED", false),
+    accessToken: getEnvVar("TELEGRAPH_ACCESS_TOKEN", false),
+    authorName: getEnvVar("TELEGRAPH_AUTHOR_NAME", false) || "opencode-tg",
+    timeoutMs: getOptionalPositiveIntEnvVar("TELEGRAPH_TIMEOUT_MS", 3000),
+    maxChars: getOptionalPositiveIntEnvVar("TELEGRAPH_MAX_CHARS", 25000),
+  },
   bot: {
     sessionsListLimit: getOptionalPositiveIntEnvVar("SESSIONS_LIST_LIMIT", 10),
     projectsListLimit: getOptionalPositiveIntEnvVar("PROJECTS_LIST_LIMIT", 10),

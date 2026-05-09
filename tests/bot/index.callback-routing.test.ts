@@ -518,6 +518,7 @@ vi.mock("../../src/settings/manager.js", () => ({
   getReasoningMode: vi.fn(() => 0),
   getTenantRuntimeInfo: vi.fn(() => undefined),
   getThinkingClearMode: vi.fn(() => false),
+  getHideThinkingMessages: vi.fn(() => false),
   isMessageStreamingEnabled: vi.fn(() => true),
   getCurrentSession: vi.fn(() => ({ id: "session-a", title: "Test", directory: "/repo" })),
   setCurrentSession: vi.fn(),

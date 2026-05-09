@@ -120,7 +120,7 @@ export function extractThreadTargetFromContext(ctx: Context): TelegramThreadTarg
   }
 
   if (!isForumChat(ctx)) {
-    return null;
+    return { chatId };
   }
 
   return {

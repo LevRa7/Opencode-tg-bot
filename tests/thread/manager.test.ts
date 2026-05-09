@@ -140,7 +140,7 @@ describe("thread/manager", () => {
     expect(threadContextManager.getSessionDirectory("session-existing")).toBe("/repo");
   });
 
-  it("ignores non-threaded chats and clears the active topic", () => {
+  it("switches from a topic to a private chat target", () => {
     const topicCtx = createMessageContext(-100100, 11);
     threadContextManager.activateFromContext(topicCtx);
 
@@ -154,11 +154,14 @@ describe("thread/manager", () => {
       createMessageContext(123456, undefined, 1001, false),
     );
 
-    expect(target).toBeNull();
-    expect(threadContextManager.getActiveTarget()).toBeNull();
+    expect(target).toEqual({ chatId: 123456 });
+    expect(threadContextManager.getActiveTarget()).toEqual({ chatId: 123456 });
     expect(mocked.clearSessionMock).not.toHaveBeenCalled();
-    expect(threadContextManager.getSessionTarget("session-direct")).toBeNull();
-    expect(mocked.setThreadContextBindingsMock).not.toHaveBeenCalled();
+    expect(threadContextManager.getSessionTarget("session-direct")).toEqual({
+      chatId: 123456,
+      messageThreadId: undefined,
+    });
+    expect(mocked.setThreadContextBindingsMock).toHaveBeenCalled();
   });
 
   it("activates forum main topic even without a message thread id", () => {
@@ -188,7 +191,7 @@ describe("thread/manager", () => {
     });
   });
 
-  it("ignores private chats without a thread id", () => {
+  it("keeps private chats without a thread id routable", () => {
     mocked.currentSession = {
       id: "session-direct",
       title: "Direct",
@@ -199,9 +202,12 @@ describe("thread/manager", () => {
       createMessageContext(123456, undefined, 1001, false),
     );
 
-    expect(target).toBeNull();
-    expect(threadContextManager.getActiveTarget()).toBeNull();
-    expect(threadContextManager.getSessionTarget("session-direct")).toBeNull();
+    expect(target).toEqual({ chatId: 123456 });
+    expect(threadContextManager.getActiveTarget()).toEqual({ chatId: 123456 });
+    expect(threadContextManager.getSessionTarget("session-direct")).toEqual({
+      chatId: 123456,
+      messageThreadId: undefined,
+    });
   });
 
   it("allows auto assignment only until topic bindings are created", () => {

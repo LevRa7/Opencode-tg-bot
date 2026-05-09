@@ -7,6 +7,8 @@ const mocked = vi.hoisted(() => ({
   clearSessionMock: vi.fn(),
   clearAllMock: vi.fn(),
   formatThinkingMessageWithReasoningMock: vi.fn(),
+  formatThinkingCompletionWithDetailsMock: vi.fn(),
+  formatThinkingCompletionMessageMock: vi.fn(),
   sendMessageWithoutDraftEffectMock: vi.fn(),
 }));
 
@@ -22,6 +24,8 @@ vi.mock("../../../src/bot/utils/thinking-draft-lifecycle.js", () => ({
 
 vi.mock("../../../src/bot/utils/thinking-message.js", () => ({
   formatThinkingMessageWithReasoning: mocked.formatThinkingMessageWithReasoningMock,
+  formatThinkingCompletionWithDetails: mocked.formatThinkingCompletionWithDetailsMock,
+  formatThinkingCompletionMessage: mocked.formatThinkingCompletionMessageMock,
 }));
 
 vi.mock("../../../src/bot/utils/send-message-draft-effect-context.js", () => ({
@@ -56,9 +60,18 @@ describe("bot/utils/thinking-block-stream", () => {
     mocked.sendMessageWithoutDraftEffectMock.mockReset().mockResolvedValue({ message_id: 101 });
     mocked.formatThinkingMessageWithReasoningMock
       .mockReset()
-      .mockImplementation((title: string, reasoning: string) => ({
-        text: `<b>${title}</b>\n\n<blockquote expandable>${reasoning}</blockquote>`,
-        format: "html",
+      .mockImplementation((title: string) => ({
+        text: `💭 ${title}`,
+      }));
+    mocked.formatThinkingCompletionWithDetailsMock
+      .mockReset()
+      .mockImplementation(async (title: string) => ({
+        text: `💭 ${title}`,
+      }));
+    mocked.formatThinkingCompletionMessageMock
+      .mockReset()
+      .mockImplementation((title: string) => ({
+        text: `💭 ${title}`,
       }));
     clearAllThinkingBlockStreams();
     configureThinkingBlockDeliveryOrchestratorForTests(null);
@@ -88,7 +101,7 @@ describe("bot/utils/thinking-block-stream", () => {
     expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(1);
     expect(mocked.renderActiveDraftMock).toHaveBeenCalledWith(
       "s1",
-      "<b>Thinking</b>\n\n<blockquote expandable>Step 1</blockquote>",
+      "💭 Thinking",
       expect.objectContaining({
         chatId: 1,
         draftId: 1,
@@ -98,7 +111,7 @@ describe("bot/utils/thinking-block-stream", () => {
     expect(sendApi.sendMessageDraft).toHaveBeenCalledWith(
       1,
       1,
-      "<b>Thinking</b>\n\n<blockquote expandable>Step 1</blockquote>",
+      "💭 Thinking",
       {
         parse_mode: "HTML",
         disable_notification: true,
@@ -106,7 +119,7 @@ describe("bot/utils/thinking-block-stream", () => {
     );
   });
 
-  it("reuses the same draft id across active updates on the same route", async () => {
+  it("keeps the same draft id while active reasoning changes on the same route", async () => {
     const next = vi.fn().mockReturnValue(77);
     configureThinkingBlockDraftIdAllocator({ next });
 
@@ -126,12 +139,8 @@ describe("bot/utils/thinking-block-stream", () => {
     });
 
     expect(next).toHaveBeenCalledTimes(1);
-    expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(2);
+    expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(1);
     expect(mocked.renderActiveDraftMock.mock.calls[0]?.[2]).toMatchObject({
-      draftId: 77,
-      routingIdentity: "1:5",
-    });
-    expect(mocked.renderActiveDraftMock.mock.calls[1]?.[2]).toMatchObject({
       draftId: 77,
       routingIdentity: "1:5",
     });
@@ -275,16 +284,8 @@ describe("bot/utils/thinking-block-stream", () => {
     expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(2);
   });
 
-  it("replays the last good render after a failed update so finalize can recover", async () => {
-    mocked.renderActiveDraftMock
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error("boom"))
-      .mockResolvedValueOnce(undefined);
-    mocked.finalizeDraftMock.mockImplementation(async () => {
-      if (mocked.renderActiveDraftMock.mock.calls.length < 3) {
-        throw new Error("stuck failed state");
-      }
-    });
+  it("keeps the last one-line render stable while retaining final reasoning details", async () => {
+    const publisher = { publish: vi.fn().mockResolvedValue("https://telegra.ph/reasoning") };
 
     await streamThinkingBlocks({
       sessionId: "s1",
@@ -294,23 +295,12 @@ describe("bot/utils/thinking-block-stream", () => {
       reasoningText: "Step 1",
     });
 
-    await expect(
-      streamThinkingBlocks({
-        sessionId: "s1",
-        target: { chatId: 1 },
-        sendApi: createSendApi(),
-        title: "Thinking",
-        reasoningText: "Step 2",
-      }),
-    ).rejects.toThrow("boom");
-    await Promise.resolve();
-
     await streamThinkingBlocks({
       sessionId: "s1",
       target: { chatId: 1 },
       sendApi: createSendApi(),
       title: "Thinking",
-      reasoningText: "Step 1",
+      reasoningText: "Step 2",
     });
 
     await expect(
@@ -319,10 +309,16 @@ describe("bot/utils/thinking-block-stream", () => {
         target: { chatId: 1 },
         sendApi: createSendApi(),
         title: "Thinking",
+        publisher,
       }),
     ).resolves.toBe("finalized");
 
-    expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(3);
+    expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(2);
+    expect(mocked.formatThinkingCompletionWithDetailsMock).toHaveBeenCalledWith(
+      "Thinking",
+      "Step 2",
+      publisher,
+    );
   });
 
   it("finalizes through the draft lifecycle even when coordinator state is missing", async () => {
@@ -380,10 +376,19 @@ describe("bot/utils/thinking-block-stream", () => {
     }));
 
     vi.doMock("../../../src/bot/utils/thinking-message.js", () => ({
-      formatThinkingMessageWithReasoning: (title: string, reasoning: string) => ({
-        text: `<b>${title}</b>\n\n<blockquote expandable>${reasoning}</blockquote>`,
-        format: "html",
+      formatThinkingMessageWithReasoning: (title: string) => ({
+        text: `💭 ${title}`,
+        format: undefined,
       }),
+      formatThinkingCompletionMessage: (title: string) => ({
+        text: `✅ Finished thinking — ${title}`,
+        format: undefined,
+      }),
+      formatThinkingCompletionWithDetails: (title: string) =>
+        Promise.resolve({
+          text: `✅ Finished thinking — ${title}`,
+          format: undefined,
+        }),
     }));
 
     vi.doMock("../../../src/bot/utils/send-message-draft-effect-context.js", () => ({
@@ -501,53 +506,167 @@ describe("bot/utils/thinking-block-stream", () => {
     expect(missingRoutingCleanup.deleteText).not.toHaveBeenCalled();
   });
 
-  it("publishes a normal message on finalize and starts fresh on the next block", async () => {
+  it("publishes Telegraph details before finalizing the thinking stream", async () => {
     const sendApi = createSendApi();
+    let resolveDetails: ((value: { text: string; format?: "html" }) => void) | null = null;
+    let renderedFinalText = "💭 Thinking";
+    mocked.renderActiveDraftMock.mockImplementation(async (_sessionId: string, text: string) => {
+      renderedFinalText = text;
+    });
     mocked.finalizeDraftMock.mockImplementation(async (_sessionId: string, transport) => {
-      await transport.sendMessage(transport.chatId, "published thinking", {
+      await transport.sendMessage(transport.chatId, renderedFinalText, {
         parse_mode: "HTML",
         disable_notification: true,
       });
     });
+    mocked.formatThinkingCompletionWithDetailsMock.mockImplementation(
+      () =>
+        new Promise<{ text: string; format?: "html" }>((resolve) => {
+          resolveDetails = resolve;
+        }),
+    );
 
     const payload = {
       sessionId: "s1",
       target: { chatId: 1 },
       sendApi,
       title: "Thinking",
-      reasoningText: "Step 1",
+      reasoningText: "Step 1\nStep 2",
     };
 
     await streamThinkingBlocks(payload);
+    const finalizePromise = finalizeThinkingBlockStream({
+        sessionId: "s1",
+        target: { chatId: 1 },
+        sendApi,
+        title: "Thinking",
+        publisher: { publish: vi.fn().mockResolvedValue("https://telegra.ph/reasoning") },
+      });
+
+    await vi.waitFor(() => {
+      expect(mocked.formatThinkingCompletionMessageMock).toHaveBeenCalledWith("Thinking", "Step 1\nStep 2");
+    });
+    expect(mocked.formatThinkingCompletionWithDetailsMock).toHaveBeenCalledWith(
+      "Thinking",
+      "Step 1\nStep 2",
+      expect.objectContaining({ publish: expect.any(Function) }),
+    );
+    expect(resolveDetails).not.toBeNull();
+    expect(mocked.finalizeDraftMock).not.toHaveBeenCalled();
+
+    resolveDetails?.({
+      text: "<a href=\"https://telegra.ph/reasoning\">💭 Thinking</a>",
+      format: "html",
+    });
+    await expect(finalizePromise).resolves.toBe("finalized");
+
+    expect(mocked.renderActiveDraftMock).toHaveBeenLastCalledWith(
+      "s1",
+      "<a href=\"https://telegra.ph/reasoning\">💭 Thinking</a>",
+      expect.objectContaining({ chatId: 1 }),
+    );
+    expect(mocked.finalizeDraftMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a fresh draft id for the final thinking render", async () => {
+    const next = vi.fn().mockReturnValueOnce(10).mockReturnValueOnce(11);
+    configureThinkingBlockDraftIdAllocator({ next });
+
+    await streamThinkingBlocks({
+      sessionId: "s1",
+      target: { chatId: 1 },
+      sendApi: createSendApi(),
+      title: "Thinking",
+      reasoningText: "Step 1",
+    });
+
+    await expect(
+      finalizeThinkingBlockStream({
+        sessionId: "s1",
+        target: { chatId: 1 },
+        sendApi: createSendApi(),
+        title: "Thinking",
+      }),
+    ).resolves.toBe("finalized");
+
+    expect(mocked.renderActiveDraftMock).toHaveBeenNthCalledWith(
+      1,
+      "s1",
+      "💭 Thinking",
+      expect.objectContaining({ draftId: 10 }),
+    );
+    expect(mocked.renderActiveDraftMock).toHaveBeenNthCalledWith(
+      2,
+      "s1",
+      "💭 Thinking",
+      expect.objectContaining({ draftId: 11 }),
+    );
+    expect(next).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to the plain thinking completion when Telegraph details fail", async () => {
+    const sendApi = createSendApi();
+    let renderedFinalText = "";
+    mocked.renderActiveDraftMock.mockImplementation(async (_sessionId: string, text: string) => {
+      renderedFinalText = text;
+    });
+    mocked.formatThinkingCompletionWithDetailsMock.mockImplementation(
+      async () => {
+        throw new Error("telegraph unavailable");
+      },
+    );
+
+    await streamThinkingBlocks({
+      sessionId: "s1",
+      target: { chatId: 1 },
+      sendApi,
+      title: "Thinking",
+      reasoningText: "Step 1",
+    });
+
     await expect(
       finalizeThinkingBlockStream({
         sessionId: "s1",
         target: { chatId: 1 },
         sendApi,
         title: "Thinking",
+        publisher: { publish: vi.fn().mockResolvedValue("https://telegra.ph/reasoning") },
       }),
     ).resolves.toBe("finalized");
-    await streamThinkingBlocks(payload);
 
-    expect(mocked.finalizeDraftMock).toHaveBeenCalledWith(
-      "s1",
-      expect.objectContaining({
-        chatId: 1,
-        routingIdentity: "1:main",
-      }),
+    expect(renderedFinalText).toBe("💭 Thinking");
+    expect(mocked.finalizeDraftMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefers completion reasoning over stale active reasoning when finalizing details", async () => {
+    await streamThinkingBlocks({
+      sessionId: "s1",
+      target: { chatId: 1 },
+      sendApi: createSendApi(),
+      title: "Thinking",
+      reasoningText: "stale streamed reasoning",
+    });
+
+    const options = {
+      sessionId: "s1",
+      target: { chatId: 1 },
+      sendApi: createSendApi(),
+      title: "Thinking",
+      reasoningText: "final completion reasoning",
+      publisher: { publish: vi.fn().mockResolvedValue("https://telegra.ph/reasoning") },
+    } as Parameters<typeof finalizeThinkingBlockStream>[0] & { reasoningText: string };
+
+    await finalizeThinkingBlockStream(options);
+
+    expect(mocked.formatThinkingCompletionMessageMock).toHaveBeenCalledWith(
+      "Thinking",
+      "final completion reasoning",
     );
-    expect(mocked.sendMessageWithoutDraftEffectMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sendMessage: expect.any(Function),
-      }),
-      1,
-      "published thinking",
-      {
-        parse_mode: "HTML",
-        disable_notification: true,
-      },
+    expect(mocked.formatThinkingCompletionWithDetailsMock).toHaveBeenCalledWith(
+      "Thinking",
+      "final completion reasoning",
+      expect.objectContaining({ publish: expect.any(Function) }),
     );
-    expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(2);
   });
 
   it("returns a failed outcome when durable finalization cannot be published", async () => {
@@ -800,8 +919,8 @@ describe("bot/utils/thinking-block-stream", () => {
       true,
       expect.objectContaining({ routingIdentity: "1:main" }),
     );
-    expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(2);
-    expect(mocked.renderActiveDraftMock.mock.calls[1]?.[2]).toMatchObject({
+    expect(mocked.renderActiveDraftMock).toHaveBeenCalledTimes(1);
+    expect(mocked.renderActiveDraftMock.mock.calls[0]?.[2]).toMatchObject({
       draftId: 90,
       routingIdentity: "1:main",
     });

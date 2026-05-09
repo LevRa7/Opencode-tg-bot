@@ -40,6 +40,19 @@ describe("bot/utils/message-thread", () => {
     });
   });
 
+  it("keeps private chats as valid targets without a thread id", () => {
+    const ctx = {
+      from: { id: 1001 },
+      chat: { id: 1001, type: "private" },
+      message: { chat: { id: 1001, type: "private" } },
+    } as unknown as Context;
+
+    expect(extractMessageThreadIdFromContext(ctx)).toBeUndefined();
+    expect(extractThreadTargetFromContext(ctx)).toEqual({
+      chatId: 1001,
+    });
+  });
+
   it("keeps forum main topic as a valid target without a thread id", () => {
     const ctx = {
       from: { id: 1001 },

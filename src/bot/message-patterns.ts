@@ -1,6 +1,5 @@
-export const AGENT_MODE_BUTTON_TEXT_PATTERN = /^(📋|🛠️|💬|🔍|📝|📄|📦|🤖)\s.+\sMode$/;
+export const AGENT_MODE_BUTTON_TEXT_PATTERN = /^([📋🛠️💬🔍📝📄📦]|🤖\s\d)/;
 
-export const MODEL_BUTTON_TEXT_PATTERN = /^🤖\s(?!.*\sMode$)[\s\S]+$/;
+export const MODEL_BUTTON_TEXT_PATTERN = /^🤖\s(?!\d+(?:K|M)?(?:\s|$))/;
 
-// Keep support for both legacy "💭" and current "💡" prefix.
 export const VARIANT_BUTTON_TEXT_PATTERN = /^(💡|💭)\s.+$/;

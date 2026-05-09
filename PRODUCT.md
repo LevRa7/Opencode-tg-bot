@@ -69,6 +69,7 @@ No public inbound ports are required for normal usage.
 - Chunk long Telegram HTML safely so tag structure survives splitting and active thinking drafts stay within Telegram limits
 - Preserve readable numbered lists in Telegram replies instead of collapsing ordered items into repeated `1.` lines
 - Keep assistant-output delivery resilient to Telegram `429 retry_after` and other per-message send failures without crashing the bot process
+- Show localized one-line technical progress for tool calls, todo updates, and reasoning/thinking, with optional Telegraph links for detailed output when configured
 - Send code updates as files (size-limited)
 - Send assistant-mentioned local files as follow-up attachments only from the admin host runtime or from tenant-visible `/workspace/...` and `/state/...` paths that map to the current Docker user's Workspaces directory
 
@@ -101,6 +102,7 @@ No public inbound ports are required for normal usage.
 - Optional STT settings for voice transcription (`STT_API_URL`, `STT_API_KEY`, `STT_MODEL`, `STT_LANGUAGE`)
 - Optional TTS settings for global audio replies (`TTS_PROVIDER`, `TTS_API_URL`, `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`, `GOOGLE_APPLICATION_CREDENTIALS`)
 - Optional OpenCode server monitoring with automatic restart (`OPENCODE_AUTO_RESTART_ENABLED`, `OPENCODE_MONITOR_INTERVAL_SEC`)
+- Optional Telegraph detail publishing for long technical progress output (`TELEGRAPH_ENABLED`, `TELEGRAPH_ACCESS_TOKEN`, `TELEGRAPH_AUTHOR_NAME`, `TELEGRAPH_TIMEOUT_MS`, `TELEGRAPH_MAX_CHARS`)
 
 ## Current Product Scope
 
@@ -167,6 +169,7 @@ Model picker behavior:
 - [x] Persistent settings between restarts (`settings.json`)
 - [x] UI localization support via i18n files
 - [x] Service message visibility controls (thinking/tool updates)
+- [x] Localized technical progress summaries with optional Telegraph detail links
 - [x] Sending code blocks as text files when needed
 - [x] Image attachments support (persist original photo files and fall back to local text extraction when the selected model lacks image input)
 - [x] PDF attachments support (persist original PDF files and fall back to local text extraction when the selected model lacks PDF input)

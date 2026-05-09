@@ -7,6 +7,8 @@ import {
   type RuntimeModelCatalog,
   type RuntimeModelCatalogProvider,
 } from "../../model/types.js";
+import { getAvailableVariants } from "../../variant/manager.js";
+import { showVariantSelectionMenu } from "./variant.js";
 import { logger } from "../../utils/logger.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { keyboardManager } from "../../keyboard/manager.js";
@@ -386,6 +388,12 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
 
     await ctx.answerCallbackQuery({ text: t("model.changed_callback", { name: displayName }) });
     await ctx.deleteMessage().catch(() => {});
+
+    const variants = await getAvailableVariants(parsedModel.providerID, parsedModel.modelID);
+    const enabledVariants = variants.filter((variant) => !variant.disabled);
+    if (enabledVariants.length > 1) {
+      await showVariantSelectionMenu(ctx);
+    }
 
     return true;
   } catch (err) {

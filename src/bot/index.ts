@@ -19,12 +19,12 @@ import { restartCommand } from "./commands/restart.js";
 import {
   AGENT_MODE_BUTTON_TEXT_PATTERN,
   MODEL_BUTTON_TEXT_PATTERN,
-  VARIANT_BUTTON_TEXT_PATTERN,
 } from "./message-patterns.js";
 import { sessionsCommand, handleSessionSelect } from "./commands/sessions.js";
 import { newCommand } from "./commands/new.js";
 import { modelCommand } from "./commands/model.js";
 import { variantCommand } from "./commands/variant.js";
+import { compactCommand } from "./commands/compact.js";
 import { handleSettingsCallback, settingsCommand } from "./commands/settings.js";
 import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand } from "./commands/abort.js";
@@ -54,10 +54,10 @@ import {
   handleQuestionTextAnswer,
 } from "./handlers/question.js";
 import { handlePermissionCallback, showPermissionRequest } from "./handlers/permission.js";
-import { handleAgentSelect, showAgentSelectionMenu } from "./handlers/agent.js";
+import { handleAgentSelect, cycleAgentMode } from "./handlers/agent.js";
 import { handleModelSelect, showModelSelectionMenu } from "./handlers/model.js";
-import { handleVariantSelect, showVariantSelectionMenu } from "./handlers/variant.js";
-import { handleContextButtonPress, handleCompactConfirm } from "./handlers/context.js";
+import { handleVariantSelect } from "./handlers/variant.js";
+import { handleCompactConfirm } from "./handlers/context.js";
 import { handleInlineMenuCancel } from "./handlers/inline-menu.js";
 import { questionManager } from "../question/manager.js";
 import { interactionManager } from "../interaction/manager.js";
@@ -66,6 +66,12 @@ import { keyboardManager } from "../keyboard/manager.js";
 import { subscribeToEvents } from "../opencode/events.js";
 import { summaryAggregator } from "../summary/aggregator.js";
 import { formatToolInfo, getAssistantParseMode } from "../summary/formatter.js";
+import {
+  formatTechnicalProgressSync,
+  formatTechnicalProgressWithDetails,
+} from "../summary/technical-progress/formatter.js";
+import { TelegraphClient } from "../telegraph/telegraph-client.js";
+import { NoopDetailsPublisher } from "../telegraph/noop-details-publisher.js";
 import {
   createPlainRenderedParts,
   prepareAssistantFinalStreamingPayload,
@@ -101,7 +107,6 @@ import { handlePhotoMessage } from "./handlers/photo.js";
 import { finalizeAssistantResponse } from "./utils/finalize-assistant-response.js";
 import { sendTtsResponseForSession } from "./utils/send-tts-response.js";
 import { MessageDraftStreamManager } from "./utils/message-draft-stream.js";
-import { deliverThinkingMessage } from "./utils/thinking-message.js";
 import { SequentialMessageDraftIdAllocator } from "./utils/message-draft-id.js";
 import {
   clearAllThinkingBlockStreams,
@@ -110,6 +115,7 @@ import {
   finalizeThinkingBlockStream,
   streamThinkingBlocks,
 } from "./utils/thinking-block-stream.js";
+import { getVisibleReasoningText } from "./utils/thinking-message.js";
 import { formatAssistantRunFooter } from "./utils/assistant-run-footer.js";
 import { sendBotText, sendStreamedBotText } from "./utils/telegram-text.js";
 import {
@@ -148,7 +154,6 @@ import {
 import {
   escapeHtml,
   formatReasoningBlock,
-  formatReasoningForTelegramHtml,
   formatToolCallAsSpoiler,
   markdownToHtml,
 } from "./utils/reasoning-format.js";
@@ -282,7 +287,6 @@ const childSessionsAwaitingIdleCleanup = new Set<string>();
 const childTopicDeletionBlockedSessions = new Set<string>();
 const childTopicPromptSent = new Set<string>();
 const childReasoningBuffer = new Map<string, { messageId: string; text: string }>();
-const childProcessedToolIds = new Set<string>();
 const childTypingIntervals = new Map<string, ReturnType<typeof setInterval>>();
 const childSessionTitle = new Map<string, string>();
 
@@ -307,6 +311,7 @@ const childTopicPinnedMessageId = new Map<string, number>();
 // 2026-05-01: Tracks the maternal session's own token usage from completionInfo,
 // used in the maternal idle footer to show maternal + sum(child) tokens.
 const maternalTokenUsage = new Map<string, { input: number; output: number }>();
+const publishedToolDetailCallIds = new Set<string>();
 
 interface ChildAssistantMessageState {
   orderedPartIds: string[];
@@ -1283,6 +1288,7 @@ const toolMessageBatcher = new ToolMessageBatcher({
         withMessageThreadId(
           {
             caption: fileData.caption,
+            ...(fileData.captionFormat === "html" ? { parse_mode: "HTML" as const } : {}),
             disable_notification: true,
             ...(keyboard ? { reply_markup: keyboard } : {}),
           },
@@ -1387,6 +1393,10 @@ const messageDraftStreamManager = new MessageDraftStreamManager(
 );
 configureThinkingBlockDraftIdAllocator(sharedMessageDraftIdAllocator);
 export { messageDraftStreamManager };
+
+const technicalDetailsPublisher = config.telegraph?.enabled
+  ? new TelegraphClient(config.telegraph)
+  : new NoopDetailsPublisher();
 
 const toolCallStreamer = new ToolCallStreamer({
   throttleMs: RESPONSE_STREAM_THROTTLE_MS,
@@ -1604,24 +1614,33 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         return;
       }
 
+      if (assistantRunState.isFinalResponsePublished(sessionId)) {
+        return;
+      }
+
       const mode = await getReasoningModeForSession(sessionId);
       if (!messageText.trim() && !reasoningText?.trim() && !toolCalls?.length) {
         return;
       }
 
-      if (
-        mode > 0 &&
-        reasoningText?.trim() &&
-        !(await getHideThinkingMessagesForSession(sessionId))
-      ) {
+      const hideThinkingMessages = await getHideThinkingMessagesForSession(sessionId);
+      const visibleReasoningText = hideThinkingMessages
+        ? undefined
+        : getVisibleReasoningText(reasoningText);
+
+      if (mode > 0 && visibleReasoningText) {
         try {
+          const reasoningTitle =
+            visibleReasoningText.match(/^[^.!?]*[.!?]/)?.[0]?.trim() ||
+            visibleReasoningText.split(/\r?\n/)[0]?.trim() ||
+            t("bot.thinking");
           await streamThinkingBlocks({
             sessionId,
             logicalMessageId: messageId,
             sendApi: botApi,
             target,
-            title: t("bot.thinking"),
-            reasoningText,
+            title: reasoningTitle,
+            reasoningText: visibleReasoningText,
           });
         } catch (error) {
           logger.warn(
@@ -1663,7 +1682,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
       void enqueueLocalFileFollowUpsFromText(
         sessionId,
-        buildFollowUpCandidateText(messageText, reasoningText),
+        buildFollowUpCandidateText(messageText, visibleReasoningText),
       );
     },
   );
@@ -1721,8 +1740,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
         const chatId = target.chatId;
         const mode = await getReasoningModeForSession(sessionId);
+        const hideThinkingMessages = await getHideThinkingMessagesForSession(sessionId);
+        const visibleReasoningText = hideThinkingMessages
+          ? undefined
+          : getVisibleReasoningText(reasoningText);
         const hasVisibleFinalContent = Boolean(
-          messageText.trim() || reasoningText?.trim() || toolCalls?.length,
+          messageText.trim() || visibleReasoningText?.trim() || toolCalls?.length,
         );
         const completionLogicalMessageId = completionInfo?.logicalMessageId ?? messageId;
         const completionEventTimeMs = completionInfo?.completedAt;
@@ -1736,13 +1759,17 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           return;
         }
 
-        if (mode > 0) {
+        if (mode > 0 && visibleReasoningText) {
+          const finalReasoningText = visibleReasoningText;
+          const finalReasoningTitle = finalReasoningText.match(/^[^.!?]*[.!?]/)?.[0]?.trim() || finalReasoningText.split(/\r?\n/)[0]?.trim() || t("bot.thinking");
           const thinkingFinalizeOutcome = await finalizeThinkingBlockStream({
             sessionId,
             logicalMessageId: completionInfo?.logicalMessageId ?? messageId,
             sendApi: botApi,
             target,
-            title: t("bot.thinking"),
+            title: finalReasoningTitle,
+            reasoningText: visibleReasoningText,
+            publisher: technicalDetailsPublisher,
           });
           if (thinkingFinalizeOutcome === "failed") {
             logger.warn(
@@ -1755,31 +1782,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           logicalMessageId: completionLogicalMessageId,
         });
 
-        const formattedTechnicals = (toolCalls || []).map((t) => ({
-          description: t.title || t.tool,
-          command:
-            t.input &&
-            typeof t.input === "object" &&
-            "command" in t.input &&
-            typeof t.input.command === "string"
-              ? t.input.command
-              : undefined,
-        }));
-
         const finalFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
         let finalText = messageText;
         let finalParseMode: "html" | "raw" | "markdown_v2" = finalFormat;
 
         if (mode > 0) {
-          const assistantText =
-            (finalFormat as string) === "html" ? messageText : markdownToHtml(messageText);
-
-          const technicalsOnly = formattedTechnicals.map((t) => ({
-            description: t.description,
-            command: t.command,
-          }));
-          const chunks = formatReasoningForTelegramHtml(mode, "", technicalsOnly, assistantText);
-          finalText = chunks[0] || assistantText;
+          finalText = (finalFormat as string) === "html" ? messageText : markdownToHtml(messageText);
           finalParseMode = "html";
         }
 
@@ -1922,6 +1930,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     const botApi = getSessionRoutingApi(sessionId);
     const target = getSessionRoutingTarget(sessionId);
     if (!botApi || !target || (!hasLiveSessionTarget(sessionId) && !isDedicatedTopicSession)) {
+      if (isDedicatedTopicSession) {
+        // 2026-05-09: child session.idle can arrive after the final answer is sent but
+        // after live routing has already disappeared. Topic deletion is owned by the
+        // subagent topic registry, so schedule it before clearing volatile routing state.
+        await scheduleChildTopicDeletionWhenDeliveryCompletes(sessionId, "completed");
+      }
       finalAssistantDeliveryOrchestrator.clearSession(sessionId);
       toolMessageBatcher.clearSession(sessionId, "session_idle_missing_routing");
       toolCallStreamer.clearSession(sessionId, "session_idle_missing_routing");
@@ -2021,6 +2035,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       return;
     }
 
+    if (assistantRunState.isFinalResponsePublished(toolInfo.sessionId)) {
+      orderedPublication.resolve(null);
+      return;
+    }
+
     const shouldIncludeToolInfoInFileCaption =
       toolInfo.hasFileAttachment &&
       (toolInfo.tool === "write" || toolInfo.tool === "edit" || toolInfo.tool === "apply_patch");
@@ -2028,29 +2047,66 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     try {
       if (
         (await getHideToolCallMessagesForSession(toolInfo.sessionId)) ||
-        shouldIncludeToolInfoInFileCaption ||
-        toolInfo.tool === "task"
+        shouldIncludeToolInfoInFileCaption
       ) {
         orderedPublication.resolve(null);
         return;
       }
 
-      const message = formatToolInfo(toolInfo);
-      if (message) {
+      const formattedProgress = formatTechnicalProgressSync(toolInfo);
+      if (formattedProgress.text) {
         if (!isSessionCurrent(toolInfo.sessionId)) {
           orderedPublication.resolve(null);
           toolCallStreamer.clearSession(toolInfo.sessionId, "tool_lost_live_routing_before_queue");
           return;
         }
 
-        const spoilerMessage = formatToolCallAsSpoiler(message);
+        const prefix = `tool:${toolInfo.callId}`;
+        const spoilerMessage = formatToolCallAsSpoiler(formattedProgress.text);
         orderedPublication.resolve(async () => {
-          toolCallStreamer.replaceByPrefix(
+          toolCallStreamer.replaceByPrefix(toolInfo.sessionId, prefix, spoilerMessage);
+          await enqueueLocalFileFollowUpsFromText(
             toolInfo.sessionId,
-            `tool:${toolInfo.callId}`,
-            spoilerMessage,
+            joinFollowUpCandidateTexts(
+              spoilerMessage,
+              toolInfo.title,
+              typeof toolInfo.input?.description === "string" ? toolInfo.input.description : undefined,
+              typeof toolInfo.input?.command === "string" ? toolInfo.input.command : undefined,
+            ),
           );
-          await enqueueLocalFileFollowUpsFromText(toolInfo.sessionId, spoilerMessage);
+
+          safeBackgroundTask({
+            taskName: `technical-progress-details.${toolInfo.sessionId}.${toolInfo.callId}`,
+            task: async () => {
+              const callKey = `${toolInfo.sessionId}:${toolInfo.callId}`;
+              if (publishedToolDetailCallIds.has(callKey)) {
+                return;
+              }
+              publishedToolDetailCallIds.add(callKey);
+
+              const linkedProgress = await formatTechnicalProgressWithDetails(
+                toolInfo,
+                technicalDetailsPublisher,
+              );
+              if (linkedProgress.format !== "html" || !linkedProgress.text) {
+                return;
+              }
+
+              if (!isSessionCurrent(toolInfo.sessionId)) {
+                return;
+              }
+
+              if (!toolCallStreamer.hasPrefix(toolInfo.sessionId, prefix)) {
+                return;
+              }
+
+              toolCallStreamer.replaceByPrefix(
+                toolInfo.sessionId,
+                prefix,
+                `<blockquote expandable>${linkedProgress.text}</blockquote>`,
+              );
+            },
+          });
         });
         return;
       }
@@ -2190,12 +2246,17 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         return;
       }
 
-      const toolMessage = formatToolInfo(fileInfo);
+      const formattedFileProgress = await formatTechnicalProgressWithDetails(
+        fileInfo,
+        technicalDetailsPublisher,
+      );
+      const toolMessage = formattedFileProgress.text || formatToolInfo(fileInfo);
       const caption = prepareDocumentCaption(toolMessage || fileInfo.fileData.caption);
 
       toolMessageBatcher.enqueueFile(fileInfo.sessionId, {
         ...fileInfo.fileData,
         caption,
+        ...(formattedFileProgress.format === "html" ? { captionFormat: "html" as const } : {}),
       });
     } catch (err) {
       logger.error("Failed to send file to Telegram:", err);
@@ -2308,17 +2369,13 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       return;
     }
 
+    if (assistantRunState.isFinalResponsePublished(sessionId)) {
+      return;
+    }
+
     logger.debug("[Bot] Agent started thinking");
 
     await toolCallStreamer.breakSession(sessionId, "thinking_started");
-
-    const reasoningMode = await getReasoningModeForSession(sessionId);
-    const hideThinkingMessages = await getHideThinkingMessagesForSession(sessionId);
-    if (!hideThinkingMessages && reasoningMode === 0) {
-      deliverThinkingMessage(sessionId, toolMessageBatcher, {
-        hideThinkingMessages,
-      });
-    }
 
     if (pinnedMessageManager.isInitialized()) {
       await pinnedMessageManager.refresh();
@@ -2599,52 +2656,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         }
       }
 
-      if (
-        part?.sessionID &&
-        part.id &&
-        part.type === "tool" &&
-        isManagedChildSession(part.sessionID)
-      ) {
-        const sessionId = part.sessionID;
-        const partId = part.id;
-        const toolPart = part as {
-          tool?: string;
-          state?: { status?: string; input?: Record<string, unknown> };
-        };
-        const toolStatus = toolPart.state?.status;
-
-        if (toolStatus !== "completed" || childProcessedToolIds.has(partId)) {
-          // Skip: only send completed tools once
-        } else {
-          childProcessedToolIds.add(partId);
-
-          safeBackgroundTask({
-            taskName: `child-tool.${partId}`,
-            task: async () => {
-              const target = getSessionDeliveryTarget(sessionId);
-              const botApi = getSessionRoutingApi(sessionId);
-              if (!botApi || !target) {
-                return;
-              }
-
-              const toolLabel = toolPart.tool ?? "tool";
-              const toolInput = toolPart.state?.input;
-              let inputSummary = "";
-              if (toolInput) {
-                const inputStr = JSON.stringify(toolInput).slice(0, 200);
-                inputSummary = `\n<code>${escapeHtml(inputStr)}</code>`;
-              }
-
-              await deliverChildTopicMessage(childTopicDeliveryDependencies, {
-                sessionId,
-                kind: "diagnostic",
-                text: `⚙️ <b>${escapeHtml(toolLabel)}</b>${inputSummary}`,
-                format: "html",
-              });
-            },
-          });
-        }
-      }
+      // 2026-05-09: Subagent tool events are now delivered through the aggregator's
+      // setOnTool → formatTechnicalProgressSync/WithDetails pipeline, which produces
+      // localized, Telegraph-linked messages consistent with the main chat style.
+      // The old raw JSON diagnostic path here was a duplication source.
     }
 
     if (event.type === "message.updated") {
@@ -3177,6 +3192,7 @@ export function createBot(): Bot<Context> {
   bot.command("sessions", sessionsCommand);
   bot.command("model", modelCommand);
   bot.command("variant", variantCommand);
+  bot.command("compact", compactCommand);
   bot.command("settings", settingsCommand);
   bot.command("new", newCommand);
   bot.command("abort", abortCommand);
@@ -3266,15 +3282,14 @@ export function createBot(): Bot<Context> {
         return;
       }
 
-      await showAgentSelectionMenu(ctx);
+      await cycleAgentMode(ctx);
     } catch (err) {
-      logger.error("[Bot] Error showing agent menu:", err);
+      logger.error("[Bot] Error cycling agent mode:", err);
       await ctx.reply(t("error.load_agents"));
     }
   });
 
   // Handle Reply Keyboard button press (model selector)
-  // Model button text is produced by formatModelForButton() and always starts with "🤖 ".
   bot.hears(MODEL_BUTTON_TEXT_PATTERN, async (ctx) => {
     logger.debug(`[Bot] Model button pressed: ${ctx.message?.text}`);
 
@@ -3287,39 +3302,6 @@ export function createBot(): Bot<Context> {
     } catch (err) {
       logger.error("[Bot] Error showing model menu:", err);
       await ctx.reply(t("error.load_models"));
-    }
-  });
-
-  // Handle Reply Keyboard button press (context button)
-  bot.hears(/^📊(?:\s|$)/, async (ctx) => {
-    logger.debug(`[Bot] Context button pressed: ${ctx.message?.text}`);
-
-    try {
-      if (await blockMenuWhileInteractionActive(ctx)) {
-        return;
-      }
-
-      await handleContextButtonPress(ctx);
-    } catch (err) {
-      logger.error("[Bot] Error handling context button:", err);
-      await ctx.reply(t("error.context_button"));
-    }
-  });
-
-  // Handle Reply Keyboard button press (variant selector)
-  // Keep support for both legacy "💭" and current "💡" prefix.
-  bot.hears(VARIANT_BUTTON_TEXT_PATTERN, async (ctx) => {
-    logger.debug(`[Bot] Variant button pressed: ${ctx.message?.text}`);
-
-    try {
-      if (await blockMenuWhileInteractionActive(ctx)) {
-        return;
-      }
-
-      await showVariantSelectionMenu(ctx);
-    } catch (err) {
-      logger.error("[Bot] Error showing variant menu:", err);
-      await ctx.reply(t("error.load_variants"));
     }
   });
 

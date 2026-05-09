@@ -1,0 +1,19 @@
+{
+  "name": "opencode-cliproxy-api",
+  "version": "1.0.0",
+  "description": "CliProxyApi plugin for Opencode with dynamic model discovery",
+  "main": "index.ts",
+  "type": "module",
+  "scripts": {
+    "update": "bun run update"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.2.26"
+  }
+}

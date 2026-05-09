@@ -430,6 +430,7 @@ vi.mock("../../src/bot/utils/thinking-message-lifecycle.js", () => ({
 }));
 vi.mock("../../src/bot/utils/thinking-message.js", () => ({
   buildThinkingMessageHtml: vi.fn(() => "thinking"),
+  getVisibleReasoningText: vi.fn((text: string | undefined) => text),
 }));
 const sendBotTextMock = vi.hoisted(() => vi.fn(async () => 1));
 

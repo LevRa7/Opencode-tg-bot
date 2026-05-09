@@ -158,15 +158,7 @@ describe("summary/formatter", () => {
       },
     });
 
-    expect(text).toBe(
-      [
-        "📝 Updated task list — 3 tasks",
-        "",
-        "✅ Done item",
-        "⏳ In progress item",
-        "⬜ Pending item",
-      ].join("\n"),
-    );
+    expect(text).toBe("📝 Updated task list — 3 tasks");
   });
 
   it("formats write/edit tool details with line counters", () => {

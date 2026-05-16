@@ -5,10 +5,37 @@ import { opencodeClient } from "./client.js";
 import { opencodeReadyLifecycle } from "./ready-lifecycle.js";
 
 let readyRefreshRegistered = false;
+const HEALTH_CHECK_TIMEOUT_MS = 3000;
+const HEALTH_CHECK_TIMED_OUT = Symbol("health-check-timed-out");
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<T | typeof HEALTH_CHECK_TIMED_OUT> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<typeof HEALTH_CHECK_TIMED_OUT>((resolve) => {
+        timeout = setTimeout(() => resolve(HEALTH_CHECK_TIMED_OUT), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
 
 export async function isOpencodeServerHealthy(): Promise<boolean> {
   try {
-    const { data, error } = await opencodeClient.global.health();
+    const result = await withTimeout(opencodeClient.global.health(), HEALTH_CHECK_TIMEOUT_MS);
+    if (result === HEALTH_CHECK_TIMED_OUT) {
+      return false;
+    }
+
+    const { data, error } = result;
     return !error && data?.healthy === true;
   } catch {
     return false;

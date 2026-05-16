@@ -15,6 +15,7 @@ import { refreshSessionCacheIfOpencodeReady } from "../opencode/ready-refresh.js
 import { getRuntimeMode } from "../runtime/mode.js";
 import { getRuntimePaths } from "../runtime/paths.js";
 import { stopBotContainers } from "../runtime/docker.js";
+import { safeBackgroundTask } from "../utils/safe-background-task.js";
 import { logger } from "../utils/logger.js";
 
 const STARTUP_LOCK_FILE_NAME = "bot-start.lock";
@@ -159,11 +160,15 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
       isRuntimeAvailable: isHostRuntimeAvailable,
       start: processManager.start.bind(processManager),
     });
-    autoRestartMonitor.start();
-    await refreshSessionCacheIfOpencodeReady("startup");
 
     bot = createBot();
     await scheduledTaskRuntime.initialize(bot);
+
+    autoRestartMonitor.start();
+    safeBackgroundTask({
+      taskName: "app.startupCacheRefresh",
+      task: () => refreshSessionCacheIfOpencodeReady("startup"),
+    });
 
     const webhookInfo = await bot.api.getWebhookInfo();
     if (webhookInfo.url) {

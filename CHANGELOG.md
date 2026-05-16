@@ -18,9 +18,9 @@ Documentation rule:
 
 ### Fixed
 
-- Ported upstream v0.20.4 fixes: link to localhost/broken URL error handling, cache refresh after OpenCode server start, session restore after server readiness, external user input truncation, reply keyboard context after detach, TypeError Invalid URL when `TELEGRAM_API_ROOT` unset, health check timeout to prevent bot polling blocks.
+- Ported upstream v0.20.4 fixes: link to localhost/broken URL error handling, cache refresh after OpenCode server start, session restore after server readiness, external user input truncation, reply keyboard context after detach, TypeError Invalid URL when `TELEGRAM_API_ROOT` unset, health check timeout to prevent bot polling blocks, OpenCode 1.14 global event stream compatibility, IPv4 forcing for Telegram API, stuck busy state after reconnect, duplicate event listener stop during detach, Windows path handling in `/ls`.
   - Why: adopt upstream bugfixes and error-handling improvements while adapting to multi-user architecture.
-  - Affects: `src/bot/utils/send-with-markdown-fallback.ts`, `src/telegram/render/validator.ts`, `src/telegram/render/inline-renderer.ts`, `src/model/manager.ts`, `src/model/context-limit.ts`, `src/opencode/*.ts`, `src/bot/utils/external-user-input.ts`, `src/pinned/manager.ts`, `src/utils/opencode-error.ts`
+  - Affects: `src/bot/utils/send-with-markdown-fallback.ts`, `src/telegram/render/validator.ts`, `src/telegram/render/inline-renderer.ts`, `src/model/manager.ts`, `src/model/context-limit.ts`, `src/opencode/*.ts`, `src/bot/utils/external-user-input.ts`, `src/pinned/manager.ts`, `src/utils/opencode-error.ts`, `src/bot/utils/busy-reconciliation.ts`, `src/scheduled-task/foreground-state.ts`, `src/bot/telegram-client-options.ts`, `src/bot/commands/ls.ts`, `src/bot/commands/detach.ts`
 
 ### Added
 

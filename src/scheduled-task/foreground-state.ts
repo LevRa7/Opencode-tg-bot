@@ -123,6 +123,15 @@ class ForegroundSessionState {
     this.busyScopeKeyBySessionId.clear();
     this.sessionMetaBySessionId.clear();
   }
+
+  __setMarkedAtForTests(sessionId: string, markedAt: number): void {
+    const session = this.sessionMetaBySessionId.get(sessionId);
+    if (!session) {
+      return;
+    }
+
+    this.sessionMetaBySessionId.set(sessionId, { ...session, markedAt });
+  }
 }
 
 export const foregroundSessionState = new ForegroundSessionState();

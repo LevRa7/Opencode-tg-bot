@@ -63,7 +63,7 @@ async function clearForegroundBusySession(sessionId: string, reason: string): Pr
   clearPromptResponseMode(sessionId);
 }
 
-export async function reconcileBusyStateNow(directory: string): Promise<void> {
+export async function reconcileBusyStateNow(directory: string, now: number = Date.now()): Promise<void> {
   if (!directory) {
     return;
   }
@@ -81,7 +81,6 @@ export async function reconcileBusyStateNow(directory: string): Promise<void> {
     return;
   }
 
-  const now = Date.now();
   const freshForegroundSessionIds = new Set(
     foregroundBusySessions
       .filter((session) => isWithinForegroundBusyGracePeriod(session, now))
@@ -130,18 +129,16 @@ export async function reconcileBusyStateNow(directory: string): Promise<void> {
   }
 }
 
-export async function reconcileBusyState(directory: string): Promise<void> {
+export async function reconcileBusyState(directory: string, now: number = Date.now()): Promise<void> {
   if (!directory || inFlightDirectories.has(directory)) {
     return;
   }
 
-  const { foregroundBusySessions, attachedSessionForDirectory } =
-    getReconciliationTargets(directory);
-  if (foregroundBusySessions.length === 0 && !attachedSessionForDirectory) {
+  if (inFlightDirectories.size >= MAX_IN_FLIGHT_RECONCILES) {
+    logger.warn("[BusyReconciliation] Too many in-flight reconciles, skipping");
     return;
   }
 
-  const now = Date.now();
   const lastReconcileAt = lastReconcileAtByDirectory.get(directory);
   if (lastReconcileAt !== undefined && now - lastReconcileAt < RECONCILE_MIN_INTERVAL_MS) {
     return;
@@ -151,7 +148,7 @@ export async function reconcileBusyState(directory: string): Promise<void> {
   inFlightDirectories.add(directory);
 
   try {
-    await reconcileBusyStateNow(directory);
+    await reconcileBusyStateNow(directory, now);
   } catch (error) {
     logger.warn("[BusyReconciliation] Failed to reconcile busy state", error);
   } finally {

@@ -161,6 +161,7 @@ Log files:
 - In source mode this is `<project root>/logs`; if `OPENCODE_TELEGRAM_HOME` is set, use `<OPENCODE_TELEGRAM_HOME>/logs` instead.
 - Each source-mode bot run writes to a separate file named `bot-YYYY-MM-DD_HH-MM-SS_<pid>.log`.
 - Installed mode writes under the installed app home `logs` directory and uses daily files named `bot-YYYY-MM-DD.log`.
+- Installed mode writes under the installed app home `logs` directory and uses daily files named `bot-YYYY-MM-DD.log`.
 - If a user asks to inspect logs, look in that `logs` directory first and open the newest matching bot log file.
 
 Levels:

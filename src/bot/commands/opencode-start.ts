@@ -2,6 +2,7 @@ import { CommandContext, Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { config } from "../../config.js";
 import { resolveLocalOpencodeTarget } from "../../opencode/process.js";
+import { refreshSessionCacheAfterOpencodeReady } from "../../opencode/ready-refresh.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { processManager } from "../../process/manager.js";
 import { logger } from "../../utils/logger.js";
@@ -54,6 +55,7 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
         }),
         withMessageThreadId(undefined, messageThreadId),
       );
+      await refreshSessionCacheAfterOpencodeReady("opencode_start_already_running");
       return;
     }
 
@@ -114,6 +116,7 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
         version: health?.version || t("common.unknown"),
       }),
     });
+    await refreshSessionCacheAfterOpencodeReady("opencode_start_success");
   } catch (err) {
     logger.error("[Bot] Error in /opencode-start command:", err);
     await ctx.reply(

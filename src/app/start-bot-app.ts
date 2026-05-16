@@ -11,8 +11,7 @@ import type { ProcessOperationResult } from "../process/types.js";
 import { loadSettings } from "../settings/manager.js";
 import { processManager } from "../process/manager.js";
 import { scheduledTaskRuntime } from "../scheduled-task/runtime.js";
-import { warmupHostSessionDirectoryCache } from "../session/cache-manager.js";
-import { reconcileStoredModelSelection } from "../model/manager.js";
+import { refreshSessionCacheIfOpencodeReady } from "../opencode/ready-refresh.js";
 import { getRuntimeMode } from "../runtime/mode.js";
 import { getRuntimePaths } from "../runtime/paths.js";
 import { stopBotContainers } from "../runtime/docker.js";
@@ -161,8 +160,7 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
       start: processManager.start.bind(processManager),
     });
     autoRestartMonitor.start();
-    await reconcileStoredModelSelection();
-    await warmupHostSessionDirectoryCache();
+    await refreshSessionCacheIfOpencodeReady("startup");
 
     bot = createBot();
     await scheduledTaskRuntime.initialize(bot);

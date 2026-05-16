@@ -16,7 +16,76 @@ interface RuntimeModelCatalogCacheEntry {
 }
 
 const MODEL_CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
+const SERVER_UNAVAILABLE_ERROR_MARKERS = [
+  "fetch failed",
+  "econnrefused",
+  "connection refused",
+  "connect refused",
+];
 const runtimeModelCatalogCache = new Map<string, RuntimeModelCatalogCacheEntry>();
+
+function hasServerUnavailableMarker(value: string): boolean {
+  const lower = value.toLowerCase();
+  return SERVER_UNAVAILABLE_ERROR_MARKERS.some((marker) => lower.includes(marker));
+}
+
+function isServerUnavailableError(error: unknown): boolean {
+  const queue: unknown[] = [error];
+  const seen = new Set<unknown>();
+
+  while (queue.length > 0) {
+    const current = queue.pop();
+
+    if (!current || seen.has(current)) {
+      continue;
+    }
+
+    seen.add(current);
+
+    if (typeof current === "string") {
+      if (hasServerUnavailableMarker(current)) {
+        return true;
+      }
+
+      continue;
+    }
+
+    if (current instanceof Error) {
+      if (hasServerUnavailableMarker(`${current.name}: ${current.message}`)) {
+        return true;
+      }
+
+      const errorWithCause = current as Error & { cause?: unknown };
+      if (errorWithCause.cause) {
+        queue.push(errorWithCause.cause);
+      }
+
+      continue;
+    }
+
+    if (typeof current === "object") {
+      const value = current as {
+        code?: unknown;
+        message?: unknown;
+        cause?: unknown;
+      };
+
+      if (typeof value.code === "string" && hasServerUnavailableMarker(value.code)) {
+        return true;
+      }
+
+      if (typeof value.message === "string" && hasServerUnavailableMarker(value.message)) {
+        return true;
+      }
+
+      if (value.cause) {
+        queue.push(value.cause);
+      }
+    }
+  }
+
+  return false;
+}
 
 function getModelKey(providerID: string, modelID: string): string {
   return `${providerID}/${modelID}`;
@@ -48,11 +117,11 @@ function normalizeRuntimeModelCatalog(data: {
   };
 }
 
-export async function getRuntimeModelCatalog(): Promise<RuntimeModelCatalog> {
+export async function getRuntimeModelCatalog(options?: { force?: boolean }): Promise<RuntimeModelCatalog> {
   const runtimeKey = getCurrentOpencodeRuntimeKey();
   const cachedEntry = runtimeModelCatalogCache.get(runtimeKey);
 
-  if (cachedEntry?.catalog && Date.now() < cachedEntry.expiresAt) {
+  if (!options?.force && cachedEntry?.catalog && Date.now() < cachedEntry.expiresAt) {
     logger.debug(
       `[ModelManager] Runtime model catalog cache hit: runtime=${runtimeKey}, providers=${cachedEntry.catalog.providers.length}`,
     );
@@ -114,16 +183,21 @@ export async function getRuntimeModelCatalog(): Promise<RuntimeModelCatalog> {
   return refreshPromise;
 }
 
-async function getValidModelKeys(): Promise<Set<string> | null> {
+async function getValidModelKeys(options?: { force?: boolean }): Promise<Set<string> | null> {
   try {
-    const catalog = await getRuntimeModelCatalog();
+    const catalog = await getRuntimeModelCatalog({ force: options?.force });
     return new Set(
       catalog.providers.flatMap((provider) =>
         provider.models.map((model) => getModelKey(model.providerID, model.modelID)),
       ),
     );
   } catch (err) {
-    logger.warn("[ModelManager] Skipping stored model validation: runtime catalog unavailable", err);
+    if (isServerUnavailableError(err)) {
+      logger.warn("[ModelManager] OpenCode server is not running; skipping model catalog refresh");
+    } else {
+      logger.warn("[ModelManager] Skipping stored model validation: runtime catalog unavailable", err);
+    }
+
     return null;
   }
 }
@@ -147,14 +221,16 @@ export async function getFavoriteModels(): Promise<ModelReference[]> {
   return favorites;
 }
 
-export async function reconcileStoredModelSelection(): Promise<void> {
+export async function reconcileStoredModelSelection(options?: {
+  forceCatalogRefresh?: boolean;
+}): Promise<void> {
   const currentModel = getCurrentModel();
 
   if (!currentModel?.providerID || !currentModel.modelID) {
     return;
   }
 
-  const validModelKeys = await getValidModelKeys();
+  const validModelKeys = await getValidModelKeys({ force: options?.forceCatalogRefresh });
 
   if (!validModelKeys) {
     return;

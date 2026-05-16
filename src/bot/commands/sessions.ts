@@ -25,8 +25,16 @@ import { showCurrentQuestion } from "../handlers/question.js";
 
 const SESSION_CALLBACK_PREFIX = "session:";
 const SESSION_PAGE_CALLBACK_PREFIX = "session:page:";
+const BACKGROUND_SESSION_CALLBACK_PREFIX = "background-session:";
 const SESSION_FETCH_EXTRA_COUNT = 1;
 const TELEGRAM_TOPIC_NAME_MAX_LENGTH = 128;
+
+export function buildBackgroundSessionOpenKeyboard(sessionId: string): InlineKeyboard {
+  return new InlineKeyboard().text(
+    t("background.open_session_button"),
+    `${BACKGROUND_SESSION_CALLBACK_PREFIX}${sessionId}`,
+  );
+}
 
 /**
  * Rename the Telegram forum topic to match the session title.
@@ -174,6 +182,84 @@ function buildSessionsKeyboard(pageData: SessionPage, pageSize: number): InlineK
   }
 
   return keyboard;
+}
+
+export async function handleBackgroundSessionOpen(ctx: Context): Promise<boolean> {
+  const data = ctx.callbackQuery?.data;
+  if (!data || !data.startsWith(BACKGROUND_SESSION_CALLBACK_PREFIX)) {
+    return false;
+  }
+
+  if (isForegroundBusy()) {
+    await replyBusyBlocked(ctx);
+    return true;
+  }
+
+  const sessionId = data.slice(BACKGROUND_SESSION_CALLBACK_PREFIX.length);
+  if (!sessionId) {
+    await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+    return true;
+  }
+
+  const currentProject = getCurrentProject();
+  if (!currentProject) {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(t("sessions.select_project_first"));
+    return true;
+  }
+
+  try {
+    const { data: session, error } = await opencodeClient.session.get({
+      sessionID: sessionId,
+      directory: currentProject.worktree,
+    });
+
+    if (error || !session) {
+      throw error || new Error("Failed to get session details");
+    }
+
+    const sessionInfo: SessionInfo = {
+      id: session.id,
+      title: session.title,
+      directory: currentProject.worktree,
+    };
+
+    const previousSession = getCurrentSession();
+    if (previousSession) {
+      clearScopedSessionRuntime(previousSession.id, "session_switched");
+    }
+
+    setCurrentSession(sessionInfo);
+    const activeScope = threadContextManager.getActiveScope();
+    if (activeScope) {
+      await attachSessionForScope({
+        scope: activeScope,
+        session: sessionInfo,
+        reason: "selected_session",
+        restoreQuestion: () => Promise.resolve(),
+        restorePermission: () => Promise.resolve(),
+      });
+    }
+
+    clearAllInteractionState("session_switched");
+
+    await ctx.answerCallbackQuery();
+
+    try {
+      await ctx.editMessageReplyMarkup();
+    } catch {
+      // ignore - button may already be removed
+    }
+
+    await ctx.reply(
+      t("sessions.selected", { title: session.title }),
+    );
+  } catch (error) {
+    logger.error("[Sessions] Error opening background session:", error);
+    await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+  }
+
+  return true;
 }
 
 export async function sessionsCommand(ctx: CommandContext<Context>) {

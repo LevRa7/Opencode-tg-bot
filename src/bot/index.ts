@@ -20,7 +20,7 @@ import {
   AGENT_MODE_BUTTON_TEXT_PATTERN,
   MODEL_BUTTON_TEXT_PATTERN,
 } from "./message-patterns.js";
-import { sessionsCommand, handleSessionSelect } from "./commands/sessions.js";
+import { sessionsCommand, handleSessionSelect, handleBackgroundSessionOpen, buildBackgroundSessionOpenKeyboard } from "./commands/sessions.js";
 import { newCommand } from "./commands/new.js";
 import { modelCommand } from "./commands/model.js";
 import { variantCommand } from "./commands/variant.js";
@@ -1611,13 +1611,11 @@ async function deliverBackgroundSessionNotification(
   }
 
   const adminChatId = config.telegram.adminUserId;
-  const keyboard = getCurrentReplyKeyboard();
+  const openButton = buildBackgroundSessionOpenKeyboard(notification.sessionId);
   await activeBotInstance.api.sendMessage(
     adminChatId,
     formatBackgroundSessionNotification(notification),
-    {
-      ...(keyboard ? { reply_markup: keyboard } : {}),
-    },
+    { reply_markup: openButton },
   );
 }
 
@@ -3281,6 +3279,7 @@ export function createBot(): Bot<Context> {
         clearLsPathIndex();
       }
       const handledSession = await handleSessionSelect(ctx);
+      const handledBackgroundSession = await handleBackgroundSessionOpen(ctx);
       const handledProject = await handleProjectSelect(ctx, { ensureEventSubscription });
       const handledQuestion = await handleQuestionCallback(ctx);
       const handledAccessApproval = await handleAccessApprovalCallback(ctx);
@@ -3301,12 +3300,13 @@ export function createBot(): Bot<Context> {
       const handledMcps = await handleMcpsCallback(ctx);
 
       logger.debug(
-        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, settings=${handledSettings}, worktree=${handledWorktree}, open=${handledOpen}, ls=${handledLs}, skills=${handledSkills}, mcps=${handledMcps}`,
+        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, backgroundSession=${handledBackgroundSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, settings=${handledSettings}, worktree=${handledWorktree}, open=${handledOpen}, ls=${handledLs}, skills=${handledSkills}, mcps=${handledMcps}`,
       );
 
       if (
         !handledInlineCancel &&
         !handledSession &&
+        !handledBackgroundSession &&
         !handledProject &&
         !handledQuestion &&
         !handledAccessApproval &&

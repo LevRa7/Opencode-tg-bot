@@ -170,6 +170,7 @@ vi.mock("../../../src/utils/logger.js", () => ({
 
 vi.mock("../../../src/i18n/index.js", () => ({
   t: mocked.tMock,
+  normalizeLocale: vi.fn((value: string) => value),
 }));
 
 vi.mock("../../../src/scheduled-task/foreground-state.js", () => ({
@@ -465,7 +466,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     const dispatched = await processUserPrompt(ctx, "topic switch prompt", deps);
 
     expect(dispatched).toBe(true);
-    expect(mocked.foregroundMarkBusyMock).toHaveBeenCalledWith("s1", {
+    expect(mocked.foregroundMarkBusyMock).toHaveBeenCalledWith("s1", "/repo", {
       userId: 10,
       chatId: 777,
       messageThreadId: 20,

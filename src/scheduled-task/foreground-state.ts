@@ -4,11 +4,18 @@ import {
   type TelegramConversationScope,
 } from "../telegram/scope.js";
 
+export interface ForegroundBusySession {
+  sessionId: string;
+  directory: string;
+  markedAt: number;
+}
+
 type ForegroundScope = TelegramConversationScope | string | null;
 
 class ForegroundSessionState {
   private activeSessionIdsByScope = new Map<string, Set<string>>();
   private busyScopeKeyBySessionId = new Map<string, string>();
+  private sessionMetaBySessionId = new Map<string, ForegroundBusySession>();
 
   private getScopeState(scopeKey?: ForegroundScope): Set<string> {
     const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
@@ -31,8 +38,8 @@ class ForegroundSessionState {
     return this.activeSessionIdsByScope.get(resolvedScopeKey);
   }
 
-  markBusy(sessionId: string, scopeKey?: ForegroundScope): void {
-    if (!sessionId) {
+  markBusy(sessionId: string, directory: string, scopeKey?: ForegroundScope): void {
+    if (!sessionId || !directory) {
       return;
     }
 
@@ -40,13 +47,14 @@ class ForegroundSessionState {
     const scopeState = this.getScopeState(resolvedScopeKey);
     scopeState.add(sessionId);
     this.busyScopeKeyBySessionId.set(sessionId, resolvedScopeKey);
+    this.sessionMetaBySessionId.set(sessionId, { sessionId, directory, markedAt: Date.now() });
     logger.debug(
-      `[ScheduledTaskForeground] Marked session busy: scope=${resolvedScopeKey}, session=${sessionId}, count=${scopeState.size}`,
+      `[ScheduledTaskForeground] Marked session busy: scope=${resolvedScopeKey}, session=${sessionId}, directory=${directory}, count=${scopeState.size}`,
     );
   }
 
-  tryMarkBusy(sessionId: string, scopeKey?: ForegroundScope): boolean {
-    this.markBusy(sessionId, scopeKey);
+  tryMarkBusy(sessionId: string, directory: string, scopeKey?: ForegroundScope): boolean {
+    this.markBusy(sessionId, directory, scopeKey);
     return true;
   }
 
@@ -60,10 +68,12 @@ class ForegroundSessionState {
     const scopeState = this.activeSessionIdsByScope.get(resolvedScopeKey);
     if (!scopeState) {
       this.busyScopeKeyBySessionId.delete(sessionId);
+      this.sessionMetaBySessionId.delete(sessionId);
       return;
     }
     scopeState.delete(sessionId);
     this.busyScopeKeyBySessionId.delete(sessionId);
+    this.sessionMetaBySessionId.delete(sessionId);
     logger.debug(
       `[ScheduledTaskForeground] Marked session idle: scope=${resolvedScopeKey}, session=${sessionId}, count=${scopeState.size}`,
     );
@@ -71,6 +81,10 @@ class ForegroundSessionState {
     if (scopeState.size === 0) {
       this.activeSessionIdsByScope.delete(resolvedScopeKey);
     }
+  }
+
+  getBusySessions(): ForegroundBusySession[] {
+    return Array.from(this.sessionMetaBySessionId.values(), (session) => ({ ...session }));
   }
 
   isBusy(scopeKey?: ForegroundScope): boolean {
@@ -99,6 +113,7 @@ class ForegroundSessionState {
       if (this.busyScopeKeyBySessionId.get(activeSessionId) === resolvedScopeKey) {
         this.busyScopeKeyBySessionId.delete(activeSessionId);
       }
+      this.sessionMetaBySessionId.delete(activeSessionId);
     }
     this.activeSessionIdsByScope.delete(resolvedScopeKey);
   }
@@ -106,6 +121,7 @@ class ForegroundSessionState {
   __resetForTests(): void {
     this.activeSessionIdsByScope.clear();
     this.busyScopeKeyBySessionId.clear();
+    this.sessionMetaBySessionId.clear();
   }
 }
 

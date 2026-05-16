@@ -98,6 +98,14 @@ export async function attachSessionForScope(options: {
   }
 }
 
+export async function markAttachedSessionBusy(sessionId: string): Promise<void> {
+  attachManager.setBusy(sessionId, true);
+}
+
+export async function markAttachedSessionIdle(sessionId: string): Promise<void> {
+  attachManager.setBusy(sessionId, false);
+}
+
 export function detachAttachedSession(_reason: string): void {
   const scope = getCurrentTelegramConversationScope();
   if (!scope) {

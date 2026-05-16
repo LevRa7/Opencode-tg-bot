@@ -497,7 +497,7 @@ async function executeCommand(
       ? `${storedModel.providerID}/${storedModel.modelID}`
       : undefined;
 
-  foregroundSessionState.markBusy(session.id, busyScope);
+  foregroundSessionState.markBusy(session.id, session.directory, busyScope);
 
   safeBackgroundTask({
     taskName: "session.command",

@@ -253,7 +253,7 @@ describe("interactionGuardMiddleware", () => {
   });
 
   it("blocks disallowed command while busy with generic blocked message", async () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
 
     const ctx = createTextContext("/new");
     const next: NextFunction = vi.fn().mockResolvedValue(undefined);
@@ -265,7 +265,7 @@ describe("interactionGuardMiddleware", () => {
   });
 
   it("allows plain text while busy without interaction (handlers defer to batch mechanism)", async () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
 
     const ctx = createTextContext("hello");
     const next: NextFunction = vi.fn().mockResolvedValue(undefined);
@@ -277,7 +277,7 @@ describe("interactionGuardMiddleware", () => {
   });
 
   it("allows callback while busy without interaction (handlers defer to batch mechanism)", async () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
 
     const ctx = createCallbackContext("project:123");
     const next: NextFunction = vi.fn().mockResolvedValue(undefined);
@@ -289,7 +289,7 @@ describe("interactionGuardMiddleware", () => {
   });
 
   it("allows abort, status, and help while busy", async () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
 
     for (const command of ["/abort", "/status", "/help"]) {
       const ctx = createTextContext(command);
@@ -303,7 +303,7 @@ describe("interactionGuardMiddleware", () => {
   });
 
   it("allows active question callback while busy", async () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
     interactionManager.start({
       kind: "question",
       expectedInput: "mixed",
@@ -319,7 +319,7 @@ describe("interactionGuardMiddleware", () => {
   });
 
   it("allows active permission callback while busy", async () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
     interactionManager.start({
       kind: "permission",
       expectedInput: "callback",

@@ -189,10 +189,10 @@ describe("bot/commands/abort", () => {
 
     attachManager.attach(topicAScope, sessionA);
     runWithTelegramConversationScope(topicAScope, () => {
-      foregroundSessionState.markBusy("session-1");
+      foregroundSessionState.markBusy("session-1", "D:/repo");
     });
     runWithTelegramConversationScope(topicBScope, () => {
-      foregroundSessionState.markBusy("session-2");
+      foregroundSessionState.markBusy("session-2", "test");
     });
 
     mocked.resolveScopedSession.mockReturnValue({
@@ -237,7 +237,7 @@ describe("bot/commands/abort", () => {
 
     attachManager.attach(topicAScope, session);
     runWithTelegramConversationScope(topicAScope, () => {
-      foregroundSessionState.markBusy("session-1");
+      foregroundSessionState.markBusy("session-1", "D:/repo");
     });
 
     attachManager.attach(topicBScope, session);
@@ -348,7 +348,7 @@ describe("bot/commands/abort", () => {
 
     attachManager.attach(topicAScope, session);
     runWithTelegramConversationScope(topicAScope, () => {
-      foregroundSessionState.markBusy("session-1");
+      foregroundSessionState.markBusy("session-1", "D:/repo");
     });
 
     mocked.resolveScopedSession.mockReturnValue({

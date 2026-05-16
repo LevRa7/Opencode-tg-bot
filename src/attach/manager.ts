@@ -128,6 +128,20 @@ class AttachManager {
     return Array.from(this.statesByScopeKey.values()).map((state) => cloneState(state));
   }
 
+  setBusy(sessionId: string, busy: boolean): void {
+    const scopeKey = this.scopeKeyBySessionId.get(sessionId);
+    if (!scopeKey) {
+      return;
+    }
+
+    const state = this.statesByScopeKey.get(scopeKey);
+    if (!state) {
+      return;
+    }
+
+    state.busy = busy;
+  }
+
   __resetForTests(): void {
     this.statesByScopeKey.clear();
     this.scopeKeyBySessionId.clear();

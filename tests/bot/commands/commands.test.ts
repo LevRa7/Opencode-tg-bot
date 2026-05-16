@@ -574,7 +574,7 @@ describe("bot/commands/commands", () => {
 
     attachManager.attach(topicAScope, mocked.currentSession);
     runWithTelegramConversationScope(topicAScope, () => {
-      foregroundSessionState.markBusy("session-1");
+      foregroundSessionState.markBusy("session-1", "test");
     });
 
     interactionManager.start({

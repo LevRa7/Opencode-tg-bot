@@ -89,7 +89,7 @@ describe("bot/commands/projects command", () => {
   });
 
   it("blocks projects command while foreground session is busy", async () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
 
     const ctx = createContext();
     await projectsCommand(ctx as never);

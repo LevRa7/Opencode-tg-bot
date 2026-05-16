@@ -349,6 +349,11 @@ class SummaryAggregator {
       return;
     }
 
+    if (eventType === "server.heartbeat") {
+      logger.debug("[Aggregator] Heartbeat received");
+      return;
+    }
+
     // Log all question-related events for debugging
     if (event.type.startsWith("question.")) {
       logger.info(

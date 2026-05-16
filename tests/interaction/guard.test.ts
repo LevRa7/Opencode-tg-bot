@@ -341,7 +341,7 @@ describe("interaction guard", () => {
   });
 
   it("allows only abort, status, and help commands while busy without interaction", () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
 
     expect(resolveInteractionGuardDecision(createContext({ text: "/abort" })).allow).toBe(true);
     expect(resolveInteractionGuardDecision(createContext({ text: "/status" })).allow).toBe(true);
@@ -356,7 +356,7 @@ describe("interaction guard", () => {
   it("blocks new work only in the same topic when busy state is scoped to that topic", () => {
     runWithTelegramConversationScope(
       { userId: 1, chatId: 100, messageThreadId: 10 },
-      () => foregroundSessionState.markBusy("session-1"),
+      () => foregroundSessionState.markBusy("session-1", "test"),
     );
 
     const sameTopicDecision = runWithTelegramConversationScope(
@@ -377,7 +377,7 @@ describe("interaction guard", () => {
   });
 
   it("allows plain text and media while busy without interaction, but blocks unallowed commands", () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
 
     const startDecision = resolveInteractionGuardDecision(createContext({ text: "/start" }));
     const textDecision = resolveInteractionGuardDecision(createContext({ text: "hello" }));
@@ -392,7 +392,7 @@ describe("interaction guard", () => {
   });
 
   it("allows valid question answers while busy", () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
     interactionManager.start({
       kind: "question",
       expectedInput: "mixed",
@@ -415,7 +415,7 @@ describe("interaction guard", () => {
   });
 
   it("allows valid permission callback while busy and blocks other inputs", () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
     interactionManager.start({
       kind: "permission",
       expectedInput: "callback",
@@ -434,7 +434,7 @@ describe("interaction guard", () => {
   });
 
   it("does not allow rename callback to bypass busy state", () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
     interactionManager.start({
       kind: "rename",
       expectedInput: "text",

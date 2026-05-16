@@ -524,7 +524,7 @@ export async function processUserPrompt(
   }
 
   const busyScope = threadContextManager.getActiveScope() ?? scope;
-  foregroundSessionState.markBusy(currentSession.id, resolveBusyScopeForSession(currentSession.id, busyScope));
+  foregroundSessionState.markBusy(currentSession.id, currentSession.directory, resolveBusyScopeForSession(currentSession.id, busyScope));
   const sessionIsBusy = await isSessionBusy(currentSession.id, currentSession.directory);
 
   releaseSessionClaim(currentSession.id, claimRunId);

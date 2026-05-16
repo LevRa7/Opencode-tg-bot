@@ -241,7 +241,7 @@ describe("bot/commands/sessions", () => {
   });
 
   it("blocks sessions command while foreground session is busy", async () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
 
     const ctx = createCommandContext();
     await sessionsCommand(ctx as never);
@@ -361,7 +361,7 @@ describe("bot/commands/sessions", () => {
   });
 
   it("blocks session selection callback while foreground session is busy", async () => {
-    foregroundSessionState.markBusy("session-1");
+    foregroundSessionState.markBusy("session-1", "test");
 
     interactionManager.start({
       kind: "inline",

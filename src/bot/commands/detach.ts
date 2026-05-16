@@ -1,6 +1,5 @@
 import { CommandContext, Context } from "grammy";
 import { getCurrentProject, clearSession, getCurrentSession } from "../../settings/manager.js";
-import { stopEventListening } from "../../opencode/events.js";
 import { clearPromptResponseMode } from "../handlers/prompt.js";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
 import { assistantRunState } from "../assistant-run-state.js";
@@ -30,7 +29,6 @@ export async function detachCommand(ctx: CommandContext<Context>): Promise<void>
 
     const { session: currentSession, scope: currentScope } = resolved;
 
-    stopEventListening();
     clearScopedSessionRuntime(currentSession.id, "detach_command", { scope: currentScope });
     clearPromptResponseMode(currentSession.id);
     foregroundSessionState.markIdle(currentSession.id, currentScope);

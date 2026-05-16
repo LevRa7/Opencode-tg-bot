@@ -1,5 +1,14 @@
+const EXTERNAL_USER_INPUT_MAX_DISPLAY_LENGTH = 2000;
+
+function truncateExternalUserInputText(text: string): string {
+  if (text.length <= EXTERNAL_USER_INPUT_MAX_DISPLAY_LENGTH) {
+    return text;
+  }
+  return `${text.slice(0, EXTERNAL_USER_INPUT_MAX_DISPLAY_LENGTH - 3)}...`;
+}
+
 function normalizeExternalUserInputText(text: string): string {
-  return text.trim().replace(/\s+/g, " ");
+  return truncateExternalUserInputText(text.trim().replace(/\s+/g, " "));
 }
 
 export function extractExternalUserInputText(event: {

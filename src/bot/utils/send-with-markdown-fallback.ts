@@ -56,7 +56,12 @@ const TELEGRAM_PARSE_ERROR_MARKERS = [
   "unsupported start tag",
   "unexpected end tag",
   "bad request: can't parse",
+  "entity url",
+  "wrong http url",
+  "url host is empty",
 ];
+
+const TELEGRAM_ENTITY_URL_ERROR_MARKERS = ["entity url", "wrong http url", "url host is empty"];
 
 const MARKDOWN_PARSE_ERROR_MARKERS = [
   "can't parse entities",

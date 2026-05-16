@@ -1,7 +1,11 @@
 import type { MessageEntity } from "grammy/types";
 import { compareTelegramEntities } from "./entity-order.js";
 import type { InlineNode } from "./types.js";
-import { validateTelegramEntities } from "./validator.js";
+import {
+  isLoopbackTelegramHttpUrl,
+  isValidTelegramTextLinkUrl,
+  validateTelegramEntities,
+} from "./validator.js";
 
 const MARKDOWN_V2_TEXT_RESERVED_CHARS = /([_\*\[\]\(\)~`>#+\-=|{}.!\\])/g;
 const MARKDOWN_V2_CODE_RESERVED_CHARS = /([`\\])/g;
@@ -101,6 +105,18 @@ function pushEntity(state: InlineRenderState, entity: MessageEntity): void {
   state.entities.push(entity);
 }
 
+function isLocalReferenceUrl(url: string): boolean {
+  return url.startsWith("#") || url.startsWith("/") || url.startsWith("./") || url.startsWith("../");
+}
+
+function appendPlainLinkTarget(state: InlineRenderState, offset: number, url: string): void {
+  if (!url || state.text.slice(offset) === url) {
+    return;
+  }
+
+  appendText(state, ` (${url})`);
+}
+
 function renderIntoState(state: InlineRenderState, nodes: InlineNode[]): void {
   for (const node of nodes) {
     switch (node.type) {
@@ -150,6 +166,12 @@ function renderIntoState(state: InlineRenderState, nodes: InlineNode[]): void {
       case "link": {
         const offset = state.text.length;
         renderIntoState(state, node.text);
+        if (!isValidTelegramTextLinkUrl(node.url)) {
+          if (isLocalReferenceUrl(node.url) || isLoopbackTelegramHttpUrl(node.url)) {
+            appendPlainLinkTarget(state, offset, node.url);
+            break;
+          }
+        }
         pushEntity(state, {
           type: "text_link",
           offset,

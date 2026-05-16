@@ -5,8 +5,10 @@ import { permissionManager } from "../permission/manager.js";
 import { questionManager } from "../question/manager.js";
 import {
   buildTelegramConversationScopeKey,
+  getCurrentTelegramConversationScope,
   type TelegramConversationScope,
 } from "../telegram/scope.js";
+import { summaryAggregator } from "../summary/aggregator.js";
 import { ConversationContextKey } from "../thread/conversation-context-key.js";
 import { threadContextManager } from "../thread/manager.js";
 import { logger } from "../utils/logger.js";
@@ -94,4 +96,19 @@ export async function attachSessionForScope(options: {
 
     throw error;
   }
+}
+
+export function detachAttachedSession(_reason: string): void {
+  const scope = getCurrentTelegramConversationScope();
+  if (!scope) {
+    return;
+  }
+
+  const state = attachManager.getStateForScope(scope);
+  if (!state) {
+    return;
+  }
+
+  summaryAggregator.clear();
+  attachManager.detach(scope);
 }

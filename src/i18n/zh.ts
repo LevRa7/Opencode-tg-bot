@@ -92,6 +92,10 @@ export const zh: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ 活动会话与所选项目不匹配，因此已重置。使用 /sessions 选择一个会话，或 /new 创建新会话。",
   "bot.prompt_send_error": "向 OpenCode 发送请求失败。",
+  "background.session_fallback": "会话 {id}",
+  "background.assistant_response": "🔔 助手已在后台会话中回复：{session}",
+  "background.question_asked": "❓ 后台会话需要回答：{session}",
+  "background.permission_asked": "🔐 后台会话请求了权限：{session}",
   "bot.external_user_input": "已在附加会话中收到用户输入：",
   "bot.session_error": "🔴 OpenCode 返回错误：{message}",
   "bot.session_retry": "🔁 {message}\n\n提供方在重复重试时持续返回同一错误。使用 /abort 可停止。",

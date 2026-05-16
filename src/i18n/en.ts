@@ -100,6 +100,10 @@ export const en = {
   "bot.session_reset_project_mismatch":
     "⚠️ Active session does not match the selected project, so it was reset. Use /sessions to pick one or /new to create a new session.",
   "bot.prompt_send_error": "Failed to send request to OpenCode.",
+  "background.session_fallback": "session {id}",
+  "background.assistant_response": "🔔 Assistant replied in background session: {session}",
+  "background.question_asked": "❓ Background session needs an answer: {session}",
+  "background.permission_asked": "🔐 Background session requested permissions: {session}",
   "bot.external_user_input": "User input received in attached session:",
   "bot.session_error": "🔴 OpenCode returned an error: {message}",
   "bot.session_retry":

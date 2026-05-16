@@ -99,6 +99,10 @@ export const ru: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ Активная сессия не соответствует выбранному проекту, поэтому была сброшена. Используйте /sessions для выбора или /new для создания новой сессии.",
   "bot.prompt_send_error": "Не удалось отправить запрос в OpenCode.",
+  "background.session_fallback": "сессия {id}",
+  "background.assistant_response": "🔔 В фоновой сессии пришёл ответ ассистента: {session}",
+  "background.question_asked": "❓ В фоновой сессии нужен ответ: {session}",
+  "background.permission_asked": "🔐 В фоновой сессии запрошены права: {session}",
   "bot.external_user_input": "В подключенной сессии получен пользовательский ввод:",
   "bot.session_error": "🔴 OpenCode вернул ошибку: {message}",
   "bot.session_retry":

@@ -117,6 +117,10 @@ import {
   finalizeThinkingBlockStream,
   streamThinkingBlocks,
 } from "./utils/thinking-block-stream.js";
+import {
+  backgroundSessionTracker,
+  type BackgroundSessionNotification,
+} from "../background-session/tracker.js";
 import { getVisibleReasoningText } from "./utils/thinking-message.js";
 import { formatAssistantRunFooter } from "./utils/assistant-run-footer.js";
 import { sendBotText, sendStreamedBotText } from "./utils/telegram-text.js";
@@ -1573,6 +1577,50 @@ export function createSendRenderedPart({
   };
 }
 
+function formatShortSessionId(sessionId: string): string {
+  return sessionId.length <= 8 ? sessionId : sessionId.slice(0, 8);
+}
+
+function getBackgroundSessionLabel(notification: BackgroundSessionNotification): string {
+  const title = notification.sessionTitle?.trim();
+  if (title) {
+    return title;
+  }
+
+  return t("background.session_fallback", { id: formatShortSessionId(notification.sessionId) });
+}
+
+function formatBackgroundSessionNotification(notification: BackgroundSessionNotification): string {
+  const session = getBackgroundSessionLabel(notification);
+
+  switch (notification.kind) {
+    case "assistant_response":
+      return t("background.assistant_response", { session });
+    case "question_asked":
+      return t("background.question_asked", { session });
+    case "permission_asked":
+      return t("background.permission_asked", { session });
+  }
+}
+
+async function deliverBackgroundSessionNotification(
+  notification: BackgroundSessionNotification,
+): Promise<void> {
+  if (!activeBotInstance) {
+    return;
+  }
+
+  const adminChatId = config.telegram.adminUserId;
+  const keyboard = getCurrentReplyKeyboard();
+  await activeBotInstance.api.sendMessage(
+    adminChatId,
+    formatBackgroundSessionNotification(notification),
+    {
+      ...(keyboard ? { reply_markup: keyboard } : {}),
+    },
+  );
+}
+
 async function ensureEventSubscription(directory: string): Promise<void> {
   if (!directory) {
     logger.error("No directory found for event subscription");
@@ -1580,6 +1628,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   }
 
   summaryAggregator.setTypingIndicatorEnabled(true);
+  backgroundSessionTracker.setDirectory(directory);
+  backgroundSessionTracker.setOnNotification(deliverBackgroundSessionNotification);
+
+  if (!config.bot.trackBackgroundSessions) {
+    backgroundSessionTracker.clear();
+  }
   summaryAggregator.setSessionDirectoryResolver((sessionId) =>
     threadContextManager.getSessionDirectory(sessionId),
   );
@@ -3063,6 +3117,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       }
     }
 
+    if (config.bot.trackBackgroundSessions) {
+      backgroundSessionTracker.processEvent(event, getCurrentSession()?.id ?? null);
+    }
+
     summaryAggregator.processEvent(event);
   }).catch((err) => {
     logger.error("Failed to subscribe to events:", err);
@@ -3070,6 +3128,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 }
 
 export function createBot(): Bot<Context> {
+  backgroundSessionTracker.clear();
   clearAllInteractionState("bot_startup");
   setUserLocaleResolver(getUserLocale);
   subagentTopicService.clearAll();
@@ -3222,7 +3281,7 @@ export function createBot(): Bot<Context> {
         clearLsPathIndex();
       }
       const handledSession = await handleSessionSelect(ctx);
-      const handledProject = await handleProjectSelect(ctx);
+      const handledProject = await handleProjectSelect(ctx, { ensureEventSubscription });
       const handledQuestion = await handleQuestionCallback(ctx);
       const handledAccessApproval = await handleAccessApprovalCallback(ctx);
       const handledPermission = await handlePermissionCallback(ctx);
@@ -3235,8 +3294,8 @@ export function createBot(): Bot<Context> {
       const handledRenameCancel = await handleRenameCancel(ctx);
       const handledCommands = await handleCommandsCallback(ctx, { bot, ensureEventSubscription });
       const handledSettings = await handleSettingsCallback(ctx);
-      const handledWorktree = await handleWorktreeCallback(ctx);
-      const handledOpen = await handleOpenCallback(ctx);
+      const handledWorktree = await handleWorktreeCallback(ctx, { ensureEventSubscription });
+      const handledOpen = await handleOpenCallback(ctx, { ensureEventSubscription });
       const handledLs = await handleLsCallback(ctx);
       const handledSkills = await handleSkillsCallback(ctx, { bot, ensureEventSubscription });
       const handledMcps = await handleMcpsCallback(ctx);

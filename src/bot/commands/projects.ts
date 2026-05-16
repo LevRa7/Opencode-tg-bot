@@ -24,9 +24,15 @@ import { config } from "../../config.js";
 import { ProjectInfo } from "../../settings/manager.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import { stopEventListening } from "../../opencode/events.js";
+import { backgroundSessionTracker } from "../../background-session/tracker.js";
 
 const MAX_INLINE_BUTTON_LABEL_LENGTH = 64;
 const PROJECT_PAGE_CALLBACK_PREFIX = "projects:page:";
+
+interface ProjectSelectDeps {
+  ensureEventSubscription?: (directory: string) => Promise<void>;
+}
 
 interface ProjectsPaginationRange {
   page: number;
@@ -201,7 +207,10 @@ export async function projectsCommand(ctx: CommandContext<Context>) {
   }
 }
 
-export async function handleProjectSelect(ctx: Context): Promise<boolean> {
+export async function handleProjectSelect(
+  ctx: Context,
+  deps: ProjectSelectDeps = {},
+): Promise<boolean> {
   const callbackQuery = ctx.callbackQuery;
   if (!callbackQuery?.data) {
     return false;
@@ -265,6 +274,9 @@ export async function handleProjectSelect(ctx: Context): Promise<boolean> {
       `[Bot] Project selected: ${selectedProject.name || selectedProject.worktree} (id: ${projectId})`,
     );
 
+    stopEventListening();
+    backgroundSessionTracker.clear();
+
     const previousSession = getCurrentSession();
     if (previousSession) {
       clearScopedSessionRuntime(previousSession.id, "project_switched");
@@ -303,6 +315,10 @@ export async function handleProjectSelect(ctx: Context): Promise<boolean> {
     const keyboard = createMainKeyboard(currentAgent, currentModel, contextInfo, variantName);
 
     const projectName = selectedProject.name || selectedProject.worktree;
+
+    if (config.bot.trackBackgroundSessions && deps.ensureEventSubscription) {
+      await deps.ensureEventSubscription(selectedProject.worktree);
+    }
 
     await ctx.answerCallbackQuery();
     await ctx.reply(

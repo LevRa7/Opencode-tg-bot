@@ -104,6 +104,11 @@ export const es: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ La sesión activa no coincide con el proyecto seleccionado, así que se reinició. Usa /sessions para elegir una o /new para crear una nueva.",
   "bot.prompt_send_error": "No se pudo enviar la solicitud a OpenCode.",
+  "background.session_fallback": "sesión {id}",
+  "background.assistant_response":
+    "🔔 El asistente respondió en una sesión en segundo plano: {session}",
+  "background.question_asked": "❓ Una sesión en segundo plano necesita una respuesta: {session}",
+  "background.permission_asked": "🔐 Una sesión en segundo plano solicitó permisos: {session}",
   "bot.external_user_input": "Se recibió entrada del usuario en la sesión adjunta:",
   "bot.session_error": "🔴 OpenCode devolvió un error: {message}",
   "bot.session_retry":

@@ -270,6 +270,7 @@ export const config = {
     hideThinkingMessages: getOptionalBooleanEnvVar("HIDE_THINKING_MESSAGES", false),
     hideToolCallMessages: getOptionalBooleanEnvVar("HIDE_TOOL_CALL_MESSAGES", false),
     hideToolFileMessages: getOptionalBooleanEnvVar("HIDE_TOOL_FILE_MESSAGES", false),
+    trackBackgroundSessions: getOptionalBooleanEnvVar("TRACK_BACKGROUND_SESSIONS", true),
     logRetention: getOptionalPositiveIntEnvVar("LOG_RETENTION", 10),
     scheduledTaskExecutionTimeoutMinutes: getOptionalPositiveIntEnvVar(
       "SCHEDULED_TASK_EXECUTION_TIMEOUT_MINUTES",

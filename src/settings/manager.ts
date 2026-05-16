@@ -49,6 +49,11 @@ export interface SessionDirectoryCacheInfo {
   }>;
 }
 
+export interface ScheduledTaskSessionIgnoreInfo {
+  sessionId: string;
+  createdAt: string;
+}
+
 export interface LastRestartRequest {
   updateId: number;
   requestedAt: string;
@@ -128,6 +133,7 @@ export interface Settings {
   sessionDirectoryCache?: SessionDirectoryCacheInfo;
   scopedSessionDirectoryCache?: Record<string, SessionDirectoryCacheInfo>;
   scheduledTasks?: ScheduledTask[];
+  scheduledTaskSessionIgnores?: ScheduledTaskSessionIgnoreInfo[];
   lastRestartRequest?: LastRestartRequest;
   threadContextBindings?: ThreadContextBinding[];
   attachedSessions?: Record<string, AttachedSessionSettings>;
@@ -205,6 +211,12 @@ function cloneLastRestartRequest(
   request: LastRestartRequest | undefined,
 ): LastRestartRequest | undefined {
   return request ? { ...request } : undefined;
+}
+
+function cloneScheduledTaskSessionIgnores(
+  ignores: ScheduledTaskSessionIgnoreInfo[] | undefined,
+): ScheduledTaskSessionIgnoreInfo[] | undefined {
+  return ignores?.map((ignore) => ({ ...ignore }));
 }
 
 function cloneScheduledTasks(tasks: ScheduledTask[] | undefined): ScheduledTask[] | undefined {
@@ -1142,6 +1154,17 @@ export function clearSessionDirectoryCache(): void {
   void writeSettingsFile(currentSettings);
 }
 
+export function getScheduledTaskSessionIgnores(): ScheduledTaskSessionIgnoreInfo[] {
+  return cloneScheduledTaskSessionIgnores(currentSettings.scheduledTaskSessionIgnores) ?? [];
+}
+
+export function setScheduledTaskSessionIgnores(
+  ignores: ScheduledTaskSessionIgnoreInfo[],
+): Promise<void> {
+  currentSettings.scheduledTaskSessionIgnores = cloneScheduledTaskSessionIgnores(ignores);
+  return writeSettingsFile(currentSettings);
+}
+
 export function getScheduledTasks(): ScheduledTask[] {
   return cloneScheduledTasks(currentSettings.scheduledTasks) ?? [];
 }
@@ -1244,6 +1267,8 @@ export async function loadSettings(): Promise<void> {
       loadedSettings.scopedSessionDirectoryCache,
     ),
     scheduledTasks: cloneScheduledTasks(loadedSettings.scheduledTasks) ?? [],
+    scheduledTaskSessionIgnores:
+      cloneScheduledTaskSessionIgnores(loadedSettings.scheduledTaskSessionIgnores) ?? [],
     lastRestartRequest: cloneLastRestartRequest(loadedSettings.lastRestartRequest),
     threadContextBindings: cloneThreadContextBindings(loadedSettings.threadContextBindings) ?? [],
     attachedSessions: cloneAttachedSessionSettingsMap(loadedSettings.attachedSessions),

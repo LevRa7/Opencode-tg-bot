@@ -2,6 +2,7 @@ export const en = {
   "cmd.description.status": "Server and session status",
   "cmd.description.new": "Create a new session",
   "cmd.description.stop": "Stop current action",
+  "cmd.description.detach": "Detach from current session",
   "cmd.description.sessions": "List sessions",
   "cmd.description.tts": "Toggle audio replies",
   "cmd.description.projects": "List projects",
@@ -252,6 +253,13 @@ export const en = {
   "opencode_stop.success": "✅ OpenCode Server stopped successfully",
   "opencode_stop.error":
     "🔴 An error occurred while stopping server.\n\nCheck application logs for details.",
+
+  "detach.project_not_selected":
+    "🏗 Project is not selected.\n\nFirst select a project with /projects.",
+  "detach.no_active_session": "ℹ️ Bot is already detached from any session.",
+  "detach.success":
+    "✅ Detached from session: {title}\n\nThe OpenCode session was not stopped. If it is still running, it will continue separately. To check it later, select it again via /sessions.",
+  "detach.error": "🔴 Failed to detach from the current session.",
 
   "agent.changed_callback": "Mode changed: {name}",
   "agent.changed_message": "✅ Mode changed to: {name}",

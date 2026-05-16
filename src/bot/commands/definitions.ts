@@ -16,6 +16,7 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "status", descriptionKey: "cmd.description.status" },
   { command: "new", descriptionKey: "cmd.description.new" },
   { command: "abort", descriptionKey: "cmd.description.stop" },
+  { command: "detach", descriptionKey: "cmd.description.detach" },
   { command: "sessions", descriptionKey: "cmd.description.sessions" },
   { command: "model", descriptionKey: "cmd.description.model" },
   { command: "variant", descriptionKey: "cmd.description.variant" },

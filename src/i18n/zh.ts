@@ -4,6 +4,7 @@ export const zh: I18nDictionary = {
   "cmd.description.status": "服务器和会话状态",
   "cmd.description.new": "创建新会话",
   "cmd.description.stop": "停止当前操作",
+  "cmd.description.detach": "从当前会话分离",
   "cmd.description.sessions": "列出会话",
   "cmd.description.tts": "切换语音回复",
   "cmd.description.projects": "列出项目",
@@ -228,6 +229,12 @@ export const zh: I18nDictionary = {
   "opencode_stop.stop_error": "🔴 停止 OpenCode 服务器失败\n\n错误：{error}",
   "opencode_stop.success": "✅ OpenCode 服务器已成功停止",
   "opencode_stop.error": "🔴 停止服务器时发生错误。\n\n请查看应用日志了解详情。",
+
+  "detach.project_not_selected": "🏗 未选择项目。\n\n请先使用 /projects 选择一个项目。",
+  "detach.no_active_session": "ℹ️ 机器人当前未附加到任何会话。",
+  "detach.success":
+    "✅ 已从会话分离：{title}\n\nOpenCode 会话未停止。如果它仍在运行，将继续独立执行。稍后可通过 /sessions 重新选择它来查看。",
+  "detach.error": "🔴 无法从当前会话分离。",
 
   "agent.changed_callback": "模式已更改：{name}",
   "agent.changed_message": "✅ 模式已切换为：{name}",

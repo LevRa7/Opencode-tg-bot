@@ -28,6 +28,7 @@ import { compactCommand } from "./commands/compact.js";
 import { handleSettingsCallback, settingsCommand } from "./commands/settings.js";
 import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand } from "./commands/abort.js";
+import { detachCommand } from "./commands/detach.js";
 import { opencodeStartCommand } from "./commands/opencode-start.js";
 import { opencodeStopCommand } from "./commands/opencode-stop.js";
 import { renameCommand, handleRenameCancel, handleRenameTextAnswer } from "./commands/rename.js";
@@ -3197,6 +3198,7 @@ export function createBot(): Bot<Context> {
   bot.command("settings", settingsCommand);
   bot.command("new", newCommand);
   bot.command("abort", abortCommand);
+  bot.command("detach", detachCommand);
   bot.command("task", taskCommand);
   bot.command("tasklist", taskListCommand);
   bot.command("rename", renameCommand);

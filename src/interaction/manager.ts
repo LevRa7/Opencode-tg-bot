@@ -7,7 +7,7 @@ import type {
   TransitionInteractionOptions,
 } from "./types.js";
 
-export const DEFAULT_ALLOWED_INTERACTION_COMMANDS = ["/help", "/status", "/abort"] as const;
+export const DEFAULT_ALLOWED_INTERACTION_COMMANDS = ["/help", "/status", "/abort", "/detach"] as const;
 
 function normalizeCommand(command: string): string | null {
   const trimmed = command.trim().toLowerCase();

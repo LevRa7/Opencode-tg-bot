@@ -12,6 +12,7 @@ import { logger } from "../../utils/logger.js";
 
 const RECONCILE_MIN_INTERVAL_MS = 10_000;
 const FOREGROUND_BUSY_RECONCILE_GRACE_MS = 2_000;
+const MAX_IN_FLIGHT_RECONCILES = 5;
 
 type SessionStatus = {
   type?: string;

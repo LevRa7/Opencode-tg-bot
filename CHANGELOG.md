@@ -12,13 +12,13 @@ Documentation rule:
 
 ### Added
 
-- Ported upstream v0.20.4 changes: `/ls` command for file exploration and download, `/detach` command for session detach without abort, background session notification infrastructure, `TELEGRAM_API_ROOT` + `TELEGRAM_PROXY_SECRET` for reverse-proxy setups.
+- Ported upstream v0.20.4 features: `/ls` command, `/detach` command, background session notification with inline "open session" button, full question options details with entity rendering, `TELEGRAM_API_ROOT` + `TELEGRAM_PROXY_SECRET` for reverse-proxy setups.
   - Why: align with upstream feature set while preserving multi-user runtime isolation.
-  - Affects: `src/bot/commands/ls.ts`, `src/bot/commands/detach.ts`, `src/bot/utils/send-downloaded-file.ts`, `src/bot/utils/telegram-file-url.ts`, `src/opencode/ready-lifecycle.ts`, `src/opencode/ready-refresh.ts`, `src/utils/opencode-error.ts`, `src/bot/utils/external-user-input.ts`, `src/config.ts`, `src/i18n/*.ts`, `tests/*`
+  - Affects: `src/bot/commands/ls.ts`, `src/bot/commands/detach.ts`, `src/bot/commands/sessions.ts`, `src/bot/handlers/question.ts`, `src/background-session/tracker.ts`, `src/scheduled-task/session-ignore.ts`, `src/bot/utils/send-downloaded-file.ts`, `src/bot/utils/telegram-file-url.ts`, `src/opencode/ready-lifecycle.ts`, `src/opencode/ready-refresh.ts`, `src/utils/opencode-error.ts`, `src/bot/utils/external-user-input.ts`, `src/config.ts`, `src/i18n/*.ts`, `tests/*`
 
 ### Fixed
 
-- Ported upstream v0.20.4 fixes: link to localhost/broken URL error handling, cache refresh after OpenCode server start, session restore after server readiness, external user input truncation, duplicate event listener stop during detach, reply keyboard context after detach, TypeError Invalid URL when `TELEGRAM_API_ROOT` is unset.
+- Ported upstream v0.20.4 fixes: link to localhost/broken URL error handling, cache refresh after OpenCode server start, session restore after server readiness, external user input truncation, reply keyboard context after detach, TypeError Invalid URL when `TELEGRAM_API_ROOT` unset, health check timeout to prevent bot polling blocks.
   - Why: adopt upstream bugfixes and error-handling improvements while adapting to multi-user architecture.
   - Affects: `src/bot/utils/send-with-markdown-fallback.ts`, `src/telegram/render/validator.ts`, `src/telegram/render/inline-renderer.ts`, `src/model/manager.ts`, `src/model/context-limit.ts`, `src/opencode/*.ts`, `src/bot/utils/external-user-input.ts`, `src/pinned/manager.ts`, `src/utils/opencode-error.ts`
 

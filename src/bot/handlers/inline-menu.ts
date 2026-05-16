@@ -22,6 +22,7 @@ const INLINE_MENU_KINDS = [
   "context",
   "ontology",
   "open",
+  "ls",
   "worktree",
   "settings",
 ] as const;

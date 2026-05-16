@@ -42,6 +42,7 @@ import { streamCommand } from "./commands/stream.js";
 import { ttsCommand } from "./commands/tts.js";
 import { worktreeCommand, handleWorktreeCallback } from "./commands/worktree.js";
 import { openCommand, handleOpenCallback, clearOpenPathIndex } from "./commands/open.js";
+import { clearLsPathIndex, handleLsCallback, lsCommand } from "./commands/ls.js";
 import {
   skillsCommand,
   handleSkillsCallback,
@@ -3202,6 +3203,7 @@ export function createBot(): Bot<Context> {
   bot.command("commands", commandsCommand);
   bot.command("worktree", worktreeCommand);
   bot.command("open", openCommand);
+  bot.command("ls", lsCommand);
   bot.command("skills", skillsCommand);
   bot.command("mcps", mcpsCommand);
 
@@ -3215,6 +3217,7 @@ export function createBot(): Bot<Context> {
       const handledInlineCancel = await handleInlineMenuCancel(ctx);
       if (handledInlineCancel) {
         clearOpenPathIndex();
+        clearLsPathIndex();
       }
       const handledSession = await handleSessionSelect(ctx);
       const handledProject = await handleProjectSelect(ctx);
@@ -3232,11 +3235,12 @@ export function createBot(): Bot<Context> {
       const handledSettings = await handleSettingsCallback(ctx);
       const handledWorktree = await handleWorktreeCallback(ctx);
       const handledOpen = await handleOpenCallback(ctx);
+      const handledLs = await handleLsCallback(ctx);
       const handledSkills = await handleSkillsCallback(ctx, { bot, ensureEventSubscription });
       const handledMcps = await handleMcpsCallback(ctx);
 
       logger.debug(
-        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, settings=${handledSettings}, worktree=${handledWorktree}, open=${handledOpen}, skills=${handledSkills}, mcps=${handledMcps}`,
+        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, settings=${handledSettings}, worktree=${handledWorktree}, open=${handledOpen}, ls=${handledLs}, skills=${handledSkills}, mcps=${handledMcps}`,
       );
 
       if (
@@ -3257,6 +3261,7 @@ export function createBot(): Bot<Context> {
         !handledSettings &&
         !handledWorktree &&
         !handledOpen &&
+        !handledLs &&
         !handledSkills &&
         !handledMcps
       ) {

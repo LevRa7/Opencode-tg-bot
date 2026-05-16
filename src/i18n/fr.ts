@@ -14,6 +14,7 @@ export const fr: I18nDictionary = {
   "cmd.description.skills": "Lister les skills disponibles",
   "cmd.description.mcps": "Parcourir les serveurs MCP",
   "cmd.description.open": "Ouvrir des fichiers dans le navigateur de repertoires",
+  "cmd.description.ls": "Lister le contenu du répertoire",
   "cmd.description.model": "Sélectionner ou définir le modèle par défaut",
   "cmd.description.variant": "Sélectionner ou définir la variante par défaut",
   "cmd.description.compact": "Compact current session context",
@@ -636,6 +637,14 @@ export const fr: I18nDictionary = {
   "commands.button.next_page": "Suivant ➡️",
   "commands.page_empty_callback": "Aucune commande sur cette page",
   "commands.page_load_error_callback": "Impossible de charger cette page. Veuillez réessayer.",
+  "commands.download.no_roots": "Aucune racine de navigation autorisée n'est configurée.",
+  "commands.download.downloading": "Téléchargement du fichier...",
+  "commands.download.not_found": "Fichier introuvable",
+  "commands.download.not_file": "Le chemin n'est pas un fichier",
+  "commands.download.file_too_large": "Le fichier est trop volumineux",
+  "commands.download.size": "Taille",
+  "commands.download.modified": "Modifié",
+  "commands.download.error": "Impossible de télécharger le fichier.",
 
   "cmd.description.rename": "Renommer la session actuelle",
 
@@ -757,6 +766,13 @@ export const fr: I18nDictionary = {
     "✅ Projet ajouté : {project}\n\n📋 Utilisez /sessions ou /new pour commencer à travailler.",
   "open.subfolder_count": "{count} sous-dossier",
   "open.subfolders_count": "{count} sous-dossiers",
+  "ls.access_denied": "⛔ Accès refusé : le chemin est en dehors du projet actuel",
+  "ls.scan_error": "🔴 Impossible de lister le répertoire",
+  "ls.header": "Liste du répertoire",
+  "ls.total": "Total : {count} éléments",
+  "ls.file.header": "Détails du fichier",
+  "ls.file.download": "📥 Télécharger",
+  "ls.file.back": "⬅️ Retour",
 
   "skills.arguments_empty":
     "⚠️ Les arguments ne peuvent pas être vides. Envoyez du texte ou appuyez sur Exécuter.",

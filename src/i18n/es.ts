@@ -14,6 +14,7 @@ export const es: I18nDictionary = {
   "cmd.description.skills": "Listar skills disponibles",
   "cmd.description.mcps": "Explorar servidores MCP",
   "cmd.description.open": "Abrir archivos en el navegador de directorios",
+  "cmd.description.ls": "Listar contenidos del directorio",
   "cmd.description.model": "Seleccionar o configurar modelo predeterminado",
   "cmd.description.variant": "Seleccionar o configurar variante predeterminada",
   "cmd.description.compact": "Compact current session context",
@@ -634,6 +635,14 @@ export const es: I18nDictionary = {
   "commands.page_empty_callback": "No hay comandos en esta página",
   "commands.page_load_error_callback":
     "No se pudo cargar esta página. Por favor, inténtalo de nuevo.",
+  "commands.download.no_roots": "No hay raíces de navegación permitidas configuradas.",
+  "commands.download.downloading": "Descargando archivo...",
+  "commands.download.not_found": "Archivo no encontrado",
+  "commands.download.not_file": "La ruta no es un archivo",
+  "commands.download.file_too_large": "El archivo es demasiado grande",
+  "commands.download.size": "Tamaño",
+  "commands.download.modified": "Modificado",
+  "commands.download.error": "No se pudo descargar el archivo.",
 
   "cmd.description.rename": "Renombrar la sesión actual",
 
@@ -754,6 +763,13 @@ export const es: I18nDictionary = {
     "✅ Proyecto agregado: {project}\n\n📋 Usa /sessions o /new para empezar a trabajar.",
   "open.subfolder_count": "{count} subcarpeta",
   "open.subfolders_count": "{count} subcarpetas",
+  "ls.access_denied": "⛔ Acceso denegado: la ruta está fuera del proyecto actual",
+  "ls.scan_error": "🔴 No se puede listar el directorio",
+  "ls.header": "Listado del directorio",
+  "ls.total": "Total: {count} elementos",
+  "ls.file.header": "Detalles del archivo",
+  "ls.file.download": "📥 Descargar",
+  "ls.file.back": "⬅️ Volver",
 
   "skills.arguments_empty":
     "⚠️ Los argumentos no pueden estar vacíos. Envía texto o toca Ejecutar.",

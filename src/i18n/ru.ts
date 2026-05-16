@@ -14,6 +14,7 @@ export const ru: I18nDictionary = {
   "cmd.description.skills": "Список доступных skills",
   "cmd.description.mcps": "Просмотр MCP серверов",
   "cmd.description.open": "Открыть файлы в браузере директорий",
+  "cmd.description.ls": "Список содержимого каталога",
   "cmd.description.model": "Выбрать или задать модель по умолчанию",
   "cmd.description.variant": "Выбрать или задать вариант по умолчанию",
   "cmd.description.compact": "Сжать контекст текущей сессии",
@@ -621,6 +622,14 @@ export const ru: I18nDictionary = {
   "commands.page_empty_callback": "На этой странице нет команд",
   "commands.page_load_error_callback":
     "Не удалось загрузить эту страницу. Пожалуйста, попробуйте снова.",
+  "commands.download.no_roots": "Не настроены разрешённые корневые каталоги для просмотра.",
+  "commands.download.downloading": "Скачиваю файл...",
+  "commands.download.not_found": "Файл не найден",
+  "commands.download.not_file": "Путь не является файлом",
+  "commands.download.file_too_large": "Файл слишком большой",
+  "commands.download.size": "Размер",
+  "commands.download.modified": "Изменён",
+  "commands.download.error": "Не удалось скачать файл.",
 
   "cmd.description.rename": "Переименовать текущую сессию",
 
@@ -740,6 +749,13 @@ export const ru: I18nDictionary = {
     "✅ Проект добавлен: {project}\n\n📋 Используйте /sessions или /new, чтобы начать работу.",
   "open.subfolder_count": "{count} подпапка",
   "open.subfolders_count": "{count} подпапок",
+  "ls.access_denied": "⛔ Доступ запрещён: путь находится за пределами текущего проекта",
+  "ls.scan_error": "🔴 Не удается перечислить каталог",
+  "ls.header": "Список каталога",
+  "ls.total": "Всего: {count} элементов",
+  "ls.file.header": "Сведения о файле",
+  "ls.file.download": "📥 Скачать",
+  "ls.file.back": "⬅️ Назад",
 
   "skills.arguments_empty":
     "⚠️ Аргументы не могут быть пустыми. Отправьте текст или нажмите Выполнить.",

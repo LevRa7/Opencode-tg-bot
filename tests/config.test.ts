@@ -355,3 +355,45 @@ describe("config boolean env parsing", () => {
     expect(config.opencode.autoRestart.monitorIntervalSec).toBe(300);
   });
 });
+
+describe("config telegram force-ipv4", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "test-telegram-token");
+    vi.stubEnv("TELEGRAM_ADMIN_USER_ID", "123456789");
+    vi.stubEnv("OPENCODE_MODEL_PROVIDER", "test-provider");
+    vi.stubEnv("OPENCODE_MODEL_ID", "test-model");
+    vi.stubEnv("TELEGRAM_PROXY_URL", "");
+    vi.stubEnv("TELEGRAM_API_ROOT", "");
+    vi.stubEnv("TELEGRAM_PROXY_SECRET", "");
+    vi.stubEnv("TELEGRAM_FORCE_IPV4", "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("disables forced IPv4 by default", async () => {
+    const config = await loadConfig();
+
+    expect(config.telegram.forceIpv4).toBe(false);
+  });
+
+  it("parses TELEGRAM_FORCE_IPV4 as a boolean", async () => {
+    vi.stubEnv("TELEGRAM_FORCE_IPV4", "true");
+    const config = await loadConfig();
+
+    expect(config.telegram.forceIpv4).toBe(true);
+  });
+
+  it("allows TELEGRAM_FORCE_IPV4 together with reverse proxy settings", async () => {
+    vi.stubEnv("TELEGRAM_API_ROOT", "https://tg-proxy.example.com");
+    vi.stubEnv("TELEGRAM_PROXY_SECRET", "shared-secret");
+    vi.stubEnv("TELEGRAM_FORCE_IPV4", "true");
+    const config = await loadConfig();
+
+    expect(config.telegram.apiRoot).toBe("https://tg-proxy.example.com");
+    expect(config.telegram.proxySecret).toBe("shared-secret");
+    expect(config.telegram.forceIpv4).toBe(true);
+  });
+});

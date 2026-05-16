@@ -1,4 +1,7 @@
+// @ts-expect-error — node-fetch v2 ships no TS types and we avoid adding @types/node-fetch
+import nodeFetch from "node-fetch";
 import type { Api } from "grammy";
+import { Agent as HttpsAgent } from "https";
 import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 
@@ -28,7 +31,7 @@ async function downloadTelegramFileInternal(
   fileId: string,
   options: DownloadTelegramFileOptions = {},
 ): Promise<DownloadedFile> {
-  const { maxFileSizeBytes = MAX_FILE_SIZE_BYTES, fetchImpl = fetch } = options;
+  const { maxFileSizeBytes = MAX_FILE_SIZE_BYTES, fetchImpl = nodeFetch } = options;
 
   logger.debug(`[FileDownload] Getting file info for fileId=${fileId}`);
 
@@ -53,6 +56,8 @@ async function downloadTelegramFileInternal(
   if (config.telegram.proxyUrl) {
     const { HttpsProxyAgent } = await import("https-proxy-agent");
     fetchOptions.agent = new HttpsProxyAgent(config.telegram.proxyUrl);
+  } else if (config.telegram.forceIpv4) {
+    fetchOptions.agent = new HttpsAgent({ family: 4, keepAlive: true });
   }
 
   const response = await fetchImpl(fileUrl, fetchOptions);

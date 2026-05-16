@@ -1,10 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Agent as HttpsAgent } from "https";
 
+const nodeFetchMock = vi.hoisted(() => vi.fn());
 const mocked = vi.hoisted(() => ({
   config: {
     telegram: {
       token: "test-telegram-token",
       proxyUrl: "",
+      apiRoot: "",
+      proxySecret: "",
+      forceIpv4: false,
     },
     server: {
       logLevel: "error",
@@ -21,6 +26,10 @@ vi.mock("https-proxy-agent", () => ({
   HttpsProxyAgent: mocked.httpsProxyAgentMock,
 }));
 
+vi.mock("node-fetch", () => ({
+  default: nodeFetchMock,
+}));
+
 import {
   downloadTelegramFile,
   downloadTelegramVideoForCompression,
@@ -34,7 +43,11 @@ describe("bot/utils/file-download", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     mocked.config.telegram.proxyUrl = "";
+    mocked.config.telegram.apiRoot = "";
+    mocked.config.telegram.proxySecret = "";
+    mocked.config.telegram.forceIpv4 = false;
     mocked.httpsProxyAgentMock.mockReset();
+    nodeFetchMock.mockReset();
   });
 
   describe("downloadTelegramFile", () => {
@@ -51,6 +64,46 @@ describe("bot/utils/file-download", () => {
         "File too large: 21.00MB (max 20MB)",
       );
       expect(getFile).toHaveBeenCalledWith("oversized-file-id");
+    });
+
+    it("does not configure a fetch agent for direct downloads by default", async () => {
+      nodeFetchMock.mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+      });
+
+      const getFile = vi.fn().mockResolvedValue({
+        file_path: "photos/default.jpg",
+        file_size: 1024,
+      });
+      const api = { getFile } as never;
+
+      await downloadTelegramFile(api, "fid");
+
+      const [, init] = nodeFetchMock.mock.calls[0];
+      expect((init as { agent?: unknown } | undefined)?.agent).toBeUndefined();
+    });
+
+    it("uses an IPv4 HTTPS agent for direct downloads when TELEGRAM_FORCE_IPV4 is enabled", async () => {
+      mocked.config.telegram.forceIpv4 = true;
+
+      nodeFetchMock.mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+      });
+
+      const getFile = vi.fn().mockResolvedValue({
+        file_path: "photos/ipv4.jpg",
+        file_size: 1024,
+      });
+      const api = { getFile } as never;
+
+      await downloadTelegramFile(api, "fid");
+
+      const [, init] = nodeFetchMock.mock.calls[0];
+      const agent = (init as { agent?: unknown } | undefined)?.agent;
+      expect(agent).toBeInstanceOf(HttpsAgent);
+      expect((agent as HttpsAgent).options.family).toBe(4);
     });
   });
 

@@ -3,8 +3,6 @@ import type { Api, RawApi } from "grammy";
 import { promises as fs } from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
-import { SocksProxyAgent } from "socks-proxy-agent";
-import { HttpsProxyAgent } from "https-proxy-agent";
 import { config } from "../config.js";
 import type { MessageFormatMode } from "../config.js";
 import type { TelegramRenderedPart } from "../telegram/render/types.js";
@@ -87,6 +85,7 @@ import { logger } from "../utils/logger.js";
 import { safeBackgroundTask } from "../utils/safe-background-task.js";
 import { withTelegramRateLimitRetry } from "../utils/telegram-rate-limit-retry.js";
 import { pinnedMessageManager } from "../pinned/manager.js";
+import { createTelegramBotOptions } from "./telegram-client-options.js";
 import { setUserLocaleResolver, t } from "../i18n/index.js";
 import {
   clearPromptResponseMode,
@@ -106,6 +105,7 @@ import { handleVoiceMessage } from "./handlers/voice.js";
 import { handleDocumentMessage } from "./handlers/document.js";
 import { handleVideoMessage } from "./handlers/video.js";
 import { handlePhotoMessage } from "./handlers/photo.js";
+import { reconcileBusyState } from "./utils/busy-reconciliation.js";
 import { finalizeAssistantResponse } from "./utils/finalize-assistant-response.js";
 import { sendTtsResponseForSession } from "./utils/send-tts-response.js";
 import { MessageDraftStreamManager } from "./utils/message-draft-stream.js";
@@ -2641,6 +2641,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
   logger.info(`[Bot] Subscribing to OpenCode events for project: ${directory}`);
   subscribeToEvents(directory, (event) => {
+    if ((event as { type: string }).type === "server.heartbeat") {
+      void reconcileBusyState(directory);
+    }
+
     if (event.type === "message.part.updated") {
       const part = (
         event.properties as {
@@ -3136,27 +3140,7 @@ export function createBot(): Bot<Context> {
   childSessionsAwaitingIdleCleanup.clear();
   childTopicDeletionBlockedSessions.clear();
 
-  const botOptions: ConstructorParameters<typeof Bot<Context>>[1] = {};
-
-  if (config.telegram.proxyUrl) {
-    const proxyUrl = config.telegram.proxyUrl;
-    let agent;
-
-    if (proxyUrl.startsWith("socks")) {
-      agent = new SocksProxyAgent(proxyUrl);
-      logger.info(`[Bot] Using SOCKS proxy: ${proxyUrl.replace(/\/\/.*@/, "//***@")}`);
-    } else {
-      agent = new HttpsProxyAgent(proxyUrl);
-      logger.info(`[Bot] Using HTTP/HTTPS proxy: ${proxyUrl.replace(/\/\/.*@/, "//***@")}`);
-    }
-
-    botOptions.client = {
-      baseFetchConfig: {
-        agent,
-        compress: true,
-      },
-    };
-  }
+  const botOptions = createTelegramBotOptions(config.telegram);
 
   const bot = new Bot(config.telegram.token, botOptions);
   activeBotInstance = bot;

@@ -230,6 +230,7 @@ export const config = {
     proxyUrl: getEnvVar("TELEGRAM_PROXY_URL", false),
     apiRoot: getEnvVar("TELEGRAM_API_ROOT", false).replace(/\/+$/, ""),
     proxySecret: getEnvVar("TELEGRAM_PROXY_SECRET", false),
+    forceIpv4: getOptionalBooleanEnvVar("TELEGRAM_FORCE_IPV4", false),
   },
   opencode: {
     apiUrl: getEnvVar("OPENCODE_API_URL", false) || "http://localhost:4096",

@@ -72,6 +72,7 @@ import {
 } from "../summary/technical-progress/formatter.js";
 import { TelegraphClient } from "../telegraph/telegraph-client.js";
 import { TelegraphPublishQueue } from "../telegraph/publish-queue.js";
+import { ThinkingTelegraphAccumulator } from "../telegraph/thinking-accumulator.js";
 import { SubagentTelegraphLogger } from "../telegraph/subagent-logger.js";
 import { NoopDetailsPublisher } from "../telegraph/noop-details-publisher.js";
 import {
@@ -1410,6 +1411,9 @@ const telegraphClient = config.telegraph?.enabled
 const technicalDetailsPublisher = telegraphClient
   ? new TelegraphPublishQueue(telegraphClient)
   : new NoopDetailsPublisher();
+const thinkingDetailsPublisher = telegraphClient
+  ? new ThinkingTelegraphAccumulator(telegraphClient)
+  : new NoopDetailsPublisher();
 const subagentTelegraphLogger = telegraphClient
   ? new SubagentTelegraphLogger(telegraphClient)
   : null;
@@ -1849,7 +1853,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             target,
             title: finalReasoningTitle,
             reasoningText: visibleReasoningText,
-            publisher: technicalDetailsPublisher,
+            publisher: thinkingDetailsPublisher,
           });
           if (thinkingFinalizeOutcome === "failed") {
             logger.warn(
@@ -1993,6 +1997,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     // Flush accumulated Telegraph page content immediately on task completion
     void technicalDetailsPublisher.flush();
+    void thinkingDetailsPublisher.flush();
 
     // 2026-05-01: Diagnose maternal session not cleaning up. If finishRun returns
     // null the run may have been missing (never started / already cleared).

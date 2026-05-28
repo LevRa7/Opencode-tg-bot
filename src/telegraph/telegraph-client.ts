@@ -32,7 +32,8 @@ export class TelegraphClient implements TechnicalDetailsPublisher {
   constructor(private readonly config: TelegraphConfig) {}
 
   async publish(request: TechnicalDetailsPublishRequest): Promise<string | null> {
-    const result = await this.createPage(request.title, request.body);
+    const safeTitle = request.title.length > 256 ? `${request.title.slice(0, 253)}...` : request.title;
+    const result = await this.createPage(safeTitle, request.body);
     return result?.url ?? null;
   }
 
@@ -45,9 +46,11 @@ export class TelegraphClient implements TechnicalDetailsPublisher {
       return null;
     }
 
+    const safeTitle = title.length > 256 ? `${title.slice(0, 253)}...` : title;
+
     const params = new URLSearchParams();
     params.set("access_token", this.config.accessToken);
-    params.set("title", title);
+    params.set("title", safeTitle);
     params.set("author_name", this.config.authorName);
     params.set("content", JSON.stringify(this.buildNodes(body)));
     params.set("return_content", "false");
@@ -67,9 +70,11 @@ export class TelegraphClient implements TechnicalDetailsPublisher {
       return false;
     }
 
+    const safeTitle = title.length > 256 ? `${title.slice(0, 253)}...` : title;
+
     const params = new URLSearchParams();
     params.set("access_token", this.config.accessToken);
-    params.set("title", title);
+    params.set("title", safeTitle);
     params.set("author_name", this.config.authorName);
     params.set("content", JSON.stringify(this.buildNodes(body)));
     params.set("return_content", "false");

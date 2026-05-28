@@ -9,9 +9,28 @@ interface AssistantRunFooterParams {
   outputTokens?: number;
 }
 
-function formatElapsedSeconds(elapsedMs: number): string {
-  const safeElapsedMs = Math.max(0, elapsedMs);
-  return `${(safeElapsedMs / 1000).toFixed(1)}s`;
+function formatElapsed(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, elapsedMs) / 1000;
+
+  if (totalSeconds < 60) {
+    return `${totalSeconds.toFixed(1)}s`;
+  }
+
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+
+  if (hours > 0) {
+    if (seconds > 0) {
+      return `${hours}h ${minutes}m ${seconds}s`;
+    }
+    return `${hours}h ${minutes}m`;
+  }
+
+  if (seconds > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${minutes}m`;
 }
 
 function formatTokens(value: number): string {
@@ -33,7 +52,7 @@ export function formatAssistantRunFooter({
   outputTokens,
 }: AssistantRunFooterParams): string {
   const agentDisplay = getAgentDisplayName(agent);
-  let text = `${agentDisplay} · 🤖 ${providerID}/${modelID} · 🕒 ${formatElapsedSeconds(elapsedMs)}`;
+  let text = `${agentDisplay} · 🤖 ${providerID}/${modelID} · 🕒 ${formatElapsed(elapsedMs)}`;
 
   if (typeof inputTokens === "number" || typeof outputTokens === "number") {
     const parts: string[] = [];

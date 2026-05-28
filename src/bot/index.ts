@@ -106,9 +106,11 @@ import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
 import { assistantRunState } from "./assistant-run-state.js";
 import { handleVoiceMessage } from "./handlers/voice.js";
 import { handleDocumentMessage } from "./handlers/document.js";
+import { createMediaGroupAttachmentMiddleware } from "./handlers/media-group.js";
 import { handleVideoMessage } from "./handlers/video.js";
 import { handlePhotoMessage } from "./handlers/photo.js";
 import { reconcileBusyState } from "./utils/busy-reconciliation.js";
+import { shouldSuppressUserAbortSessionError } from "./utils/abort-error-suppression.js";
 import { finalizeAssistantResponse } from "./utils/finalize-assistant-response.js";
 import { sendTtsResponseForSession } from "./utils/send-tts-response.js";
 import { MessageDraftStreamManager } from "./utils/message-draft-stream.js";
@@ -2150,13 +2152,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         }
 
         const prefix = `tool:${toolInfo.callId}`;
-        const spoilerMessage = formatToolCallAsSpoiler(formattedProgress.text);
         orderedPublication.resolve(async () => {
-          toolCallStreamer.replaceByPrefix(toolInfo.sessionId, prefix, spoilerMessage);
+          toolCallStreamer.replaceByPrefix(toolInfo.sessionId, prefix, formattedProgress.text);
           await enqueueLocalFileFollowUpsFromText(
             toolInfo.sessionId,
             joinFollowUpCandidateTexts(
-              spoilerMessage,
+              formattedProgress.text,
               toolInfo.title,
               typeof toolInfo.input?.description === "string" ? toolInfo.input.description : undefined,
               typeof toolInfo.input?.command === "string" ? toolInfo.input.command : undefined,
@@ -2197,7 +2198,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               toolCallStreamer.replaceByPrefix(
                 toolInfo.sessionId,
                 prefix,
-                `<blockquote expandable>${linkedProgress.text}</blockquote>`,
+                linkedProgress.text,
               );
             },
           });
@@ -2639,6 +2640,16 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     ]);
 
     const normalizedMessage = message.trim() || t("common.unknown_error");
+    if (shouldSuppressUserAbortSessionError(sessionId, normalizedMessage)) {
+      logger.debug(`[Bot] Suppressed user-initiated abort error: session=${sessionId}`);
+      clearSessionRoutingContext(sessionId);
+      clearChildAssistantSession(sessionId);
+      localFileFollowUpTracker.clearSession(sessionId);
+      foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
+      await scheduledTaskRuntime.flushDeferredDeliveries();
+      return;
+    }
+
     const truncatedMessage =
       normalizedMessage.length > 3500
         ? `${normalizedMessage.slice(0, 3497)}...`
@@ -3549,6 +3560,8 @@ export function createBot(): Bot<Context> {
     logger.debug(`[Bot] Received audio message, chatId=${ctx.chat.id}`);
     await handleVoiceMessage(ctx, buildVoicePromptDeps(ctx));
   });
+
+  bot.on("message", createMediaGroupAttachmentMiddleware({ bot, ensureEventSubscription }));
 
   // Photo message handler
   bot.on("message:photo", async (ctx) => {

@@ -2166,6 +2166,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                 return;
               }
 
+              const stateStatus = (toolInfo.state as Record<string, unknown>)?.status;
+              if (stateStatus !== "completed") {
+                return;
+              }
+
               const linkedProgress = await formatTechnicalProgressWithDetails(
                 toolInfo,
                 technicalDetailsPublisher,

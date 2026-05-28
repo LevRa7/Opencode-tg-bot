@@ -50,7 +50,11 @@ function worktreeKey(worktree: string): string {
   return worktree;
 }
 
-export async function getProjects(): Promise<ProjectInfo[]> {
+interface GetProjectsOptions {
+  includeLinkedWorktrees?: boolean;
+}
+
+export async function getProjects(options: GetProjectsOptions = {}): Promise<ProjectInfo[]> {
   const { data: projects, error } = await opencodeClient.project.list();
 
   if (error || !projects) {
@@ -94,12 +98,19 @@ export async function getProjects(): Promise<ProjectInfo[]> {
     (left, right) => right.lastUpdated - left.lastUpdated,
   );
 
-  const linkedWorktreeFlags = await Promise.all(
-    projectList.map((project) => isLinkedGitWorktree(project.worktree)),
-  );
+  let visibleProjects: InternalProject[];
+  let hiddenLinkedWorktrees: number;
 
-  const visibleProjects = projectList.filter((_, index) => !linkedWorktreeFlags[index]);
-  const hiddenLinkedWorktrees = projectList.length - visibleProjects.length;
+  if (options.includeLinkedWorktrees) {
+    visibleProjects = projectList;
+    hiddenLinkedWorktrees = 0;
+  } else {
+    const linkedWorktreeFlags = await Promise.all(
+      projectList.map((project) => isLinkedGitWorktree(project.worktree)),
+    );
+    visibleProjects = projectList.filter((_, index) => !linkedWorktreeFlags[index]);
+    hiddenLinkedWorktrees = projectList.length - visibleProjects.length;
+  }
 
   logger.debug(
     `[ProjectManager] Projects resolved: api=${projects.length}, cached=${cachedProjects.length}, hiddenLinkedWorktrees=${hiddenLinkedWorktrees}, total=${visibleProjects.length}`,
@@ -122,7 +133,7 @@ export async function getProjectByWorktree(worktree: string): Promise<ProjectInf
     return { ...ROOT_PROJECT };
   }
 
-  const projects = await getProjects();
+  const projects = await getProjects({ includeLinkedWorktrees: true });
   const project = projects.find((p) => p.worktree === worktree);
   if (!project) {
     throw new Error(`Project with worktree ${worktree} not found`);

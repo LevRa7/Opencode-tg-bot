@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TelegraphPageAccumulator } from "../../src/telegraph/publish-queue.js";
+import { TelegraphPublishQueue } from "../../src/telegraph/publish-queue.js";
 import { FloodWaitError, TelegraphClient } from "../../src/telegraph/telegraph-client.js";
 
 vi.mock("../../src/utils/logger.js", () => ({
@@ -30,159 +30,176 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("TelegraphPageAccumulator", () => {
-  it("creates a page on first publish and returns URL", async () => {
-    const client = mockClient();
-    const acc = new TelegraphPageAccumulator(client, { flushIntervalMs: 3000, idleResetMs: 60000 });
+describe("TelegraphPublishQueue", () => {
+  it("forwards publish requests to upstream and returns a unique URL per call", async () => {
+    const client = mockClient({
+      publish: vi.fn()
+        .mockResolvedValueOnce("https://telegra.ph/page-01")
+        .mockResolvedValueOnce("https://telegra.ph/page-02"),
+    });
+    const queue = new TelegraphPublishQueue(client, { minIntervalMs: 10 });
 
-    const url = await acc.publish({ title: "test", body: "content" });
+    const p1 = queue.publish({ title: "t1", body: "b1" });
+    const p2 = queue.publish({ title: "t2", body: "b2" });
 
-    expect(url).toBe("https://telegra.ph/page-01");
-    expect(client.createPage).toHaveBeenCalledTimes(1);
+    await vi.runAllTimersAsync();
+    const [url1, url2] = await Promise.all([p1, p2]);
+
+    expect(url1).toBe("https://telegra.ph/page-01");
+    expect(url2).toBe("https://telegra.ph/page-02");
+    expect(client.publish).toHaveBeenCalledTimes(2);
   });
 
-  it("returns same URL for subsequent publishes without creating new pages", async () => {
-    const client = mockClient();
-    const acc = new TelegraphPageAccumulator(client, { flushIntervalMs: 3000, idleResetMs: 60000 });
+  it("processes requests sequentially with minimum interval", async () => {
+    const calls: number[] = [];
+    const client = mockClient({
+      publish: vi.fn(async () => {
+        calls.push(Date.now());
+        return "https://telegra.ph/page";
+      }),
+    });
+    const queue = new TelegraphPublishQueue(client, { minIntervalMs: 100, maxQueueSize: 5 });
 
-    const url1 = await acc.publish({ title: "t1", body: "b1" });
-    const url2 = await acc.publish({ title: "t2", body: "b2" });
+    const p1 = queue.publish({ title: "t1", body: "b1" });
+    const p2 = queue.publish({ title: "t2", body: "b2" });
 
-    expect(url1).toBe(url2);
-    expect(client.createPage).toHaveBeenCalledTimes(1);
+    await vi.runAllTimersAsync();
+    await Promise.all([p1, p2]);
+
+    expect(calls.length).toBe(2);
+    expect(calls[1]! - calls[0]!).toBeGreaterThanOrEqual(100);
   });
 
-  it("edits the page on timer tick when dirty", async () => {
-    const client = mockClient();
-    const acc = new TelegraphPageAccumulator(client, { flushIntervalMs: 100, idleResetMs: 60000 });
+  it("opens circuit breaker on FloodWaitError and drains queue", async () => {
+    const client = mockClient({
+      publish: vi.fn(async () => { throw new FloodWaitError(60000); }),
+    });
+    const queue = new TelegraphPublishQueue(client, { circuitBreakerThreshold: 1, minIntervalMs: 10 });
 
-    await acc.publish({ title: "t1", body: "b1" });
-    await acc.publish({ title: "t2", body: "b2" });
+    const p1 = queue.publish({ title: "t1", body: "b1" });
+    const p2 = queue.publish({ title: "t2", body: "b2" });
 
-    expect(client.editPage).not.toHaveBeenCalled();
+    await vi.runAllTimersAsync();
+    const [r1, r2] = await Promise.all([p1, p2]);
 
-    await vi.advanceTimersByTimeAsync(150);
+    expect(r1).toBeNull();
+    expect(r2).toBeNull();
+    expect(queue.isOpen).toBe(true);
+  });
 
-    expect(client.editPage).toHaveBeenCalledTimes(1);
-    expect(client.editPage).toHaveBeenCalledWith(
-      "page-01",
-      expect.any(String),
-      expect.stringContaining("t1"),
+  it("rejects new requests while circuit is open", async () => {
+    const client = mockClient({
+      publish: vi.fn(async () => { throw new FloodWaitError(60000); }),
+    });
+    const queue = new TelegraphPublishQueue(client, { circuitBreakerThreshold: 1, minIntervalMs: 10 });
+
+    const p1 = queue.publish({ title: "t1", body: "b1" });
+    await vi.runAllTimersAsync();
+    await p1;
+
+    expect(queue.isOpen).toBe(true);
+
+    const result = await queue.publish({ title: "t2", body: "b2" });
+    expect(result).toBeNull();
+  });
+
+  it("recovers after circuit breaker cooldown", async () => {
+    let shouldFail = true;
+    const client = mockClient({
+      publish: vi.fn(async () => {
+        if (shouldFail) throw new FloodWaitError(500);
+        return "https://telegra.ph/recovered";
+      }),
+    });
+    const queue = new TelegraphPublishQueue(client, {
+      circuitBreakerThreshold: 1,
+      circuitBreakerCooldownMs: 500,
+      minIntervalMs: 10,
+    });
+
+    const p1 = queue.publish({ title: "t1", body: "b1" });
+    await vi.runAllTimersAsync();
+    await p1;
+
+    expect(queue.isOpen).toBe(true);
+
+    shouldFail = false;
+    vi.advanceTimersByTime(600);
+
+    const p2 = queue.publish({ title: "t2", body: "b2" });
+    await vi.runAllTimersAsync();
+    const result = await p2;
+
+    expect(result).toBe("https://telegra.ph/recovered");
+    expect(queue.isOpen).toBe(false);
+  });
+
+  it("drops oldest requests on queue overflow", async () => {
+    let blocked = true;
+    const client = mockClient({
+      publish: vi.fn(async () => {
+        while (blocked) await new Promise((r) => setTimeout(r, 10));
+        return "https://telegra.ph/page";
+      }),
+    });
+    const queue = new TelegraphPublishQueue(client, { maxQueueSize: 3, minIntervalMs: 10 });
+
+    const promises = Array.from({ length: 5 }, (_, i) =>
+      queue.publish({ title: `t${i}`, body: `b${i}` }),
     );
+
+    blocked = false;
+    await vi.runAllTimersAsync();
+    const results = await Promise.all(promises);
+
+    const nullCount = results.filter((r) => r === null).length;
+    expect(nullCount).toBeGreaterThanOrEqual(1);
   });
 
-  it("flush() forces immediate page edit", async () => {
-    const client = mockClient();
-    const acc = new TelegraphPageAccumulator(client, { flushIntervalMs: 10000, idleResetMs: 60000 });
-
-    await acc.publish({ title: "t1", body: "b1" });
-    await acc.publish({ title: "t2", body: "b2" });
-
-    await acc.flush();
-
-    expect(client.editPage).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not edit when no new sections since last flush", async () => {
-    const client = mockClient();
-    const acc = new TelegraphPageAccumulator(client, { flushIntervalMs: 100, idleResetMs: 60000 });
-
-    await acc.publish({ title: "t1", body: "b1" });
-
-    // First tick — will not edit because initial create already has content
-    await vi.advanceTimersByTimeAsync(150);
-    expect(client.editPage).not.toHaveBeenCalled();
-
-    // Add new section
-    await acc.publish({ title: "t2", body: "b2" });
-    await vi.advanceTimersByTimeAsync(150);
-    expect(client.editPage).toHaveBeenCalledTimes(1);
-
-    // Another tick without new content — no extra edit
-    await vi.advanceTimersByTimeAsync(150);
-    expect(client.editPage).toHaveBeenCalledTimes(1);
-  });
-
-  it("handles FLOOD_WAIT on create gracefully", async () => {
+  it("returns null for pending requests on reset", async () => {
+    let resolveLater: () => void;
+    const waitPromise = new Promise<void>((r) => { resolveLater = r; });
     const client = mockClient({
-      createPage: vi.fn(async () => { throw new FloodWaitError(60000); }),
-    } as unknown as Partial<TelegraphClient>);
-    const acc = new TelegraphPageAccumulator(client, { flushIntervalMs: 3000, idleResetMs: 60000 });
+      publish: vi.fn(async () => {
+        await waitPromise;
+        return "https://telegra.ph/page";
+      }),
+    });
+    const queue = new TelegraphPublishQueue(client, { minIntervalMs: 10 });
 
-    const url = await acc.publish({ title: "t1", body: "b1" });
+    const p1 = queue.publish({ title: "t1", body: "b1" });
+    const p2 = queue.publish({ title: "t2", body: "b2" });
 
-    expect(url).toBeNull();
+    queue.reset();
+    resolveLater!();
+    await vi.runAllTimersAsync();
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r2).toBeNull();
   });
 
-  it("handles FLOOD_WAIT on edit gracefully and pauses", async () => {
-    const editMock = vi.fn(async () => { throw new FloodWaitError(10000); });
+  it("resets failure counter on successful publish", async () => {
+    let failCount = 0;
     const client = mockClient({
-      editPage: editMock,
-    } as unknown as Partial<TelegraphClient>);
-    const acc = new TelegraphPageAccumulator(client, { flushIntervalMs: 100, idleResetMs: 60000 });
+      publish: vi.fn(async () => {
+        failCount++;
+        if (failCount <= 2) return null;
+        return "https://telegra.ph/page";
+      }),
+    });
+    const queue = new TelegraphPublishQueue(client, {
+      circuitBreakerThreshold: 5,
+      minIntervalMs: 10,
+    });
 
-    await acc.publish({ title: "t1", body: "b1" });
-    await acc.publish({ title: "t2", body: "b2" });
+    const promises = Array.from({ length: 3 }, (_, i) =>
+      queue.publish({ title: `t${i}`, body: `b${i}` }),
+    );
 
-    await acc.flush();
+    await vi.runAllTimersAsync();
+    const results = await Promise.all(promises);
 
-    // After FLOOD_WAIT, further flushes are skipped
-    editMock.mockResolvedValue(true);
-    await acc.publish({ title: "t3", body: "b3" });
-    await acc.flush();
-
-    // Only 1 call because second flush was during cooldown
-    expect(editMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("resets state and creates a new page after reset()", async () => {
-    const client = mockClient();
-    const acc = new TelegraphPageAccumulator(client, { flushIntervalMs: 3000, idleResetMs: 60000 });
-
-    await acc.publish({ title: "t1", body: "b1" });
-    expect(client.createPage).toHaveBeenCalledTimes(1);
-
-    acc.reset();
-
-    (client.createPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ url: "https://telegra.ph/page-02", path: "page-02" });
-    const url = await acc.publish({ title: "t2", body: "b2" });
-
-    expect(url).toBe("https://telegra.ph/page-02");
-    expect(client.createPage).toHaveBeenCalledTimes(2);
-  });
-
-  it("accumulates sections into full page content", async () => {
-    const client = mockClient();
-    const acc = new TelegraphPageAccumulator(client, { flushIntervalMs: 3000, idleResetMs: 60000 });
-
-    await acc.publish({ title: "💻 git status", body: "```\nOn branch main\n```" });
-    await acc.publish({ title: "✍️ Edited file", body: "```diff\n+new\n-old\n```" });
-
-    await acc.flush();
-
-    const editCall = (client.editPage as ReturnType<typeof vi.fn>).mock.calls[0];
-    const body = editCall?.[2] as string;
-    expect(body).toContain("💻 git status");
-    expect(body).toContain("On branch main");
-    expect(body).toContain("---");
-    expect(body).toContain("✍️ Edited file");
-    expect(body).toContain("+new");
-  });
-
-  it("auto-resets after idle period and creates new page", async () => {
-    const client = mockClient();
-    const acc = new TelegraphPageAccumulator(client, { flushIntervalMs: 3000, idleResetMs: 1000 });
-
-    await acc.publish({ title: "t1", body: "b1" });
-    expect(client.createPage).toHaveBeenCalledTimes(1);
-
-    // Advance past idle threshold
-    vi.advanceTimersByTime(1500);
-
-    (client.createPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ url: "https://telegra.ph/page-02", path: "page-02" });
-    const url = await acc.publish({ title: "t2", body: "b2" });
-
-    expect(url).toBe("https://telegra.ph/page-02");
-    expect(client.createPage).toHaveBeenCalledTimes(2);
+    expect(results[2]).toBe("https://telegra.ph/page");
+    expect(queue.isOpen).toBe(false);
   });
 });

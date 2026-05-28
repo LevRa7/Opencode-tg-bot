@@ -2,45 +2,45 @@ import { logger } from "../utils/logger.js";
 import { FloodWaitError, TelegraphClient } from "./telegraph-client.js";
 import type { TechnicalDetailsPublishRequest, TechnicalDetailsPublisher } from "./types.js";
 
-export interface PageAccumulatorConfig {
-  flushIntervalMs: number;
-  idleResetMs: number;
-  pageTitle: string;
+export interface PublishQueueConfig {
+  maxQueueSize: number;
+  minIntervalMs: number;
+  staleTtlMs: number;
+  circuitBreakerThreshold: number;
+  circuitBreakerCooldownMs: number;
 }
 
-const DEFAULT_CONFIG: PageAccumulatorConfig = {
-  flushIntervalMs: 5000,
-  idleResetMs: 120_000,
-  pageTitle: "🔧 Task Details",
+interface QueueItem {
+  request: TechnicalDetailsPublishRequest;
+  enqueuedAt: number;
+  resolve: (url: string | null) => void;
+}
+
+const DEFAULT_CONFIG: PublishQueueConfig = {
+  maxQueueSize: 40,
+  minIntervalMs: 5000,
+  staleTtlMs: 60_000,
+  circuitBreakerThreshold: 5,
+  circuitBreakerCooldownMs: 300_000,
 };
 
-interface ActivePage {
-  url: string;
-  path: string;
-  createdAt: number;
-}
-
 /**
- * Accumulates tool event details on a single Telegraph page.
- * Creates one page, then edits it periodically (every 3s) with all content.
- * Avoids FLOOD_WAIT by minimizing API calls.
+ * Sequential queue for creating individual Telegraph pages.
+ * Each publish() call creates a SEPARATE page with its own URL.
+ * Enforces minimum interval between API calls to avoid FLOOD_WAIT.
  */
-export class TelegraphPageAccumulator implements TechnicalDetailsPublisher {
+export class TelegraphPublishQueue implements TechnicalDetailsPublisher {
+  private readonly queue: QueueItem[] = [];
+  private readonly config: PublishQueueConfig;
   private readonly client: TelegraphClient;
-  private readonly config: PageAccumulatorConfig;
 
-  private activePage: ActivePage | null = null;
-  private sections: Array<{ title: string; body: string }> = [];
-  private lastSectionCount = 0;
-  private dirty = false;
-  private flushTimer: ReturnType<typeof setInterval> | null = null;
-  private lastPublishAt = 0;
-  private creating = false;
-  private createPromise: Promise<ActivePage | null> | null = null;
+  private processing = false;
+  private lastRequestAt = 0;
+  private consecutiveFailures = 0;
   private cooldownUntil = 0;
   private disposed = false;
 
-  constructor(client: TelegraphClient, config?: Partial<PageAccumulatorConfig>) {
+  constructor(client: TelegraphClient, config?: Partial<PublishQueueConfig>) {
     this.client = client;
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
@@ -48,168 +48,151 @@ export class TelegraphPageAccumulator implements TechnicalDetailsPublisher {
   async publish(request: TechnicalDetailsPublishRequest): Promise<string | null> {
     if (this.disposed) return null;
 
-    if (this.isCoolingDown()) {
-      return this.activePage?.url ?? null;
+    if (this.isCircuitOpen()) {
+      logger.debug("[PublishQueue] Circuit breaker open, skipping request");
+      return null;
     }
 
-    // Check if page should be reset (long idle period)
-    if (this.activePage && Date.now() - this.lastPublishAt > this.config.idleResetMs) {
-      await this.flush();
-      this.reset();
+    while (this.queue.length >= this.config.maxQueueSize) {
+      const dropped = this.queue.shift();
+      if (dropped) {
+        dropped.resolve(null);
+        logger.debug("[PublishQueue] Queue overflow, dropped oldest request");
+      }
     }
 
-    this.sections.push({ title: request.title, body: request.body });
-    this.dirty = true;
-    this.lastPublishAt = Date.now();
-
-    // If no active page, create one
-    if (!this.activePage) {
-      const page = await this.getOrCreatePage();
-      if (!page) return null;
-      this.startFlushTimer();
-      return page.url;
-    }
-
-    // Page exists — return URL immediately; edit will happen on timer
-    return this.activePage.url;
+    return new Promise<string | null>((resolve) => {
+      this.queue.push({ request, enqueuedAt: Date.now(), resolve });
+      this.scheduleProcessing();
+    });
   }
 
   async flush(): Promise<void> {
-    if (!this.dirty || !this.activePage || this.sections.length === 0) return;
-    if (this.isCoolingDown()) return;
-
-    const fullContent = this.buildFullContent();
-    try {
-      const success = await this.client.editPage(
-        this.activePage.path,
-        this.config.pageTitle,
-        fullContent,
-      );
-      if (success) {
-        this.dirty = false;
-        this.lastSectionCount = this.sections.length;
-        logger.debug(`[PageAccumulator] Page updated (${this.sections.length} sections)`);
-      }
-    } catch (error) {
-      if (error instanceof FloodWaitError) {
-        this.cooldownUntil = Date.now() + error.waitMs;
-        logger.warn(
-          `[PageAccumulator] FLOOD_WAIT on edit (${error.waitMs}ms), pausing`,
-        );
-      } else {
-        logger.warn("[PageAccumulator] Failed to edit page", { error });
-      }
-    }
+    // Flush triggers immediate processing of all queued items
   }
 
   reset(): void {
-    this.activePage = null;
-    this.sections = [];
-    this.lastSectionCount = 0;
-    this.dirty = false;
-    this.creating = false;
-    this.createPromise = null;
-    this.stopFlushTimer();
+    this.drainQueue();
   }
 
   dispose(): void {
     this.disposed = true;
-    this.stopFlushTimer();
-    void this.flush();
+    this.drainQueue();
   }
 
-  get pageUrl(): string | null {
-    return this.activePage?.url ?? null;
+  get queueLength(): number {
+    return this.queue.length;
   }
 
-  get sectionCount(): number {
-    return this.sections.length;
+  get isOpen(): boolean {
+    return this.isCircuitOpen();
   }
 
-  private isCoolingDown(): boolean {
+  private isCircuitOpen(): boolean {
     if (this.cooldownUntil === 0) return false;
     if (Date.now() >= this.cooldownUntil) {
       this.cooldownUntil = 0;
+      this.consecutiveFailures = 0;
+      logger.info("[PublishQueue] Circuit breaker closed, resuming");
       return false;
     }
     return true;
   }
 
-  private async getOrCreatePage(): Promise<ActivePage | null> {
-    if (this.activePage) return this.activePage;
-
-    // Deduplicate concurrent create calls
-    if (this.creating && this.createPromise) {
-      return this.createPromise;
-    }
-
-    this.creating = true;
-    this.createPromise = this.doCreatePage();
-
-    try {
-      const result = await this.createPromise;
-      return result;
-    } finally {
-      this.creating = false;
-      this.createPromise = null;
-    }
+  private scheduleProcessing(): void {
+    if (this.processing || this.disposed) return;
+    this.processing = true;
+    void this.processLoop();
   }
 
-  private async doCreatePage(): Promise<ActivePage | null> {
-    const fullContent = this.buildFullContent();
+  private async processLoop(): Promise<void> {
+    while (this.queue.length > 0 && !this.disposed) {
+      if (this.isCircuitOpen()) {
+        this.drainQueue();
+        break;
+      }
+
+      const elapsed = Date.now() - this.lastRequestAt;
+      if (elapsed < this.config.minIntervalMs) {
+        await sleep(this.config.minIntervalMs - elapsed);
+      }
+
+      // Remove stale items
+      while (this.queue.length > 0) {
+        const front = this.queue[0]!;
+        if (Date.now() - front.enqueuedAt > this.config.staleTtlMs) {
+          this.queue.shift();
+          front.resolve(null);
+          logger.debug("[PublishQueue] Dropped stale request");
+        } else {
+          break;
+        }
+      }
+
+      if (this.queue.length === 0) break;
+
+      const item = this.queue.shift()!;
+      const url = await this.executePublish(item);
+      item.resolve(url);
+    }
+    this.processing = false;
+  }
+
+  private async executePublish(item: QueueItem): Promise<string | null> {
+    this.lastRequestAt = Date.now();
 
     try {
-      const result = await this.client.createPage(this.config.pageTitle, fullContent);
-      if (!result) return null;
+      const url = await this.client.publish(item.request);
 
-      this.activePage = {
-        url: result.url,
-        path: result.path,
-        createdAt: Date.now(),
-      };
-      this.dirty = false;
-      this.lastSectionCount = this.sections.length;
-      logger.info(`[PageAccumulator] Created new page: ${result.url}`);
-      return this.activePage;
+      if (url !== null) {
+        if (this.consecutiveFailures > 0) {
+          logger.info(`[PublishQueue] Recovered after ${this.consecutiveFailures} failures`);
+        }
+        this.consecutiveFailures = 0;
+        return url;
+      }
+
+      this.consecutiveFailures++;
+      this.checkCircuitBreaker();
+      return null;
     } catch (error) {
       if (error instanceof FloodWaitError) {
-        this.cooldownUntil = Date.now() + error.waitMs;
-        logger.warn(`[PageAccumulator] FLOOD_WAIT on create (${error.waitMs}ms)`);
-      } else {
-        logger.warn("[PageAccumulator] Failed to create page", { error });
+        this.consecutiveFailures++;
+        const cooldown = Math.max(error.waitMs, this.config.circuitBreakerCooldownMs);
+        this.cooldownUntil = Date.now() + cooldown;
+        logger.warn(
+          `[PublishQueue] FLOOD_WAIT (${error.waitMs}ms), pausing until ${new Date(this.cooldownUntil).toISOString()}`,
+        );
+        this.drainQueue();
+        return null;
       }
+
+      this.consecutiveFailures++;
+      this.checkCircuitBreaker();
+      logger.warn("[PublishQueue] Unexpected error during publish", { error });
       return null;
     }
   }
 
-  private buildFullContent(): string {
-    const parts: string[] = [];
-
-    for (let i = 0; i < this.sections.length; i++) {
-      const section = this.sections[i]!;
-      if (i > 0) {
-        parts.push("\n---\n");
-      }
-      parts.push(`## ${section.title}\n`);
-      parts.push(section.body);
-    }
-
-    return parts.join("\n");
-  }
-
-  private startFlushTimer(): void {
-    if (this.flushTimer) return;
-    this.flushTimer = setInterval(() => {
-      if (this.dirty && this.sections.length > this.lastSectionCount) {
-        void this.flush();
-      }
-    }, this.config.flushIntervalMs);
-  }
-
-  private stopFlushTimer(): void {
-    if (this.flushTimer) {
-      clearInterval(this.flushTimer);
-      this.flushTimer = null;
+  private checkCircuitBreaker(): void {
+    if (this.consecutiveFailures >= this.config.circuitBreakerThreshold) {
+      this.cooldownUntil = Date.now() + this.config.circuitBreakerCooldownMs;
+      logger.warn(
+        `[PublishQueue] Circuit breaker opened after ${this.consecutiveFailures} failures. ` +
+          `Cooldown until ${new Date(this.cooldownUntil).toISOString()}`,
+      );
+      this.drainQueue();
     }
   }
+
+  private drainQueue(): void {
+    while (this.queue.length > 0) {
+      const item = this.queue.shift();
+      item?.resolve(null);
+    }
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -71,7 +71,7 @@ import {
   formatTechnicalProgressWithDetails,
 } from "../summary/technical-progress/formatter.js";
 import { TelegraphClient } from "../telegraph/telegraph-client.js";
-import { TelegraphPageAccumulator } from "../telegraph/publish-queue.js";
+import { TelegraphPublishQueue } from "../telegraph/publish-queue.js";
 import { SubagentTelegraphLogger } from "../telegraph/subagent-logger.js";
 import { NoopDetailsPublisher } from "../telegraph/noop-details-publisher.js";
 import {
@@ -1408,7 +1408,7 @@ const telegraphClient = config.telegraph?.enabled
   ? new TelegraphClient(config.telegraph)
   : null;
 const technicalDetailsPublisher = telegraphClient
-  ? new TelegraphPageAccumulator(telegraphClient)
+  ? new TelegraphPublishQueue(telegraphClient)
   : new NoopDetailsPublisher();
 const subagentTelegraphLogger = telegraphClient
   ? new SubagentTelegraphLogger(telegraphClient)

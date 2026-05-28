@@ -139,12 +139,11 @@ describe("buildTelegraphContent", () => {
     ]);
   });
 
-  it("handles bash command format with $ prefix and code fence", () => {
-    const input = "$ git status\n```\nOn branch main\nnothing to commit\n```";
+  it("handles bash command with full code fence block", () => {
+    const input = "```bash\n$ git status\nOn branch main\nnothing to commit\n```";
     const result = buildTelegraphContent(input);
     expect(result).toEqual([
-      { tag: "p", children: ["$ git status"] },
-      { tag: "pre", children: ["On branch main\nnothing to commit"] },
+      { tag: "pre", children: ["$ git status\nOn branch main\nnothing to commit"] },
     ]);
   });
 });

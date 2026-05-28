@@ -254,7 +254,7 @@ describe("formatTechnicalProgressWithDetails", () => {
       text: '<a href="https://telegra.ph/npm-test">💻 Ran command — npm test (10 passed)</a>',
       format: "html",
     });
-    expect(publisher.publish).toHaveBeenCalledWith({ title: "💻 Ran command — npm test (10 passed)", body: "$ npm test\n```\n10 passed\n```" });
+    expect(publisher.publish).toHaveBeenCalledWith({ title: "💻 Ran command — npm test (10 passed)", body: "```bash\n$ npm test\n10 passed\n```" });
   });
 
   it("keeps the same unlinked one-line message when details are worthless", async () => {

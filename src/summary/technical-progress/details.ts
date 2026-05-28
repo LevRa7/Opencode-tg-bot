@@ -58,14 +58,9 @@ function buildBody(toolInfo: TechnicalProgressToolInfo): string | null {
     const command = typeof input.command === "string" ? input.command.trim() : "";
     const output = stringifyCandidate(toolInfo.metadata?.output);
     if (output) {
-      const parts: string[] = [];
-      if (command) {
-        parts.push(`$ ${command}`);
-      }
-      parts.push("```");
-      parts.push(output);
-      parts.push("```");
-      return parts.join("\n");
+      const header = command ? `$ ${command}` : "";
+      const body = [header, output].filter(Boolean).join("\n");
+      return ["```bash", body, "```"].join("\n");
     }
   }
 

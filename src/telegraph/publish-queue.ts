@@ -9,7 +9,7 @@ export interface PageAccumulatorConfig {
 }
 
 const DEFAULT_CONFIG: PageAccumulatorConfig = {
-  flushIntervalMs: 3000,
+  flushIntervalMs: 5000,
   idleResetMs: 120_000,
   pageTitle: "🔧 Task Details",
 };

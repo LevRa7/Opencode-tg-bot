@@ -23,7 +23,7 @@ export interface SubagentLogEvent {
   status?: string;
 }
 
-const FLUSH_INTERVAL_MS = 3000;
+const FLUSH_INTERVAL_MS = 5000;
 
 /**
  * Manages per-subagent Telegraph pages with activity logs.

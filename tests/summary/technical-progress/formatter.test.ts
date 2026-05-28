@@ -251,7 +251,7 @@ describe("formatTechnicalProgressWithDetails", () => {
     }), publisher);
 
     expect(result).toEqual({
-      text: '💻 Ran command — npm test (10 passed)  <a href="https://telegra.ph/npm-test">🔗</a>',
+      text: '<a href="https://telegra.ph/npm-test">💻 Ran command — npm test (10 passed)</a>',
       format: "html",
     });
     expect(publisher.publish).toHaveBeenCalledWith({ title: "💻 Ran command — npm test (10 passed)", body: "```bash\n$ npm test\n10 passed\n```" });
@@ -298,7 +298,7 @@ describe("formatTechnicalProgressWithDetails", () => {
       },
     }), publisher);
 
-    expect(result.text).toBe('📝 Updated task list — 1 task  <a href="https://telegra.ph/npm-test">🔗</a>');
+    expect(result.text).toBe('<a href="https://telegra.ph/npm-test">📝 Updated task list — 1 task</a>');
     expect(publisher.publish).toHaveBeenCalledWith({
       title: "📝 Updated task list — 1 task",
       body: "⏳ Review <b>& fix",
@@ -316,7 +316,7 @@ describe("formatTechnicalProgressWithDetails", () => {
     const result = await formatTechnicalProgressWithDetails(input, publisher);
 
     expect(result).toEqual({
-      text: '✍️ Edited file — index.ts (+2 −1)  <a href="https://telegra.ph/file-diff">🔗</a>',
+      text: '<a href="https://telegra.ph/file-diff">✍️ Edited file — index.ts (+2 −1)</a>',
       format: "html",
     });
     expect(publisher.publish).toHaveBeenCalledWith({
@@ -336,7 +336,7 @@ describe("formatTechnicalProgressWithDetails", () => {
     const result = await formatTechnicalProgressWithDetails(input, publisher);
 
     expect(result).toEqual({
-      text: '💭 Thinking  <a href="https://telegra.ph/reasoning">🔗</a>',
+      text: '<a href="https://telegra.ph/reasoning">💭 Thinking</a>',
       format: "html",
     });
     expect(publisher.publish).toHaveBeenCalledWith({

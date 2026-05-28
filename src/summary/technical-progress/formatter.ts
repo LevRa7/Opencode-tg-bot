@@ -96,7 +96,7 @@ export async function formatTechnicalProgressWithDetails(
   }
 
   return {
-    text: `${escapeTelegramHtml(base.text)}  <a href="${escapeTelegramHtml(url)}">🔗</a>`,
+    text: `<a href="${escapeTelegramHtml(url)}">${escapeTelegramHtml(base.text)}</a>`,
     format: "html",
   };
 }

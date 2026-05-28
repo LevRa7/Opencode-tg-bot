@@ -14,6 +14,7 @@ interface SummaryAggregatorPrivateState {
   onFileChangeCallback: null;
   bot: null;
   chatId: null;
+  messageThreadId: undefined;
   typingIndicatorEnabled: boolean;
   resolveSessionDirectory: (sessionId: string) => string | null;
 }
@@ -84,6 +85,7 @@ export async function resetSingletonState(): Promise<void> {
   aggregator.onFileChangeCallback = null;
   aggregator.bot = null;
   aggregator.chatId = null;
+  aggregator.messageThreadId = undefined;
   aggregator.typingIndicatorEnabled = true;
   aggregator.resolveSessionDirectory = () => null;
 

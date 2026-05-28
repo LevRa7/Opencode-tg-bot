@@ -562,6 +562,7 @@ export async function processUserPrompt(
   }
 
   summaryAggregator.setSession(currentSession.id);
+  summaryAggregator.setBotAndChatId(bot, ctx.chat!.id, extractMessageThreadIdFromContext(ctx));
 
   try {
     const currentAgent = getStoredAgent();

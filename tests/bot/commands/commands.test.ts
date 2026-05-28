@@ -80,6 +80,7 @@ vi.mock("../../../src/opencode/client.js", () => ({
 vi.mock("../../../src/summary/aggregator.js", () => ({
   summaryAggregator: {
     setSession: mocked.setSessionSummaryMock,
+    setBotAndChatId: vi.fn(),
     clear: mocked.clearSummaryMock,
   },
 }));

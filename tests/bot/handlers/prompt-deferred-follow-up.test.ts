@@ -28,6 +28,7 @@ const mocked = vi.hoisted(() => ({
   pinnedClearMock: vi.fn(),
   pinnedGetContextInfoMock: vi.fn(),
   summarySetSessionMock: vi.fn(),
+  summarySetBotAndChatIdMock: vi.fn(),
   summaryClearMock: vi.fn(),
   stopEventListeningMock: vi.fn(),
   interactionGetSnapshotMock: vi.fn(),
@@ -131,6 +132,7 @@ vi.mock("../../../src/pinned/manager.js", () => ({
 vi.mock("../../../src/summary/aggregator.js", () => ({
   summaryAggregator: {
     setSession: mocked.summarySetSessionMock,
+    setBotAndChatId: mocked.summarySetBotAndChatIdMock,
     clearSession: mocked.clearSessionMock,
     clear: mocked.summaryClearMock,
   },

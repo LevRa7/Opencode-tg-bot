@@ -459,6 +459,7 @@ async function executeCommand(
 
   await deps.ensureEventSubscription(session.directory);
   summaryAggregator.setSession(session.id);
+  summaryAggregator.setBotAndChatId(deps.bot, ctx.chat.id, extractMessageThreadIdFromContext(ctx));
 
   const sessionIsBusy = await isSessionBusy(session.id, session.directory);
   if (sessionIsBusy) {

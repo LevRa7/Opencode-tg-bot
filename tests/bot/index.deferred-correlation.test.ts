@@ -450,6 +450,7 @@ vi.mock("../../src/summary/aggregator.js", () => ({
       }
     }),
     setSession: vi.fn(),
+    setBotAndChatId: vi.fn(),
   },
 }));
 vi.mock("../../src/summary/formatter.js", () => ({

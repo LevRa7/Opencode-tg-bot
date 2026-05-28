@@ -1343,6 +1343,77 @@ describe("summary/aggregator", () => {
     }
   });
 
+  it("passes message_thread_id to sendChatAction when messageThreadId is set", () => {
+    vi.useFakeTimers();
+
+    try {
+      const sendChatAction = vi.fn().mockResolvedValue(true);
+      summaryAggregator.setBotAndChatId(
+        {
+          api: {
+            sendChatAction,
+          },
+        } as never,
+        123,
+        42,
+      );
+
+      summaryAggregator.setSession("session-thread");
+      summaryAggregator.processEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-thread-typing",
+            sessionID: "session-thread",
+            role: "assistant",
+            time: { created: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      expect(sendChatAction).toHaveBeenCalledTimes(1);
+      expect(sendChatAction).toHaveBeenCalledWith(123, "typing", {
+        message_thread_id: 42,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends typing without message_thread_id when messageThreadId is not set", () => {
+    vi.useFakeTimers();
+
+    try {
+      const sendChatAction = vi.fn().mockResolvedValue(true);
+      summaryAggregator.setBotAndChatId(
+        {
+          api: {
+            sendChatAction,
+          },
+        } as never,
+        123,
+      );
+
+      summaryAggregator.setSession("session-no-thread");
+      summaryAggregator.processEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: "message-no-thread-typing",
+            sessionID: "session-no-thread",
+            role: "assistant",
+            time: { created: Date.now() },
+          },
+        },
+      } as unknown as Event);
+
+      expect(sendChatAction).toHaveBeenCalledTimes(1);
+      expect(sendChatAction).toHaveBeenCalledWith(123, "typing");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("clears tracked root bookkeeping after one root errors and another later goes idle", async () => {
     const onThinking = vi.fn();
     summaryAggregator.setOnThinking(onThinking);

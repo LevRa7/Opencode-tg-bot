@@ -212,6 +212,7 @@ class SummaryAggregator {
   private knownTextPartIds: Map<string, Set<string>> = new Map();
   private bot: Bot | null = null;
   private chatId: number | null = null;
+  private messageThreadId: number | undefined = undefined;
   private typingTimer: ReturnType<typeof setInterval> | null = null;
   private typingIndicatorEnabled = true;
   private partHashes: Map<string, Set<string>> = new Map();
@@ -224,9 +225,10 @@ class SummaryAggregator {
   private pendingChildSessionIdsByParent: Map<string, string[]> = new Map();
   private fallbackSubagentCardIdsByParent: Map<string, string[]> = new Map();
 
-  setBotAndChatId(bot: Bot, chatId: number): void {
+  setBotAndChatId(bot: Bot, chatId: number, messageThreadId?: number): void {
     this.bot = bot;
     this.chatId = chatId;
+    this.messageThreadId = messageThreadId;
   }
 
   setSessionDirectoryResolver(resolver: SessionDirectoryResolver): void {
@@ -324,9 +326,21 @@ class SummaryAggregator {
 
     const sendTyping = () => {
       if (this.bot && this.chatId) {
-        this.bot.api.sendChatAction(this.chatId, "typing").catch((err) => {
+        try {
+          const promise =
+            this.messageThreadId !== undefined
+              ? this.bot.api.sendChatAction(this.chatId, "typing", {
+                  message_thread_id: this.messageThreadId,
+                })
+              : this.bot.api.sendChatAction(this.chatId, "typing");
+          if (promise && typeof promise.catch === "function") {
+            promise.catch((err: unknown) => {
+              logger.error("Failed to send typing action:", err);
+            });
+          }
+        } catch (err) {
           logger.error("Failed to send typing action:", err);
-        });
+        }
       }
     };
 

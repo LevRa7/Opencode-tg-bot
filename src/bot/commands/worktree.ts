@@ -2,11 +2,12 @@ import { CommandContext, Context, InlineKeyboard } from "grammy";
 import { config } from "../../config.js";
 import { getGitWorktreeContext, type GitWorktreeEntry } from "../../git/worktree.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
-import { getProjectByWorktree } from "../../project/manager.js";
+import { getProjectByWorktree, getProjects } from "../../project/manager.js";
 import { upsertSessionDirectory } from "../../session/cache-manager.js";
 import { getCurrentProject } from "../../settings/manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import {
   appendInlineMenuCancelButton,
   ensureActiveInlineMenu,
@@ -143,10 +144,24 @@ async function loadCurrentWorktreeContext() {
   }
 
   const context = await getGitWorktreeContext(currentProject.worktree);
+  if (!context) {
+    return { currentProject, context: null };
+  }
+
+  try {
+    const projects = await getProjects({ includeLinkedWorktrees: true });
+    const knownPaths = new Set(projects.map((p) => p.worktree));
+    context.worktrees = context.worktrees.filter((w) => knownPaths.has(w.path));
+  } catch {
+    // preserve full list on error
+  }
+
   return { currentProject, context };
 }
 
 export async function worktreeCommand(ctx: CommandContext<Context>) {
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+
   try {
     if (isForegroundBusy(ctx)) {
       await replyBusyBlocked(ctx);
@@ -156,17 +171,26 @@ export async function worktreeCommand(ctx: CommandContext<Context>) {
     const { currentProject, context } = await loadCurrentWorktreeContext();
 
     if (!currentProject) {
-      await ctx.reply(t("worktree.project_not_selected"));
+      await ctx.reply(
+        t("worktree.project_not_selected"),
+        withMessageThreadId(undefined, messageThreadId),
+      );
       return;
     }
 
     if (!context) {
-      await ctx.reply(t("worktree.not_git_repo"));
+      await ctx.reply(
+        t("worktree.not_git_repo"),
+        withMessageThreadId(undefined, messageThreadId),
+      );
       return;
     }
 
     if (context.worktrees.length === 0) {
-      await ctx.reply(t("worktree.empty"));
+      await ctx.reply(
+        t("worktree.empty"),
+        withMessageThreadId(undefined, messageThreadId),
+      );
       return;
     }
 
@@ -179,7 +203,10 @@ export async function worktreeCommand(ctx: CommandContext<Context>) {
     });
   } catch (error) {
     logger.error("[Bot] Error loading worktrees:", error);
-    await ctx.reply(t("worktree.fetch_error"));
+    await ctx.reply(
+      t("worktree.fetch_error"),
+      withMessageThreadId(undefined, messageThreadId),
+    );
   }
 }
 
@@ -205,13 +232,18 @@ export async function handleWorktreeCallback(
     return true;
   }
 
+  const messageThreadId = extractMessageThreadIdFromContext(ctx);
+
   try {
     const { currentProject, context } = await loadCurrentWorktreeContext();
 
     if (!currentProject) {
       clearAllInteractionState("worktree_project_missing");
       await ctx.answerCallbackQuery();
-      await ctx.reply(t("worktree.project_not_selected"));
+      await ctx.reply(
+        t("worktree.project_not_selected"),
+        withMessageThreadId(undefined, messageThreadId),
+      );
       return true;
     }
 
@@ -263,16 +295,20 @@ export async function handleWorktreeCallback(
       : await switchToProject(ctx, selectedProjectInfo, "worktree_switched");
 
     await ctx.answerCallbackQuery();
-    await ctx.reply(t("worktree.selected", { worktree: selectedWorktree.path }), {
-      reply_markup: replyKeyboard,
-    });
+    await ctx.reply(
+      t("worktree.selected", { worktree: selectedWorktree.path }),
+      withMessageThreadId({ reply_markup: replyKeyboard }, messageThreadId),
+    );
     await ctx.deleteMessage();
     return true;
   } catch (error) {
     logger.error("[Bot] Error handling worktree callback:", error);
     clearAllInteractionState("worktree_select_error");
     await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
-    await ctx.reply(t("worktree.select_error"));
+    await ctx.reply(
+      t("worktree.select_error"),
+      withMessageThreadId(undefined, messageThreadId),
+    );
     return true;
   }
 }

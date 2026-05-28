@@ -107,7 +107,10 @@ describe("bot/commands/worktree", () => {
     const ctx = createCommandContext();
     await worktreeCommand(ctx as never);
 
-    expect(ctx.reply).toHaveBeenCalledWith(t("worktree.project_not_selected"));
+    expect(ctx.reply).toHaveBeenCalledWith(
+      t("worktree.project_not_selected"),
+      {},
+    );
     expect(mocked.replyWithInlineMenuMock).not.toHaveBeenCalled();
   });
 

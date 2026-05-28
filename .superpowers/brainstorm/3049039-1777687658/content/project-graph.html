@@ -1,0 +1,53 @@
+<h2>Интерактивная схема проекта</h2>
+<p class="subtitle">
+  Вот полная карта взаимосвязей модулей, менеджеров и внешних сервисов. Красным выделены те самые
+  "хрупкие" места, которые мы обсуждали.
+</p>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: "dark" });
+</script>
+
+<div class="mockup" style="background: #111; padding: 20px">
+  <div class="mermaid">
+    graph TD subgraph Telegram_Cloud [Telegram Cloud] User((User)) TG_API[Telegram Bot API] end
+    subgraph Bot_Process [Bot Node.js Process] Handler[src/bot/index.ts - Main Handler]
+    Manager[Managers Layer] Aggregator[src/summary/aggregator.ts] Delivery[Delivery & Rendering]
+    subgraph Managers [State Managers] SessionMgr[SessionManager] ProjectMgr[ProjectManager]
+    AuthMgr[AuthMiddleware] InteractionGuard[InteractionGuard] ThreadMgr[ThreadManager] end end
+    subgraph Local_Runtime [Local Workspace / Docker] OC_Server[OpenCode Server] STT_API[Whisper STT
+    API] Filesystem[(settings.json / Workspaces)] end %% Flows User -->|Text/Media| TG_API TG_API
+    -->|Update| AuthMgr AuthMgr -->|Authorized| InteractionGuard InteractionGuard -->|Clear| Handler
+    Handler -->|Prompt| SessionMgr SessionMgr -->|Call API| OC_Server OC_Server -->|SSE Events|
+    Aggregator Aggregator -->|Formatted| Delivery Delivery -->|Message/File| TG_API %% Fragile
+    Points Delivery -.->|Fragile: Timeout| TG_API style TG_API
+    fill:#333,stroke:#0088cc,stroke-width:2px ThreadMgr -.->|Fragile: Thread Leak| Handler style
+    ThreadMgr fill:#111,stroke:#f00,stroke-width:2px,stroke-dasharray: 5 5 OC_Server -.->|Fragile:
+    Crash| Filesystem style OC_Server fill:#111,stroke:#f00,stroke-width:3px %% Restarts &
+    Protections Restart[src/opencode/auto-restart.ts] -->|Fix| OC_Server style Restart
+    fill:#004400,stroke:#0f0 InteractionGuard -->|Shield| Handler style InteractionGuard
+    fill:#002244,stroke:#00f,stroke-width:2px
+  </div>
+</div>
+
+<div class="section">
+  <h3>Что мы видим на графе:</h3>
+  <ul>
+    <li>
+      <b>Interaction Guard:</b> Тот самый "щит". Он перехватывает запросы до того, как они попадут в
+      основной обработчик, если сессия занята.
+    </li>
+    <li>
+      <b>Thread Manager:</b> Модуль, который следит, чтобы сообщения из одной темы форума не
+      "утекали" в другую (проблема Thread Leak).
+    </li>
+    <li>
+      <b>OpenCode Server:</b> Центральный узел в Docker. Мы выделили его жирным красным, так как это
+      точка отказа, которую лечит <b>auto-restart</b>.
+    </li>
+    <li>
+      <b>Delivery:</b> Узел отправки, который борется с таймаутами Telegram (пунктирная линия).
+    </li>
+  </ul>
+</div>

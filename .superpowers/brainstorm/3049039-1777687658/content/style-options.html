@@ -1,0 +1,40 @@
+<h2>Какой стиль схемы тебе ближе?</h2>
+<p class="subtitle">
+  Схема должна показывать "хрупкие" моменты (ошибки, таймауты). Выбери, как мы это художественно
+  обыграем:
+</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Техно-нуар / Киберпанк</h3>
+      <p>
+        Темный фон, неоновые линии данных. Хрупкие узлы (например, Telegram API или LLM-прокси)
+        искрят, покрыты глитчами или трещинами. Красные "error" потоки перехватываются блоками
+        retry.
+      </p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Завод / Механизм (Стимпанк)</h3>
+      <p>
+        Бот как конвейер. Очереди сообщений — это шестеренки. Хрупкие моменты — это места, где из
+        труб идет пар (таймауты), или застревают детали (отвал OpenCode сервера), но есть "механизмы
+        защиты".
+      </p>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Чистая изометрия (Isometric Tech)</h3>
+      <p>
+        Аккуратные 3D-блоки (Docker контейнеры, Telegram-облако, OpenCode). Хрупкость показана через
+        "шатающиеся" мостики между блоками, предупреждающие знаки (⚠️) и красные зоны перегрузки.
+      </p>
+    </div>
+  </div>
+</div>

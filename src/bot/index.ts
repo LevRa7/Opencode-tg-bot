@@ -2165,7 +2165,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               if (publishedToolDetailCallIds.has(callKey)) {
                 return;
               }
-              publishedToolDetailCallIds.add(callKey);
 
               const linkedProgress = await formatTechnicalProgressWithDetails(
                 toolInfo,
@@ -2174,6 +2173,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               if (linkedProgress.format !== "html" || !linkedProgress.text) {
                 return;
               }
+
+              publishedToolDetailCallIds.add(callKey);
 
               if (!isSessionCurrent(toolInfo.sessionId)) {
                 return;

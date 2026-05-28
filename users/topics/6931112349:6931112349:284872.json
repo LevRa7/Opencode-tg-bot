@@ -1,0 +1,18 @@
+{
+  "currentProject": {
+    "id": "22460fc65b183e6921717bba0c84ccfcf4b57982",
+    "worktree": "/home/me/MyProjects/opencode-tg",
+    "name": "/home/me/MyProjects/opencode-tg"
+  },
+  "currentSession": {
+    "id": "ses_1f33023f4ffe5POzlbo55bPT88",
+    "title": "New session - 2026-05-09T12:56:49.419Z",
+    "directory": "/home/me/MyProjects/opencode-tg"
+  },
+  "pinnedMessageId": 49533,
+  "currentModel": {
+    "providerID": "deepseek",
+    "modelID": "deepseek-v4-flash",
+    "variant": "default"
+  }
+}

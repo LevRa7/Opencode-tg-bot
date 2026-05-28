@@ -12,6 +12,7 @@ import { isForegroundBusy, replyBusyBlocked } from "../utils/busy-guard.js";
 import { getCurrentProject } from "../../settings/manager.js";
 import { sendDownloadedFile } from "../utils/send-downloaded-file.js";
 import { formatFileSize } from "../utils/file-download.js";
+import { getTenantBrowserRoots, isWithinAllowedTenantRoot, isAllowedTenantRoot } from "../utils/browser-roots.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 
@@ -59,7 +60,8 @@ function truncateLabel(label: string, maxLen: number = MAX_BUTTON_LABEL_LENGTH):
 }
 
 function pathToDisplayPath(absolutePath: string): string {
-  const home = os.homedir();
+  const roots = getTenantBrowserRoots();
+  const home = roots.length > 0 ? roots[0] : os.homedir();
   if (absolutePath === home) {
     return "~";
   }
@@ -93,29 +95,13 @@ function getRootPath(filePath: string): string {
   return getPathApi(filePath).parse(filePath).root;
 }
 
-function isSamePath(leftPath: string, rightPath: string): boolean {
-  return getPathApi(rightPath).relative(rightPath, leftPath) === "";
-}
 
-function isPathWithinDirectory(targetPath: string, directoryPath: string): boolean {
-  const pathApi = getPathApi(directoryPath);
-  const relativePath = pathApi.relative(directoryPath, targetPath);
-  return relativePath === "" || (!relativePath.startsWith("..") && !pathApi.isAbsolute(relativePath));
-}
 
 function getProjectRoot(): string | null {
   return getCurrentProject()?.worktree ?? null;
 }
 
-function isWithinProjectRoot(targetPath: string): boolean {
-  const projectRoot = getProjectRoot();
-  return projectRoot !== null && isPathWithinDirectory(targetPath, projectRoot);
-}
 
-function isProjectRoot(targetPath: string): boolean {
-  const projectRoot = getProjectRoot();
-  return projectRoot !== null && isSamePath(targetPath, projectRoot);
-}
 
 function buildLsHeader(displayPath: string, totalCount: number, page: number, totalPages: number): string {
   let header = `📁 ${t("ls.header")}\n<code>${escapeHtml(displayPath)}</code>`;
@@ -222,7 +208,7 @@ async function scanDirectory(
   | { error: string }
 > {
   try {
-    if (!isWithinProjectRoot(dirPath)) {
+    if (!isWithinAllowedTenantRoot(dirPath)) {
       return { error: t("ls.access_denied") };
     }
     const dirEntries = await fs.readdir(dirPath, { withFileTypes: true });
@@ -273,7 +259,7 @@ function buildBrowseKeyboard(
         : encodeFileCallback(entry.fullPath, page);
     keyboard.text(label, callbackData).row();
   }
-  if (hasParent && !isProjectRoot(currentPath)) {
+  if (hasParent && !isAllowedTenantRoot(currentPath)) {
     keyboard.text(t("open.back"), encodePathForCallback(CALLBACK_NAV_PREFIX, getParentPath(currentPath))).row();
   }
   if (totalPages > 1) {
@@ -307,7 +293,7 @@ function hasBrowseActions(currentPath: string, hasParent: boolean, totalCount: n
   if (totalCount > 0) {
     return true;
   }
-  return hasParent && !isProjectRoot(currentPath);
+  return hasParent && !isAllowedTenantRoot(currentPath);
 }
 
 async function renderBrowseView(dirPath: string, page: number = 0) {
@@ -331,7 +317,7 @@ async function renderBrowseView(dirPath: string, page: number = 0) {
 
 async function getFileDetails(filePath: string): Promise<FileDetails | { error: string }> {
   try {
-    if (!isWithinProjectRoot(filePath)) {
+    if (!isWithinAllowedTenantRoot(filePath)) {
       return { error: t("ls.access_denied") };
     }
     const stat = await fs.stat(filePath);
@@ -363,17 +349,18 @@ async function renderFileDetailsView(filePath: string, page: number) {
 }
 
 function resolveInitialDirectory(userId?: number): string | null {
-  const currentProject = getProjectRoot();
-  if (!currentProject) {
+  const roots = getTenantBrowserRoots();
+  const rootDir = roots.length > 0 ? roots[0] : getProjectRoot();
+  if (!rootDir) {
     return null;
   }
   if (userId) {
     const cachedDirectory = sessionDirectories.get(userId);
-    if (cachedDirectory && isPathWithinDirectory(cachedDirectory, currentProject)) {
+    if (cachedDirectory && isWithinAllowedTenantRoot(cachedDirectory)) {
       return cachedDirectory;
     }
   }
-  return currentProject;
+  return rootDir;
 }
 
 export function clearLsPathIndex(): void {
@@ -391,8 +378,8 @@ export async function lsCommand(ctx: CommandContext<Context>): Promise<void> {
     return;
   }
   clearLsPathIndex();
-  const projectRoot = getProjectRoot();
-  if (!projectRoot) {
+  const roots = getTenantBrowserRoots();
+  if (roots.length === 0) {
     await ctx.reply(t("bot.project_not_selected"));
     return;
   }
@@ -402,7 +389,7 @@ export async function lsCommand(ctx: CommandContext<Context>): Promise<void> {
     await ctx.reply(t("bot.project_not_selected"));
     return;
   }
-  if (!isWithinProjectRoot(targetDir)) {
+  if (!isWithinAllowedTenantRoot(targetDir)) {
     await ctx.reply(`❌ ${t("ls.access_denied")}`);
     return;
   }
@@ -479,7 +466,7 @@ export async function handleLsCallback(ctx: Context): Promise<boolean> {
   try {
     const navPath = decodePathFromCallback(CALLBACK_NAV_PREFIX, data);
     if (navPath !== null) {
-      if (!isWithinProjectRoot(navPath)) {
+      if (!isWithinAllowedTenantRoot(navPath)) {
         await ctx.answerCallbackQuery({ text: t("ls.access_denied") });
         return true;
       }
@@ -488,7 +475,7 @@ export async function handleLsCallback(ctx: Context): Promise<boolean> {
     }
     const pageInfo = decodePaginationCallback(data);
     if (pageInfo !== null) {
-      if (!isWithinProjectRoot(pageInfo.path)) {
+      if (!isWithinAllowedTenantRoot(pageInfo.path)) {
         await ctx.answerCallbackQuery({ text: t("ls.access_denied") });
         return true;
       }
@@ -497,7 +484,7 @@ export async function handleLsCallback(ctx: Context): Promise<boolean> {
     }
     const fileInfo = decodeFileCallback(data);
     if (fileInfo !== null) {
-      if (!isWithinProjectRoot(fileInfo.path)) {
+      if (!isWithinAllowedTenantRoot(fileInfo.path)) {
         await ctx.answerCallbackQuery({ text: t("ls.access_denied") });
         return true;
       }
@@ -506,7 +493,7 @@ export async function handleLsCallback(ctx: Context): Promise<boolean> {
     }
     const downloadPath = decodePathFromCallback(CALLBACK_DOWNLOAD_PREFIX, data);
     if (downloadPath !== null) {
-      if (!isWithinProjectRoot(downloadPath)) {
+      if (!isWithinAllowedTenantRoot(downloadPath)) {
         await ctx.answerCallbackQuery({ text: t("ls.access_denied") });
         return true;
       }
@@ -515,7 +502,7 @@ export async function handleLsCallback(ctx: Context): Promise<boolean> {
     }
     const backInfo = decodeBackCallback(data);
     if (backInfo !== null) {
-      if (!isWithinProjectRoot(backInfo.path)) {
+      if (!isWithinAllowedTenantRoot(backInfo.path)) {
         await ctx.answerCallbackQuery({ text: t("ls.access_denied") });
         return true;
       }

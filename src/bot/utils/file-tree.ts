@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { t } from "../../i18n/index.js";
+import { getTenantBrowserRoots } from "./browser-roots.js";
 
 export interface DirectoryEntry {
   name: string;
@@ -26,6 +27,10 @@ export interface DirectoryScanError {
 export const MAX_ENTRIES_PER_PAGE = 8;
 
 export function getHomeDirectory(): string {
+  const roots = getTenantBrowserRoots();
+  if (roots.length > 0) {
+    return roots[0];
+  }
   return os.homedir();
 }
 

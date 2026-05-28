@@ -22,7 +22,7 @@ function parseModelArgument(rawArgument: string): { providerID: string; modelID:
 }
 
 async function findRuntimeModel(providerID: string, modelID: string): Promise<ModelInfo | null> {
-  const catalog = await getRuntimeModelCatalog();
+  const catalog = await getRuntimeModelCatalog({ force: true });
   const provider = catalog.providers.find((item) => item.providerID === providerID);
   const modelExists = provider?.models.some((model) => model.modelID === modelID) ?? false;
 

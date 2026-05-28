@@ -407,7 +407,7 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
 export async function showModelSelectionMenu(ctx: Context): Promise<void> {
   try {
     const currentModel = fetchCurrentModel();
-    const catalog = await getRuntimeModelCatalog();
+    const catalog = await getRuntimeModelCatalog({ force: true });
     const keyboard = buildProviderSelectionKeyboard(catalog, currentModel);
 
     if (keyboard.inline_keyboard.length === 0) {

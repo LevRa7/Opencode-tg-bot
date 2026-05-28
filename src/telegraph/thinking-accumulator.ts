@@ -76,8 +76,9 @@ export class ThinkingTelegraphAccumulator implements TechnicalDetailsPublisher {
   private async doFlush(): Promise<void> {
     if (!this.page || this.page.thoughts.length === 0) return;
 
-    const content = this.page.thoughts
-      .map((t, i) => `## ${i + 1}\n\n${t}`)
+    const reversed = [...this.page.thoughts].reverse();
+    const content = reversed
+      .map((t, i) => `## ${reversed.length - i}\n\n${t}`)
       .join("\n\n---\n\n");
 
     try {

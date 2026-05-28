@@ -111,6 +111,7 @@ export const fr: I18nDictionary = {
   "background.question_asked": "❓ Une session en arrière-plan attend une réponse : {session}",
   "background.permission_asked":
     "🔐 Une session en arrière-plan a demandé des autorisations : {session}",
+  "background.forum_not_found": "Chat forum introuvable. Démarrez une session dans un groupe avec des sujets.",
   "bot.external_user_input": "Entrée utilisateur reçue dans la session attachée :",
   "bot.session_error": "🔴 OpenCode a renvoyé une erreur : {message}",
   "bot.session_retry":

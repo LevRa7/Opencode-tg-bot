@@ -468,6 +468,22 @@ class ThreadContextManager {
     return this.sessionByContext.get(contextKey)?.directory ?? null;
   }
 
+  findForumChatIdForUser(userId: number): number | null {
+    this.ensureHydrated();
+
+    for (const scope of this.scopeBySessionId.values()) {
+      if (
+        scope.userId === userId &&
+        typeof scope.messageThreadId === "number" &&
+        scope.messageThreadId > 0
+      ) {
+        return scope.chatId;
+      }
+    }
+
+    return null;
+  }
+
   getActiveTarget(): TelegramThreadTarget | null {
     return this.activeScope
       ? { chatId: this.activeScope.chatId, messageThreadId: this.activeScope.messageThreadId }

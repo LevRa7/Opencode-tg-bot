@@ -104,6 +104,7 @@ export const ru: I18nDictionary = {
     "background.assistant_response": "🔔 В фоновой сессии пришёл ответ ассистента: {session}",
   "background.question_asked": "❓ В фоновой сессии нужен ответ: {session}",
   "background.permission_asked": "🔐 В фоновой сессии запрошены права: {session}",
+  "background.forum_not_found": "Форум-чат не найден. Начните сессию в группе с топиками.",
   "bot.external_user_input": "В подключенной сессии получен пользовательский ввод:",
   "bot.session_error": "🔴 OpenCode вернул ошибку: {message}",
   "bot.session_retry":

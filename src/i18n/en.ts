@@ -105,6 +105,7 @@ export const en = {
     "background.assistant_response": "🔔 Assistant replied in background session: {session}",
   "background.question_asked": "❓ Background session needs an answer: {session}",
   "background.permission_asked": "🔐 Background session requested permissions: {session}",
+  "background.forum_not_found": "Forum chat not found. Start a session in a group with topics.",
   "bot.external_user_input": "User input received in attached session:",
   "bot.session_error": "🔴 OpenCode returned an error: {message}",
   "bot.session_retry":

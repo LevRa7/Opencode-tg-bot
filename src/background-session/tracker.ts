@@ -53,6 +53,7 @@ class BackgroundSessionTracker {
   private pendingAssistantResponsesBySessionId = new Map<string, PendingAssistantResponse>();
   private questionRequestIds = new Set<string>();
   private permissionRequestIds = new Set<string>();
+  private undeliveredMessageIds = new Map<string, string[]>();
 
   setDirectory(directory: string): void {
     if (this.directory === directory) {
@@ -75,6 +76,7 @@ class BackgroundSessionTracker {
     this.pendingAssistantResponsesBySessionId.clear();
     this.questionRequestIds.clear();
     this.permissionRequestIds.clear();
+    this.undeliveredMessageIds.clear();
   }
 
   processEvent(event: Event, currentSessionId: string | null): void {
@@ -165,6 +167,11 @@ class BackgroundSessionTracker {
     }
 
     this.pendingAssistantResponsesBySessionId.delete(sessionId);
+
+    const existing = this.undeliveredMessageIds.get(sessionId) ?? [];
+    existing.push(pendingResponse.messageId);
+    this.undeliveredMessageIds.set(sessionId, existing);
+
     this.emitNotification({
       kind: "assistant_response",
       sessionId,
@@ -200,6 +207,12 @@ class BackgroundSessionTracker {
       sessionTitle: this.sessionTitles.get(sessionId),
       requestId: id,
     });
+  }
+
+  getAndClearUndeliveredMessages(sessionId: string): string[] {
+    const ids = this.undeliveredMessageIds.get(sessionId) ?? [];
+    this.undeliveredMessageIds.delete(sessionId);
+    return ids;
   }
 
   private shouldIgnoreSession(sessionId: string, currentSessionId: string | null): boolean {

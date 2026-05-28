@@ -97,6 +97,7 @@ export const zh: I18nDictionary = {
     "background.assistant_response": "🔔 助手已在后台会话中回复：{session}",
   "background.question_asked": "❓ 后台会话需要回答：{session}",
   "background.permission_asked": "🔐 后台会话请求了权限：{session}",
+  "background.forum_not_found": "未找到论坛聊天。请在带有主题的群组中开始会话。",
   "bot.external_user_input": "已在附加会话中收到用户输入：",
   "bot.session_error": "🔴 OpenCode 返回错误：{message}",
   "bot.session_retry": "🔁 {message}\n\n提供方在重复重试时持续返回同一错误。使用 /abort 可停止。",

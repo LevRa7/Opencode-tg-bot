@@ -110,6 +110,7 @@ export const de: I18nDictionary = {
     "🔔 Assistent hat in einer Hintergrundsitzung geantwortet: {session}",
   "background.question_asked": "❓ Hintergrundsitzung benötigt eine Antwort: {session}",
   "background.permission_asked": "🔐 Hintergrundsitzung hat Berechtigungen angefordert: {session}",
+  "background.forum_not_found": "Forum-Chat nicht gefunden. Starten Sie eine Sitzung in einer Gruppe mit Themen.",
   "bot.external_user_input": "Benutzereingabe in angehängter Sitzung empfangen:",
   "bot.session_error": "🔴 OpenCode meldete einen Fehler: {message}",
   "bot.session_retry":

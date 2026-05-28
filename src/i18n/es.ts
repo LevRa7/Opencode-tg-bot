@@ -110,6 +110,7 @@ export const es: I18nDictionary = {
     "🔔 El asistente respondió en una sesión en segundo plano: {session}",
   "background.question_asked": "❓ Una sesión en segundo plano necesita una respuesta: {session}",
   "background.permission_asked": "🔐 Una sesión en segundo plano solicitó permisos: {session}",
+  "background.forum_not_found": "Chat de foro no encontrado. Inicia una sesión en un grupo con temas.",
   "bot.external_user_input": "Se recibió entrada del usuario en la sesión adjunta:",
   "bot.session_error": "🔴 OpenCode devolvió un error: {message}",
   "bot.session_retry":

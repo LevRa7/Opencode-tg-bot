@@ -22,6 +22,8 @@ import { threadContextManager } from "../../thread/manager.js";
 import { attachSessionForScope } from "../../attach/service.js";
 import { showPermissionRequest } from "../handlers/permission.js";
 import { showCurrentQuestion } from "../handlers/question.js";
+import { backgroundSessionTracker } from "../../background-session/tracker.js";
+import type { TelegramConversationScope } from "../../telegram/scope.js";
 
 const SESSION_CALLBACK_PREFIX = "session:";
 const SESSION_PAGE_CALLBACK_PREFIX = "session:page:";
@@ -208,7 +210,19 @@ export async function handleBackgroundSessionOpen(ctx: Context): Promise<boolean
     return true;
   }
 
+  const userId = ctx.from?.id;
+  if (!userId) {
+    await ctx.answerCallbackQuery({ text: t("callback.processing_error") });
+    return true;
+  }
+
   try {
+    const forumChatId = threadContextManager.findForumChatIdForUser(userId);
+    if (!forumChatId) {
+      await ctx.answerCallbackQuery({ text: t("background.forum_not_found") });
+      return true;
+    }
+
     const { data: session, error } = await opencodeClient.session.get({
       sessionID: sessionId,
       directory: currentProject.worktree,
@@ -217,6 +231,20 @@ export async function handleBackgroundSessionOpen(ctx: Context): Promise<boolean
     if (error || !session) {
       throw error || new Error("Failed to get session details");
     }
+
+    const topicName =
+      session.title.length > TELEGRAM_TOPIC_NAME_MAX_LENGTH
+        ? session.title.slice(0, TELEGRAM_TOPIC_NAME_MAX_LENGTH - 1)
+        : session.title;
+
+    const topicResult = await ctx.api.createForumTopic(forumChatId, topicName);
+    const messageThreadId = topicResult.message_thread_id;
+
+    const newScope: TelegramConversationScope = {
+      userId,
+      chatId: forumChatId,
+      messageThreadId,
+    };
 
     const sessionInfo: SessionInfo = {
       id: session.id,
@@ -230,18 +258,48 @@ export async function handleBackgroundSessionOpen(ctx: Context): Promise<boolean
     }
 
     setCurrentSession(sessionInfo);
-    const activeScope = threadContextManager.getActiveScope();
-    if (activeScope) {
-      await attachSessionForScope({
-        scope: activeScope,
-        session: sessionInfo,
-        reason: "selected_session",
-        restoreQuestion: () => Promise.resolve(),
-        restorePermission: () => Promise.resolve(),
-      });
-    }
+    await attachSessionForScope({
+      scope: newScope,
+      session: sessionInfo,
+      reason: "selected_session",
+      restoreQuestion: () => showCurrentQuestion(ctx.api, forumChatId, messageThreadId),
+      restorePermission: (request) =>
+        showPermissionRequest(ctx.api, forumChatId, request, messageThreadId),
+    });
 
     clearAllInteractionState("session_switched");
+
+    const undeliveredIds = backgroundSessionTracker.getAndClearUndeliveredMessages(sessionId);
+    if (undeliveredIds.length > 0) {
+      const { data: messages } = await opencodeClient.session.messages({
+        sessionID: sessionId,
+        directory: currentProject.worktree,
+      });
+
+      if (messages) {
+        const undeliveredSet = new Set(undeliveredIds);
+        const undeliveredMessages = (messages as Array<{ info: { id: string; time?: { created?: number } }; parts: Array<{ type: string; text?: string }> }>)
+          .filter((msg) => undeliveredSet.has(msg.info.id))
+          .sort((a, b) => (a.info.time?.created ?? 0) - (b.info.time?.created ?? 0));
+
+        for (const msg of undeliveredMessages) {
+          const textParts = msg.parts
+            .filter((part) => part.type === "text" && typeof part.text === "string")
+            .map((part) => part.text as string);
+
+          const text = textParts.join("").trim();
+          if (text) {
+            const truncated =
+              text.length > TELEGRAM_MESSAGE_LIMIT
+                ? text.slice(0, TELEGRAM_MESSAGE_LIMIT - 3) + "..."
+                : text;
+            await ctx.api.sendMessage(forumChatId, truncated, {
+              message_thread_id: messageThreadId,
+            });
+          }
+        }
+      }
+    }
 
     await ctx.answerCallbackQuery();
 
@@ -251,8 +309,10 @@ export async function handleBackgroundSessionOpen(ctx: Context): Promise<boolean
       // ignore - button may already be removed
     }
 
-    await ctx.reply(
+    await ctx.api.sendMessage(
+      forumChatId,
       t("sessions.selected", { title: session.title }),
+      { message_thread_id: messageThreadId },
     );
   } catch (error) {
     logger.error("[Sessions] Error opening background session:", error);

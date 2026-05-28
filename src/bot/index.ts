@@ -1610,10 +1610,25 @@ async function deliverBackgroundSessionNotification(
     return;
   }
 
-  const adminChatId = config.telegram.adminUserId;
+  const scope = threadContextManager.getSessionScope(notification.sessionId);
+  if (!scope) {
+    logger.debug(
+      `[BackgroundNotification] No scope found for session ${notification.sessionId}, skipping notification`,
+    );
+    return;
+  }
+
+  if (typeof scope.messageThreadId === "number" && scope.messageThreadId > 0) {
+    logger.debug(
+      `[BackgroundNotification] Session ${notification.sessionId} is bound to topic ${scope.messageThreadId}, skipping notification`,
+    );
+    return;
+  }
+
+  const recipientChatId = scope.userId;
   const openButton = buildBackgroundSessionOpenKeyboard(notification.sessionId);
   await activeBotInstance.api.sendMessage(
-    adminChatId,
+    recipientChatId,
     formatBackgroundSessionNotification(notification),
     { reply_markup: openButton },
   );

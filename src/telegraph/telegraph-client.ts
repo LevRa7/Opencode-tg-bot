@@ -1,36 +1,96 @@
 import { logger } from "../utils/logger.js";
+import { buildTelegraphContent } from "./content-builder.js";
+import type { TelegraphElement } from "./content-builder.js";
 import type { TechnicalDetailsPublishRequest, TechnicalDetailsPublisher, TelegraphConfig } from "./types.js";
 
-interface TelegraphCreatePageResponse {
+interface TelegraphPageResponse {
   ok: boolean;
+  error?: string;
   result?: {
+    path?: string;
     url?: string;
   };
 }
 
-const createPageUrl = "https://api.telegra.ph/createPage";
+const API_BASE = "https://api.telegra.ph";
 const truncatedMarker = "\n[truncated]";
+const FLOOD_WAIT_REGEX = /FLOOD_WAIT_(\d+)/;
 
-interface TelegraphNode {
-  tag: "p";
-  children: string[];
+export class FloodWaitError extends Error {
+  constructor(public readonly waitMs: number) {
+    super(`FLOOD_WAIT: must wait ${waitMs}ms`);
+    this.name = "FloodWaitError";
+  }
+}
+
+export interface CreatePageResult {
+  url: string;
+  path: string;
 }
 
 export class TelegraphClient implements TechnicalDetailsPublisher {
   constructor(private readonly config: TelegraphConfig) {}
 
   async publish(request: TechnicalDetailsPublishRequest): Promise<string | null> {
-    if (!this.config.enabled || !this.config.accessToken || request.body.trim().length === 0) {
+    const result = await this.createPage(request.title, request.body);
+    return result?.url ?? null;
+  }
+
+  async flush(): Promise<void> {}
+
+  reset(): void {}
+
+  async createPage(title: string, body: string): Promise<CreatePageResult | null> {
+    if (!this.config.enabled || !this.config.accessToken || body.trim().length === 0) {
       return null;
     }
 
+    const params = new URLSearchParams();
+    params.set("access_token", this.config.accessToken);
+    params.set("title", title);
+    params.set("author_name", this.config.authorName);
+    params.set("content", JSON.stringify(this.buildNodes(body)));
+    params.set("return_content", "false");
+
+    const payload = await this.apiCall(`${API_BASE}/createPage`, params);
+    if (!payload) return null;
+
+    const url = validateTelegraphUrl(payload.result?.url);
+    const path = payload.result?.path;
+    if (!url || !path) return null;
+
+    return { url, path };
+  }
+
+  async editPage(path: string, title: string, body: string): Promise<boolean> {
+    if (!this.config.enabled || !this.config.accessToken) {
+      return false;
+    }
+
+    const params = new URLSearchParams();
+    params.set("access_token", this.config.accessToken);
+    params.set("title", title);
+    params.set("author_name", this.config.authorName);
+    params.set("content", JSON.stringify(this.buildNodes(body)));
+    params.set("return_content", "false");
+
+    const payload = await this.apiCall(`${API_BASE}/editPage/${path}`, params);
+    return payload !== null;
+  }
+
+  private buildNodes(body: string): TelegraphElement[] {
+    const truncated = truncateBody(body, this.config.maxChars);
+    return buildTelegraphContent(truncated);
+  }
+
+  private async apiCall(url: string, body: URLSearchParams): Promise<TelegraphPageResponse | null> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
 
     try {
-      const response = await fetch(createPageUrl, {
+      const response = await fetch(url, {
         method: "POST",
-        body: this.buildRequestBody(request),
+        body,
         signal: controller.signal,
       });
 
@@ -39,39 +99,31 @@ export class TelegraphClient implements TechnicalDetailsPublisher {
         return null;
       }
 
-      const payload = (await response.json()) as TelegraphCreatePageResponse & { error?: string };
+      const payload = (await response.json()) as TelegraphPageResponse;
       if (!payload.ok) {
+        const errorText = payload.error ?? "unknown error";
+        const floodWait = parseFloodWaitSeconds(errorText);
+        if (floodWait !== null) {
+          logger.warn(`[TelegraphClient] FLOOD_WAIT: ${floodWait}s`);
+          throw new FloodWaitError(floodWait * 1000);
+        }
         logger.warn(
-          `[TelegraphClient] Telegraph API returned an unsuccessful response: ${payload.error ?? "unknown error"}`,
+          `[TelegraphClient] Telegraph API returned an unsuccessful response: ${errorText}`,
         );
         return null;
       }
 
-      return validateTelegraphUrl(payload.result?.url);
+      return payload;
     } catch (error) {
-      logger.warn("[TelegraphClient] Failed to publish technical details", safeError(error));
+      if (error instanceof FloodWaitError) {
+        throw error;
+      }
+      logger.warn("[TelegraphClient] Failed to call Telegraph API", safeError(error));
       return null;
     } finally {
       clearTimeout(timeout);
     }
   }
-
-  private buildRequestBody(request: TechnicalDetailsPublishRequest): URLSearchParams {
-    const body = new URLSearchParams();
-    body.set("access_token", this.config.accessToken);
-    body.set("title", request.title);
-    body.set("author_name", this.config.authorName);
-    body.set("content", JSON.stringify(buildContentNodes(truncateBody(request.body, this.config.maxChars))));
-    body.set("return_content", "false");
-    return body;
-  }
-}
-
-function buildContentNodes(body: string): TelegraphNode[] {
-  return body
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length > 0)
-    .map((line) => ({ tag: "p", children: [line] }));
 }
 
 function truncateBody(body: string, maxChars: number): string {
@@ -106,6 +158,11 @@ function validateTelegraphUrl(value: string | undefined): string | null {
     logger.warn("[TelegraphClient] Telegraph API returned an invalid URL");
     return null;
   }
+}
+
+function parseFloodWaitSeconds(text: string): number | null {
+  const match = text.match(FLOOD_WAIT_REGEX);
+  return match ? parseInt(match[1]!, 10) : null;
 }
 
 function safeError(error: unknown): { name?: string } {

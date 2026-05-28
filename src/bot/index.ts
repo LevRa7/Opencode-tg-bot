@@ -71,6 +71,8 @@ import {
   formatTechnicalProgressWithDetails,
 } from "../summary/technical-progress/formatter.js";
 import { TelegraphClient } from "../telegraph/telegraph-client.js";
+import { TelegraphPageAccumulator } from "../telegraph/publish-queue.js";
+import { SubagentTelegraphLogger } from "../telegraph/subagent-logger.js";
 import { NoopDetailsPublisher } from "../telegraph/noop-details-publisher.js";
 import {
   createPlainRenderedParts,
@@ -1326,6 +1328,7 @@ const responseStreamer = new ResponseStreamer({
       format,
       messageThreadId: deliveryTarget?.messageThreadId ?? target.messageThreadId,
       deliveryTarget,
+      useHtmlFallback: true,
     });
 
     if (typeof messageId !== "number") {
@@ -1349,6 +1352,7 @@ const responseStreamer = new ResponseStreamer({
         text,
         options,
         format,
+        useHtmlFallback: true,
       });
     } catch (error) {
       const errorParts: string[] = [];
@@ -1400,9 +1404,15 @@ const messageDraftStreamManager = new MessageDraftStreamManager(
 configureThinkingBlockDraftIdAllocator(sharedMessageDraftIdAllocator);
 export { messageDraftStreamManager };
 
-const technicalDetailsPublisher = config.telegraph?.enabled
+const telegraphClient = config.telegraph?.enabled
   ? new TelegraphClient(config.telegraph)
+  : null;
+const technicalDetailsPublisher = telegraphClient
+  ? new TelegraphPageAccumulator(telegraphClient)
   : new NoopDetailsPublisher();
+const subagentTelegraphLogger = telegraphClient
+  ? new SubagentTelegraphLogger(telegraphClient)
+  : null;
 
 const toolCallStreamer = new ToolCallStreamer({
   throttleMs: RESPONSE_STREAM_THROTTLE_MS,
@@ -1573,6 +1583,7 @@ export function createSendRenderedPart({
       format: finalParseMode,
       messageThreadId: deliveryTarget?.messageThreadId ?? messageThreadId,
       deliveryTarget,
+      useHtmlFallback: true,
     });
   };
 }
@@ -1980,6 +1991,9 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     const completedRun = assistantRunState.finishRun(sessionId, "session_idle");
 
+    // Flush accumulated Telegraph page content immediately on task completion
+    void technicalDetailsPublisher.flush();
+
     // 2026-05-01: Diagnose maternal session not cleaning up. If finishRun returns
     // null the run may have been missing (never started / already cleared).
     if (!completedRun) {
@@ -2187,6 +2201,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
   });
 
+  const subagentLastLoggedTool = new Map<string, string>();
+
   summaryAggregator.setOnSubagent(async (sessionId, subagents, eventTimeMs) => {
     const orderedPublication = scheduleOrderedPublication(sessionId, {
       eventTimeMs,
@@ -2260,8 +2276,41 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         pendingChildRoutingSetupBySessionId.delete(subagent.sessionId);
       }
 
+      // Log subagent tool events to Telegraph and collect URLs
+      if (subagentTelegraphLogger) {
+        for (const subagent of subagents) {
+          if (!subagent.sessionId) continue;
+          const toolKey = subagent.currentTool ?? subagent.status ?? "";
+          const lastKey = subagentLastLoggedTool.get(subagent.sessionId);
+          if (toolKey !== lastKey) {
+            subagentLastLoggedTool.set(subagent.sessionId, toolKey);
+            void subagentTelegraphLogger.logEvent({
+              sessionId: subagent.sessionId,
+              title: subagent.description || "Subagent",
+              tool: subagent.currentToolTitle,
+              detail: subagent.currentTool,
+              status: subagent.status === "completed" || subagent.status === "error" ? subagent.status : undefined,
+            });
+          }
+        }
+      }
+
       const enrichedSubagents = subagents.map((subagent) => {
         if (!subagent.sessionId) return subagent;
+
+        // Use Telegraph page URL if available
+        if (subagentTelegraphLogger) {
+          const telegraphUrl = subagentTelegraphLogger.getPageUrl(subagent.sessionId);
+          if (telegraphUrl) {
+            return {
+              ...subagent,
+              topicLinkLabel: t("subagent.topic_link"),
+              topicLinkUrl: telegraphUrl,
+            };
+          }
+        }
+
+        // Fallback to Telegram topic link
         const linkState = subagentTopicService.getLinkState(subagent.sessionId);
         if (!linkState) return subagent;
         if (linkState.kind === "stopped") {
@@ -2279,7 +2328,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         return;
       }
 
-      const renderedCards = await renderSubagentCards(enrichedSubagents);
+      const activeSubagents = enrichedSubagents.filter(
+        (s) => s.status !== "completed" && s.status !== "error",
+      );
+      const renderedCards = await renderSubagentCards(activeSubagents);
       if (!renderedCards) {
         orderedPublication.resolve(null);
         return;
@@ -3169,6 +3221,17 @@ export function createBot(): Bot<Context> {
       logger.debug(`[Bot] Heartbeat #${heartbeatCounter} - event loop alive`);
     }
   }, 5000);
+
+  // Disable link previews for all outgoing text messages
+  bot.api.config.use(async (prev, method, payload, signal) => {
+    if (method === "sendMessage" || method === "editMessageText") {
+      const p = payload as Record<string, unknown>;
+      if (!p.link_preview_options) {
+        p.link_preview_options = { is_disabled: true };
+      }
+    }
+    return prev(method, payload, signal);
+  });
 
   // Log all API calls for diagnostics
   let lastGetUpdatesTime = Date.now();

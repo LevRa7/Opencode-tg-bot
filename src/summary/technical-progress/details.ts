@@ -58,13 +58,20 @@ function buildBody(toolInfo: TechnicalProgressToolInfo): string | null {
     const command = typeof input.command === "string" ? input.command.trim() : "";
     const output = stringifyCandidate(toolInfo.metadata?.output);
     if (output) {
-      return command ? `${command}\n${output}` : output;
+      const parts: string[] = [];
+      if (command) {
+        parts.push(`$ ${command}`);
+      }
+      parts.push("```");
+      parts.push(output);
+      parts.push("```");
+      return parts.join("\n");
     }
   }
 
   if (["grep", "glob"].includes(toolInfo.tool)) {
     const output = stringifyCandidate(toolInfo.metadata?.output);
-    if (output) return output;
+    if (output) return ["```", output, "```"].join("\n");
     const results = toolInfo.metadata?.results;
     if (Array.isArray(results) && results.length > 0) {
       return `Found ${results.length} result(s)`;

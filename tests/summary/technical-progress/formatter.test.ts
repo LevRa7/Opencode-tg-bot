@@ -65,6 +65,8 @@ describe("technical progress titles and metrics", () => {
 function publisherReturning(url: string | null): TechnicalDetailsPublisher {
   return {
     publish: vi.fn().mockResolvedValue(url),
+    flush: vi.fn().mockResolvedValue(undefined),
+    reset: vi.fn(),
   };
 }
 
@@ -252,7 +254,7 @@ describe("formatTechnicalProgressWithDetails", () => {
       text: '<a href="https://telegra.ph/npm-test">💻 Ran command — npm test (10 passed)</a>',
       format: "html",
     });
-    expect(publisher.publish).toHaveBeenCalledWith({ title: "💻 Ran command — npm test (10 passed)", body: "npm test\n10 passed" });
+    expect(publisher.publish).toHaveBeenCalledWith({ title: "💻 Ran command — npm test (10 passed)", body: "$ npm test\n```\n10 passed\n```" });
   });
 
   it("keeps the same unlinked one-line message when details are worthless", async () => {
@@ -319,7 +321,7 @@ describe("formatTechnicalProgressWithDetails", () => {
     });
     expect(publisher.publish).toHaveBeenCalledWith({
       title: "✍️ Edited file — index.ts (+2 −1)",
-      body: "src/index.ts\n+2 −1",
+      body: "src/index.ts  +2 −1\n",
     });
   });
 

@@ -27,6 +27,7 @@ export interface SendBotTextParams {
   format?: TelegramTextFormat;
   messageThreadId?: number;
   deliveryTarget?: TelegramDeliveryTarget | null;
+  useHtmlFallback?: boolean;
 }
 
 interface EditBotTextParams {
@@ -49,6 +50,7 @@ interface SendStreamedBotTextSendParams {
   format?: TelegramTextFormat;
   messageThreadId?: number;
   deliveryTarget?: TelegramDeliveryTarget | null;
+  useHtmlFallback?: boolean;
 }
 
 interface SendStreamedBotTextEditParams {
@@ -58,6 +60,7 @@ interface SendStreamedBotTextEditParams {
   text: string;
   rawFallbackText?: string;
   options?: TelegramEditMessageOptions;
+  useHtmlFallback?: boolean;
   format?: TelegramTextFormat;
 }
 
@@ -139,6 +142,7 @@ export async function sendStreamedBotText(
       rawFallbackText: renderConfig.fallbackText,
       options: params.options,
       parseMode: renderConfig.parseMode,
+      useHtmlFallback: params.useHtmlFallback,
     });
     return;
   }
@@ -157,6 +161,7 @@ export async function sendStreamedBotText(
     ),
     parseMode: renderConfig.parseMode,
     messageThreadId: params.messageThreadId,
+    useHtmlFallback: params.useHtmlFallback,
   });
 
   return (result as { message_id?: number })?.message_id ?? null;
@@ -171,6 +176,7 @@ export async function sendBotText({
   format = "raw",
   messageThreadId,
   deliveryTarget,
+  useHtmlFallback,
 }: SendBotTextParams): Promise<number | null> {
   logger.debug(
     `[TelegramText] sendBotText: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, format=${format}, textLength=${text.length}`,
@@ -192,6 +198,7 @@ export async function sendBotText({
       options,
       format,
       messageThreadId,
+      useHtmlFallback,
       deliveryTarget,
     });
   } catch (error) {

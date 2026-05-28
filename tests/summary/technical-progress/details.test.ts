@@ -21,7 +21,7 @@ describe("buildTechnicalDetails", () => {
     expect(buildTechnicalDetails({ tool: "unknown", metadata: { result: {} } } as never)).toBeNull();
     expect(buildTechnicalDetails({ tool: "unknown", metadata: { result: [] } } as never)).toBeNull();
     expect(buildTechnicalDetails({ tool: "bash", title: "x", metadata: {} } as never)).toBeNull();
-    expect(buildTechnicalDetails({ tool: "bash", metadata: { output: "TOKEN=abc123456789" } } as never)?.body).toBe("TOKEN=[REDACTED]");
+    expect(buildTechnicalDetails({ tool: "bash", metadata: { output: "TOKEN=abc123456789" } } as never)?.body).toBe("```\nTOKEN=[REDACTED]\n```");
   });
 
   it("skips unsupported structured payloads without crashing", () => {

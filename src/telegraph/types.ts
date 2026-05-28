@@ -13,4 +13,6 @@ export interface TechnicalDetailsPublishRequest {
 
 export interface TechnicalDetailsPublisher {
   publish(request: TechnicalDetailsPublishRequest): Promise<string | null>;
+  flush(): Promise<void>;
+  reset(): void;
 }

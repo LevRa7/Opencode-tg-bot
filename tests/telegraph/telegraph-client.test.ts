@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TelegraphClient } from "../../src/telegraph/telegraph-client.js";
+import { FloodWaitError, TelegraphClient } from "../../src/telegraph/telegraph-client.js";
 import { logger } from "../../src/utils/logger.js";
 
 vi.mock("../../src/utils/logger.js", () => ({
@@ -52,14 +52,13 @@ afterEach(() => {
 
 describe("TelegraphClient", () => {
   it("publishes Telegraph nodes with plain text content and returns a valid Telegraph URL", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, result: { url: "https://telegra.ph/test" } }));
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, result: { url: "https://telegra.ph/test", path: "test" } }));
 
     const result = await client().publish({ title: "npm test", body: "<hello>\nworld" });
 
     expect(result).toBe("https://telegra.ph/test");
     expect(sentContent()).toEqual([
-      { tag: "p", children: ["<hello>"] },
-      { tag: "p", children: ["world"] },
+      { tag: "p", children: ["<hello>", { tag: "br" }, "world"] },
     ]);
   });
 
@@ -89,7 +88,7 @@ describe("TelegraphClient", () => {
   });
 
   it("skips empty and whitespace-only lines when building content nodes", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, result: { url: "https://telegra.ph/test" } }));
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, result: { url: "https://telegra.ph/test", path: "test" } }));
 
     await client().publish({ title: "npm test", body: "line1\n\nline2\n   \nline3" });
 
@@ -139,5 +138,20 @@ describe("TelegraphClient", () => {
 
     expect(result).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("throws FloodWaitError when Telegraph returns FLOOD_WAIT", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: false, error: "FLOOD_WAIT_120" }));
+
+    await expect(client().publish({ title: "npm test", body: "details" }))
+      .rejects.toThrow(FloodWaitError);
+
+    try {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ ok: false, error: "FLOOD_WAIT_300" }));
+      await client().publish({ title: "test", body: "content" });
+    } catch (e) {
+      expect(e).toBeInstanceOf(FloodWaitError);
+      expect((e as FloodWaitError).waitMs).toBe(300_000);
+    }
   });
 });

@@ -2,6 +2,7 @@ import { logger } from "../../utils/logger.js";
 import type { Api, RawApi } from "grammy";
 import { withMessageThreadId } from "./message-thread.js";
 import { sanitizeHtmlForTelegram } from "./html-sanitize.js";
+import { markdownToHtml } from "./reasoning-format.js";
 
 type SendMessageApi = Pick<Api<RawApi>, "sendMessage">;
 type SendMessageDraftApi = Pick<Api<RawApi>, "sendMessageDraft">;
@@ -23,6 +24,7 @@ interface SendMessageWithMarkdownFallbackParams {
   options?: TelegramSendMessageOptions;
   parseMode?: TelegramParseMode;
   messageThreadId?: number;
+  useHtmlFallback?: boolean;
 }
 
 interface SendMessageDraftWithMarkdownFallbackParams {
@@ -45,6 +47,7 @@ interface EditMessageWithMarkdownFallbackParams {
   options?: TelegramEditMessageOptions;
   parseMode?: TelegramParseMode;
   messageThreadId?: number;
+  useHtmlFallback?: boolean;
 }
 
 const TELEGRAM_PARSE_ERROR_MARKERS = [
@@ -164,6 +167,8 @@ interface SafeTelegramRender<TOptions extends TelegramFormattingOptions | undefi
   initialText: string;
   initialOptions: NonNullable<TOptions> | Record<string, never>;
   escapedRetryText: string | null;
+  htmlFallbackText: string | null;
+  htmlFallbackOptions: NonNullable<TOptions> | Record<string, never>;
   fallbackText: string;
   fallbackOptions: NonNullable<TOptions> | Record<string, never>;
   hasFormatting: boolean;
@@ -177,12 +182,14 @@ function buildSafeTelegramRender<TOptions extends TelegramFormattingOptions | un
   options,
   parseMode,
   messageThreadId,
+  useHtmlFallback,
 }: {
   text: string;
   rawFallbackText?: string;
   options?: TOptions;
   parseMode?: TelegramParseMode;
   messageThreadId?: number;
+  useHtmlFallback?: boolean;
 }): SafeTelegramRender<TOptions> {
   const resolvedOptions = resolveMessageThreadOptions(options, messageThreadId);
   const hasEntities = !!resolvedOptions?.entities?.length;
@@ -197,12 +204,25 @@ function buildSafeTelegramRender<TOptions extends TelegramFormattingOptions | un
     Reflect.set(initialOptions, "parse_mode", parseMode);
   }
 
+  const strippedOptions = stripTelegramFormattingOptions(resolvedOptions) ?? {};
+
+  // HTML fallback: convert markdown to HTML for a middle-ground fallback
+  // between entities/MarkdownV2 and raw text (opt-in, only when source is not already HTML)
+  const shouldTryHtmlFallback = useHtmlFallback && parseMode !== "HTML" && hasFormatting;
+  const htmlText = shouldTryHtmlFallback ? markdownToHtml(rawFallbackText ?? text) : null;
+  const htmlFallbackOptions = {
+    ...strippedOptions,
+    ...(htmlText ? { parse_mode: "HTML" } : {}),
+  } as unknown as NonNullable<TOptions> | Record<string, never>;
+
   return {
     initialText,
     initialOptions,
     escapedRetryText: parseMode === "MarkdownV2" && !hasEntities ? escapeTelegramMarkdownV2(text) : null,
+    htmlFallbackText: htmlText,
+    htmlFallbackOptions,
     fallbackText: rawFallbackText ?? (parseMode === "MarkdownV2" ? unescapeTelegramMarkdownV2(text) : text),
-    fallbackOptions: stripTelegramFormattingOptions(resolvedOptions) ?? {},
+    fallbackOptions: strippedOptions ?? {},
     hasFormatting,
     shouldRetryEscapedMarkdown: parseMode === "MarkdownV2" && !hasEntities,
     formatName: parseMode ? (parseMode === "HTML" ? "HTML" : "Markdown") : "entities",
@@ -265,6 +285,7 @@ export async function sendMessageWithMarkdownFallback({
   options,
   parseMode,
   messageThreadId,
+  useHtmlFallback,
 }: SendMessageWithMarkdownFallbackParams): Promise<Awaited<ReturnType<SendMessageApi["sendMessage"]>>> {
   const render = buildSafeTelegramRender({
     text,
@@ -272,6 +293,7 @@ export async function sendMessageWithMarkdownFallback({
     options,
     parseMode,
     messageThreadId,
+    useHtmlFallback,
   });
 
   if (!render.hasFormatting) {
@@ -297,18 +319,25 @@ export async function sendMessageWithMarkdownFallback({
           if (!isTelegramParseError(escapedError)) {
             throw escapedError;
           }
-
-          logger.warn(
-            "[Bot] Escaped Markdown parse failed, retrying assistant message in raw mode",
-            escapedError,
-          );
-          return api.sendMessage(chatId, render.fallbackText, render.fallbackOptions);
         }
     }
 
+    // HTML fallback: render markdown as HTML before falling to raw
+    if (render.htmlFallbackText) {
+      logger.warn(
+        `[Bot] ${render.formatName} parse failed, retrying with HTML fallback`,
+      );
+      try {
+        return await api.sendMessage(chatId, render.htmlFallbackText, render.htmlFallbackOptions);
+      } catch (htmlError) {
+        if (!isTelegramParseError(htmlError)) {
+          throw htmlError;
+        }
+      }
+    }
+
     logger.warn(
-      `[Bot] ${render.formatName} parse failed, retrying assistant message in raw mode`,
-      error,
+      `[Bot] All formatted attempts failed, sending in raw mode`,
     );
     return api.sendMessage(chatId, render.fallbackText, render.fallbackOptions);
   }
@@ -360,19 +389,19 @@ export async function sendMessageDraftWithMarkdownFallback({
           if (!isTelegramParseError(escapedError)) {
             throw escapedError;
           }
-
-          logger.warn(
-            "[Bot] Escaped Markdown parse failed, retrying assistant draft in raw mode",
-            escapedError,
-          );
-          return api.sendMessageDraft(chatId, draftId, render.fallbackText, render.fallbackOptions);
         }
     }
 
-    logger.warn(
-      `[Bot] ${render.formatName} parse failed, retrying assistant draft in raw mode`,
-      error,
-    );
+    if (render.htmlFallbackText) {
+      try {
+        return await api.sendMessageDraft(chatId, draftId, render.htmlFallbackText, render.htmlFallbackOptions);
+      } catch (htmlError) {
+        if (!isTelegramParseError(htmlError)) {
+          throw htmlError;
+        }
+      }
+    }
+
     return api.sendMessageDraft(chatId, draftId, render.fallbackText, render.fallbackOptions);
   }
 }
@@ -386,6 +415,7 @@ export async function editMessageWithMarkdownFallback({
   options,
   parseMode,
   messageThreadId,
+  useHtmlFallback,
 }: EditMessageWithMarkdownFallbackParams): Promise<Awaited<ReturnType<EditMessageApi["editMessageText"]>>> {
   const render = buildSafeTelegramRender({
     text,
@@ -393,6 +423,7 @@ export async function editMessageWithMarkdownFallback({
     options,
     parseMode,
     messageThreadId,
+    useHtmlFallback,
   });
 
   if (!render.hasFormatting) {
@@ -423,18 +454,25 @@ export async function editMessageWithMarkdownFallback({
           if (!isTelegramParseError(escapedError)) {
             throw escapedError;
           }
-
-          logger.warn(
-            "[Bot] Escaped Markdown parse failed, retrying edited message in raw mode",
-            escapedError,
-          );
-          return api.editMessageText(chatId, messageId, render.fallbackText, render.fallbackOptions);
         }
     }
 
+    // HTML fallback: render markdown as HTML before falling to raw
+    if (render.htmlFallbackText) {
+      logger.warn(
+        `[Bot] ${render.formatName} parse failed, retrying edit with HTML fallback`,
+      );
+      try {
+        return await api.editMessageText(chatId, messageId, render.htmlFallbackText, render.htmlFallbackOptions);
+      } catch (htmlError) {
+        if (!isTelegramParseError(htmlError)) {
+          throw htmlError;
+        }
+      }
+    }
+
     logger.warn(
-      `[Bot] ${render.formatName} parse failed, retrying edited message in raw mode`,
-      error,
+      `[Bot] All formatted attempts failed, editing in raw mode`,
     );
     return api.editMessageText(chatId, messageId, render.fallbackText, render.fallbackOptions);
   }

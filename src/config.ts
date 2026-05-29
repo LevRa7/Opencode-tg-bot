@@ -258,6 +258,8 @@ export const config = {
     authorName: getEnvVar("TELEGRAPH_AUTHOR_NAME", false) || "opencode-tg",
     timeoutMs: getOptionalPositiveIntEnvVar("TELEGRAPH_TIMEOUT_MS", 3000),
     maxChars: getOptionalPositiveIntEnvVar("TELEGRAPH_MAX_CHARS", 25000),
+    translateEnabled: getOptionalBooleanEnvVar("TELEGRAPH_TRANSLATE_ENABLED", false),
+    translateApiUrl: getEnvVar("TELEGRAPH_TRANSLATE_API_URL", false),
   },
   bot: {
     sessionsListLimit: getOptionalPositiveIntEnvVar("SESSIONS_LIST_LIMIT", 10),

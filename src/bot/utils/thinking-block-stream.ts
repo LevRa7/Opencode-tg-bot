@@ -58,6 +58,7 @@ interface FinalizeThinkingBlockStreamOptions {
   title: string;
   reasoningText?: string;
   publisher?: TechnicalDetailsPublisher;
+  locale?: string;
 }
 
 export type ThinkingBlockFinalizeOutcome = "finalized" | "failed" | "cleared";
@@ -337,6 +338,7 @@ export async function finalizeThinkingBlockStream(
         options.title,
         completionReasoningText,
         options.publisher ?? fallbackDetailsPublisher,
+        options.locale,
       );
       completionText = linkedCompletion.text;
     } catch (error) {

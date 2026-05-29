@@ -62,6 +62,7 @@ export const zh: I18nDictionary = {
   "settings.hide_tool_call_messages": "{state} 工具",
   "settings.hide_tool_file_messages": "{state} 文件变更",
   "settings.subagent_topics": "{state} 子代理话题",
+  "settings.telegraph_translate": "{state} 翻译思考内容",
   "settings.subagent_topic_timeout": "子代理话题自动删除：{minutes} 分钟",
   "settings.subagent_topic_timeout.title": "选择子代理话题自动删除时间",
   "settings.subagent_topic_timeout.option": "{minutes} 分钟",

@@ -66,6 +66,7 @@ export const en = {
   "settings.hide_tool_call_messages": "{state} Tools",
   "settings.hide_tool_file_messages": "{state} File changes",
   "settings.subagent_topics": "{state} Subagent topics",
+  "settings.telegraph_translate": "{state} Translate thoughts",
   "settings.subagent_topic_timeout": "Subagent topic auto-delete: {minutes} min",
   "settings.subagent_topic_timeout.title": "Choose subagent topic auto-delete timeout",
   "settings.subagent_topic_timeout.option": "{minutes} min",

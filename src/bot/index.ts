@@ -89,7 +89,8 @@ import { safeBackgroundTask } from "../utils/safe-background-task.js";
 import { withTelegramRateLimitRetry } from "../utils/telegram-rate-limit-retry.js";
 import { pinnedMessageManager } from "../pinned/manager.js";
 import { createTelegramBotOptions } from "./telegram-client-options.js";
-import { setUserLocaleResolver, t } from "../i18n/index.js";
+import { getLocale, setUserLocaleResolver, t } from "../i18n/index.js";
+import { translateText } from "../translate/manager.js";
 import {
   clearPromptResponseMode,
   clearPromptRouting,
@@ -160,6 +161,7 @@ import {
   getHideToolFileMessages,
   getReasoningMode,
   getSubagentTopicAutoDeleteMinutes,
+  getTelegraphTranslateEnabled,
   getSubagentTopicsEnabled,
   getTenantRuntimeInfo,
   getThinkingClearMode,
@@ -1722,12 +1724,16 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       if (mode > 0 && visibleReasoningText) {
         try {
           const reasoningTitle = extractReasoningTitle(visibleReasoningText);
+          const userLocalePartial = getTelegraphTranslateEnabled() ? getLocale() : undefined;
+          const translatedTitlePartial = userLocalePartial && userLocalePartial !== "en"
+            ? (await translateText(reasoningTitle, userLocalePartial).catch(() => null)) ?? reasoningTitle
+            : reasoningTitle;
           await streamThinkingBlocks({
             sessionId,
             logicalMessageId: messageId,
             sendApi: botApi,
             target,
-            title: reasoningTitle,
+            title: translatedTitlePartial,
             reasoningText: visibleReasoningText,
           });
         } catch (error) {
@@ -1850,14 +1856,25 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         if (mode > 0 && visibleReasoningText) {
           const finalReasoningText = visibleReasoningText;
           const finalReasoningTitle = extractReasoningTitle(finalReasoningText);
+          const translateEnabled = getTelegraphTranslateEnabled();
+          const userLocale = translateEnabled ? getLocale() : undefined;
+          const translatedTitle = userLocale && userLocale !== "en"
+            ? (await translateText(finalReasoningTitle, userLocale)) ?? finalReasoningTitle
+            : finalReasoningTitle;
+          logger.debug("[ThinkingFlow] Locale for translation", {
+            translateEnabled,
+            userLocale,
+            localeFromGetLocale: getLocale(),
+          });
           const thinkingFinalizeOutcome = await finalizeThinkingBlockStream({
             sessionId,
             logicalMessageId: completionInfo?.logicalMessageId ?? messageId,
             sendApi: botApi,
             target,
-            title: finalReasoningTitle,
+            title: translatedTitle,
             reasoningText: visibleReasoningText,
             publisher: thinkingDetailsPublisher,
+            locale: userLocale,
           });
           if (thinkingFinalizeOutcome === "failed") {
             logger.warn(

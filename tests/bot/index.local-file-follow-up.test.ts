@@ -205,6 +205,7 @@ vi.mock("../../src/settings/manager.js", () => ({
       getHideToolFileMessages: getHideToolFileMessagesMock,
       getSubagentTopicsEnabled: getSubagentTopicsEnabledMock,
       getSubagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutesMock,
+      getTelegraphTranslateEnabled: vi.fn(() => false),
       getUserLocale: vi.fn(() => "en"),
       isMessageStreamingEnabled: vi.fn(() => true),
 }));

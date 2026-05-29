@@ -8,12 +8,14 @@ const mocked = vi.hoisted(() => ({
   hideThinkingMessages: false,
   hideToolCallMessages: false,
   hideToolFileMessages: false,
+  telegraphTranslateEnabled: false,
   subagentTopicsEnabled: false,
   subagentTopicAutoDeleteMinutes: 1,
   setUserLocaleMock: vi.fn(),
   setHideThinkingMessagesMock: vi.fn(),
   setHideToolCallMessagesMock: vi.fn(),
   setHideToolFileMessagesMock: vi.fn(),
+  setTelegraphTranslateEnabledMock: vi.fn(),
   setSubagentTopicsEnabledMock: vi.fn(),
   setSubagentTopicAutoDeleteMinutesMock: vi.fn(),
 }));
@@ -38,6 +40,11 @@ vi.mock("../../../src/settings/manager.js", () => ({
   setHideToolFileMessages: vi.fn((enabled: boolean) => {
     mocked.setHideToolFileMessagesMock(enabled);
     mocked.hideToolFileMessages = enabled;
+  }),
+  getTelegraphTranslateEnabled: vi.fn(() => mocked.telegraphTranslateEnabled),
+  setTelegraphTranslateEnabled: vi.fn((enabled: boolean) => {
+    mocked.setTelegraphTranslateEnabledMock(enabled);
+    mocked.telegraphTranslateEnabled = enabled;
   }),
   getSubagentTopicsEnabled: vi.fn(() => mocked.subagentTopicsEnabled),
   setSubagentTopicsEnabled: vi.fn((enabled: boolean) => {
@@ -111,11 +118,13 @@ describe("bot/commands/settings", () => {
     mocked.hideToolCallMessages = false;
     mocked.hideToolFileMessages = false;
     mocked.subagentTopicsEnabled = false;
+    mocked.telegraphTranslateEnabled = false;
     mocked.subagentTopicAutoDeleteMinutes = 1;
     mocked.setUserLocaleMock.mockClear();
     mocked.setHideThinkingMessagesMock.mockClear();
     mocked.setHideToolCallMessagesMock.mockClear();
     mocked.setHideToolFileMessagesMock.mockClear();
+    mocked.setTelegraphTranslateEnabledMock.mockClear();
     mocked.setSubagentTopicsEnabledMock.mockClear();
     mocked.setSubagentTopicAutoDeleteMinutesMock.mockClear();
   });
@@ -138,14 +147,15 @@ describe("bot/commands/settings", () => {
       "settings:toggle:hide_thinking",
       "settings:toggle:hide_tool_calls",
       "settings:toggle:hide_tool_files",
+      "settings:toggle:telegraph_translate",
       "settings:toggle:subagent_topics",
       "settings:subagent_timeout",
       "inline:cancel:settings",
     ]);
     expect(rows[0]?.[0]?.text).toBe("🌐 🇬🇧 English");
     expect(rows[1]?.[0]?.text).toBe("✅ Thinking");
-    expect(rows[4]?.[0]?.text).toBe("X Subagent topics");
-    expect(rows[5]?.[0]?.text).toBe("Subagent topic auto-delete: 1 min");
+    expect(rows[5]?.[0]?.text).toBe("X Subagent topics");
+    expect(rows[6]?.[0]?.text).toBe("Subagent topic auto-delete: 1 min");
     expect(rows[rows.length - 1]?.[0]?.text).toBe(t("settings.close"));
   });
 
@@ -276,7 +286,7 @@ describe("bot/commands/settings", () => {
       string,
       unknown,
     ];
-    expect(getInlineRows(options)[4]?.[0]?.text).toBe("✅ Subagent topics");
+    expect(getInlineRows(options)[5]?.[0]?.text).toBe("✅ Subagent topics");
   });
 
   it("edits to the subagent timeout submenu", async () => {
@@ -317,7 +327,7 @@ describe("bot/commands/settings", () => {
       string,
       unknown,
     ];
-    expect(getInlineRows(options)[5]?.[0]?.text).toBe("Subagent topic auto-delete: 30 min");
+    expect(getInlineRows(options)[6]?.[0]?.text).toBe("Subagent topic auto-delete: 30 min");
   });
 
   it("returns false for unknown and non-settings callbacks", async () => {

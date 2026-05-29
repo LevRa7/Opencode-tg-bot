@@ -109,6 +109,7 @@ export interface ScopedUserSettings {
   hideThinkingMessages?: boolean;
   hideToolCallMessages?: boolean;
   hideToolFileMessages?: boolean;
+  telegraphTranslateEnabled?: boolean;
   subagentTopicsEnabled?: boolean;
   subagentTopicAutoDeleteMinutes?: number;
   defaultProject?: ProjectInfo;
@@ -329,6 +330,7 @@ function cloneScopedUserSettings(
     hideToolCallMessages: settings.hideToolCallMessages,
     hideToolFileMessages: settings.hideToolFileMessages,
     subagentTopicsEnabled: settings.subagentTopicsEnabled,
+  telegraphTranslateEnabled: settings.telegraphTranslateEnabled,
     subagentTopicAutoDeleteMinutes: settings.subagentTopicAutoDeleteMinutes,
     defaultProject: cloneProjectInfo(settings.defaultProject),
     defaultAgent: settings.defaultAgent,
@@ -376,6 +378,7 @@ function isScopedUserSettingsEmpty(settings: ScopedUserSettings | undefined): bo
       settings.hideToolCallMessages === undefined &&
       settings.hideToolFileMessages === undefined &&
       settings.subagentTopicsEnabled === undefined &&
+      settings.telegraphTranslateEnabled === undefined &&
       settings.subagentTopicAutoDeleteMinutes === undefined &&
       settings.defaultProject === undefined &&
       settings.defaultAgent === undefined &&
@@ -836,6 +839,22 @@ export function setHideToolFileMessages(enabled: boolean): void {
   }
 
   scopedSettings.hideToolFileMessages = enabled;
+  pruneUserScopedSettings();
+
+  void writeSettingsFile(currentSettings);
+}
+
+export function getTelegraphTranslateEnabled(): boolean {
+  return getUserScopedSettings()?.telegraphTranslateEnabled ?? config.telegraph.translateEnabled;
+}
+
+export function setTelegraphTranslateEnabled(enabled: boolean): void {
+  const scopedSettings = getOrCreateUserScopedSettings();
+  if (!scopedSettings) {
+    return;
+  }
+
+  scopedSettings.telegraphTranslateEnabled = enabled;
   pruneUserScopedSettings();
 
   void writeSettingsFile(currentSettings);

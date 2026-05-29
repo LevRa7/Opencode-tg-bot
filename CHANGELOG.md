@@ -10,6 +10,12 @@ Documentation rule:
 
 ## [Unreleased]
 
+### Fixed
+
+- Made `extractTranslationText` resilient to model responses with non-text parts (e.g. `tool_call`/`tool_result`). Previously the function filtered only `type === "text"` parts, causing intermittent translation failures when the `big-pickle` model returned tool-call parts instead of plain text.
+  - Why: translation results were silently dropped for ~50% of entries, leaving English text on Telegraph pages despite successful model responses.
+  - Affects: `src/translate/manager.ts`
+
 ### Added
 
 - Ported upstream v0.20.5–v0.20.6 features: multiple file attachments (Telegram media group / album support), image document recognition (image/* MIME in document messages), user abort error suppression for cleaner UX, and permission request forwarding from subagent sessions.

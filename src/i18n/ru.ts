@@ -66,6 +66,7 @@ export const ru: I18nDictionary = {
   "settings.hide_tool_call_messages": "{state} Инструменты",
   "settings.hide_tool_file_messages": "{state} Изменения файлов",
   "settings.subagent_topics": "{state} Темы сабагентов",
+  "settings.telegraph_translate": "{state} Перевод мыслей",
   "settings.subagent_topic_timeout": "Автоудаление темы сабагента: {minutes} мин",
   "settings.subagent_topic_timeout.title": "Выберите таймаут автоудаления темы сабагента",
   "settings.subagent_topic_timeout.option": "{minutes} мин",

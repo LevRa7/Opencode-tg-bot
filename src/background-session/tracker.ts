@@ -1,4 +1,5 @@
 import type { Event } from "@opencode-ai/sdk/v2";
+import { isInternalSession } from "../utils/internal-sessions.js";
 import { isScheduledTaskSessionIgnored } from "../scheduled-task/session-ignore.js";
 import { logger } from "../utils/logger.js";
 
@@ -80,6 +81,10 @@ class BackgroundSessionTracker {
   }
 
   processEvent(event: Event, currentSessionId: string | null): void {
+    if (this.isInternalEvent(event)) {
+      return;
+    }
+
     switch (event.type) {
       case "session.created":
       case "session.updated":
@@ -213,6 +218,24 @@ class BackgroundSessionTracker {
     const ids = this.undeliveredMessageIds.get(sessionId) ?? [];
     this.undeliveredMessageIds.delete(sessionId);
     return ids;
+  }
+
+  private isInternalEvent(event: Event): boolean {
+    const props = event.properties as Record<string, unknown>;
+
+    const info = props.info as Record<string, unknown> | undefined;
+    if (info && typeof info.sessionID === "string" && isInternalSession(info.sessionID)) {
+      return true;
+    }
+    if (info && typeof info.id === "string" && isInternalSession(info.id)) {
+      return true;
+    }
+
+    if (typeof props.sessionID === "string" && isInternalSession(props.sessionID)) {
+      return true;
+    }
+
+    return false;
   }
 
   private shouldIgnoreSession(sessionId: string, currentSessionId: string | null): boolean {

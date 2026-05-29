@@ -1,11 +1,15 @@
 import { logger } from "../utils/logger.js";
 import type { TelegraphClient } from "./telegraph-client.js";
+import { FloodWaitError } from "./telegraph-client.js";
 import type { TechnicalDetailsPublishRequest, TechnicalDetailsPublisher } from "./types.js";
+import { translateText } from "../translate/manager.js";
 
 interface ThoughtEntry {
   timestamp: number;
   title: string;
   body: string;
+  translatedBody?: string;
+  locale?: string;
 }
 
 interface ThinkingPage {
@@ -22,7 +26,8 @@ function formatTimestamp(ts: number): string {
 }
 
 function entryToMarkdown(entry: ThoughtEntry): string {
-  return `## ${formatTimestamp(entry.timestamp)}\n\n${entry.title}\n\n${entry.body}`;
+  const body = entry.translatedBody ?? entry.body;
+  return `## ${formatTimestamp(entry.timestamp)}\n\n${entry.title}\n\n${body}`;
 }
 
 function buildPageContent(entries: ThoughtEntry[]): string {
@@ -36,6 +41,7 @@ function buildPageContent(entries: ThoughtEntry[]): string {
  */
 export class ThinkingTelegraphAccumulator implements TechnicalDetailsPublisher {
   private page: ThinkingPage | null = null;
+  private pagePath: string | null = null;
   private readonly client: TelegraphClient;
 
   constructor(client: TelegraphClient) {
@@ -52,12 +58,14 @@ export class ThinkingTelegraphAccumulator implements TechnicalDetailsPublisher {
       timestamp: Date.now(),
       title: title || extractFirstLine(thoughtBody),
       body,
+      locale: request.locale,
     };
 
     if (this.page) {
       this.page.entries.push(entry);
       this.page.dirty = true;
       this.scheduleFlush();
+      this.scheduleTranslation(entry);
       return this.page.url;
     }
 
@@ -66,12 +74,14 @@ export class ThinkingTelegraphAccumulator implements TechnicalDetailsPublisher {
       const result = await this.client.createPage("💭 Thinking", content);
       if (!result) return null;
 
+      this.pagePath = result.path;
       this.page = {
         url: result.url,
         path: result.path,
         entries: [entry],
         dirty: false,
       };
+      this.scheduleTranslation(entry);
       return result.url;
     } catch (error) {
       logger.warn("[ThinkingAccum] Failed to create thinking page", { error });
@@ -81,7 +91,7 @@ export class ThinkingTelegraphAccumulator implements TechnicalDetailsPublisher {
 
   async flush(): Promise<void> {
     if (this.page && this.page.dirty) {
-      await this.doFlush();
+      await this.doFlush(this.page);
     }
     this.page = null;
   }
@@ -91,31 +101,142 @@ export class ThinkingTelegraphAccumulator implements TechnicalDetailsPublisher {
   }
 
   private pendingFlush = false;
+  private flushInProgress = false;
+  private flushNeeded = false;
 
   private scheduleFlush(): void {
     if (this.pendingFlush) return;
     this.pendingFlush = true;
+    const page = this.page;
     setImmediate(async () => {
       this.pendingFlush = false;
-      if (this.page && this.page.dirty) {
-        await this.doFlush();
+      if (page && page.dirty) {
+        await this.doFlush(page);
       }
     });
   }
 
-  private async doFlush(): Promise<void> {
-    if (!this.page || this.page.entries.length === 0) return;
+  private async doFlush(target?: ThinkingPage): Promise<boolean> {
+    if (this.flushInProgress) {
+      this.flushNeeded = true;
+      return false;
+    }
+    this.flushInProgress = true;
+    this.flushNeeded = false;
+    try {
+      return await this.doFlushInner(target);
+    } finally {
+      this.flushInProgress = false;
+      if (this.flushNeeded) {
+        this.flushNeeded = false;
+        await this.doFlushInner(target);
+      }
+    }
+  }
 
-    const content = buildPageContent(this.page.entries);
+  private async doFlushInner(target?: ThinkingPage): Promise<boolean> {
+    const page = target ?? this.page;
+    if (!page || page.entries.length === 0) return false;
+
+    const content = buildPageContent(page.entries);
+    const path = page.path ?? this.pagePath;
 
     try {
-      const success = await this.client.editPage(this.page.path, "💭 Thinking", content);
+      const success = await this.client.editPage(path, "💭 Thinking", content);
       if (success) {
-        this.page.dirty = false;
+        page.dirty = false;
       }
+      return success;
     } catch (error) {
+      if (error instanceof FloodWaitError) {
+        logger.warn(
+          `[ThinkingAccum] FloodWait on edit, waiting ${error.waitMs}ms then retrying`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, error.waitMs));
+        try {
+          const success = await this.client.editPage(path, "💭 Thinking", content);
+          if (success) {
+            page.dirty = false;
+          }
+          return success;
+        } catch (retryError) {
+          logger.warn("[ThinkingAccum] Failed to edit thinking page on retry", { error: retryError });
+          return false;
+        }
+      }
       logger.warn("[ThinkingAccum] Failed to edit thinking page", { error });
+      return false;
     }
+  }
+
+  private scheduleTranslation(entry: ThoughtEntry): void {
+    if (!entry.locale || entry.locale === "en" || entry.translatedBody) {
+      logger.debug("[ThinkingAccum] Translation skipped in scheduleTranslation", {
+        locale: entry.locale,
+        localeTruthy: !!entry.locale,
+        isEn: entry.locale === "en",
+        hasTranslatedBody: !!entry.translatedBody,
+        entryTitle: entry.title.slice(0, 80),
+      });
+      return;
+    }
+
+    const textToTranslate = entry.body;
+    const locale = entry.locale;
+    const page = this.page;
+
+    logger.debug("[ThinkingAccum] Scheduling translation", {
+      locale,
+      textLength: textToTranslate.length,
+      textPreview: textToTranslate.slice(0, 120),
+      hasPage: !!page,
+      pageUrl: page?.url,
+    });
+
+    setImmediate(async () => {
+      try {
+        logger.debug("[ThinkingAccum] Starting translation", { locale, textLength: textToTranslate.length });
+        const translated = await translateText(textToTranslate, locale as any);
+        logger.debug("[ThinkingAccum] Translation result", { hasResult: !!translated, locale });
+        if (!translated || !page) {
+          logger.debug("[ThinkingAccum] Translation aborted post-call", {
+            hasTranslated: !!translated,
+            hasPage: !!page,
+          });
+          return;
+        }
+
+        const storedEntry = page.entries.find((e) => e === entry);
+        if (!storedEntry) {
+          logger.debug("[ThinkingAccum] Entry no longer in page", {
+            entryTitle: entry.title.slice(0, 80),
+            pageEntryCount: page.entries.length,
+          });
+          return;
+        }
+
+        storedEntry.translatedBody = translated;
+        page.dirty = true;
+        const flushed = await this.doFlush(page);
+
+        if (flushed) {
+          logger.info("[ThinkingAccum] Translated thinking entry and updated page", {
+            locale,
+            url: page.url,
+            entryTitle: entry.title.slice(0, 80),
+            translatedPreview: translated.slice(0, 100),
+          });
+        } else {
+          logger.warn("[ThinkingAccum] Translation succeeded but page update failed", {
+            locale,
+            url: page.url,
+            entryTitle: entry.title.slice(0, 80),
+          });
+        }
+      } catch (error) {
+        logger.warn("[ThinkingAccum] Background translation failed", { error });
+      }
+    });
   }
 }
 

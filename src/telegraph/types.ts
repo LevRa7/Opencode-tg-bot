@@ -4,11 +4,14 @@ export interface TelegraphConfig {
   authorName: string;
   timeoutMs: number;
   maxChars: number;
+  translateEnabled: boolean;
+  translateApiUrl?: string;
 }
 
 export interface TechnicalDetailsPublishRequest {
   title: string;
   body: string;
+  locale?: string;
 }
 
 export interface TechnicalDetailsPublisher {

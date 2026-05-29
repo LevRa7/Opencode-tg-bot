@@ -12,6 +12,7 @@ import type { PermissionRequest } from "../permission/types.js";
 import type { FileChange } from "../pinned/types.js";
 import type { AssistantCompletionMetadata } from "../assistant-completion-metadata.js";
 import { logger } from "../utils/logger.js";
+import { isInternalSession } from "../utils/internal-sessions.js";
 import { getCurrentProject } from "../settings/manager.js";
 import { getCurrentSession } from "../session/manager.js";
 
@@ -362,13 +363,19 @@ class SummaryAggregator {
   processEvent(event: Event): void {
     const eventType = (event as unknown as { type: string }).type;
 
-    if (eventType === "message.part.delta") {
-      this.handleMessagePartDelta(event as unknown as MessagePartDeltaEventRaw);
+    if (eventType === "server.heartbeat") {
+      logger.debug("[Aggregator] Heartbeat received");
       return;
     }
 
-    if (eventType === "server.heartbeat") {
-      logger.debug("[Aggregator] Heartbeat received");
+    // Skip events from internal bot sessions (e.g. translation, summarization)
+    // to prevent state corruption from cross-session event leaks.
+    if (this.isInternalSessionEvent(event)) {
+      return;
+    }
+
+    if (eventType === "message.part.delta") {
+      this.handleMessagePartDelta(event as unknown as MessagePartDeltaEventRaw);
       return;
     }
 
@@ -433,6 +440,29 @@ class SummaryAggregator {
         logger.debug(`[Aggregator] Unhandled event type: ${event.type}`);
         break;
     }
+  }
+
+  private isInternalSessionEvent(event: Event): boolean {
+    const props = event.properties as Record<string, unknown>;
+
+    const info = props.info as Record<string, unknown> | undefined;
+    if (info && typeof info.sessionID === "string" && isInternalSession(info.sessionID)) {
+      return true;
+    }
+    if (info && typeof info.id === "string" && isInternalSession(info.id)) {
+      return true;
+    }
+
+    const part = props.part as Record<string, unknown> | undefined;
+    if (part && typeof part.sessionID === "string" && isInternalSession(part.sessionID)) {
+      return true;
+    }
+
+    if (typeof props.sessionID === "string" && isInternalSession(props.sessionID)) {
+      return true;
+    }
+
+    return false;
   }
 
   setSession(sessionId: string): void {
@@ -756,6 +786,11 @@ class SummaryAggregator {
   }
 
   private attachUnknownSessionToPendingSubagent(sessionId: string): boolean {
+    // Never attach internal bot sessions (e.g. translation, summarization).
+    if (isInternalSession(sessionId)) {
+      return false;
+    }
+
     // 2026-04-19: unknown child events arrive before session.created in some flows,
     // but attaching them is only safe when exactly one root session is active
     // and exactly one pending subagent exists under that single root.

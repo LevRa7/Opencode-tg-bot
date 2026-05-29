@@ -69,6 +69,7 @@ export const fr: I18nDictionary = {
   "settings.hide_tool_call_messages": "{state} Outils",
   "settings.hide_tool_file_messages": "{state} Modifs fichiers",
   "settings.subagent_topics": "{state} Sujets de sous-agent",
+  "settings.telegraph_translate": "{state} Traduire les pensées",
   "settings.subagent_topic_timeout": "Suppression auto du sujet de sous-agent : {minutes} min",
   "settings.subagent_topic_timeout.title":
     "Choisir le délai de suppression auto du sujet de sous-agent",

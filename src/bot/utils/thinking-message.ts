@@ -103,10 +103,12 @@ export async function formatThinkingCompletionWithDetails(
   title: string,
   reasoningText: string,
   publisher: TechnicalDetailsPublisher,
+  locale?: string,
 ): Promise<{ text: string; format?: TelegramTextFormat }> {
   return await formatTechnicalProgressWithDetails(
     buildReasoningToolInfo(title, reasoningText, "completed"),
     publisher,
+    locale,
   );
 }
 

@@ -10,12 +10,14 @@ import {
   getHideToolFileMessages,
   getSubagentTopicAutoDeleteMinutes,
   getSubagentTopicsEnabled,
+  getTelegraphTranslateEnabled,
   getUserLocale,
   setHideThinkingMessages,
   setHideToolCallMessages,
   setHideToolFileMessages,
   setSubagentTopicAutoDeleteMinutes,
   setSubagentTopicsEnabled,
+  setTelegraphTranslateEnabled,
   setUserLocale,
 } from "../../settings/manager.js";
 import { getLocaleOptions, resolveSupportedLocale, t, type Locale } from "../../i18n/index.js";
@@ -30,7 +32,7 @@ const SETTINGS_CALLBACK_SUBAGENT_TIMEOUT_PREFIX = `${SETTINGS_CALLBACK_SUBAGENT_
 const SETTINGS_CALLBACK_TOGGLE_PREFIX = `${SETTINGS_CALLBACK_PREFIX}toggle:`;
 const SUBAGENT_TOPIC_TIMEOUT_OPTIONS = [0, 1, 5, 10, 15, 30] as const;
 
-type ToggleSettingId = "hide_thinking" | "hide_tool_calls" | "hide_tool_files" | "subagent_topics";
+type ToggleSettingId = "hide_thinking" | "hide_tool_calls" | "hide_tool_files" | "subagent_topics" | "telegraph_translate";
 
 interface SettingsRenderState {
   locale: Locale;
@@ -38,6 +40,7 @@ interface SettingsRenderState {
   hideThinkingMessages: boolean;
   hideToolCallMessages: boolean;
   hideToolFileMessages: boolean;
+  telegraphTranslateEnabled: boolean;
   subagentTopicsEnabled: boolean;
   subagentTopicAutoDeleteMinutes: number;
 }
@@ -59,6 +62,7 @@ function getSettingsRenderState(localeOverride?: Locale): SettingsRenderState {
     hideThinkingMessages: getHideThinkingMessages(),
     hideToolCallMessages: getHideToolCallMessages(),
     hideToolFileMessages: getHideToolFileMessages(),
+    telegraphTranslateEnabled: getTelegraphTranslateEnabled(),
     subagentTopicsEnabled: getSubagentTopicsEnabled(),
     subagentTopicAutoDeleteMinutes: getSubagentTopicAutoDeleteMinutes(),
   };
@@ -100,6 +104,15 @@ function buildSettingsRootKeyboard(state: SettingsRenderState): InlineKeyboard {
         state.locale,
       ),
       `${SETTINGS_CALLBACK_TOGGLE_PREFIX}hide_tool_files`,
+    )
+    .row()
+    .text(
+      t(
+        "settings.telegraph_translate",
+        { state: formatToggleState(!state.telegraphTranslateEnabled, state.locale) },
+        state.locale,
+      ),
+      `${SETTINGS_CALLBACK_TOGGLE_PREFIX}telegraph_translate`,
     )
     .row()
     .text(
@@ -185,6 +198,9 @@ function toggleSetting(settingId: ToggleSettingId): void {
     case "subagent_topics":
       setSubagentTopicsEnabled(!getSubagentTopicsEnabled());
       return;
+    case "telegraph_translate":
+      setTelegraphTranslateEnabled(!getTelegraphTranslateEnabled());
+      return;
   }
 }
 
@@ -193,7 +209,8 @@ function isToggleSettingId(value: string): value is ToggleSettingId {
     value === "hide_thinking" ||
     value === "hide_tool_calls" ||
     value === "hide_tool_files" ||
-    value === "subagent_topics"
+    value === "subagent_topics" ||
+    value === "telegraph_translate"
   );
 }
 

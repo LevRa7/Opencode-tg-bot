@@ -318,6 +318,7 @@ describe("bot/utils/thinking-block-stream", () => {
       "Thinking",
       "Step 2",
       publisher,
+      undefined,
     );
   });
 
@@ -550,6 +551,7 @@ describe("bot/utils/thinking-block-stream", () => {
       "Thinking",
       "Step 1\nStep 2",
       expect.objectContaining({ publish: expect.any(Function) }),
+      undefined,
     );
     expect(resolveDetails).not.toBeNull();
     expect(mocked.finalizeDraftMock).not.toHaveBeenCalled();
@@ -666,6 +668,7 @@ describe("bot/utils/thinking-block-stream", () => {
       "Thinking",
       "final completion reasoning",
       expect.objectContaining({ publish: expect.any(Function) }),
+      undefined,
     );
   });
 

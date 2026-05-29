@@ -1,5 +1,5 @@
 import { getLocale, t } from "../../i18n/index.js";
-import type { TechnicalDetailsPublisher } from "../../telegraph/details-publisher.js";
+import type { TechnicalDetailsPublisher, TechnicalDetailsPublishRequest } from "../../telegraph/details-publisher.js";
 import { classifyTechnicalProgress } from "./classify.js";
 import { buildTechnicalDetails } from "./details.js";
 import { buildProgressMetric } from "./metrics.js";
@@ -78,6 +78,7 @@ export function formatTechnicalProgressSync(
 export async function formatTechnicalProgressWithDetails(
   toolInfo: TechnicalProgressToolInfo,
   publisher: TechnicalDetailsPublisher,
+  locale?: string,
 ): Promise<TechnicalProgressFormatResult> {
   const base = formatTechnicalProgressSync(toolInfo);
   const details = buildTechnicalDetails(toolInfo);
@@ -86,10 +87,14 @@ export async function formatTechnicalProgressWithDetails(
     return base;
   }
 
-  const url = await publisher.publish({
+  const publishRequest: TechnicalDetailsPublishRequest = {
     title: base.text.replace(/\n.*/s, ""),
     body: details.body,
-  });
+  };
+  if (locale !== undefined) {
+    publishRequest.locale = locale;
+  }
+  const url = await publisher.publish(publishRequest);
 
   if (!url) {
     if (toolInfo.tool === "todowrite") {

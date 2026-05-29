@@ -102,6 +102,7 @@ No public inbound ports are required for normal usage.
 - Optional STT settings for voice transcription (`STT_API_URL`, `STT_API_KEY`, `STT_MODEL`, `STT_LANGUAGE`)
 - Optional TTS settings for global audio replies (`TTS_PROVIDER`, `TTS_API_URL`, `TTS_API_KEY`, `TTS_MODEL`, `TTS_VOICE`, `GOOGLE_APPLICATION_CREDENTIALS`)
 - Optional OpenCode server monitoring with automatic restart (`OPENCODE_AUTO_RESTART_ENABLED`, `OPENCODE_MONITOR_INTERVAL_SEC`)
+- Optional fallback model for automatic model-unavailable recovery (`OPENCODE_FALLBACK_MODEL_PROVIDER`, `OPENCODE_FALLBACK_MODEL_ID`)
 - Optional Telegraph detail publishing for long technical progress output (`TELEGRAPH_ENABLED`, `TELEGRAPH_ACCESS_TOKEN`, `TELEGRAPH_AUTHOR_NAME`, `TELEGRAPH_TIMEOUT_MS`, `TELEGRAPH_MAX_CHARS`)
 
 ## Current Product Scope
@@ -152,6 +153,14 @@ Model picker behavior:
 - Includes back navigation from provider model pages to the provider list
 - Keeps the configured default model (`OPENCODE_MODEL_PROVIDER` + `OPENCODE_MODEL_ID`) in the picker favorites flow
 
+Model fallback behavior:
+
+- When the SSE stream returns a model-unavailable error, the bot switches the current per-scope model to the configured fallback model (`OPENCODE_FALLBACK_MODEL_PROVIDER` / `OPENCODE_FALLBACK_MODEL_ID`, default `opencode/big-pickle`)
+- The fallback happens only once per scope — if the fallback model itself is unavailable, the error is reported as-is without further retries
+- After a successful fallback switch, all subsequent prompts in that scope use the fallback model until the user manually selects a different one
+- Model switch is reflected in the reply keyboard (model name and context) and a notification is sent to the chat
+- The fallback is per-scope (per user in a given chat/topic), not global; different scopes can use different models independently
+
 ### Main features already implemented
 
 - [x] Access control by admin Telegram user ID plus optional allowed user IDs
@@ -189,7 +198,7 @@ Open tasks for upcoming iterations:
 - [x] `/worktree` command: switch between git worktrees
 - [x] `/open` command: browse project files and open them
 - [x] `/mcps` command: browse available MCP servers
-- [x] Dynamic subagent activity display during task execution
+- [x] Model fallback auto-switch on model-unavailable errors with per-scope persistence and keyboard update
 - [ ] Git tree support
 - [x] Docker runtime support and deployment guide
 - [x] OpenCode server monitoring with automatic restart on stop/crash

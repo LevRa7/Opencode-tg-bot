@@ -98,7 +98,7 @@ import {
   isSessionBusy,
 } from "./handlers/prompt.js";
 import { deletePromptRetryContext, getPromptRetryContext } from "./handlers/prompt-context.js";
-import { switchToFallbackModel, getStoredModel, getFallbackModel } from "../model/manager.js";
+import { switchToFallbackModel, getStoredModel, getFallbackModel, isAlreadyOnFallbackModel } from "../model/manager.js";
 import type { ModelInfo } from "../model/types.js";
 import { IncomingMediaBatch } from "./incoming-media-batch.js";
 import type { ResolvedDeferredItem } from "../media/batch-types.js";
@@ -2111,14 +2111,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   });
 
   summaryAggregator.setOnTool(async (toolInfo) => {
-    // 2026-05-29: Skip individual tool notifications for managed child sessions.
-    // Parent topic already shows subagent activity cards via setOnSubagent;
-    // sending tool-level messages to child topics is redundant and noisy.
-    if (
-      isManagedChildSession(toolInfo.sessionId) ||
-      pendingChildRoutingSetupBySessionId.has(toolInfo.sessionId)
-    ) {
-      return;
+    // 2026-05-29: Wait for child topic routing to be established before
+    // streaming tool notifications. Without this, tool calls can route to
+    // the parent topic during the seeding window.
+    const pendingRoutingSetup = pendingChildRoutingSetupBySessionId.get(toolInfo.sessionId);
+    if (pendingRoutingSetup) {
+      await pendingRoutingSetup.catch(() => false);
     }
 
     const orderedPublication = scheduleOrderedPublication(toolInfo.sessionId, {
@@ -2654,10 +2652,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         originalModelName = "default";
       }
 
-      if (
-        originalModel.providerID === fallbackModel.providerID &&
-        originalModel.modelID === fallbackModel.modelID
-      ) {
+      if (isAlreadyOnFallbackModel(originalModel)) {
         return;
       }
 
@@ -2670,6 +2665,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         setCurrentModelForScope(currentScope, fallbackModel);
         const contextKey = buildTelegramConversationScopeKey(currentScope);
         threadContextManager.updateModelBinding(contextKey, fallbackModel);
+        keyboardManager.updateModel(fallbackModel);
       } else {
         switchToFallbackModel();
       }

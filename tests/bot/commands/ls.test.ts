@@ -15,6 +15,12 @@ const mocked = vi.hoisted(() => ({
   sendDownloadedFileMock: vi.fn(),
   loggerDebugMock: vi.fn(),
   loggerErrorMock: vi.fn(),
+  getTenantBrowserRootsMock: vi.fn(() => ["/repo/project"]),
+  isWithinAllowedTenantRootMock: vi.fn(
+    (targetPath: string) =>
+      targetPath === "/repo/project" || targetPath.startsWith("/repo/project/"),
+  ),
+  isAllowedTenantRootMock: vi.fn((targetPath: string) => targetPath === "/repo/project"),
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -28,6 +34,12 @@ vi.mock("node:fs", async (importOriginal) => {
     },
   };
 });
+
+vi.mock("../../../src/bot/utils/browser-roots.js", () => ({
+  getTenantBrowserRoots: mocked.getTenantBrowserRootsMock,
+  isWithinAllowedTenantRoot: mocked.isWithinAllowedTenantRootMock,
+  isAllowedTenantRoot: mocked.isAllowedTenantRootMock,
+}));
 
 vi.mock("../../../src/bot/utils/busy-guard.js", () => ({
   isForegroundBusy: mocked.isForegroundBusyMock,
@@ -119,6 +131,14 @@ describe("bot/commands/ls", () => {
     mocked.sendDownloadedFileMock.mockReset().mockResolvedValue(true);
     mocked.loggerDebugMock.mockReset();
     mocked.loggerErrorMock.mockReset();
+    mocked.getTenantBrowserRootsMock.mockReset().mockReturnValue(["/repo/project"]);
+    mocked.isWithinAllowedTenantRootMock.mockReset().mockImplementation(
+      (targetPath: string) =>
+        targetPath === "/repo/project" || targetPath.startsWith("/repo/project/"),
+    );
+    mocked.isAllowedTenantRootMock.mockReset().mockImplementation(
+      (targetPath: string) => targetPath === "/repo/project",
+    );
   });
 
   it("opens an inline browser for the current project", async () => {
@@ -126,7 +146,7 @@ describe("bot/commands/ls", () => {
     await lsCommand(ctx as never);
     expect(mocked.readdirMock).toHaveBeenCalledWith("/repo/project", { withFileTypes: true });
     expect(ctx.reply).toHaveBeenCalledWith(
-      expect.stringContaining("<code>/repo/project</code>"),
+      expect.stringContaining("<code>~</code>"),
       expect.objectContaining({ parse_mode: "HTML", reply_markup: expect.anything() }),
     );
     expect(mocked.interactionStartMock).toHaveBeenCalledWith(
@@ -149,6 +169,7 @@ describe("bot/commands/ls", () => {
   });
 
   it("requires an active project", async () => {
+    mocked.getTenantBrowserRootsMock.mockReturnValue([]);
     mocked.getCurrentProjectMock.mockReturnValue(undefined);
     const ctx = createCommandContext();
     await lsCommand(ctx as never);
@@ -174,7 +195,7 @@ describe("bot/commands/ls", () => {
     await lsCommand(ctx as never);
     expect(mocked.readdirMock).toHaveBeenCalledWith("/repo/project/docs", { withFileTypes: true });
     expect(ctx.reply).toHaveBeenCalledWith(
-      expect.stringContaining("<code>/repo/project/docs</code>"),
+      expect.stringContaining("<code>~/docs</code>"),
       expect.objectContaining({ parse_mode: "HTML", reply_markup: expect.anything() }),
     );
   });
@@ -290,9 +311,11 @@ describe("bot/commands/ls", () => {
   });
 
   it("falls back to the project root when cached directory is outside the current project", async () => {
-    mocked.getCurrentProjectMock.mockReturnValueOnce(undefined);
+    mocked.getTenantBrowserRootsMock.mockReturnValue([]);
+    mocked.getCurrentProjectMock.mockReturnValue(undefined);
     const firstCtx = createCommandContext();
     await lsCommand(firstCtx as never);
+    mocked.getTenantBrowserRootsMock.mockReturnValue(["/repo/project"]);
     mocked.getCurrentProjectMock.mockReturnValue({
       id: "project-1",
       worktree: "/repo/project",

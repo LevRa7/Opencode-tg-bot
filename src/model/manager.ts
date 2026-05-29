@@ -317,6 +317,12 @@ export function getFallbackModel(): ModelInfo | null {
   return { providerID: provider, modelID: modelId, variant: "default" };
 }
 
+export function isAlreadyOnFallbackModel(model: ModelInfo): boolean {
+  const fallback = getFallbackModel();
+  if (!fallback) return false;
+  return model.providerID === fallback.providerID && model.modelID === fallback.modelID;
+}
+
 export function switchToFallbackModel(): ModelInfo | null {
   const fallback = getFallbackModel();
   if (!fallback) {

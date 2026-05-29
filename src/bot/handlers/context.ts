@@ -10,6 +10,7 @@ import {
 } from "./inline-menu.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { keyboardManager } from "../../keyboard/manager.js";
 
 /**
  * Build inline keyboard with compact confirmation menu
@@ -117,10 +118,16 @@ export async function handleCompactConfirm(ctx: Context): Promise<boolean> {
     }
 
     logger.info(`[ContextHandler] Session compacted: ${session.id}`);
-    // Update progress message to show success
-    await ctx.api
-      .editMessageText(ctx.chat!.id, progressMessage.message_id, t("context.success"))
-      .catch(() => {});
+    await ctx.api.deleteMessage(ctx.chat!.id, progressMessage.message_id).catch(() => {});
+
+    if (ctx.chat) {
+      keyboardManager.initialize(ctx.api, ctx.chat.id);
+    }
+    const keyboard = keyboardManager.getKeyboard();
+    await ctx.reply(
+      t("context.success"),
+      withMessageThreadId(keyboard ? { reply_markup: keyboard } : undefined, messageThreadId),
+    );
 
     return true;
   } catch (err) {

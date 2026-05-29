@@ -68,11 +68,12 @@ export async function applySelectedVariant(
     keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
   }
 
+  const keyboard = keyboardManager.getKeyboard();
   const displayName = formatVariantForDisplay(variantId);
 
   await ctx.reply(
     t(options.replyTextKey, { name: displayName }),
-    withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
+    withMessageThreadId(keyboard ? { reply_markup: keyboard } : undefined, extractMessageThreadIdFromContext(ctx)),
   );
 
   return { applied: true, displayName };

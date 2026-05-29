@@ -67,6 +67,7 @@ vi.mock("../../../src/keyboard/manager.js", () => ({
     updateModel: mocked.keyboardUpdateModelMock,
     updateVariant: mocked.keyboardUpdateVariantMock,
     updateContext: mocked.keyboardUpdateContextMock,
+    getKeyboard: mocked.createMainKeyboardMock,
   },
 }));
 
@@ -218,11 +219,11 @@ describe("bot/handlers/variant", () => {
 
     const [text, options] = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls[0] as [
       string,
-      { message_thread_id?: number },
+      { reply_markup?: unknown; message_thread_id?: number },
     ];
 
     expect(text).toBe(t("variant.changed_message", { name: "Fast" }));
-    expect(options).not.toHaveProperty("reply_markup");
+    expect(options).toHaveProperty("reply_markup");
     expect(options).not.toHaveProperty("message_thread_id");
     expect(ctx.deleteMessage).toHaveBeenCalledTimes(1);
     expect(interactionManager.getSnapshot()).toBeNull();

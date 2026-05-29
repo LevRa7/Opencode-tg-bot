@@ -376,7 +376,7 @@ describe("bot/handlers/model", () => {
     });
     expect(ctx.reply).toHaveBeenCalledWith(
       t("model.changed_message", { name: "openai / gpt-4.11" }),
-      {},
+      { reply_markup: { keyboard: "main" } },
     );
     expect(mocked.clearActiveInlineMenuMock).toHaveBeenCalledWith("model_selected");
     expect(ctx.deleteMessage).toHaveBeenCalledTimes(1);

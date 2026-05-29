@@ -283,12 +283,12 @@ export async function applySelectedModel(
     keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
   }
 
-  keyboardManager.getKeyboard();
+  const keyboard = keyboardManager.getKeyboard();
   const displayName = formatModelForDisplay(modelInfo.providerID, modelInfo.modelID);
 
   await ctx.reply(
     t(options.replyTextKey, { name: displayName }),
-    withMessageThreadId(undefined, extractMessageThreadIdFromContext(ctx)),
+    withMessageThreadId(keyboard ? { reply_markup: keyboard } : undefined, extractMessageThreadIdFromContext(ctx)),
   );
 
   return { displayName };

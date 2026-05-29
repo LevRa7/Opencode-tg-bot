@@ -5,6 +5,7 @@ import { opencodeClient } from "../../opencode/client.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { keyboardManager } from "../../keyboard/manager.js";
 
 export async function compactCommand(ctx: CommandContext<Context>): Promise<void> {
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
@@ -48,9 +49,16 @@ export async function compactCommand(ctx: CommandContext<Context>): Promise<void
     }
 
     logger.info(`[CompactCommand] Session compacted: ${session.id}`);
-    await ctx.api
-      .editMessageText(ctx.chat!.id, progressMessage.message_id, t("context.success"))
-      .catch(() => {});
+    await ctx.api.deleteMessage(ctx.chat!.id, progressMessage.message_id).catch(() => {});
+
+    if (ctx.chat) {
+      keyboardManager.initialize(ctx.api, ctx.chat.id);
+    }
+    const keyboard = keyboardManager.getKeyboard();
+    await ctx.reply(
+      t("context.success"),
+      withMessageThreadId(keyboard ? { reply_markup: keyboard } : undefined, messageThreadId),
+    );
   } catch (err) {
     logger.error("[CompactCommand] Compact exception:", err);
     await ctx.api

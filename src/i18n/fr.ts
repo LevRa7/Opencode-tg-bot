@@ -104,6 +104,8 @@ export const fr: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ La session active ne correspond pas au projet sélectionné, elle a donc été réinitialisée. Utilisez /sessions pour en choisir une ou /new pour créer une nouvelle session.",
   "bot.prompt_send_error": "Impossible d'envoyer la requête à OpenCode.",
+  "bot.model_fallback_switch":
+    "⚠️ Le modèle {model} est indisponible, basculement vers {fallback}.",
   "background.session_fallback": "session {id}",
       "background.open_session_button": "🔓 Ouvrir la session",
     "background.assistant_response":
@@ -128,8 +130,15 @@ export const fr: I18nDictionary = {
   "bot.photo_no_caption":
     "💡 Conseil : ajoutez une légende pour décrire ce que vous voulez faire avec cette photo.",
   "bot.file_downloading": "⏳ Téléchargement du fichier...",
+  "bot.files_downloading": "⏳ Téléchargement des fichiers...",
   "bot.file_too_large": "⚠️ Le fichier est trop volumineux (max {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 Impossible de télécharger le fichier",
+  "bot.file_type_unsupported":
+    "⚠️ Ce type de fichier n'est pas pris en charge. Envoyez une image, un PDF ou un fichier texte/code.",
+  "bot.media_group_not_processed":
+    "⚠️ Un ou plusieurs fichiers de cet album ne peuvent pas être traités. Rien n'a été envoyé à OpenCode.",
+  "bot.media_group_download_error":
+    "🔴 Impossible de télécharger l'un des fichiers. Rien n'a été envoyé à OpenCode.",
   "bot.file_processing": "⏳ Extraction du texte du document...",
   "bot.file_process_error": "🔴 Impossible de traiter le document",
   "bot.video_too_long": "⚠️ La vidéo est trop longue (max {maxDurationSec} s)",
@@ -227,6 +236,7 @@ export const fr: I18nDictionary = {
 
   "restart.in_progress": "⏳ Le redémarrage est déjà en cours.",
   "restart.restarting": "🔄 Redémarrage du bot...",
+  "restart.completed": "✅ Bot redémarré avec succès.",
   "restart.error": "🔴 Impossible de redémarrer le bot : {error}",
 
   "stop.no_active_session":

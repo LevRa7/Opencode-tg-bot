@@ -104,6 +104,8 @@ export const de: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ Die aktive Sitzung passt nicht zum ausgewählten Projekt und wurde daher zurückgesetzt. Nutze /sessions zur Auswahl oder /new, um eine neue Sitzung zu erstellen.",
   "bot.prompt_send_error": "Anfrage konnte nicht an OpenCode gesendet werden.",
+  "bot.model_fallback_switch":
+    "⚠️ Modell {model} ist nicht verfügbar, wechsle zu {fallback}.",
   "background.session_fallback": "Sitzung {id}",
       "background.open_session_button": "🔓 Sitzung öffnen",
     "background.assistant_response":
@@ -127,8 +129,15 @@ export const de: I18nDictionary = {
   "bot.photo_no_caption":
     "💡 Tipp: Füge eine Bildunterschrift hinzu, um zu beschreiben, was du mit diesem Foto tun möchtest.",
   "bot.file_downloading": "⏳ Lade Datei herunter...",
+  "bot.files_downloading": "⏳ Lade Dateien herunter...",
   "bot.file_too_large": "⚠️ Datei ist zu groß (max. {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 Datei konnte nicht heruntergeladen werden",
+  "bot.file_type_unsupported":
+    "⚠️ Dieser Dateityp wird nicht unterstützt. Sende ein Bild, PDF oder eine Text-/Code-Datei.",
+  "bot.media_group_not_processed":
+    "⚠️ Eine oder mehrere Dateien in diesem Album können nicht verarbeitet werden. Es wurde nichts an OpenCode gesendet.",
+  "bot.media_group_download_error":
+    "🔴 Eine der Dateien konnte nicht heruntergeladen werden. Es wurde nichts an OpenCode gesendet.",
   "bot.file_processing": "⏳ Dokumenttext wird extrahiert...",
   "bot.file_process_error": "🔴 Dokument konnte nicht verarbeitet werden",
   "bot.video_too_long": "⚠️ Video ist zu lang (max. {maxDurationSec} Sek.)",
@@ -226,6 +235,7 @@ export const de: I18nDictionary = {
 
   "restart.in_progress": "⏳ Neustart läuft bereits.",
   "restart.restarting": "🔄 Bot wird neu gestartet...",
+  "restart.completed": "✅ Bot erfolgreich neu gestartet.",
   "restart.error": "🔴 Bot konnte nicht neu gestartet werden: {error}",
 
   "stop.no_active_session":

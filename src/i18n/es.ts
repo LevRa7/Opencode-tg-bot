@@ -104,6 +104,8 @@ export const es: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ La sesión activa no coincide con el proyecto seleccionado, así que se reinició. Usa /sessions para elegir una o /new para crear una nueva.",
   "bot.prompt_send_error": "No se pudo enviar la solicitud a OpenCode.",
+  "bot.model_fallback_switch":
+    "⚠️ El modelo {model} no está disponible, cambiando a {fallback}.",
   "background.session_fallback": "sesión {id}",
       "background.open_session_button": "🔓 Abrir sesión",
     "background.assistant_response":
@@ -127,8 +129,15 @@ export const es: I18nDictionary = {
   "bot.photo_no_caption":
     "💡 Consejo: agrega un pie de foto para describir que quieres hacer con esta foto.",
   "bot.file_downloading": "⏳ Descargando archivo...",
+  "bot.files_downloading": "⏳ Descargando archivos...",
   "bot.file_too_large": "⚠️ El archivo es demasiado grande (max {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 No se pudo descargar el archivo",
+  "bot.file_type_unsupported":
+    "⚠️ Este tipo de archivo no es compatible. Envía una imagen, PDF o archivo de texto/código.",
+  "bot.media_group_not_processed":
+    "⚠️ Uno o más archivos de este álbum no se pueden procesar. No se envió nada a OpenCode.",
+  "bot.media_group_download_error":
+    "🔴 No se pudo descargar uno de los archivos. No se envió nada a OpenCode.",
   "bot.file_processing": "⏳ Extrayendo texto del documento...",
   "bot.file_process_error": "🔴 No se pudo procesar el documento",
   "bot.video_too_long": "⚠️ El video es demasiado largo (máx. {maxDurationSec} s)",
@@ -225,6 +234,7 @@ export const es: I18nDictionary = {
 
   "restart.in_progress": "⏳ El reinicio ya está en curso.",
   "restart.restarting": "🔄 Reiniciando bot...",
+  "restart.completed": "✅ Bot reiniciado correctamente.",
   "restart.error": "🔴 No se pudo reiniciar el bot: {error}",
 
   "stop.no_active_session":

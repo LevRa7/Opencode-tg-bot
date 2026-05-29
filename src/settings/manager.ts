@@ -57,6 +57,9 @@ export interface ScheduledTaskSessionIgnoreInfo {
 export interface LastRestartRequest {
   updateId: number;
   requestedAt: string;
+  chatId?: number;
+  messageId?: number;
+  locale?: string;
 }
 
 export interface ThreadContextBinding {
@@ -972,6 +975,28 @@ export function setCurrentModel(modelInfo: ModelInfo): void {
 
 export function setConversationCurrentModel(modelInfo: ModelInfo): void {
   setCurrentModelSelection(modelInfo, { persistAsUserDefault: false });
+}
+
+export function setCurrentModelForScope(
+  scope: TelegramConversationScope,
+  modelInfo: ModelInfo,
+): void {
+  const userKey = String(scope.userId);
+  const scopeKey = buildTelegramConversationScopeKey(scope);
+  const isGlobalDefault = (scope.messageThreadId ?? 0) <= 0;
+
+  currentSettings.scopedUserSettings ??= {};
+  currentSettings.scopedUserSettings[userKey] ??= {};
+  currentSettings.scopedUserSettings[userKey].defaultModel = cloneModelInfo(modelInfo);
+
+  if (!isGlobalDefault) {
+    currentSettings.scopedConversationSettings ??= {};
+    currentSettings.scopedConversationSettings[scopeKey] ??= {};
+    currentSettings.scopedConversationSettings[scopeKey].currentModel = cloneModelInfo(modelInfo);
+  }
+
+  currentSettings.currentModel = cloneModelInfo(modelInfo);
+  void writeSettingsFile(currentSettings);
 }
 
 function setCurrentModelSelection(modelInfo: ModelInfo, options: DefaultSelectionOptions): void {

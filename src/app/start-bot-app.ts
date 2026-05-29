@@ -8,7 +8,7 @@ import {
   type OpenCodeAutoRestartMonitor,
 } from "../opencode/auto-restart.js";
 import type { ProcessOperationResult } from "../process/types.js";
-import { loadSettings } from "../settings/manager.js";
+import { getLastRestartRequest, loadSettings, setLastRestartRequest } from "../settings/manager.js";
 import { processManager } from "../process/manager.js";
 import { scheduledTaskRuntime } from "../scheduled-task/runtime.js";
 import { refreshSessionCacheIfOpencodeReady } from "../opencode/ready-refresh.js";
@@ -17,6 +17,7 @@ import { getRuntimePaths } from "../runtime/paths.js";
 import { stopBotContainers } from "../runtime/docker.js";
 import { safeBackgroundTask } from "../utils/safe-background-task.js";
 import { logger } from "../utils/logger.js";
+import { t, type Locale } from "../i18n/index.js";
 
 const STARTUP_LOCK_FILE_NAME = "bot-start.lock";
 
@@ -179,8 +180,22 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
 
     if (!shutdownRequested) {
       await bot.start({
-        onStart: (botInfo) => {
+        onStart: async (botInfo) => {
           logger.info(`Bot @${botInfo.username} started!`);
+
+          const lastRestart = getLastRestartRequest();
+          if (lastRestart?.chatId && lastRestart?.messageId) {
+            try {
+              await bot!.api.editMessageText(
+                lastRestart.chatId,
+                lastRestart.messageId,
+                t("restart.completed", undefined, lastRestart.locale as Locale | undefined),
+              );
+            } catch (error) {
+              logger.warn("[App] Failed to edit restart message:", error);
+            }
+            await setLastRestartRequest({ updateId: lastRestart.updateId, requestedAt: lastRestart.requestedAt });
+          }
         },
       });
     }

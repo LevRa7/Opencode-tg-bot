@@ -92,6 +92,7 @@ export const zh: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ 活动会话与所选项目不匹配，因此已重置。使用 /sessions 选择一个会话，或 /new 创建新会话。",
   "bot.prompt_send_error": "向 OpenCode 发送请求失败。",
+  "bot.model_fallback_switch": "⚠️ 模型 {model} 不可用，正在切换到 {fallback}。",
   "background.session_fallback": "会话 {id}",
       "background.open_session_button": "🔓 打开会话",
     "background.assistant_response": "🔔 助手已在后台会话中回复：{session}",
@@ -110,8 +111,12 @@ export const zh: I18nDictionary = {
   "bot.photo_process_error": "🔴 处理照片失败",
   "bot.photo_no_caption": "💡 提示：添加说明文字以描述你希望对这张照片做什么。",
   "bot.file_downloading": "⏳ 正在下载文件...",
+  "bot.files_downloading": "⏳ 正在下载文件...",
   "bot.file_too_large": "⚠️ 文件过大（最大 {maxSizeMb}MB）",
   "bot.file_download_error": "🔴 下载文件失败",
+  "bot.file_type_unsupported": "⚠️ 不支持此文件类型。请发送图片、PDF 或文本/代码文件。",
+  "bot.media_group_not_processed": "⚠️ 此相册中有一个或多个文件无法处理。未向 OpenCode 发送任何内容。",
+  "bot.media_group_download_error": "🔴 无法下载其中一个文件。未向 OpenCode 发送任何内容。",
   "bot.file_processing": "⏳ 正在提取文档文本...",
   "bot.file_process_error": "🔴 处理文档失败",
   "bot.video_too_long": "⚠️ 视频过长（最长 {maxDurationSec} 秒）",
@@ -201,6 +206,7 @@ export const zh: I18nDictionary = {
 
   "restart.in_progress": "⏳ 重启已在进行中。",
   "restart.restarting": "🔄 正在重启机器人...",
+  "restart.completed": "✅ 机器人已成功重启。",
   "restart.error": "🔴 重启机器人失败：{error}",
 
   "stop.no_active_session": "🛑 代理尚未启动\n\n使用 /new 创建会话，或通过 /sessions 选择一个。",

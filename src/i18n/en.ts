@@ -100,6 +100,8 @@ export const en = {
   "bot.session_reset_project_mismatch":
     "⚠️ Active session does not match the selected project, so it was reset. Use /sessions to pick one or /new to create a new session.",
   "bot.prompt_send_error": "Failed to send request to OpenCode.",
+  "bot.model_fallback_switch":
+    "⚠️ Model {model} is unavailable, switching to {fallback}.",
   "background.session_fallback": "session {id}",
       "background.open_session_button": "🔓 Open session",
     "background.assistant_response": "🔔 Assistant replied in background session: {session}",
@@ -119,8 +121,15 @@ export const en = {
   "bot.photo_process_error": "🔴 Failed to process photo",
   "bot.photo_no_caption": "💡 Tip: Add a caption to describe what you want to do with this photo.",
   "bot.file_downloading": "⏳ Downloading file...",
+  "bot.files_downloading": "⏳ Downloading files...",
   "bot.file_too_large": "⚠️ File is too large (max {maxSizeMb}MB)",
   "bot.file_download_error": "🔴 Failed to download file",
+  "bot.file_type_unsupported":
+    "⚠️ This file type is not supported. Send an image, PDF, or text/code file.",
+  "bot.media_group_not_processed":
+    "⚠️ One or more files in this album cannot be processed. Nothing was sent to OpenCode.",
+  "bot.media_group_download_error":
+    "🔴 Failed to download one of the files. Nothing was sent to OpenCode.",
   "bot.file_processing": "⏳ Extracting document text...",
   "bot.file_process_error": "🔴 Failed to process document",
   "bot.audio_processing": "⏳ Transcribing audio...",
@@ -217,6 +226,7 @@ export const en = {
 
   "restart.in_progress": "⏳ Restart is already in progress.",
   "restart.restarting": "🔄 Restarting bot...",
+  "restart.completed": "✅ Bot successfully restarted.",
   "restart.error": "🔴 Failed to restart bot: {error}",
 
   "stop.no_active_session":

@@ -1,6 +1,6 @@
 import { CommandContext, Context } from "grammy";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
-import { t } from "../../i18n/index.js";
+import { getLocale, t } from "../../i18n/index.js";
 import { restartCurrentProcess } from "../../runtime/restart.js";
 import { stopBotContainers } from "../../runtime/docker.js";
 import { getLastRestartRequest, setLastRestartRequest } from "../../settings/manager.js";
@@ -39,16 +39,20 @@ export async function restartCommand(ctx: CommandContext<Context>): Promise<void
   try {
     restartInProgress = true;
     logger.info(`[Bot] Restart requested by user=${ctx.from?.id ?? "unknown"}`);
-    await setLastRestartRequest({
-      updateId,
-      requestedAt: new Date().toISOString(),
-    });
 
-    await ctx.reply(t("restart.restarting"), withMessageThreadId(undefined, messageThreadId));
+    const sentMessage = await ctx.reply(t("restart.restarting"), withMessageThreadId(undefined, messageThreadId));
 
     const timer = setTimeout(() => {
       void (async () => {
         try {
+          await setLastRestartRequest({
+            updateId,
+            requestedAt: new Date().toISOString(),
+            chatId: sentMessage.chat.id,
+            messageId: sentMessage.message_id,
+            locale: getLocale(),
+          });
+
           const tenantRestartResult = await processManager.restartTenantRuntimes();
           if (!tenantRestartResult.success) {
             restartInProgress = false;

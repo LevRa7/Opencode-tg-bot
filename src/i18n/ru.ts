@@ -99,6 +99,8 @@ export const ru: I18nDictionary = {
   "bot.session_reset_project_mismatch":
     "⚠️ Активная сессия не соответствует выбранному проекту, поэтому была сброшена. Используйте /sessions для выбора или /new для создания новой сессии.",
   "bot.prompt_send_error": "Не удалось отправить запрос в OpenCode.",
+  "bot.model_fallback_switch":
+    "⚠️ Модель {model} недоступна, переключаюсь на {fallback}.",
   "background.session_fallback": "сессия {id}",
       "background.open_session_button": "🔓 Открыть сессию",
     "background.assistant_response": "🔔 В фоновой сессии пришёл ответ ассистента: {session}",
@@ -119,8 +121,15 @@ export const ru: I18nDictionary = {
   "bot.photo_process_error": "🔴 Не удалось обработать фото",
   "bot.photo_no_caption": "💡 Совет: Добавьте подпись, чтобы описать, что делать с этим фото.",
   "bot.file_downloading": "⏳ Скачиваю файл...",
+  "bot.files_downloading": "⏳ Скачиваю файлы...",
   "bot.file_too_large": "⚠️ Файл слишком большой (макс. {maxSizeMb}МБ)",
   "bot.file_download_error": "🔴 Не удалось скачать файл",
+  "bot.file_type_unsupported":
+    "⚠️ Этот тип файла не поддерживается. Отправьте изображение, PDF или текстовый/кодовый файл.",
+  "bot.media_group_not_processed":
+    "⚠️ Один или несколько файлов в альбоме нельзя обработать. В OpenCode ничего не отправлено.",
+  "bot.media_group_download_error":
+    "🔴 Не удалось скачать один из файлов. В OpenCode ничего не отправлено.",
   "bot.file_processing": "⏳ Извлекаю текст из документа...",
   "bot.file_process_error": "🔴 Не удалось обработать документ",
   "bot.video_too_long": "⚠️ Видео слишком длинное (макс. {maxDurationSec} сек.)",
@@ -215,6 +224,7 @@ export const ru: I18nDictionary = {
 
   "restart.in_progress": "⏳ Перезапуск уже выполняется.",
   "restart.restarting": "🔄 Перезапускаю бота...",
+  "restart.completed": "✅ Бот успешно перезапущен.",
   "restart.error": "🔴 Не удалось перезапустить бота: {error}",
 
   "stop.no_active_session":

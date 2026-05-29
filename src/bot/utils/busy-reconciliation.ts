@@ -145,6 +145,12 @@ export async function reconcileBusyState(directory: string, now: number = Date.n
     return;
   }
 
+  const { foregroundBusySessions, attachedSessionForDirectory } =
+    getReconciliationTargets(directory);
+  if (foregroundBusySessions.length === 0 && !attachedSessionForDirectory) {
+    return;
+  }
+
   lastReconcileAtByDirectory.set(directory, now);
   inFlightDirectories.add(directory);
 

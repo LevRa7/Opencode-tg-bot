@@ -377,6 +377,11 @@ class ThreadContextManager {
     this.persistBindings();
   }
 
+  updateModelBinding(contextKey: string, model: ModelInfo): void {
+    this.modelByContext.set(contextKey, cloneModel(model));
+    this.persistBindings();
+  }
+
   canAutoAssignSessionForActiveContext(): boolean {
     this.ensureHydrated();
 

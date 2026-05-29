@@ -26,7 +26,15 @@ type OptionalGlobalEventClient = {
 
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
+let sseIdleTimeoutMs = 30_000;
 const FATAL_NO_STREAM_ERROR = "No stream returned from event subscription";
+const SSE_IDLE_TIMEOUT_ERROR = "SSE stream idle timeout";
+
+type StreamReadResult =
+  | { type: "next"; result: IteratorResult<unknown, unknown> }
+  | { type: "error"; error: unknown }
+  | { type: "aborted" }
+  | { type: "timeout" };
 
 interface EventListenerState {
   eventStream: AsyncGenerator<unknown, unknown, unknown> | null;
@@ -82,6 +90,64 @@ function waitWithAbort(ms: number, signal: AbortSignal): Promise<boolean> {
 
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function createAttemptAbortController(parentSignal: AbortSignal): {
+  controller: AbortController;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+
+  if (parentSignal.aborted) {
+    controller.abort();
+    return { controller, cleanup: () => {} };
+  }
+
+  const onAbort = () => controller.abort();
+  parentSignal.addEventListener("abort", onAbort, { once: true });
+
+  return {
+    controller,
+    cleanup: () => parentSignal.removeEventListener("abort", onAbort),
+  };
+}
+
+function readStreamWithIdleTimeout(
+  stream: AsyncGenerator<unknown, unknown, unknown>,
+  signal: AbortSignal,
+): Promise<StreamReadResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: StreamReadResult) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+
+    const onAbort = () => finish({ type: "aborted" });
+    const timeout = setTimeout(() => finish({ type: "timeout" }), sseIdleTimeoutMs);
+
+    if (signal.aborted) {
+      finish({ type: "aborted" });
+      return;
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true });
+
+    stream.next().then(
+      (result) => finish({ type: "next", result }),
+      (error) => finish({ type: "error", error }),
+    );
+  });
+}
+
+function isEventStreamIdleTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.message === SSE_IDLE_TIMEOUT_ERROR;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -191,16 +257,18 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
     let useLegacyEventsOnce = false;
 
     while (state.isListening && !controller.signal.aborted) {
+      let attemptAbort: ReturnType<typeof createAttemptAbortController> | null = null;
       try {
         await ensureCurrentOpencodeRouteReady();
 
         let subscription: EventStreamSubscription;
+        attemptAbort = createAttemptAbortController(controller.signal);
         if (useLegacyEventsOnce) {
           useLegacyEventsOnce = false;
-          subscription = await subscribeToLegacyEventStream(directory, controller.signal);
+          subscription = await subscribeToLegacyEventStream(directory, attemptAbort.controller.signal);
         } else {
           try {
-            subscription = await subscribeToGlobalEventStream(controller.signal);
+            subscription = await subscribeToGlobalEventStream(attemptAbort.controller.signal);
             logger.debug(`Using global OpenCode event stream for ${listenerKey}`);
           } catch (error) {
             if (controller.signal.aborted || !state.isListening) {
@@ -215,7 +283,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
               `Global event stream unavailable for ${listenerKey}, falling back to project event stream`,
               error,
             );
-            subscription = await subscribeToLegacyEventStream(directory, controller.signal);
+            subscription = await subscribeToLegacyEventStream(directory, attemptAbort.controller.signal);
           }
         }
 
@@ -223,25 +291,64 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
         state.eventStream = subscription.stream;
         let usefulEventCount = 0;
 
-        for await (const event of subscription.stream) {
-          if (!state.isListening || controller.signal.aborted) {
-            logger.debug(`Event listener stopped for ${listenerKey}, breaking loop`);
-            break;
-          }
+        try {
+          while (state.isListening && !controller.signal.aborted) {
+            const readResult = await readStreamWithIdleTimeout(
+              state.eventStream,
+              attemptAbort.controller.signal,
+            );
 
-          const normalizedEvent = normalizeEvent(event, subscription.source, directory);
-          if (!normalizedEvent) {
-            continue;
-          }
+            if (readResult.type === "aborted") {
+              logger.debug(`Event listener stopped for ${listenerKey}, breaking loop`);
+              break;
+            }
 
-          if (normalizedEvent.type !== "server.connected") {
-            usefulEventCount++;
-          }
+            if (readResult.type === "timeout") {
+              attemptAbort.controller.abort();
+              const closeStream = state.eventStream.return?.(undefined);
+              void closeStream?.catch(() => undefined);
+              throw new Error(SSE_IDLE_TIMEOUT_ERROR);
+            }
 
-          if (state.eventCallback) {
-            const callbackSnapshot = state.eventCallback;
-            queueMicrotask(() => callbackSnapshot(normalizedEvent));
+            if (readResult.type === "error") {
+              throw readResult.error;
+            }
+
+            if (readResult.result.done) {
+              break;
+            }
+
+            const event = readResult.result.value;
+
+            const normalizedEvent = normalizeEvent(event, subscription.source, directory);
+            if (!normalizedEvent) {
+              continue;
+            }
+
+            if (normalizedEvent.type !== "server.connected") {
+              usefulEventCount++;
+            }
+
+            if (state.eventCallback) {
+              const callbackSnapshot = state.eventCallback;
+              queueMicrotask(() => {
+                if (
+                  controller.signal.aborted ||
+                  !state.isListening
+                ) {
+                  return;
+                }
+
+                try {
+                  callbackSnapshot(normalizedEvent);
+                } catch (error) {
+                  logger.error("[Events] Callback failed:", error);
+                }
+              });
+            }
           }
+        } finally {
+          attemptAbort.cleanup();
         }
 
         state.eventStream = null;
@@ -269,6 +376,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
           break;
         }
       } catch (error) {
+        attemptAbort?.cleanup();
         state.eventStream = null;
 
         if (controller.signal.aborted || !state.isListening) {
@@ -283,16 +391,26 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
 
         reconnectAttempt++;
         const reconnectDelay = getReconnectDelayMs(reconnectAttempt);
-        const errorText = error instanceof Error ? error.message.toLowerCase() : "";
-        if (errorText.includes("fetch failed") || errorText.includes("econnrefused")) {
+        if (isEventStreamIdleTimeoutError(error)) {
+          logger.warn(
+            `Event stream idle timeout for ${listenerKey}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})`,
+          );
+        } else if (isExpectedOpencodeUnavailableError(error)) {
           logger.warn(
             `Event stream unavailable for ${listenerKey}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})`,
           );
         } else {
-          logger.error(
-            `Event stream error for ${listenerKey}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})`,
-            error,
-          );
+          const errorText = error instanceof Error ? error.message.toLowerCase() : "";
+          if (errorText.includes("fetch failed") || errorText.includes("econnrefused")) {
+            logger.warn(
+              `Event stream unavailable for ${listenerKey}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})`,
+            );
+          } else {
+            logger.error(
+              `Event stream error for ${listenerKey}, reconnecting in ${reconnectDelay}ms (attempt=${reconnectAttempt})`,
+              error,
+            );
+          }
         }
 
         const shouldContinue = await waitWithAbort(reconnectDelay, controller.signal);
@@ -360,4 +478,8 @@ export function stopEventListening(directory?: string): void {
   }
 
   listenersByRuntimeAndDirectory.clear();
+}
+
+export function __setSseIdleTimeoutForTests(timeoutMs: number): void {
+  sseIdleTimeoutMs = timeoutMs;
 }

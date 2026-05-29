@@ -141,6 +141,46 @@ describe("bot/utils/reasoning-format", () => {
         );
       });
 
+      it("renumbers base-level ordered list items to be sequential", () => {
+        const [result] = formatReasoningForTelegramHtml(
+          1,
+          [
+            "1. First item",
+            "2. Second item",
+            "1. Third item (was restarting at 1)",
+          ].join("\n"),
+          [],
+          "",
+        );
+
+        const innerHtml = extractExpandableBlockquoteInnerHtml(result);
+
+        expect(innerHtml).toContain(
+          "1. First item\n2. Second item\n3. Third item (was restarting at 1)",
+        );
+      });
+
+      it("preserves nested ordered list numbering while renumbering base items", () => {
+        const [result] = formatReasoningForTelegramHtml(
+          1,
+          [
+            "5. First item",
+            "6. Second item",
+            "   4. Nested sub-item",
+            "      nested continuation",
+            "   5. Another nested",
+          ].join("\n"),
+          [],
+          "",
+        );
+
+        const innerHtml = extractExpandableBlockquoteInnerHtml(result);
+
+        expect(innerHtml).toContain(
+          "1. First item\n2. Second item\n   4. Nested sub-item\n      nested continuation\n   5. Another nested",
+        );
+      });
+
       it("keeps blank-line-separated ordered items as one stable list block", () => {
         const [result] = formatReasoningForTelegramHtml(
           1,

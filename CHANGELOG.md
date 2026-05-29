@@ -12,6 +12,25 @@ Documentation rule:
 
 ### Added
 
+- Ported upstream v0.20.5–v0.20.6 features: multiple file attachments (Telegram media group / album support), image document recognition (image/* MIME in document messages), user abort error suppression for cleaner UX, and permission request forwarding from subagent sessions.
+  - Why: align with upstream feature set while preserving multi-user runtime isolation and topic-aware scope routing.
+  - Affects: `src/bot/handlers/media-group.ts`, `src/bot/handlers/document.ts`, `src/bot/handlers/prompt.ts`, `src/bot/utils/abort-error-suppression.ts`, `src/bot/commands/abort.ts`, `src/bot/middleware/interaction-guard.ts`, `src/bot/utils/busy-guard.ts`, `src/summary/aggregator.ts`, `src/bot/index.ts`, `src/i18n/*.ts`, `tests/*`
+
+### Fixed
+
+- Ported upstream v0.20.5 fixes: stale busy state after abort with proper release function (`releaseAbortBusyState`), health check timeout (3s) to prevent bot polling blocks during OpenCode server start, SSE stream idle timeout (30s) with automatic reconnect, abort error suppression window (90s) to filter false "aborted" messages.
+  - Why: adopt upstream bugfixes and resilience improvements while adapting to multi-user architecture with scope-aware state management.
+  - Affects: `src/bot/commands/abort.ts`, `src/bot/commands/opencode-start.ts`, `src/opencode/events.ts`, `src/bot/utils/abort-error-suppression.ts`, `src/bot/utils/busy-reconciliation.ts`, `src/bot/middleware/interaction-guard.ts`, `src/bot/utils/busy-guard.ts`, `src/bot/index.ts`
+- Ported upstream v0.20.6 scheduled task fix: race condition where empty completed assistant response falsely reports without checking finish reason and tool-call turns; added `getAssistantFinishReason()` and `awaitingToolCalls` detection in `extractAssistantResult()`.
+  - Why: scheduled tasks that complete with tool-call turns should keep polling for the final assistant response rather than reporting empty prematurely.
+  - Affects: `src/scheduled-task/executor.ts`
+- Added user-facing error message for unsupported document MIME types; image/* documents now processed via shared media preparation pipeline.
+  - Why: improve clarity when users send unsupported file types and enable image-document attachments.
+  - Affects: `src/bot/handlers/document.ts`, `src/i18n/*.ts`
+- Permission requests now route to the correct forum topic instead of falling into the main/General thread; button callbacks work correctly after fix.
+  - Why: after the scope-based permission refactor (`a3ca508`), `deliveryTarget` from `getSessionDeliveryTarget()` could have a stale `messageThreadId` (via `threadContextManager` fallback in `getSessionRoutingTarget`) that disagreed with the routing scope. The message landed in the wrong thread, and the stored scope key didn't match the callback scope key, making buttons unresponsive. Fix uses `routing.target` directly (consistent with `routing.scope`) and removes the `deliveryTarget` override for permissions.
+  - Affects: `src/bot/index.ts`
+
 - Ported upstream v0.20.4 features: `/ls` command, `/detach` command, background session notification with inline "open session" button, full question options details with entity rendering, `TELEGRAM_API_ROOT` + `TELEGRAM_PROXY_SECRET` for reverse-proxy setups.
   - Why: align with upstream feature set while preserving multi-user runtime isolation.
   - Affects: `src/bot/commands/ls.ts`, `src/bot/commands/detach.ts`, `src/bot/commands/sessions.ts`, `src/bot/handlers/question.ts`, `src/background-session/tracker.ts`, `src/scheduled-task/session-ignore.ts`, `src/bot/utils/send-downloaded-file.ts`, `src/bot/utils/telegram-file-url.ts`, `src/opencode/ready-lifecycle.ts`, `src/opencode/ready-refresh.ts`, `src/utils/opencode-error.ts`, `src/bot/utils/external-user-input.ts`, `src/config.ts`, `src/i18n/*.ts`, `tests/*`

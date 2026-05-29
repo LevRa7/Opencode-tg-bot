@@ -97,6 +97,9 @@ import {
   processUserPrompt,
   isSessionBusy,
 } from "./handlers/prompt.js";
+import { deletePromptRetryContext, getPromptRetryContext } from "./handlers/prompt-context.js";
+import { switchToFallbackModel, getStoredModel, getFallbackModel } from "../model/manager.js";
+import type { ModelInfo } from "../model/types.js";
 import { IncomingMediaBatch } from "./incoming-media-batch.js";
 import type { ResolvedDeferredItem } from "../media/batch-types.js";
 import { composeDeferredMediaPrompt } from "../media/prompt-composer.js";
@@ -126,7 +129,7 @@ import {
   backgroundSessionTracker,
   type BackgroundSessionNotification,
 } from "../background-session/tracker.js";
-import { getVisibleReasoningText } from "./utils/thinking-message.js";
+import { extractReasoningTitle, getVisibleReasoningText } from "./utils/thinking-message.js";
 import { formatAssistantRunFooter } from "./utils/assistant-run-footer.js";
 import { sendBotText, sendStreamedBotText } from "./utils/telegram-text.js";
 import {
@@ -161,6 +164,7 @@ import {
   getThinkingClearMode,
   getUserLocale,
   isMessageStreamingEnabled,
+  setCurrentModelForScope,
 } from "../settings/manager.js";
 import {
   escapeHtml,
@@ -1716,10 +1720,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
       if (mode > 0 && visibleReasoningText) {
         try {
-          const reasoningTitle =
-            visibleReasoningText.match(/^[^.!?]*[.!?]/)?.[0]?.trim() ||
-            visibleReasoningText.split(/\r?\n/)[0]?.trim() ||
-            t("bot.thinking");
+          const reasoningTitle = extractReasoningTitle(visibleReasoningText);
           await streamThinkingBlocks({
             sessionId,
             logicalMessageId: messageId,
@@ -1847,7 +1848,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
         if (mode > 0 && visibleReasoningText) {
           const finalReasoningText = visibleReasoningText;
-          const finalReasoningTitle = finalReasoningText.match(/^[^.!?]*[.!?]/)?.[0]?.trim() || finalReasoningText.split(/\r?\n/)[0]?.trim() || t("bot.thinking");
+          const finalReasoningTitle = extractReasoningTitle(finalReasoningText);
           const thinkingFinalizeOutcome = await finalizeThinkingBlockStream({
             sessionId,
             logicalMessageId: completionInfo?.logicalMessageId ?? messageId,
@@ -2001,10 +2002,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     void technicalDetailsPublisher.flush();
     void thinkingDetailsPublisher.flush();
 
-    // 2026-05-01: Diagnose maternal session not cleaning up. If finishRun returns
-    // null the run may have been missing (never started / already cleared).
     if (!completedRun) {
-      logger.warn(
+      logger.debug(
         `[Bot] handleSessionIdle: finishRun returned null — no active run for session=${sessionId}, isDedicatedTopicSession=${isDedicatedTopicSession}, hasLiveTarget=${!!resolveAttachedSessionTarget(sessionId)}`,
       );
     } else {
@@ -2112,6 +2111,16 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   });
 
   summaryAggregator.setOnTool(async (toolInfo) => {
+    // 2026-05-29: Skip individual tool notifications for managed child sessions.
+    // Parent topic already shows subagent activity cards via setOnSubagent;
+    // sending tool-level messages to child topics is redundant and noisy.
+    if (
+      isManagedChildSession(toolInfo.sessionId) ||
+      pendingChildRoutingSetupBySessionId.has(toolInfo.sessionId)
+    ) {
+      return;
+    }
+
     const orderedPublication = scheduleOrderedPublication(toolInfo.sessionId, {
       eventTimeMs: toolInfo.eventTimeMs,
       logicalMessageId: buildToolPublicationLogicalMessageId(toolInfo),
@@ -2366,6 +2375,14 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   });
 
   summaryAggregator.setOnToolFile(async (fileInfo) => {
+    // 2026-05-29: Wait for child topic routing to be established before sending files.
+    // Without this, files could route to the parent topic during the seeding window
+    // (between seedChildRoutingFromSubagent and syncSubagentDeliveryContextForSession).
+    const pendingRoutingSetup = pendingChildRoutingSetupBySessionId.get(fileInfo.sessionId);
+    if (pendingRoutingSetup) {
+      await pendingRoutingSetup.catch(() => false);
+    }
+
     syncSessionRoutingContext(fileInfo.sessionId);
     if (!isSessionCurrent(fileInfo.sessionId)) {
       logger.error("Bot or chat ID not available for sending file");
@@ -2469,7 +2486,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     syncSessionRoutingContext(request.sessionID);
     const botApi = getSessionRoutingApi(request.sessionID);
-    const target = getSessionRoutingTarget(request.sessionID);
+    const routing = getSessionRoutingContext(request.sessionID);
+    const target = routing?.target ?? getSessionRoutingTarget(request.sessionID);
     if (!botApi || !target) {
       logger.error("Bot or chat ID not available for showing permission request");
       return;
@@ -2483,15 +2501,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     logger.info(
       `[Bot] Received permission request from agent: type=${request.permission}, requestID=${request.id}`,
     );
-    const deliveryTarget = getSessionDeliveryTarget(request.sessionID);
     await runWithSessionRoutingScope(request.sessionID, () =>
       showPermissionRequest(
         botApi,
         target.chatId,
         request,
         target.messageThreadId,
-        undefined,
-        deliveryTarget,
       ),
     );
   });
@@ -2577,16 +2592,195 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
   });
 
+  const NON_MODEL_SESSION_ERROR_PATTERN =
+    /context.{0,30}(length|size|too long|exceed|limit)/i;
+
+  const MODEL_UNAVAILABLE_PATTERNS: RegExp[] = [
+    /forbidden/i,
+    /unauthorized/i,
+    /rate.?limit/i,
+    /timeout/i,
+    /upstream.*error/i,
+    /bad.?gateway/i,
+    /service.?unavailable/i,
+    /not.?found/i,
+    /not.?supported/i,
+    /model.*not\s/i,
+    /model.*unavailable/i,
+    /invalid.*model/i,
+    /unknown.*model/i,
+    /request\sfailed/i,
+  ];
+
+  function isModelUnavailableError(message: string): boolean {
+    if (NON_MODEL_SESSION_ERROR_PATTERN.test(message)) {
+      return false;
+    }
+    return MODEL_UNAVAILABLE_PATTERNS.some((p) => p.test(message));
+  }
+
   summaryAggregator.setOnSessionError(async (sessionId, message) => {
-    syncSessionRoutingContext(sessionId);
     const routing = getPromptRoutingContext(sessionId) ?? getSessionRoutingContext(sessionId);
-    const target = getSessionRoutingTarget(sessionId);
+    const routingScope = routing?.scope ?? getSessionRoutingScope(sessionId);
+    const target = routing?.target ?? getSessionRoutingTarget(sessionId);
     const hasDedicatedTopicTarget =
       getSessionDeliveryTarget(sessionId)?.disableNotification === true;
     const hasLiveTarget = hasLiveSessionTarget(sessionId) || hasDedicatedTopicTarget;
-    const shouldClearThinkingBlock = await runWithSessionRoutingScope(sessionId, async () =>
-      getThinkingClearMode(),
+    const shouldClearThinkingBlock = await runWithTelegramConversationScope(
+      routingScope,
+      async () => getThinkingClearMode(),
     );
+
+    if (isModelUnavailableError(message)) {
+      const fallbackModel = getFallbackModel();
+      if (!fallbackModel) {
+        return;
+      }
+
+      let originalModel: ModelInfo;
+      let originalModelName: string;
+      const currentScope = routingScope;
+      if (currentScope) {
+        const current = await runWithTelegramConversationScope(currentScope, () =>
+          getStoredModel(),
+        );
+        originalModel = current;
+        originalModelName =
+          current.providerID && current.modelID
+            ? `${current.providerID}/${current.modelID}`
+            : "default";
+      } else {
+        originalModel = { providerID: "", modelID: "", variant: "default" };
+        originalModelName = "default";
+      }
+
+      if (
+        originalModel.providerID === fallbackModel.providerID &&
+        originalModel.modelID === fallbackModel.modelID
+      ) {
+        return;
+      }
+
+      const fallbackName = `${fallbackModel.providerID}/${fallbackModel.modelID}`;
+      logger.warn(
+        `[Bot] session.error model-unavailable: "${message}", switching ${sessionId} from ${originalModelName} to fallback ${fallbackName}`,
+      );
+
+      if (currentScope) {
+        setCurrentModelForScope(currentScope, fallbackModel);
+        const contextKey = buildTelegramConversationScopeKey(currentScope);
+        threadContextManager.updateModelBinding(contextKey, fallbackModel);
+      } else {
+        switchToFallbackModel();
+      }
+
+      if (routing && target) {
+        void routing.bot.api
+          .sendMessage(
+            target.chatId,
+            t("bot.model_fallback_switch", {
+              model: originalModelName,
+              fallback: fallbackName,
+            }),
+            withMessageThreadId(undefined, target.messageThreadId),
+          )
+          .catch(() => {});
+      }
+
+      const retryCtx = getPromptRetryContext(sessionId);
+      if (!retryCtx?.directory) {
+        return;
+      }
+
+      try {
+        deletePromptRetryContext(sessionId);
+        summaryAggregator.setSession(sessionId);
+
+        const retryResult = await runWithTelegramConversationScope(routingScope, async () =>
+          opencodeClient.session.promptAsync({
+            sessionID: sessionId,
+            directory: retryCtx.directory,
+            parts: [{ type: "text", text: retryCtx.lastText }],
+            model: { providerID: fallbackModel.providerID, modelID: fallbackModel.modelID },
+            agent: retryCtx.agent,
+            variant: fallbackModel.variant,
+          }),
+        );
+
+        const sdkError =
+          typeof retryResult === "object" &&
+          retryResult !== null &&
+          "error" in retryResult
+            ? (retryResult as { error?: unknown }).error ?? null
+            : null;
+        if (sdkError) {
+          logger.error(
+            `[Bot] Fallback model retry returned SDK error: sessionId=${sessionId}`,
+            sdkError,
+          );
+          throw sdkError;
+        }
+
+        logger.info(`[Bot] Fallback model retry dispatched: ${sessionId}`);
+
+        assistantRunState.clearRun(sessionId, "session_error_model_fallback");
+        assistantRunState.startRun(sessionId, {
+          startedAt: Date.now(),
+          configuredProviderID: fallbackModel.providerID,
+          configuredModelID: fallbackModel.modelID,
+        });
+
+        await Promise.all([
+          toolMessageBatcher.flushSession(sessionId, "session_error_fallback_retry"),
+          toolCallStreamer.flushSession(sessionId, "session_error_fallback_retry"),
+        ]);
+        if (routing && target) {
+          await clearThinkingBlockStream(sessionId, shouldClearThinkingBlock, {
+            sendText: async (text: string) => {
+              const sent = await routing.bot.api.sendMessage(
+                target.chatId,
+                text,
+                withMessageThreadId(
+                  { parse_mode: "HTML" as const, disable_notification: true },
+                  target.messageThreadId,
+                ),
+              );
+              return sent.message_id;
+            },
+            editText: async (messageId: number, text: string) => {
+              await routing.bot.api.editMessageText(
+                target.chatId,
+                messageId,
+                text,
+                withMessageThreadId({ parse_mode: "HTML" as const }, target.messageThreadId),
+              );
+            },
+            deleteText: async (messageId: number) => {
+              await routing.bot.api
+                .deleteMessage(target.chatId, messageId)
+                .catch(() => undefined);
+            },
+            routingIdentity: buildThinkingRoutingIdentity(target),
+          });
+        } else {
+          await clearThinkingBlockStream(sessionId, shouldClearThinkingBlock);
+        }
+        return;
+      } catch (retryError) {
+        logger.error("[Bot] Fallback model retry from session.error failed:", retryError);
+        console.error("[Bot] Fallback model retry from session.error failed:", retryError);
+        if (routing && target) {
+          void routing.bot.api
+            .sendMessage(
+              target.chatId,
+              t("bot.session_error"),
+              withMessageThreadId({ disable_notification: true }, target.messageThreadId),
+            )
+            .catch(() => {});
+        }
+      }
+    }
+
     if (!routing || !target || !hasLiveTarget) {
       finalAssistantDeliveryOrchestrator.clearSession(sessionId);
       clearPromptResponseMode(sessionId);
@@ -2679,8 +2873,9 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     clearSessionRoutingContext(sessionId);
     clearChildAssistantSession(sessionId);
     localFileFollowUpTracker.clearSession(sessionId);
-    foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
-    await scheduledTaskRuntime.flushDeferredDeliveries();
+      foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
+      summaryAggregator.stopTypingIndicator();
+      await scheduledTaskRuntime.flushDeferredDeliveries();
   });
 
   summaryAggregator.setOnSessionRetry(async ({ sessionId, message }) => {
@@ -3171,42 +3366,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       }
     }
 
-    if (event.type === "session.diff") {
-      const diffEvent = event as unknown as {
-        properties?: {
-          sessionID?: string;
-          diff?: Array<{ file?: string; additions?: number; deletions?: number }>;
-        };
-      };
-      const diffSessionId = diffEvent.properties?.sessionID;
-      const diffs = diffEvent.properties?.diff;
-      if (diffSessionId && diffs && diffs.length > 0 && isManagedChildSession(diffSessionId)) {
-        const childId = diffSessionId;
-        safeBackgroundTask({
-          taskName: `child-diff.${childId}`,
-          task: async () => {
-            const target = getSessionDeliveryTarget(childId);
-            const botApi = getSessionRoutingApi(childId);
-            if (!botApi || !target) return;
-
-            const parts = diffs!.map((d) => {
-              const filePath = d.file ?? "unknown";
-              const adds = d.additions ?? 0;
-              const dels = d.deletions ?? 0;
-              const icon = adds > 0 && dels > 0 ? "🔄" : adds > 0 ? "➕" : "➖";
-              return `${icon} <code>${escapeHtml(filePath)}</code> (${adds ? `+${adds}` : ""}${adds && dels ? " " : ""}${dels ? `-${dels}` : ""})`;
-            });
-
-            await deliverChildTopicMessage(childTopicDeliveryDependencies, {
-              sessionId: childId,
-              kind: "diagnostic",
-              text: `<blockquote>${parts.join("\n")}</blockquote>`,
-              format: "html",
-            });
-          },
-        });
-      }
-    }
+    // 2026-05-29: session.diff → child topic delivery removed.
+    // These messages duplicated tool completion notifications that already arrive
+    // via the standard setOnTool path. The cumulative nature of session.diff events
+    // caused massive repetition in subagent topics.
 
     if (config.bot.trackBackgroundSessions) {
       backgroundSessionTracker.processEvent(event, getCurrentSession()?.id ?? null);
@@ -3672,6 +3835,9 @@ export function createBot(): Bot<Context> {
 
   bot.catch((err) => {
     logger.error("[Bot] Unhandled error in bot:", err);
+    if (err instanceof Error && err.stack) {
+      logger.error("[Bot] Error stack:", err.stack);
+    }
     clearAllInteractionState("bot_unhandled_error");
     if (err.ctx) {
       logger.error(

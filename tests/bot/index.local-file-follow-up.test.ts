@@ -215,6 +215,7 @@ vi.mock("../../src/agent/manager.js", () => ({
 
 vi.mock("../../src/model/manager.js", () => ({
   getStoredModel: vi.fn(() => ({ providerID: "test", modelID: "test-model", variant: undefined })),
+  switchToFallbackModel: vi.fn(() => null),
 }));
 
 vi.mock("../../src/variant/manager.js", () => ({
@@ -2499,7 +2500,7 @@ describe("bot/index local file follow-up orchestration", () => {
     ).toHaveLength(1);
   });
 
-  it("sends child reasoning, tool summaries, diffs, final text, and footer through the same delivery helper", async () => {
+  it("sends child reasoning, final text, and footer through the same delivery helper", async () => {
     vi.resetModules();
     capturedEventCallbacksByDirectory.clear();
     sendMessageMock.mockClear();
@@ -2708,6 +2709,8 @@ describe("bot/index local file follow-up orchestration", () => {
             call[2]?.message_thread_id === 321,
         ),
       ).toBe(false);
+      // 2026-05-29: session.diff → child topic delivery removed as redundant.
+      // Tool completion notifications already report file changes via the standard path.
       expect(
         sendMessageMock.mock.calls.some(
           (call) =>
@@ -2715,7 +2718,7 @@ describe("bot/index local file follow-up orchestration", () => {
             call[2]?.message_thread_id === 321 &&
             call[2]?.disable_notification === true,
         ),
-      ).toBe(true);
+      ).toBe(false);
       expect(
         deliverChildTopicMessageMock.mock.calls.some(
           ([, request]) =>

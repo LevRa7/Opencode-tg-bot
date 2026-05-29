@@ -94,6 +94,7 @@ vi.mock("../../../src/agent/manager.js", () => ({
 
 vi.mock("../../../src/model/manager.js", () => ({
   getStoredModel: mocked.getStoredModelMock,
+  switchToFallbackModel: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock("../../../src/variant/manager.js", () => ({

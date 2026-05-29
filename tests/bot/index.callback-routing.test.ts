@@ -130,6 +130,8 @@ vi.mock("../../src/bot/middleware/auth.js", () => ({
 vi.mock("../../src/bot/commands/sessions.js", () => ({
   sessionsCommand: vi.fn(),
   handleSessionSelect: handleSessionSelectMock,
+  handleBackgroundSessionOpen: vi.fn(async () => false),
+  buildBackgroundSessionOpenKeyboard: vi.fn(() => undefined),
 }));
 
 vi.mock("../../src/bot/commands/projects.js", () => ({
@@ -462,6 +464,7 @@ vi.mock("../../src/model/capabilities.js", () => ({
 }));
 vi.mock("../../src/model/manager.js", () => ({
   getStoredModel: vi.fn(() => ({ providerID: "test", modelID: "model", variant: undefined })),
+  switchToFallbackModel: vi.fn(() => null),
 }));
 vi.mock("../../src/scheduled-task/foreground-state.js", () => ({
   foregroundSessionState: {

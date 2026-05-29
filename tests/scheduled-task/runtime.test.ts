@@ -196,7 +196,7 @@ describe("scheduled-task/runtime", () => {
       expect.objectContaining({
         chatId: 777,
         format: "raw",
-        text: expect.stringMatching(/🛠.*Build.*openai\/gpt-5.*60\.0s/),
+        text: expect.stringMatching(/🛠.*Build.*openai\/gpt-5.*1m/),
       }),
     );
     expect(footerCall).not.toHaveProperty("options");

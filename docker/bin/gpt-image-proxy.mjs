@@ -158,7 +158,7 @@ async function main() {
   });
 
   server.listen(LISTEN_PORT, LISTEN_HOST, () => {
-    console.error(`GPT image proxy listening on ${LISTEN_HOST}:${LISTEN_PORT}`);
+    console.log(`GPT image proxy listening on ${LISTEN_HOST}:${LISTEN_PORT}`);
   });
 }
 

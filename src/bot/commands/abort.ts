@@ -9,6 +9,12 @@ import { resolveScopedSessionFromContext } from "../runtime/scope-session-resolv
 import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { getCurrentTelegramConversationScopeKey } from "../../telegram/scope.js";
 import { assistantRunState } from "../assistant-run-state.js";
+import { markAttachedSessionIdle } from "../../attach/service.js";
+import { clearPromptResponseMode } from "../handlers/prompt.js";
+import { markUserAbortRequested } from "../utils/abort-error-suppression.js";
+import { summaryAggregator } from "../../summary/aggregator.js";
+
+import type { TelegramConversationScope } from "../../telegram/scope.js";
 
 type SessionState = "idle" | "busy" | "not-found";
 
@@ -17,6 +23,17 @@ interface AbortCurrentOperationOptions {
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function releaseAbortBusyState(
+  sessionId: string,
+  reason: string,
+  scope?: TelegramConversationScope | string | null,
+): Promise<void> {
+  foregroundSessionState.markIdle(sessionId, scope);
+  assistantRunState.clearRun(sessionId, reason);
+  await markAttachedSessionIdle(sessionId);
+  clearPromptResponseMode(sessionId);
+}
 
 async function pollSessionStatus(
   sessionId: string,
@@ -105,6 +122,8 @@ export async function abortCurrentOperation(
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
+    markUserAbortRequested(currentSession.id);
+    summaryAggregator.stopTypingIndicator();
 
     try {
       const { data: abortResult, error: abortError } = await opencodeClient.session.abort(
@@ -119,6 +138,7 @@ export async function abortCurrentOperation(
 
       if (abortError) {
         logger.warn("[Abort] Abort request failed:", abortError);
+        await releaseAbortBusyState(currentSession.id, "abort_unconfirmed", currentScope);
         if (notifyUser && chatId !== null && waitingMessageId !== null) {
           await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_unconfirmed"));
         }
@@ -126,6 +146,7 @@ export async function abortCurrentOperation(
       }
 
       if (abortResult !== true) {
+        await releaseAbortBusyState(currentSession.id, "abort_maybe_finished", currentScope);
         if (notifyUser && chatId !== null && waitingMessageId !== null) {
           await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_maybe_finished"));
         }
@@ -139,8 +160,7 @@ export async function abortCurrentOperation(
       );
 
       if (finalStatus === "idle" || finalStatus === "not-found") {
-        foregroundSessionState.markIdle(currentSession.id, currentScope);
-        assistantRunState.clearRun(currentSession.id, "abort_command");
+        await releaseAbortBusyState(currentSession.id, "abort_confirmed", currentScope);
         if (notifyUser && chatId !== null && waitingMessageId !== null) {
           await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.success"));
         }
@@ -151,6 +171,7 @@ export async function abortCurrentOperation(
       }
     } catch (error) {
       clearTimeout(timeoutId);
+      await releaseAbortBusyState(currentSession.id, "abort_error", currentScope);
 
       if (error instanceof Error && error.name === "AbortError") {
         if (notifyUser && chatId !== null && waitingMessageId !== null) {

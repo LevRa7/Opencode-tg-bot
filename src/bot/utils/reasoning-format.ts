@@ -283,6 +283,8 @@ function collectOrderedListBlock(
   const orderedLines: string[] = [];
   let continuationIndent = "";
   let itemBaseIndentLength = 0;
+  let itemIndex = 0;
+  let firstItemIndentLength: number | null = null;
   let index = startIndex;
 
   while (index < lines.length) {
@@ -306,8 +308,14 @@ function collectOrderedListBlock(
 
     const orderedLine = parseOrderedListLine(trimmedRightLine);
     if (orderedLine) {
-      orderedLines.push(`${orderedLine.indent}${orderedLine.marker}${orderedLine.content}`);
-      continuationIndent = `${orderedLine.indent}${" ".repeat(orderedLine.marker.length)}`;
+      if (firstItemIndentLength === null) {
+        firstItemIndentLength = orderedLine.indent.length;
+      }
+
+      const isBaseLevel = orderedLine.indent.length === firstItemIndentLength;
+      const marker = isBaseLevel ? `${++itemIndex}. ` : orderedLine.marker;
+      orderedLines.push(`${orderedLine.indent}${marker}${orderedLine.content}`);
+      continuationIndent = `${orderedLine.indent}${" ".repeat(marker.length)}`;
       itemBaseIndentLength = orderedLine.indent.length;
       index += 1;
       continue;

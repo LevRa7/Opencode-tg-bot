@@ -5,7 +5,8 @@ import { clearSession, getCurrentSession, setCurrentSession } from "../../sessio
 import { ingestSessionInfoForCache } from "../../session/cache-manager.js";
 import { getCurrentProject, setConversationCurrentProject } from "../../settings/manager.js";
 import { getStoredAgent } from "../../agent/manager.js";
-import { getStoredModel } from "../../model/manager.js";
+import { getStoredModel, switchToFallbackModel } from "../../model/manager.js";
+import { deletePromptRetryContext, setPromptRetryContext } from "./prompt-context.js";
 import { formatVariantForButton } from "../../variant/manager.js";
 import { createMainKeyboard } from "../utils/keyboard.js";
 import {
@@ -104,6 +105,62 @@ async function retryPromptWithTenantRestart({
     return { error: null };
   } catch (retryError) {
     logger.error("[Bot] session.promptAsync retry also threw:", retryError);
+    return { error: retryError };
+  }
+}
+
+interface FallbackModelRetryOptions {
+  fallbackModel: { providerID: string; modelID: string; variant?: string };
+  promptOptions: Parameters<typeof opencodeClient.session.promptAsync>[0];
+  sessionId: string;
+  routingContext: PromptRoutingContext;
+}
+
+async function retryPromptWithFallbackModel({
+  fallbackModel,
+  promptOptions,
+  sessionId,
+  routingContext,
+}: FallbackModelRetryOptions): Promise<{ error: unknown | null }> {
+  const originalModelName = promptOptions.model
+    ? `${promptOptions.model.providerID}/${promptOptions.model.modelID}`
+    : "default";
+  const fallbackModelName = `${fallbackModel.providerID}/${fallbackModel.modelID}`;
+
+  logger.warn(
+    `[Bot] Model ${originalModelName} unavailable, switching to fallback ${fallbackModelName}: sessionId=${sessionId}`,
+  );
+
+  if (routingContext && !routingContext.suppressSendErrorMessage) {
+    void runWithTelegramConversationScope(routingContext.scope, () =>
+      routingContext.bot.api
+        .sendMessage(
+          routingContext.target.chatId,
+          t("bot.model_fallback_switch", { model: originalModelName, fallback: fallbackModelName }),
+          withMessageThreadId(undefined, routingContext.target.messageThreadId),
+        )
+        .catch(() => {}),
+    ).catch(() => {});
+  }
+
+  const fallbackPromptOptions = {
+    ...promptOptions,
+    model: { providerID: fallbackModel.providerID, modelID: fallbackModel.modelID },
+    variant: fallbackModel.variant,
+  };
+
+  try {
+    const retryResult = await opencodeClient.session.promptAsync(fallbackPromptOptions);
+    const retryError = getSdkResponseError(retryResult);
+    if (retryError) {
+      logger.error("[Bot] Fallback model retry also returned an error", { sessionId, retryError });
+      return { error: retryError };
+    }
+    deletePromptRetryContext(sessionId);
+    logger.info("[Bot] Fallback model retry succeeded");
+    return { error: null };
+  } catch (retryError) {
+    logger.error("[Bot] Fallback model retry threw:", retryError);
     return { error: retryError };
   }
 }
@@ -582,8 +639,8 @@ export async function processUserPrompt(
     // If no text and files exist, use a placeholder
     if (parts.length === 0 || (parts.length > 0 && parts.every((p) => p.type === "file"))) {
       if (fileParts.length > 0) {
-        // Files without text - add a minimal system prompt
-        parts.unshift({ type: "text", text: "See attached file" });
+        const attachmentText = fileParts.length === 1 ? "See attached file" : "See attached files";
+        parts.unshift({ type: "text", text: attachmentText });
       }
     }
 
@@ -651,6 +708,9 @@ export async function processUserPrompt(
     if (scope && effectivePromptText) {
       externalInputSuppression.rememberSelfInput(currentSession.id, scope, effectivePromptText);
     }
+    if (effectivePromptText) {
+      setPromptRetryContext(currentSession.id, currentSession.directory, effectivePromptText, currentAgent);
+    }
 
     // CRITICAL: DO NOT wait for the full assistant turn to complete.
     // If we wait, the handler will not finish and grammY will not call getUpdates,
@@ -685,7 +745,20 @@ export async function processUserPrompt(
             if (!retryResult.error) {
               return;
             }
-            // Retry failed — fall through to error notification below
+            // Retry failed — fall through to fallback model attempt below
+          }
+
+          const fallbackModelOnSuccess = switchToFallbackModel();
+          if (fallbackModelOnSuccess) {
+            const fallbackResult = await retryPromptWithFallbackModel({
+              fallbackModel: fallbackModelOnSuccess,
+              promptOptions,
+              sessionId: currentSession.id,
+              routingContext,
+            });
+            if (!fallbackResult.error) {
+              return;
+            }
           }
 
           foregroundSessionState.markIdle(
@@ -730,7 +803,20 @@ export async function processUserPrompt(
           if (!retryResult.error) {
             return;
           }
-          // Retry failed — fall through to error notification below
+          // Retry failed — fall through to fallback model attempt below
+        }
+
+        const fallbackModelOnError = switchToFallbackModel();
+        if (fallbackModelOnError) {
+          const fallbackResult = await retryPromptWithFallbackModel({
+            fallbackModel: fallbackModelOnError,
+            promptOptions,
+            sessionId: currentSession.id,
+            routingContext,
+          });
+          if (!fallbackResult.error) {
+            return;
+          }
         }
 
         foregroundSessionState.markIdle(

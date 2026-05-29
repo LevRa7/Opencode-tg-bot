@@ -200,7 +200,7 @@ async function main() {
   });
 
   server.listen(LISTEN_PORT, LISTEN_HOST, () => {
-    console.error(`Gemini media proxy listening on ${LISTEN_HOST}:${LISTEN_PORT}`);
+    console.log(`Gemini media proxy listening on ${LISTEN_HOST}:${LISTEN_PORT}`);
   });
 }
 

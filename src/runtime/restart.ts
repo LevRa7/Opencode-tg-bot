@@ -50,10 +50,18 @@ export function restartCurrentProcess(options: RestartCurrentProcessOptions = {}
   const resumedArgs = [...execArgv, ...argv.slice(1)];
   const wrapperProcess = spawnProcess(
     execPath,
-    ["-e", buildRestartWrapperScript(), String(delayMs), execPath, cwd, JSON.stringify(resumedArgs)],
+    [
+      "--input-type=commonjs",
+      "-e",
+      buildRestartWrapperScript(),
+      String(delayMs),
+      execPath,
+      cwd,
+      JSON.stringify(resumedArgs),
+    ],
     {
       cwd,
-      env,
+      env: { ...env, NODE_OPTIONS: undefined },
       detached: true,
       stdio: "ignore",
       windowsHide: true,

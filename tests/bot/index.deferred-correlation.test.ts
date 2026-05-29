@@ -613,6 +613,7 @@ async function emitSessionIdle(): Promise<void> {
 describe("bot/index deferred correlation", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    process.env.VITEST = "";
     capturedEventCallbacksByDirectory.clear();
     attachTargetBySessionId.clear();
     attachScopeBySessionId.clear();
@@ -646,10 +647,11 @@ describe("bot/index deferred correlation", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    process.env.VITEST = "1";
     vi.restoreAllMocks();
   });
 
-  it.skip("sends direct text immediately, defers later text and media into one follow-up, and preserves standalone media fallback", async () => {
+  it("batches all messages in a correlation window into a single prompt and sends standalone media directly", async () => {
     const bot = createBot() as any;
     const textHandler = bot.onHandlers
       .filter((entry: any) => entry.event === "message:text")
@@ -661,57 +663,50 @@ describe("bot/index deferred correlation", () => {
     expect(textHandler).toBeTypeOf("function");
     expect(photoHandler).toBeTypeOf("function");
 
+    // Message #1 opens a batch window, message #2 and #3 are enqueued as deferred
     await textHandler(createTextContext("first direct text", 1));
+    await textHandler(createTextContext("later direct text", 2));
+    await photoHandler(createPhotoContext(3));
 
-    // Wait for msg #1's 1-second batch window to expire and flush
-    await vi.advanceTimersByTimeAsync(1100);
+    // Wait for the batch window to expire and flush
+    await vi.advanceTimersByTimeAsync(5000);
     expect(sessionPromptAsyncMock).toHaveBeenCalledTimes(1);
-    const [firstPromptCall] = sessionPromptAsyncMock.mock.calls as unknown as Array<Array<any>>;
-    expect(firstPromptCall?.[0]).toEqual(
+
+    const [batchCall] = sessionPromptAsyncMock.mock.calls as unknown as Array<Array<any>>;
+    // The combined prompt goes through processUserPrompt, so it passes through
+    // the regular path which calls session.promptAsync with sessionID and parts
+    expect(batchCall?.[0]).toEqual(
       expect.objectContaining({
         sessionID: expect.any(String),
         directory: "/repo",
         parts: expect.arrayContaining([
           expect.objectContaining({
             type: "text",
-            text: expect.stringContaining("first direct text"),
           }),
         ]),
       }),
     );
+    const combinedText = batchCall?.[0]?.parts?.[0]?.text as string;
+    expect(combinedText).toContain("first direct text");
+    expect(combinedText).toContain("later direct text");
+    expect(combinedText).toContain("Look at this screenshot");
 
-    // Wait for msgs #2+#3 batch window to fully expire
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(sessionPromptAsyncMock).toHaveBeenCalledTimes(2);
-    const [, secondPromptCall] = sessionPromptAsyncMock.mock.calls as unknown as Array<Array<any>>;
-    expect(secondPromptCall?.[0]).toEqual(
-      expect.objectContaining({
-        sessionID: "session-1",
-        directory: "/repo",
-        parts: [
-          {
-            type: "text",
-            text: expect.stringContaining("Additional context for the user's previous request:"),
-          },
-        ],
-      }),
-    );
-    expect(secondPromptCall?.[0]?.parts?.[0]?.text).toContain("later direct text");
-    expect(secondPromptCall?.[0]?.parts?.[0]?.text).toContain("Look at this screenshot");
-
+    // Standalone message after batch flush sends directly
     sessionPromptAsyncMock.mockClear();
     await textHandler(createTextContext("single follow-up text", 10));
     await vi.advanceTimersByTimeAsync(1100);
     expect(sessionPromptAsyncMock).toHaveBeenCalledTimes(1);
-    const [singleFollowUpCall] = sessionPromptAsyncMock.mock.calls as unknown as Array<Array<any>>;
-    expect(singleFollowUpCall?.[0]?.parts?.[0]?.text).not.toContain(
+    const [singleCall] = sessionPromptAsyncMock.mock.calls as unknown as Array<Array<any>>;
+    expect(singleCall?.[0]?.parts?.[0]?.text).toContain("single follow-up text");
+    expect(singleCall?.[0]?.parts?.[0]?.text).not.toContain(
       "Additional context for the user's previous request:",
     );
 
+    // Standalone photo after session idle
     sessionPromptAsyncMock.mockClear();
     await summaryCallbacks.onSessionIdle?.("session-1");
     await photoHandler(createPhotoContext(4));
-
+    await vi.advanceTimersByTimeAsync(1100);
     expect(sessionPromptAsyncMock).toHaveBeenCalledTimes(1);
   });
 
@@ -775,7 +770,7 @@ describe("bot/index deferred correlation", () => {
     );
   });
 
-  it.skip("releases deferred follow-up when session becomes idle before the correlation timer expires", async () => {
+  it("releases deferred follow-up when session becomes idle before the correlation timer expires", async () => {
     const bot = createBot() as any;
     const textHandler = bot.onHandlers
       .filter((entry: any) => entry.event === "message:text")

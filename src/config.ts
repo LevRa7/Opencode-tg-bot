@@ -244,6 +244,10 @@ export const config = {
       provider: getEnvVar("OPENCODE_MODEL_PROVIDER", true),
       modelId: getEnvVar("OPENCODE_MODEL_ID", true),
     },
+    fallbackModel: {
+      provider: getEnvVar("OPENCODE_FALLBACK_MODEL_PROVIDER", false) || "opencode",
+      modelId: getEnvVar("OPENCODE_FALLBACK_MODEL_ID", false) || "big-pickle",
+    },
   },
   server: {
     logLevel: getEnvVar("LOG_LEVEL", false) || "info",

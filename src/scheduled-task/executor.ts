@@ -44,6 +44,7 @@ type MessagePartSnapshot = {
   text?: string;
   ignored?: boolean;
   tool?: string;
+  reason?: string;
   state?: { status?: string };
 };
 
@@ -54,6 +55,7 @@ type AssistantMessageSnapshot = {
     id?: string;
     role: string;
     summary?: unknown;
+    finish?: string;
     time?: { completed?: number };
     error?: unknown;
   };
@@ -144,13 +146,31 @@ function sleep(ms: number): Promise<void> {
 }
 
 function findLatestAssistantMessage(
-  messages: Array<{ info: { role: string; summary?: unknown }; parts: MessagePartSnapshot[] }>,
+  messages: Array<{
+    info: { role: string; summary?: unknown; finish?: string };
+    parts: MessagePartSnapshot[];
+  }>,
 ): AssistantMessageSnapshot | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message?.info.role === "assistant" && !message.info.summary) {
       return message;
     }
+  }
+
+  return null;
+}
+
+function getAssistantFinishReason(message: AssistantMessageSnapshot): string | null {
+  for (let index = message.parts.length - 1; index >= 0; index -= 1) {
+    const part = message.parts[index];
+    if (part?.type === "step-finish" && typeof part.reason === "string" && part.reason.trim()) {
+      return part.reason.trim();
+    }
+  }
+
+  if (typeof message.info.finish === "string" && message.info.finish.trim()) {
+    return message.info.finish.trim();
   }
 
   return null;
@@ -163,7 +183,12 @@ function extractAssistantResult(message: AssistantMessageSnapshot | null): {
   message: AssistantMessageSnapshot | null;
 } {
   if (!message) {
-    return { resultText: null, errorMessage: null, completed: false, message: null };
+    return {
+      resultText: null,
+      errorMessage: null,
+      completed: false,
+      message: null,
+    };
   }
 
   const errorMessage = extractErrorMessage(message.info.error);
@@ -178,11 +203,14 @@ function extractAssistantResult(message: AssistantMessageSnapshot | null): {
   }
 
   const resultText = collectResponseText(message.parts);
+  const completed = Boolean(message.info.time?.completed);
+  const finishReason = getAssistantFinishReason(message);
+  const awaitingToolCalls = completed && finishReason === "tool-calls";
 
   return {
-    resultText,
+    resultText: awaitingToolCalls ? null : resultText,
     errorMessage: null,
-    completed: Boolean(message.info.time?.completed),
+    completed: completed && !awaitingToolCalls,
     message,
   };
 }
@@ -191,6 +219,7 @@ function summarizeAssistantParts(parts: MessagePartSnapshot[]): Array<{
   id?: string;
   type?: string;
   ignored?: boolean;
+  reason?: string;
   textLength?: number;
   tool?: string;
   status?: string;
@@ -199,6 +228,7 @@ function summarizeAssistantParts(parts: MessagePartSnapshot[]): Array<{
     id: part.id,
     type: part.type,
     ignored: part.ignored,
+    reason: part.reason,
     ...(typeof part.text === "string" ? { textLength: part.text.length } : {}),
     ...(part.tool ? { tool: part.tool } : {}),
     ...(part.state?.status ? { status: part.state.status } : {}),
@@ -222,6 +252,7 @@ function logEmptyAssistantResponseDiagnostics(
           id: message.info.id,
           completed: Boolean(message.info.time?.completed),
           summary: Boolean(message.info.summary),
+          finish: getAssistantFinishReason(message),
           errorMessage: extractErrorMessage(message.info.error),
           parts: summarizeAssistantParts(message.parts),
         }

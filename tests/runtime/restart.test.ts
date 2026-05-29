@@ -32,6 +32,7 @@ describe("runtime/restart", () => {
     expect(spawnProcess).toHaveBeenCalledWith(
       "/usr/bin/node",
       [
+        "--input-type=commonjs",
         "-e",
         expect.stringContaining("node:child_process"),
         "500",
@@ -41,7 +42,7 @@ describe("runtime/restart", () => {
       ],
       {
         cwd: "/app",
-        env: { TEST_ENV: "1" },
+        env: { TEST_ENV: "1", NODE_OPTIONS: undefined },
         detached: true,
         stdio: "ignore",
         windowsHide: true,

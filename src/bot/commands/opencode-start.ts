@@ -9,22 +9,60 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { editBotText } from "../utils/telegram-text.js";
 
-async function waitForServerReady(maxWaitMs: number = 10000): Promise<boolean> {
-  const startTime = Date.now();
-  const pollInterval = 500;
+const SERVER_READY_TIMEOUT_MS = 10_000;
+const SERVER_READY_POLL_INTERVAL_MS = 500;
+const HEALTH_CHECK_TIMEOUT_MS = 3_000;
+const HEALTH_CHECK_TIMED_OUT = Symbol("health-check-timed-out");
 
-  while (Date.now() - startTime < maxWaitMs) {
-    try {
-      const { data, error } = await opencodeClient.global.health();
+type HealthCheckResult = Awaited<ReturnType<typeof opencodeClient.global.health>>;
 
-      if (!error && data?.healthy) {
-        return true;
-      }
-    } catch {
-      // Server not ready yet
+async function healthWithTimeout(
+  timeoutMs: number = HEALTH_CHECK_TIMEOUT_MS,
+): Promise<HealthCheckResult | typeof HEALTH_CHECK_TIMED_OUT> {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      opencodeClient.global.health({ signal: controller.signal }),
+      new Promise<typeof HEALTH_CHECK_TIMED_OUT>((resolve) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          resolve(HEALTH_CHECK_TIMED_OUT);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+async function getHealthIfAvailable(): Promise<HealthCheckResult | null> {
+  try {
+    const result = await healthWithTimeout();
+    if (result === HEALTH_CHECK_TIMED_OUT) {
+      logger.warn(`[Bot] OpenCode health check timed out after ${HEALTH_CHECK_TIMEOUT_MS}ms`);
+      return null;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForServerReady(maxWaitMs: number = SERVER_READY_TIMEOUT_MS): Promise<boolean> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const health = await getHealthIfAvailable();
+    if (health?.data?.healthy) {
+      return true;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, SERVER_READY_POLL_INTERVAL_MS));
   }
 
   return false;
@@ -59,20 +97,15 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
       return;
     }
 
-    try {
-      const { data, error } = await opencodeClient.global.health();
-
-      if (!error && data?.healthy) {
-        await ctx.reply(
-          t("opencode_start.already_running_external", {
-            version: data.version || t("common.unknown"),
-          }),
-          withMessageThreadId(undefined, messageThreadId),
-        );
-        return;
-      }
-    } catch {
-      // continue with managed start
+    const existingHealth = await getHealthIfAvailable();
+    if (existingHealth?.data?.healthy) {
+      await ctx.reply(
+        t("opencode_start.already_running_external", {
+          version: existingHealth.data.version || t("common.unknown"),
+        }),
+        withMessageThreadId(undefined, messageThreadId),
+      );
+      return;
     }
 
     const statusMessage = await ctx.reply(
@@ -106,7 +139,7 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
       return;
     }
 
-    const { data: health } = await opencodeClient.global.health();
+    const health = (await getHealthIfAvailable())?.data;
     await editBotText({
       api: ctx.api,
       chatId: ctx.chat.id,

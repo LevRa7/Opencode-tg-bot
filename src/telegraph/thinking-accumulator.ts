@@ -2,11 +2,32 @@ import { logger } from "../utils/logger.js";
 import type { TelegraphClient } from "./telegraph-client.js";
 import type { TechnicalDetailsPublishRequest, TechnicalDetailsPublisher } from "./types.js";
 
+interface ThoughtEntry {
+  timestamp: number;
+  title: string;
+  body: string;
+}
+
 interface ThinkingPage {
   url: string;
   path: string;
-  thoughts: string[];
+  entries: ThoughtEntry[];
   dirty: boolean;
+}
+
+function formatTimestamp(ts: number): string {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} UTC`;
+}
+
+function entryToMarkdown(entry: ThoughtEntry): string {
+  return `## ${formatTimestamp(entry.timestamp)}\n\n${entry.title}\n\n${entry.body}`;
+}
+
+function buildPageContent(entries: ThoughtEntry[]): string {
+  const reversed = [...entries].reverse();
+  return reversed.map(entryToMarkdown).join("\n\n---\n\n");
 }
 
 /**
@@ -25,21 +46,30 @@ export class ThinkingTelegraphAccumulator implements TechnicalDetailsPublisher {
     const thoughtBody = request.body.trim();
     if (!thoughtBody || thoughtBody.length < 10) return null;
 
+    const title = stripThinkingPrefix(request.title.trim());
+    const body = stripLeadingTitle(thoughtBody, title);
+    const entry: ThoughtEntry = {
+      timestamp: Date.now(),
+      title: title || extractFirstLine(thoughtBody),
+      body,
+    };
+
     if (this.page) {
-      this.page.thoughts.push(thoughtBody);
+      this.page.entries.push(entry);
       this.page.dirty = true;
       this.scheduleFlush();
       return this.page.url;
     }
 
     try {
-      const result = await this.client.createPage("💭 Thinking", thoughtBody);
+      const content = entryToMarkdown(entry);
+      const result = await this.client.createPage("💭 Thinking", content);
       if (!result) return null;
 
       this.page = {
         url: result.url,
         path: result.path,
-        thoughts: [thoughtBody],
+        entries: [entry],
         dirty: false,
       };
       return result.url;
@@ -74,12 +104,9 @@ export class ThinkingTelegraphAccumulator implements TechnicalDetailsPublisher {
   }
 
   private async doFlush(): Promise<void> {
-    if (!this.page || this.page.thoughts.length === 0) return;
+    if (!this.page || this.page.entries.length === 0) return;
 
-    const reversed = [...this.page.thoughts].reverse();
-    const content = reversed
-      .map((t, i) => `## ${reversed.length - i}\n\n${t}`)
-      .join("\n\n---\n\n");
+    const content = buildPageContent(this.page.entries);
 
     try {
       const success = await this.client.editPage(this.page.path, "💭 Thinking", content);
@@ -90,4 +117,22 @@ export class ThinkingTelegraphAccumulator implements TechnicalDetailsPublisher {
       logger.warn("[ThinkingAccum] Failed to edit thinking page", { error });
     }
   }
+}
+
+function stripThinkingPrefix(title: string): string {
+  return title.replace(/^(?:💭\s*)+/u, "").trim();
+}
+
+function extractFirstLine(text: string): string {
+  return text.split(/\r?\n/)[0]?.trim() || text;
+}
+
+function stripLeadingTitle(body: string, title: string): string {
+  if (!title) return body;
+  const trimmed = body.trimStart();
+  if (trimmed.startsWith(title)) {
+    const after = trimmed.slice(title.length).trimStart();
+    return after || trimmed;
+  }
+  return trimmed;
 }

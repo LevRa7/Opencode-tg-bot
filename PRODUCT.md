@@ -171,7 +171,7 @@ Model picker behavior:
 - [x] Service message visibility controls (thinking/tool updates)
 - [x] Localized technical progress summaries with optional Telegraph detail links
 - [x] Sending code blocks as text files when needed
-- [x] Image attachments support (persist original photo files and fall back to local text extraction when the selected model lacks image input)
+- [x] Image attachments support (persist original photo files, including multiple files in one Telegram album, and fall back to local text extraction when the selected model lacks image input)
 - [x] PDF attachments support (persist original PDF files and fall back to local text extraction when the selected model lacks PDF input)
 - [x] Text file attachments support (include the saved local file path in the generated prompt for code/config/log files)
 - [x] Voice/audio transcription via Whisper-compatible APIs with automatic local media fallback when STT is unavailable or fails

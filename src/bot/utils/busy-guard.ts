@@ -1,11 +1,37 @@
 import type { Context } from "grammy";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
+import { reconcileBusyStateNow } from "./busy-reconciliation.js";
 import { t } from "../../i18n/index.js";
 import { extractTelegramConversationScopeFromContext } from "../../telegram/scope.js";
+import { logger } from "../../utils/logger.js";
 
 export function isForegroundBusy(ctx?: Context): boolean {
   const scope = ctx ? extractTelegramConversationScopeFromContext(ctx) : undefined;
   return foregroundSessionState.isBusyForScope(scope);
+}
+
+function getBusyDirectories(): string[] {
+  const directories = new Set<string>();
+
+  for (const session of foregroundSessionState.getBusySessions()) {
+    directories.add(session.directory);
+  }
+
+  return [...directories];
+}
+
+export async function reconcileForegroundBusyState(): Promise<void> {
+  if (!foregroundSessionState.getBusySessions().length) {
+    return;
+  }
+
+  for (const directory of getBusyDirectories()) {
+    try {
+      await reconcileBusyStateNow(directory);
+    } catch (error) {
+      logger.warn("[BusyGuard] Failed to reconcile foreground busy state", error);
+    }
+  }
 }
 
 export async function replyBusyBlocked(ctx: Context): Promise<void> {

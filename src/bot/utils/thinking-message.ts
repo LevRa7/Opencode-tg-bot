@@ -46,6 +46,25 @@ export function getVisibleReasoningText(reasoningText?: string): string | undefi
   return visibleText || undefined;
 }
 
+/**
+ * Extracts a clean title from the reasoning text.
+ * Strips ordered-list markers (e.g. "1. ", "2) "), takes the first line
+ * only (never bleeds into sub-lists), extracts the first sentence if
+ * punctuation is present, and removes trailing colons / semicolons.
+ */
+export function extractReasoningTitle(reasoningText: string): string {
+  const stripped = reasoningText.trimStart().replace(/^\s*\d+[.)]\s+/u, "");
+  const firstLine = stripped.split(/\r?\n/)[0]?.trim() || "";
+  if (!firstLine) return t("bot.thinking");
+
+  const firstSentence = firstLine.match(/^[^.!?]*[.!?]/)?.[0]?.trim();
+  const raw = firstSentence || firstLine;
+
+  const cleaned = raw.replace(/\s*[;:]\s*$/, "");
+  if (cleaned) return cleaned;
+  return t("bot.thinking");
+}
+
 function buildReasoningToolInfo(
   title: string,
   reasoningText: string,

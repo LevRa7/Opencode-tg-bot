@@ -44,6 +44,11 @@ vi.mock("../../src/utils/logger.js", () => ({
   },
 }));
 
+vi.mock("../../src/scheduled-task/session-ignore.js", () => ({
+  cleanupScheduledTaskSessionIgnores: vi.fn().mockResolvedValue(0),
+  registerScheduledTaskSessionIgnore: vi.fn().mockResolvedValue(undefined),
+}));
+
 import type { ScheduledOnceTask } from "../../src/scheduled-task/types.js";
 
 function createTask(partial: Partial<ScheduledOnceTask> = {}): ScheduledOnceTask {

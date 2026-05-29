@@ -92,6 +92,9 @@ export async function formatTechnicalProgressWithDetails(
   });
 
   if (!url) {
+    if (toolInfo.tool === "todowrite") {
+      return { text: `${base.text}:\n${details.body}` };
+    }
     return base;
   }
 

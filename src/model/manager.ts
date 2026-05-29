@@ -308,3 +308,31 @@ export function getStoredModel(): ModelInfo {
     variant: "default",
   };
 }
+
+export function getFallbackModel(): ModelInfo | null {
+  const { provider, modelId } = config.opencode.fallbackModel;
+  if (!provider || !modelId) {
+    return null;
+  }
+  return { providerID: provider, modelID: modelId, variant: "default" };
+}
+
+export function switchToFallbackModel(): ModelInfo | null {
+  const fallback = getFallbackModel();
+  if (!fallback) {
+    return null;
+  }
+  const current = getStoredModel();
+  if (current.providerID === fallback.providerID && current.modelID === fallback.modelID) {
+    return null;
+  }
+  logger.warn(
+    `[ModelManager] Switching from ${current.providerID}/${current.modelID} to fallback ${fallback.providerID}/${fallback.modelID}`,
+  );
+  selectModel(fallback);
+  const after = getStoredModel();
+  logger.warn(
+    `[ModelManager] After switch: ${after.providerID}/${after.modelID}`,
+  );
+  return fallback;
+}

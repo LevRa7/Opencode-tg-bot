@@ -17,12 +17,17 @@ const mocked = vi.hoisted(() => ({
   loggerErrorMock: vi.fn(),
 }));
 
-vi.mock("node:fs", () => ({
-  promises: {
-    readdir: mocked.readdirMock,
-    stat: mocked.statMock,
-  },
-}));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    promises: {
+      ...actual.promises,
+      readdir: mocked.readdirMock,
+      stat: mocked.statMock,
+    },
+  };
+});
 
 vi.mock("../../../src/bot/utils/busy-guard.js", () => ({
   isForegroundBusy: mocked.isForegroundBusyMock,

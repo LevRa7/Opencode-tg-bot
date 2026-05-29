@@ -324,6 +324,10 @@ class SummaryAggregator {
       return;
     }
 
+    if (this.activeRootSessionIds.size === 0) {
+      return;
+    }
+
     const sendTyping = () => {
       if (this.bot && this.chatId) {
         try {
@@ -492,6 +496,10 @@ class SummaryAggregator {
 
     if (this.currentSessionId === sessionId) {
       this.currentSessionId = [...this.activeRootSessionIds].at(-1) ?? null;
+    }
+
+    if (this.activeRootSessionIds.size === 0) {
+      this.stopTypingIndicator();
     }
   }
 

@@ -110,6 +110,66 @@ export async function handleDocumentMessage(
     }
   }
 
+  if (mimeType.startsWith("image/")) {
+    await ctx.reply(t("bot.file_downloading"));
+
+    let downloadedFile: Awaited<ReturnType<typeof downloadTelegramFile>>;
+
+    const releaseHold = acquireProcessingHold?.() ?? null;
+
+    try {
+      downloadedFile = await downloadFile(ctx.api, doc.file_id);
+    } catch (error) {
+      logger.error("[Document] Error downloading image document:", error);
+      await ctx.reply(t("bot.file_download_error"));
+      return;
+    }
+
+    try {
+      const prepared = await prepareMediaPrompt({
+        ctx,
+        telegramFileId: doc.file_id,
+        mediaType: "image",
+        mimeType,
+        originalFileName: filename,
+        fallbackFileName: filename,
+        caption,
+        buffer: downloadedFile.buffer,
+      });
+
+      logger.info(
+        `[Document] Sending image document (${downloadedFile.buffer.length} bytes, ${filename}, ${mimeType}) via shared media prompt`,
+      );
+
+      if (
+        enqueueCorrelatedItem?.({
+          correlationId: `document:${ctx.message?.message_id ?? doc.file_id}`,
+          kind: "document",
+          caption,
+          previewText: caption.trim() || filename,
+          contextText: prepared.promptText,
+          metadata: extractMessageMetadata(ctx),
+        })
+      ) {
+        return;
+      }
+
+      if (prepared.mode === "attachment") {
+        await processPrompt(ctx, prepared.promptText, deps, prepared.fileParts);
+        return;
+      }
+
+      await processPrompt(ctx, prepared.promptText, deps);
+      return;
+    } catch (error) {
+      logger.error("[Document] Error processing image document:", error);
+      await ctx.reply(t("bot.file_process_error"));
+      return;
+    } finally {
+      releaseHold?.();
+    }
+  }
+
   if (mimeType === "application/pdf") {
     await ctx.reply(t("bot.file_downloading"));
 
@@ -173,5 +233,6 @@ export async function handleDocumentMessage(
     }
   }
 
-  logger.debug(`[Document] Unsupported document MIME type: ${mimeType}, ignoring`);
+  logger.warn(`[Document] Unsupported document MIME type: ${mimeType}, filename=${filename}`);
+  await ctx.reply(t("bot.file_type_unsupported"));
 }

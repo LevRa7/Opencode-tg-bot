@@ -45,6 +45,9 @@ async function runStartCommand(mode?: RuntimeMode): Promise<number> {
 
   setRuntimeMode(modeResult.mode);
 
+  const { initializeLogger } = await import("./utils/logger.js");
+  await initializeLogger();
+
   const { ensureRuntimeConfigForStart } = await import("./runtime/bootstrap.js");
   await ensureRuntimeConfigForStart();
 

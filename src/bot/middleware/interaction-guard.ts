@@ -1,6 +1,7 @@
 import type { Context, NextFunction } from "grammy";
 import { resolveInteractionGuardDecision } from "../../interaction/guard.js";
 import type { BlockReason, InteractionKind } from "../../interaction/types.js";
+import { reconcileForegroundBusyState } from "../utils/busy-guard.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 
@@ -84,7 +85,12 @@ function getInteractionBlockedMessage(
 }
 
 export async function interactionGuardMiddleware(ctx: Context, next: NextFunction): Promise<void> {
-  const decision = resolveInteractionGuardDecision(ctx);
+  let decision = resolveInteractionGuardDecision(ctx);
+
+  if (!decision.allow && decision.busy) {
+    await reconcileForegroundBusyState();
+    decision = resolveInteractionGuardDecision(ctx);
+  }
 
   if (decision.allow) {
     await next();

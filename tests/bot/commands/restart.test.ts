@@ -56,7 +56,8 @@ function createContext(updateId: number = 500): CommandContext<Context> {
   return {
     update: { update_id: updateId },
     from: { id: 777 },
-    reply: vi.fn().mockResolvedValue({ message_id: 1 }),
+    reply: vi.fn().mockResolvedValue({ message_id: 1, chat: { id: 777 } }),
+    chat: { id: 777 },
   } as unknown as CommandContext<Context>;
 }
 

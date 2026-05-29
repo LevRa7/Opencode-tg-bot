@@ -268,7 +268,16 @@ describe("bot/handlers/question", () => {
     questionManager.startQuestions([SINGLE_OPTION_QUESTION], "req-6");
     await showCurrentQuestion(api, 123);
 
-    expect(api.sendMessage).toHaveBeenCalledWith(123, "1/1 Код\n\nВведите код из Telegram", {});
+    expect(api.sendMessage).toHaveBeenCalledWith(
+      123,
+      "❓ 1/1 Код\n\nВведите код из Telegram\n\nОтправить — Введите 5-значный код из Telegram",
+      {
+        entities: [
+          { type: "bold", offset: 0, length: 9 },
+          { type: "bold", offset: 36, length: 9 },
+        ],
+      },
+    );
     expect(interactionManager.getSnapshot()?.expectedInput).toBe("mixed");
 
     const textCtx = createTextContext("95001", api);
@@ -296,8 +305,13 @@ describe("bot/handlers/question", () => {
 
     expect(api.sendMessage).toHaveBeenCalledWith(
       -100123,
-      "1/1 Q1\n\nPick one",
+      "❓ 1/1 Q1\n\nPick one\n\nYes — accept\n\nNo — decline",
       expect.objectContaining({
+        entities: [
+          { type: "bold", offset: 0, length: 8 },
+          { type: "bold", offset: 20, length: 3 },
+          { type: "bold", offset: 34, length: 2 },
+        ],
         message_thread_id: 321,
         disable_notification: true,
         reply_markup: expect.anything(),

@@ -93,6 +93,10 @@ export const zh: I18nDictionary = {
     "⚠️ 活动会话与所选项目不匹配，因此已重置。使用 /sessions 选择一个会话，或 /new 创建新会话。",
   "bot.prompt_send_error": "向 OpenCode 发送请求失败。",
   "bot.model_fallback_switch": "⚠️ 模型 {model} 不可用，正在切换到 {fallback}。",
+  "bot.model_unavailable_no_fallback":
+    "⚠️ 模型 {model} 不可用，且未配置备用模型。",
+  "bot.model_unavailable_on_fallback":
+    "⚠️ 备用模型 {model} 也不可用。请使用 /model 选择其他模型。",
   "background.session_fallback": "会话 {id}",
       "background.open_session_button": "🔓 打开会话",
     "background.assistant_response": "🔔 助手已在后台会话中回复：{session}",

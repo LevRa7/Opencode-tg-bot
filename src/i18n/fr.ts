@@ -106,6 +106,10 @@ export const fr: I18nDictionary = {
   "bot.prompt_send_error": "Impossible d'envoyer la requête à OpenCode.",
   "bot.model_fallback_switch":
     "⚠️ Le modèle {model} est indisponible, basculement vers {fallback}.",
+  "bot.model_unavailable_no_fallback":
+    "⚠️ Le modèle {model} est indisponible et aucun modèle de secours n'est configuré.",
+  "bot.model_unavailable_on_fallback":
+    "⚠️ Le modèle de secours {model} est également indisponible. Veuillez sélectionner un autre modèle avec /model.",
   "background.session_fallback": "session {id}",
       "background.open_session_button": "🔓 Ouvrir la session",
     "background.assistant_response":

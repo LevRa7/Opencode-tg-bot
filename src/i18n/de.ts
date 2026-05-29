@@ -106,6 +106,10 @@ export const de: I18nDictionary = {
   "bot.prompt_send_error": "Anfrage konnte nicht an OpenCode gesendet werden.",
   "bot.model_fallback_switch":
     "⚠️ Modell {model} ist nicht verfügbar, wechsle zu {fallback}.",
+  "bot.model_unavailable_no_fallback":
+    "⚠️ Modell {model} ist nicht verfügbar und es ist kein Ersatzmodell konfiguriert.",
+  "bot.model_unavailable_on_fallback":
+    "⚠️ Das Ersatzmodell {model} ist ebenfalls nicht verfügbar. Bitte wähle ein anderes Modell mit /model.",
   "background.session_fallback": "Sitzung {id}",
       "background.open_session_button": "🔓 Sitzung öffnen",
     "background.assistant_response":

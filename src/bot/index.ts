@@ -99,6 +99,7 @@ import {
 } from "./handlers/prompt.js";
 import { deletePromptRetryContext, getPromptRetryContext } from "./handlers/prompt-context.js";
 import { switchToFallbackModel, getStoredModel, getFallbackModel, isAlreadyOnFallbackModel } from "../model/manager.js";
+import { isModelUnavailableError } from "./utils/model-error-patterns.js";
 import type { ModelInfo } from "../model/types.js";
 import { IncomingMediaBatch } from "./incoming-media-batch.js";
 import type { ResolvedDeferredItem } from "../media/batch-types.js";
@@ -2036,6 +2037,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       await clearThinkingBlockStream(sessionId, false);
       foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
       await scheduledTaskRuntime.flushDeferredDeliveries();
+      // Defer routing cleanup via setImmediate so a racing session.error callback
+      // (also queued via setImmediate) can access the routing context before it is cleared.
+      setImmediate(() => {
+        clearSessionRoutingContext(sessionId);
+      });
       return;
     }
 
@@ -2098,7 +2104,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       finalAssistantDeliveryOrchestrator.clearSession(sessionId);
       await clearThinkingBlockStream(sessionId, false);
       clearChildAssistantSession(sessionId);
-      clearSessionRoutingContext(sessionId);
+      // Defer routing cleanup so a racing session.error callback
+      // can access the routing context before it is cleared.
+      setImmediate(() => {
+        clearSessionRoutingContext(sessionId);
+      });
       localFileFollowUpTracker.clearSession(sessionId);
       messageDraftStreamManager.clearSession(sessionId);
       foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
@@ -2590,33 +2600,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
   });
 
-  const NON_MODEL_SESSION_ERROR_PATTERN =
-    /context.{0,30}(length|size|too long|exceed|limit)/i;
-
-  const MODEL_UNAVAILABLE_PATTERNS: RegExp[] = [
-    /forbidden/i,
-    /unauthorized/i,
-    /rate.?limit/i,
-    /timeout/i,
-    /upstream.*error/i,
-    /bad.?gateway/i,
-    /service.?unavailable/i,
-    /not.?found/i,
-    /not.?supported/i,
-    /model.*not\s/i,
-    /model.*unavailable/i,
-    /invalid.*model/i,
-    /unknown.*model/i,
-    /request\sfailed/i,
-  ];
-
-  function isModelUnavailableError(message: string): boolean {
-    if (NON_MODEL_SESSION_ERROR_PATTERN.test(message)) {
-      return false;
-    }
-    return MODEL_UNAVAILABLE_PATTERNS.some((p) => p.test(message));
-  }
-
   summaryAggregator.setOnSessionError(async (sessionId, message) => {
     const routing = getPromptRoutingContext(sessionId) ?? getSessionRoutingContext(sessionId);
     const routingScope = routing?.scope ?? getSessionRoutingScope(sessionId);
@@ -2630,11 +2613,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     );
 
     if (isModelUnavailableError(message)) {
-      const fallbackModel = getFallbackModel();
-      if (!fallbackModel) {
-        return;
-      }
-
       let originalModel: ModelInfo;
       let originalModelName: string;
       const currentScope = routingScope;
@@ -2652,7 +2630,36 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         originalModelName = "default";
       }
 
+      const fallbackModel = getFallbackModel();
+      if (!fallbackModel) {
+        logger.warn(
+          `[Bot] session.error model-unavailable: "${message}", sessionId=${sessionId}, model=${originalModelName}, no fallback configured`,
+        );
+        if (routing && target) {
+          void routing.bot.api
+            .sendMessage(
+              target.chatId,
+              t("bot.model_unavailable_no_fallback", { model: originalModelName }),
+              withMessageThreadId(undefined, target.messageThreadId),
+            )
+            .catch(() => {});
+        }
+        return;
+      }
+
       if (isAlreadyOnFallbackModel(originalModel)) {
+        logger.warn(
+          `[Bot] session.error model-unavailable: "${message}", sessionId=${sessionId}, already on fallback ${originalModelName}`,
+        );
+        if (routing && target) {
+          void routing.bot.api
+            .sendMessage(
+              target.chatId,
+              t("bot.model_unavailable_on_fallback", { model: originalModelName }),
+              withMessageThreadId(undefined, target.messageThreadId),
+            )
+            .catch(() => {});
+        }
         return;
       }
 
@@ -2877,6 +2884,187 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   summaryAggregator.setOnSessionRetry(async ({ sessionId, message }) => {
     syncSessionRoutingContext(sessionId);
     if (!getPromptRoutingContext(sessionId) && !getSessionRoutingContext(sessionId)) {
+      return;
+    }
+
+    if (isModelUnavailableError(message)) {
+      const routing = getPromptRoutingContext(sessionId) ?? getSessionRoutingContext(sessionId);
+      const routingScope = routing?.scope ?? getSessionRoutingScope(sessionId);
+      const target = routing?.target ?? getSessionRoutingTarget(sessionId);
+
+      let originalModel: ModelInfo;
+      let originalModelName: string;
+      if (routingScope) {
+        const current = await runWithTelegramConversationScope(routingScope, () =>
+          getStoredModel(),
+        );
+        originalModel = current;
+        originalModelName =
+          current.providerID && current.modelID
+            ? `${current.providerID}/${current.modelID}`
+            : "default";
+      } else {
+        originalModel = { providerID: "", modelID: "", variant: "default" };
+        originalModelName = "default";
+      }
+
+      const fallbackModel = getFallbackModel();
+      if (!fallbackModel) {
+        logger.warn(
+          `[Bot] session.retry model-unavailable: "${message}", sessionId=${sessionId}, model=${originalModelName}, no fallback configured`,
+        );
+        if (routing && target) {
+          void routing.bot.api
+            .sendMessage(
+              target.chatId,
+              t("bot.model_unavailable_no_fallback", { model: originalModelName }),
+              withMessageThreadId(undefined, target.messageThreadId),
+            )
+            .catch(() => {});
+        }
+        return;
+      }
+
+      if (isAlreadyOnFallbackModel(originalModel)) {
+        logger.warn(
+          `[Bot] session.retry model-unavailable: "${message}", sessionId=${sessionId}, already on fallback ${originalModelName}`,
+        );
+        if (routing && target) {
+          void routing.bot.api
+            .sendMessage(
+              target.chatId,
+              t("bot.model_unavailable_on_fallback", { model: originalModelName }),
+              withMessageThreadId(undefined, target.messageThreadId),
+            )
+            .catch(() => {});
+        }
+        return;
+      }
+
+      const fallbackName = `${fallbackModel.providerID}/${fallbackModel.modelID}`;
+      logger.warn(
+        `[Bot] session.retry model-unavailable: "${message}", switching ${sessionId} from ${originalModelName} to fallback ${fallbackName}`,
+      );
+
+      if (routingScope) {
+        setCurrentModelForScope(routingScope, fallbackModel);
+        const contextKey = buildTelegramConversationScopeKey(routingScope);
+        threadContextManager.updateModelBinding(contextKey, fallbackModel);
+        keyboardManager.updateModel(fallbackModel);
+      } else {
+        switchToFallbackModel();
+      }
+
+      if (routing && target) {
+        void routing.bot.api
+          .sendMessage(
+            target.chatId,
+            t("bot.model_fallback_switch", {
+              model: originalModelName,
+              fallback: fallbackName,
+            }),
+            withMessageThreadId(undefined, target.messageThreadId),
+          )
+          .catch(() => {});
+      }
+
+      try {
+        const dir = threadContextManager.getSessionDirectory(sessionId);
+        if (dir) {
+          await opencodeClient.session.abort({ sessionID: sessionId, directory: dir });
+          logger.info(`[Bot] Aborted session after model-unavailable retry: ${sessionId}`);
+        }
+      } catch (abortErr) {
+        logger.warn(`[Bot] Failed to abort session ${sessionId} after model-unavailable retry:`, abortErr);
+      }
+
+      const retryCtx = getPromptRetryContext(sessionId);
+      if (!retryCtx?.directory) {
+        return;
+      }
+
+      const shouldClearThinkingBlock = await runWithTelegramConversationScope(
+        routingScope,
+        async () => getThinkingClearMode(),
+      );
+
+      try {
+        deletePromptRetryContext(sessionId);
+        summaryAggregator.setSession(sessionId);
+
+        const retryResult = await runWithTelegramConversationScope(routingScope, async () =>
+          opencodeClient.session.promptAsync({
+            sessionID: sessionId,
+            directory: retryCtx.directory,
+            parts: [{ type: "text", text: retryCtx.lastText }],
+            model: { providerID: fallbackModel.providerID, modelID: fallbackModel.modelID },
+            agent: retryCtx.agent,
+            variant: fallbackModel.variant,
+          }),
+        );
+
+        const sdkError =
+          typeof retryResult === "object" &&
+          retryResult !== null &&
+          "error" in retryResult
+            ? (retryResult as { error?: unknown }).error ?? null
+            : null;
+        if (sdkError) {
+          logger.error(
+            `[Bot] Fallback model retry from session.retry returned SDK error: sessionId=${sessionId}`,
+            sdkError,
+          );
+          throw sdkError;
+        }
+
+        logger.info(`[Bot] Fallback model retry dispatched from session.retry: ${sessionId}`);
+
+        assistantRunState.clearRun(sessionId, "session_retry_model_fallback");
+        assistantRunState.startRun(sessionId, {
+          startedAt: Date.now(),
+          configuredProviderID: fallbackModel.providerID,
+          configuredModelID: fallbackModel.modelID,
+        });
+
+        await Promise.all([
+          toolMessageBatcher.flushSession(sessionId, "session_retry_fallback_retry"),
+          toolCallStreamer.flushSession(sessionId, "session_retry_fallback_retry"),
+        ]);
+        if (routing && target) {
+          await clearThinkingBlockStream(sessionId, shouldClearThinkingBlock, {
+            sendText: async (text: string) => {
+              const sent = await routing.bot.api.sendMessage(
+                target.chatId,
+                text,
+                withMessageThreadId(
+                  { parse_mode: "HTML" as const, disable_notification: true },
+                  target.messageThreadId,
+                ),
+              );
+              return sent.message_id;
+            },
+            editText: async (messageId: number, text: string) => {
+              await routing.bot.api.editMessageText(
+                target.chatId,
+                messageId,
+                text,
+                withMessageThreadId({ parse_mode: "HTML" as const }, target.messageThreadId),
+              );
+            },
+            deleteText: async (messageId: number) => {
+              await routing.bot.api
+                .deleteMessage(target.chatId, messageId)
+                .catch(() => undefined);
+            },
+            routingIdentity: buildThinkingRoutingIdentity(target),
+          });
+        } else {
+          await clearThinkingBlockStream(sessionId, shouldClearThinkingBlock);
+        }
+      } catch (retryError) {
+        logger.error("[Bot] Fallback model retry from session.retry failed:", retryError);
+        console.error("[Bot] Fallback model retry from session.retry failed:", retryError);
+      }
       return;
     }
 

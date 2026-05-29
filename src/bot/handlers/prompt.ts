@@ -5,7 +5,8 @@ import { clearSession, getCurrentSession, setCurrentSession } from "../../sessio
 import { ingestSessionInfoForCache } from "../../session/cache-manager.js";
 import { getCurrentProject, setConversationCurrentProject } from "../../settings/manager.js";
 import { getStoredAgent } from "../../agent/manager.js";
-import { getStoredModel } from "../../model/manager.js";
+import { getStoredModel, switchToFallbackModel, getFallbackModel } from "../../model/manager.js";
+import { isModelUnavailableError } from "../utils/model-error-patterns.js";
 import { deletePromptRetryContext, setPromptRetryContext } from "./prompt-context.js";
 import { formatVariantForButton } from "../../variant/manager.js";
 import { createMainKeyboard } from "../utils/keyboard.js";
@@ -692,6 +693,48 @@ export async function processUserPrompt(
             // Retry failed — give up
           }
 
+          const errorText = String(error);
+          if (isModelUnavailableError(errorText)) {
+            const fallbackModel = switchToFallbackModel();
+            if (fallbackModel) {
+              const fallbackName = `${fallbackModel.providerID}/${fallbackModel.modelID}`;
+              logger.warn(
+                `[Bot] session.prompt returned model-unavailable error, switching to fallback ${fallbackName}: sessionId=${currentSession.id}`,
+              );
+              if (!routingContext.suppressSendErrorMessage) {
+                const originalModelName = promptOptions.model
+                  ? `${promptOptions.model.providerID}/${promptOptions.model.modelID}`
+                  : "default";
+                void runWithTelegramConversationScope(routingContext.scope, () =>
+                  routingContext.bot.api
+                    .sendMessage(
+                      routingContext.target.chatId,
+                      t("bot.model_fallback_switch", { model: originalModelName, fallback: fallbackName }),
+                      withMessageThreadId(undefined, routingContext.target.messageThreadId),
+                    )
+                    .catch(() => {}),
+                ).catch(() => {});
+              }
+              const fallbackPromptOptions = {
+                ...promptOptions,
+                model: { providerID: fallbackModel.providerID, modelID: fallbackModel.modelID },
+                variant: fallbackModel.variant,
+              };
+              try {
+                const fallbackResult = await opencodeClient.session.promptAsync(fallbackPromptOptions);
+                const fallbackError = getSdkResponseError(fallbackResult);
+                if (!fallbackError) {
+                  deletePromptRetryContext(currentSession.id);
+                  logger.info("[Bot] Fallback model retry succeeded");
+                  return;
+                }
+                logger.error("[Bot] Fallback model retry also returned an error", { fallbackError });
+              } catch (fallbackErr) {
+                logger.error("[Bot] Fallback model retry threw:", fallbackErr);
+              }
+            }
+          }
+
           foregroundSessionState.markIdle(
             currentSession.id,
             resolveBusyScopeForSession(currentSession.id, routingContext.scope),
@@ -735,6 +778,48 @@ export async function processUserPrompt(
             return;
           }
           // Retry failed — give up
+        }
+
+        const errorText = String(error);
+        if (isModelUnavailableError(errorText)) {
+          const fallbackModel = switchToFallbackModel();
+          if (fallbackModel) {
+            const fallbackName = `${fallbackModel.providerID}/${fallbackModel.modelID}`;
+            logger.warn(
+              `[Bot] session.prompt threw model-unavailable error, switching to fallback ${fallbackName}: sessionId=${currentSession.id}`,
+            );
+            if (!routingContext.suppressSendErrorMessage) {
+              const originalModelName = promptOptions.model
+                ? `${promptOptions.model.providerID}/${promptOptions.model.modelID}`
+                : "default";
+              void runWithTelegramConversationScope(routingContext.scope, () =>
+                routingContext.bot.api
+                  .sendMessage(
+                    routingContext.target.chatId,
+                    t("bot.model_fallback_switch", { model: originalModelName, fallback: fallbackName }),
+                    withMessageThreadId(undefined, routingContext.target.messageThreadId),
+                  )
+                  .catch(() => {}),
+              ).catch(() => {});
+            }
+            const fallbackPromptOptions = {
+              ...promptOptions,
+              model: { providerID: fallbackModel.providerID, modelID: fallbackModel.modelID },
+              variant: fallbackModel.variant,
+            };
+            try {
+              const fallbackResult = await opencodeClient.session.promptAsync(fallbackPromptOptions);
+              const fallbackError = getSdkResponseError(fallbackResult);
+              if (!fallbackError) {
+                deletePromptRetryContext(currentSession.id);
+                logger.info("[Bot] Fallback model retry succeeded");
+                return;
+              }
+              logger.error("[Bot] Fallback model retry also returned an error", { fallbackError });
+            } catch (fallbackErr) {
+              logger.error("[Bot] Fallback model retry threw:", fallbackErr);
+            }
+          }
         }
 
         foregroundSessionState.markIdle(

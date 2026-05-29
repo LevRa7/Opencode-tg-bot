@@ -102,6 +102,10 @@ export const en = {
   "bot.prompt_send_error": "Failed to send request to OpenCode.",
   "bot.model_fallback_switch":
     "⚠️ Model {model} is unavailable, switching to {fallback}.",
+  "bot.model_unavailable_no_fallback":
+    "⚠️ Model {model} is unavailable and no fallback model is configured.",
+  "bot.model_unavailable_on_fallback":
+    "⚠️ Fallback model {model} is also unavailable. Please select a different model with /model.",
   "background.session_fallback": "session {id}",
       "background.open_session_button": "🔓 Open session",
     "background.assistant_response": "🔔 Assistant replied in background session: {session}",

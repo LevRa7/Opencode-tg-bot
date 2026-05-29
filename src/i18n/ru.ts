@@ -101,6 +101,10 @@ export const ru: I18nDictionary = {
   "bot.prompt_send_error": "Не удалось отправить запрос в OpenCode.",
   "bot.model_fallback_switch":
     "⚠️ Модель {model} недоступна, переключаюсь на {fallback}.",
+  "bot.model_unavailable_no_fallback":
+    "⚠️ Модель {model} недоступна, и резервная модель не настроена.",
+  "bot.model_unavailable_on_fallback":
+    "⚠️ Резервная модель {model} также недоступна. Выберите другую модель командой /model.",
   "background.session_fallback": "сессия {id}",
       "background.open_session_button": "🔓 Открыть сессию",
     "background.assistant_response": "🔔 В фоновой сессии пришёл ответ ассистента: {session}",

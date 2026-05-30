@@ -160,9 +160,9 @@ Scheduled tasks let you prepare prompts in advance and run them automatically la
 
 When installed via npm (`@levra7/opencode-telegram-bot`), the configuration wizard handles the initial setup. The `.env` file is stored in your platform's app data directory:
 
-- **macOS:** `~/Library/Application Support/@levra7/opencode-telegram-bot/.env`
-- **Windows:** `%APPDATA%\@levra7\opencode-telegram-bot\.env`
-- **Linux:** `~/.config/@levra7/opencode-telegram-bot/.env`
+- **macOS:** `~/Library/Application Support/opencode-telegram-bot/.env`
+- **Windows:** `%APPDATA%\opencode-telegram-bot\.env`
+- **Linux:** `~/.config/opencode-telegram-bot/.env`
 
 | Variable                        | Description                                                                                                  | Required | Default                  |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------ | :------: | ------------------------ |

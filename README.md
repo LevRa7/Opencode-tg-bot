@@ -1,7 +1,6 @@
 # OpenCode Telegram Bot
 
-[![npm version](https://img.shields.io/npm/v/@grinev/opencode-telegram-bot)](https://www.npmjs.com/package/@grinev/opencode-telegram-bot)
-[![CI](https://github.com/grinev/opencode-telegram-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/grinev/opencode-telegram-bot/actions/workflows/ci.yml)
+[![CI](https://github.com/LevRa7/Opencode-tg-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/LevRa7/Opencode-tg-bot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 
@@ -76,28 +75,24 @@ opencode serve
 
 ### 3. Install & Run
 
-The fastest way — run directly with `npx`:
+Clone and run from source:
 
 ```bash
-npx @grinev/opencode-telegram-bot
+git clone https://github.com/LevRa7/Opencode-tg-bot.git
+cd Opencode-tg-bot
+npm install
+cp .env.example .env
+# Edit .env with your bot token, user ID, and model settings
+npm run build
+npm start
 ```
 
-> Quick start is for npm usage. You do not need to clone this repository. If you run this command from the source directory (repository root), it may fail with `opencode-telegram: not found`. To run from sources, use the [Development](#development) section.
+On first launch, the bot will create the configuration file if it doesn't exist. Open your bot in Telegram and start sending tasks.
 
-On first launch, an interactive wizard will guide you through the configuration — it asks for interface language first, then your bot token, user ID, OpenCode API URL, and optional OpenCode server credentials (username/password). After that, you're ready to go. Open your bot in Telegram and start sending tasks.
-
-#### Alternative: Global Install
-
-```bash
-npm install -g @grinev/opencode-telegram-bot
-opencode-telegram start
-```
-
-To reconfigure at any time:
-
-```bash
-opencode-telegram config
-```
+> If you prefer to install from GitHub directly, you can also run:
+> ```bash
+> npx github:LevRa7/Opencode-tg-bot
+> ```
 
 ## Supported Platforms
 
@@ -109,25 +104,33 @@ opencode-telegram config
 
 ## Bot Commands
 
-| Command           | Description                                             |
-| ----------------- | ------------------------------------------------------- |
-| `/status`         | Server health, current project, session, and model info |
-| `/new`            | Create a new session                                    |
-| `/abort`          | Abort the current task                                  |
-| `/sessions`       | Browse and switch between recent sessions               |
-| `/projects`       | Switch between OpenCode projects                        |
-| `/tts`            | Toggle audio replies                                    |
-| `/rename`         | Rename the current session                              |
-| `/commands`       | Browse and run custom commands                          |
-| `/mcps`           | Browse available MCP servers and connection state       |
-| `/task`           | Create a scheduled task                                 |
-| `/tasklist`       | Browse and delete scheduled tasks                       |
-| `/opencode_start` | Start the OpenCode server remotely                      |
-| `/opencode_stop`  | Stop the OpenCode server remotely                       |
-| `/open`           | Open files in directory browser                         |
-| `/skills`         | List available skills                                   |
-| `/worktree`       | Manage worktrees                                        |
-| `/help`           | Show available commands                                 |
+| Command           | Description                                                  |
+| ----------------- | ------------------------------------------------------------ |
+| `/status`         | Server health, current project, session, and model info      |
+| `/new`            | Create a new session                                         |
+| `/abort`          | Abort the current task                                       |
+| `/detach`         | Detach the current session from this chat/topic              |
+| `/sessions`       | Browse and switch between recent sessions                    |
+| `/model`          | Switch the active model from favorites/recent                |
+| `/variant`        | Switch model variant (fast, default, thinking, etc.)         |
+| `/compact`        | Compact (summarize) the current session context              |
+| `/settings`       | Open user settings (language, toggles, timeouts)             |
+| `/stream`         | Toggle streaming assistant responses on/off                  |
+| `/restart`        | Restart the OpenCode server (admin only)                     |
+| `/tts`            | Toggle audio replies                                         |
+| `/projects`       | Switch between OpenCode projects                             |
+| `/rename`         | Rename the current session                                   |
+| `/commands`       | Browse and run custom commands                               |
+| `/mcps`           | Browse available MCP servers and connection state            |
+| `/task`           | Create a scheduled task                                      |
+| `/tasklist`       | Browse and delete scheduled tasks                            |
+| `/opencode_start` | Start the OpenCode server remotely                           |
+| `/opencode_stop`  | Stop the OpenCode server remotely                            |
+| `/open`           | Open files in directory browser                              |
+| `/ls`             | Browse directory contents in a paginated menu                |
+| `/skills`         | List available skills                                        |
+| `/worktree`       | Manage worktrees                                             |
+| `/help`           | Show available commands                                      |
 
 Any regular text message is sent as a prompt to the coding agent only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured. When a chat or forum topic is attached to a session, follow-up updates and external-input notices stay scoped to that same conversation target.
 
@@ -332,8 +335,8 @@ Since the bot runs locally on your machine and connects to your local OpenCode s
 ### Running from Source
 
 ```bash
-git clone https://github.com/grinev/opencode-telegram-bot.git
-cd opencode-telegram-bot
+git clone https://github.com/LevRa7/Opencode-tg-bot.git
+cd Opencode-tg-bot
 npm install
 cp .env.example .env
 # Edit .env with your bot token, user ID, and model settings
@@ -388,7 +391,7 @@ Please follow commit and release note conventions in [CONTRIBUTING.md](CONTRIBUT
 
 ## Community
 
-Have questions, want to share your experience using the bot, or have an idea for a feature? Join the conversation in [GitHub Discussions](https://github.com/grinev/opencode-telegram-bot/discussions).
+Have questions, want to share your experience using the bot, or have an idea for a feature? Join the conversation in [GitHub Discussions](https://github.com/LevRa7/Opencode-tg-bot/discussions).
 
 ## License
 

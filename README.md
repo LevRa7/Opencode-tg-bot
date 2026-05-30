@@ -75,24 +75,26 @@ opencode serve
 
 ### 3. Install & Run
 
-Clone and run from source:
+The fastest way — run directly with `npx`:
 
 ```bash
-git clone https://github.com/LevRa7/Opencode-tg-bot.git
-cd Opencode-tg-bot
-npm install
-cp .env.example .env
-# Edit .env with your bot token, user ID, and model settings
-npm run build
-npm start
+npx @levra7/opencode-telegram-bot
 ```
 
-On first launch, the bot will create the configuration file if it doesn't exist. Open your bot in Telegram and start sending tasks.
+On first launch, an interactive wizard will guide you through the configuration — it asks for interface language first, then your bot token, user ID, OpenCode API URL, and optional OpenCode server credentials (username/password). After that, you're ready to go. Open your bot in Telegram and start sending tasks.
 
-> If you prefer to install from GitHub directly, you can also run:
-> ```bash
-> npx github:LevRa7/Opencode-tg-bot
-> ```
+#### Alternative: Global Install
+
+```bash
+npm install -g @levra7/opencode-telegram-bot
+opencode-telegram start
+```
+
+To reconfigure at any time:
+
+```bash
+opencode-telegram config
+```
 
 ## Supported Platforms
 
@@ -156,11 +158,11 @@ Scheduled tasks let you prepare prompts in advance and run them automatically la
 
 ### Environment Variables
 
-When installed via npm, the configuration wizard handles the initial setup. The `.env` file is stored in your platform's app data directory:
+When installed via npm (`@levra7/opencode-telegram-bot`), the configuration wizard handles the initial setup. The `.env` file is stored in your platform's app data directory:
 
-- **macOS:** `~/Library/Application Support/opencode-telegram-bot/.env`
-- **Windows:** `%APPDATA%\opencode-telegram-bot\.env`
-- **Linux:** `~/.config/opencode-telegram-bot/.env`
+- **macOS:** `~/Library/Application Support/@levra7/opencode-telegram-bot/.env`
+- **Windows:** `%APPDATA%\@levra7\opencode-telegram-bot\.env`
+- **Linux:** `~/.config/@levra7/opencode-telegram-bot/.env`
 
 | Variable                        | Description                                                                                                  | Required | Default                  |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------ | :------: | ------------------------ |

@@ -33,6 +33,9 @@ Languages: English (`en`), Deutsch (`de`), Español (`es`), Français (`fr`), Р
 - **Custom Commands** — run OpenCode custom commands (and built-ins like `init`/`review`) from an inline menu with confirmation
 - **MCP visibility** — inspect configured MCP servers and their connection state with `/mcps`
 - **Interactive Q&A** — answer agent questions and approve permissions via inline buttons
+- **Thought translation** — model reasoning blocks are automatically translated into your selected language via a local [LibreTranslate](https://libretranslate.com) server. Translated headlines appear in chat (`💭`/`🧠`), and full reasoning text in Telegraph pages is replaced with the translated version in the background
+- **Multi-user / Tenancy** — the bot supports multiple users via `TELEGRAM_ALLOWED_USER_IDS`. Each user gets their own isolated OpenCode runtime and settings
+- **Multi-threaded (Forum Topics)** — the bot works in both private chats and Telegram group/forum topics. Each topic can have its own session attachment, model, and settings, keeping conversations organized
 - **Voice prompts** — send voice/audio messages, transcribe them via a Whisper-compatible API, and optionally enable spoken replies with `/tts`
 - **Optional auto-restart** — monitor the local OpenCode server and restart it automatically after stop/crash when enabled in config
 - **Telegram-safe formatting** — assistant replies are rendered with a local MarkdownV2 formatter for more stable Telegram output
@@ -189,6 +192,8 @@ When installed via npm, the configuration wizard handles the initial setup. The 
 | `TELEGRAPH_AUTHOR_NAME`         | Author name shown on generated Telegraph detail pages                                                         |    No    | `opencode-tg`            |
 | `TELEGRAPH_TIMEOUT_MS`          | Telegraph publish request timeout in milliseconds                                                            |    No    | `3000`                   |
 | `TELEGRAPH_MAX_CHARS`           | Maximum technical detail body length sent to Telegraph                                                       |    No    | `60000`                  |
+| `TELEGRAPH_TRANSLATE_ENABLED`   | Automatically translate model thoughts to the user's language via LibreTranslate                             |    No    | `false`                  |
+| `TELEGRAPH_TRANSLATE_API_URL`   | LibreTranslate server URL (e.g. `http://localhost:5000`)                                                     |    No    | —                        |
 | `CODE_FILE_MAX_SIZE_KB`         | Max file size (KB) to send as document                                                                       |    No    | `100`                    |
 | `STT_API_URL`                   | Whisper-compatible API base URL (enables voice/audio transcription)                                          |    No    | —                        |
 | `STT_API_KEY`                   | API key for your STT provider                                                                                |    No    | —                        |
@@ -207,6 +212,37 @@ When installed via npm, the configuration wizard handles the initial setup. The 
 > **Keep your `.env` file private.** It contains your bot token. Never commit it to version control.
 
 Telegraph detail publishing is optional. When enabled, concise localized tool, todo, and reasoning progress lines stay in Telegram, while longer technical details are published to Telegraph and linked from the progress line.
+
+### Thought Translation (Optional)
+
+When `TELEGRAPH_TRANSLATE_ENABLED=true` and a LibreTranslate server is running at `TELEGRAPH_TRANSLATE_API_URL`, the bot will automatically translate model reasoning blocks:
+
+- **Chat headlines** — `💭` and `🧠` titles are translated into the bot's selected language
+- **Telegraph pages** — full reasoning text is translated in the background and replaces the original content on the page
+
+Install LibreTranslate locally (requires Python 3):
+
+```bash
+pipx install libretranslate
+libretranslate --host 0.0.0.0 --port 5000 --load-only en,ru,de,fr,es,zh
+```
+
+Example systemd service (auto-start on boot):
+
+```ini
+[Unit]
+Description=LibreTranslate
+After=network.target
+
+[Service]
+Type=simple
+User=your-username
+ExecStart=/home/your-username/.local/bin/libretranslate --host 0.0.0.0 --port 5000 --load-only en,ru,de,fr,es,zh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
 
 ### Voice and Audio Transcription (Optional)
 
@@ -264,6 +300,26 @@ The model picker uses OpenCode local model state (`favorite` + `recent`):
 - Default model from `OPENCODE_MODEL_PROVIDER` + `OPENCODE_MODEL_ID` is always included in favorites
 
 To add a model to favorites, open OpenCode TUI (`opencode`), go to model selection, and press **Cmd+F/Ctrl+F** on the model.
+
+### Multi-User / Tenant Mode
+
+The bot supports multiple users via `TELEGRAM_ALLOWED_USER_IDS`. Each user:
+
+- Gets their own isolated OpenCode runtime (started on first message)
+- Has independent session, model, and project state
+- Has per-user settings (language, model preferences, etc.)
+
+This is useful for teams sharing a single Telegram bot, or for running the bot under one account while granting access to another.
+
+### Multi-Threaded (Forum Topics)
+
+The bot works in both private chats and Telegram forum topics. Each topic:
+
+- Has its own session attachment — different topics can work on different OpenCode sessions
+- Remembers its model, variant, and agent independently
+- Receives follow-up updates scoped to that topic only
+
+To use: add the bot to a Telegram group with forum mode enabled. Each topic in the forum behaves like a separate bot conversation.
 
 ## Security
 

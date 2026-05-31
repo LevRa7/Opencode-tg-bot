@@ -38,6 +38,7 @@ vi.mock("../../src/runtime/docker.js", () => ({
 
 vi.mock("../../src/settings/manager.js", () => ({
   loadSettings: loadSettingsMock,
+  disposeDatabase: vi.fn(),
 }));
 
 vi.mock("../../src/process/manager.js", () => ({

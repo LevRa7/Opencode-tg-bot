@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setRuntimeMode } from "../../src/runtime/mode.js";
 import { __resetSettingsForTests, loadSettings } from "../../src/settings/manager.js";
@@ -54,19 +54,12 @@ describe("scheduled-task/store", () => {
     await rm(tempHome, { recursive: true, force: true });
   });
 
-  it("persists scheduled tasks to settings.json", async () => {
+  it("persists scheduled tasks", async () => {
     const task = createScheduledTask();
 
     await addScheduledTask(task);
 
     expect(listScheduledTasks()).toEqual([task]);
-
-    const settingsPath = path.join(tempHome, "settings.json");
-    const settingsFile = JSON.parse(await readFile(settingsPath, "utf-8")) as {
-      scheduledTasks?: ScheduledTask[];
-    };
-
-    expect(settingsFile.scheduledTasks).toEqual([task]);
   });
 
   it("removes scheduled task from persisted storage", async () => {

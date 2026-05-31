@@ -8,7 +8,7 @@ import {
   type OpenCodeAutoRestartMonitor,
 } from "../opencode/auto-restart.js";
 import type { ProcessOperationResult } from "../process/types.js";
-import { getLastRestartRequest, loadSettings, setLastRestartRequest } from "../settings/manager.js";
+import { getLastRestartRequest, loadSettings, setLastRestartRequest, disposeDatabase } from "../settings/manager.js";
 import { processManager } from "../process/manager.js";
 import { scheduledTaskRuntime } from "../scheduled-task/runtime.js";
 import { refreshSessionCacheIfOpencodeReady } from "../opencode/ready-refresh.js";
@@ -206,5 +206,6 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
     processManager.dispose();
     await shutdownBotContainers();
     await releaseStartupLock();
+    disposeDatabase();
   }
 }

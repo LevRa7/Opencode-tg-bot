@@ -9,6 +9,9 @@ yarn-error.log*
 # Environment
 .env
 settings.json
+settings.db
+settings.db-*
+settings.migrated-to-sqlite
 bot.log
 bot-runtime.log
 *.mp4

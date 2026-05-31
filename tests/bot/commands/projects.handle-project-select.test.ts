@@ -110,9 +110,9 @@ describe("bot/commands/projects handleProjectSelect", () => {
   };
   const scopeB: TelegramConversationScope = { userId: 2, chatId: 100, messageThreadId: 10 };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     foregroundSessionState.__resetForTests();
-    __resetSettingsForTests();
+    await __resetSettingsForTests();
     mocked.getProjectsMock.mockReset();
     mocked.ensureActiveInlineMenuMock.mockReset();
     mocked.clearAllInteractionStateMock.mockReset();

@@ -28,9 +28,9 @@ import {
 import { __resetSettingsForTests, setTenantRuntimeInfo } from "../../src/settings/manager.js";
 
 describe("opencode/client", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     __resetOpencodeClientRegistryForTests();
-    __resetSettingsForTests();
+    await __resetSettingsForTests();
     mocked.createOpencodeClientMock.mockClear();
     mocked.ensureRuntimeMock.mockClear();
     mocked.ensureRuntimeMock.mockResolvedValue({ success: true });

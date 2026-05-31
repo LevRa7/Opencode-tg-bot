@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseTaskSchedule } from "../../src/scheduled-task/schedule-parser.js";
+import { __resetSettingsForTests } from "../../src/settings/manager.js";
 
 const mocked = vi.hoisted(() => ({
   sessionCreateMock: vi.fn(),
@@ -29,7 +30,7 @@ vi.mock("../../src/utils/logger.js", () => ({
 }));
 
 describe("scheduled-task/schedule-parser", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     mocked.sessionCreateMock.mockReset();
     mocked.sessionPromptMock.mockReset();
     mocked.sessionDeleteMock.mockReset();
@@ -41,6 +42,7 @@ describe("scheduled-task/schedule-parser", () => {
       error: null,
     });
     mocked.sessionDeleteMock.mockResolvedValue({ data: true, error: null });
+    await __resetSettingsForTests();
   });
 
   it("parses recurring schedule JSON and removes temporary session", async () => {

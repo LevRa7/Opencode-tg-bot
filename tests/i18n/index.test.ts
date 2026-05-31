@@ -100,9 +100,9 @@ const COMMAND_LOCALIZATION_KEYS = [
 ] as const;
 
 describe("i18n/index locale helpers", () => {
-  afterEach(() => {
+  afterEach(async () => {
     resetRuntimeLocale();
-    __resetSettingsForTests();
+    await __resetSettingsForTests();
     vi.unstubAllEnvs();
   });
 
@@ -152,9 +152,9 @@ describe("i18n/index locale helpers", () => {
     expect(getLocale()).toBe("ru");
   });
 
-  it("uses scoped user locale before env locale", () => {
+  it("uses scoped user locale before env locale", async () => {
     vi.stubEnv("BOT_LOCALE", "en");
-    __resetSettingsForTests();
+    await __resetSettingsForTests();
 
     const locale = runWithTelegramConversationScope(
       { userId: 777, chatId: 123, messageThreadId: 1 },

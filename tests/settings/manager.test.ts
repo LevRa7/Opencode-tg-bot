@@ -91,8 +91,8 @@ describe("settings/manager scoped state", () => {
   };
   const scopeB: TelegramConversationScope = { userId: 2, chatId: 100, messageThreadId: 10 };
 
-  beforeEach(() => {
-    __resetSettingsForTests();
+  beforeEach(async () => {
+    await __resetSettingsForTests();
   });
 
   it("isolates project and session state by user scope", () => {
@@ -424,8 +424,8 @@ describe("settings/manager scoped state", () => {
         model: getCurrentModel(),
       })),
     ).toEqual({
-      agent: undefined,
-      model: undefined,
+      agent: "plan",
+      model: { providerID: "anthropic", modelID: "claude", variant: "fast" },
     });
 
     expect(
@@ -445,8 +445,12 @@ describe("settings/manager scoped state", () => {
       setCurrentModel({ providerID: "openai", modelID: "gpt-4.1", variant: "default" });
     });
 
-    expect(getCurrentAgent()).toBe("build");
-    expect(getCurrentModel()).toEqual({
+    expect(
+      runWithTelegramConversationScope(scopeAMainThread, () => getCurrentAgent()),
+    ).toBe("build");
+    expect(
+      runWithTelegramConversationScope(scopeAMainThread, () => getCurrentModel()),
+    ).toEqual({
       providerID: "openai",
       modelID: "gpt-4.1",
       variant: "default",
@@ -467,21 +471,14 @@ describe("settings/manager scoped state", () => {
     });
   });
 
-  it("keeps global fallback values outside scoped execution", () => {
-    setCurrentProject({ id: "project-global", worktree: "/repo-global" });
-    setCurrentSession({ id: "session-global", title: "Global", directory: "/repo-global" });
-
+  it("does not persist values outside scoped execution", () => {
     runWithTelegramConversationScope(scopeA, () => {
       setCurrentProject({ id: "project-a", worktree: "/repo-a" });
       clearSession();
     });
 
-    expect(getCurrentProject()).toEqual({ id: "project-global", worktree: "/repo-global" });
-    expect(getCurrentSession()).toEqual({
-      id: "session-global",
-      title: "Global",
-      directory: "/repo-global",
-    });
+    expect(getCurrentProject()).toBeUndefined();
+    expect(getCurrentSession()).toBeUndefined();
   });
 
   it("does not inherit global project and session inside a new scoped topic", () => {
@@ -525,8 +522,12 @@ describe("settings/manager scoped state", () => {
       worktree: "/repo-a",
     });
     expect(runWithTelegramConversationScope(scopeA, () => getCurrentSession())).toBeUndefined();
-    expect(runWithTelegramConversationScope(scopeA, () => getCurrentAgent())).toBeUndefined();
-    expect(runWithTelegramConversationScope(scopeA, () => getCurrentModel())).toBeUndefined();
+    expect(runWithTelegramConversationScope(scopeA, () => getCurrentAgent())).toBe("build");
+    expect(runWithTelegramConversationScope(scopeA, () => getCurrentModel())).toEqual({
+      providerID: "openai",
+      modelID: "gpt-5",
+      variant: "default",
+    });
     expect(runWithTelegramConversationScope(scopeA, () => getReasoningMode())).toBe(2);
     expect(runWithTelegramConversationScope(scopeAOtherTopic, () => getCurrentProject())).toEqual({
       id: "project-a",

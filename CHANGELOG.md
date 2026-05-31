@@ -10,6 +10,10 @@ Documentation rule:
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings persistence migrated from JSON file to SQLite.** `settings.json` replaced with `settings.db` (SQLite, WAL mode, better-sqlite3). All ~45 callers unchanged — only `src/settings/manager.ts` internals refactored. One-time auto-migration on first start. Marker file `.migrated-to-sqlite` prevents repeated migration. DDD: value objects (`ProjectInfo`, `SessionInfo`, `ModelInfo`) stored as JSON columns in bounded-context tables. See `docs/superpowers/specs/2026-05-31-settings-db-refactor-design.md`.
+
 ### Fixed
 
 - Made `extractTranslationText` resilient to model responses with non-text parts (e.g. `tool_call`/`tool_result`). Previously the function filtered only `type === "text"` parts, causing intermittent translation failures when the `big-pickle` model returned tool-call parts instead of plain text.

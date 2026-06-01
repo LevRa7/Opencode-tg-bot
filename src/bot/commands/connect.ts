@@ -37,8 +37,15 @@ export async function connectCommand(ctx: Context): Promise<void> {
     ]);
     const rawList = (providerData as any)?.all ?? (providerData as any)?.providers ?? [];
     if (rawList.length === 0) { await ctx.reply(t("connect.empty")); return; }
+    // Filter to providers that have auth methods
+    const authMap = authData as Record<string, any[]>;
+    const authable = rawList.filter((p: any) => {
+      const id = p.id ?? p.name ?? "";
+      return Array.isArray(authMap[id]) && authMap[id].length > 0;
+    });
+    if (authable.length === 0) { await ctx.reply(t("connect.empty")); return; }
     const popular: any[] = [], rest: any[] = [];
-    for (const p of rawList) {
+    for (const p of authable) {
       (POPULAR_PROVIDERS.some(pp => (p.id ?? p.name ?? "").toLowerCase().includes(pp)) ? popular : rest).push(p);
     }
     popular.sort((a: any,b: any) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
@@ -54,7 +61,9 @@ export async function handleProviderAuth(ctx: Context, providerId: string): Prom
   try {
     const project = getCurrentProject();
     const { data: authData } = await opencodeClient.provider.auth({ directory: project?.worktree });
+    logger.debug("[Connect] authData for", providerId, ":", JSON.stringify(authData).slice(0, 500));
     const methods = (authData as Record<string, any[]>)?.[providerId] ?? [];
+    logger.debug("[Connect] methods for", providerId, ":", methods.length, methods.map((m: any) => m.type).join(","));
     if (methods.length === 0) { await ctx.reply(t("connect.no_methods")); await ctx.answerCallbackQuery(); clearActiveInlineMenu("connect_no_methods"); return; }
     if (methods.length === 1) {
       if (methods[0].type === "api") await startApiKeyFlow(ctx, providerId);
@@ -74,7 +83,9 @@ export async function startProviderAuth(ctx: Context, providerId: string, method
   try {
     const project = getCurrentProject();
     const { data: authData } = await opencodeClient.provider.auth({ directory: project?.worktree });
+    logger.debug("[Connect] authData for", providerId, ":", JSON.stringify(authData).slice(0, 500));
     const methods = (authData as Record<string, any[]>)?.[providerId] ?? [];
+    logger.debug("[Connect] methods for", providerId, ":", methods.length, methods.map((m: any) => m.type).join(","));
     if (methodIndex >= methods.length) { await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); return; }
     if (methods[methodIndex].type === "api") await startApiKeyFlow(ctx, providerId);
     else await startOAuthFlow(ctx, providerId, methodIndex);

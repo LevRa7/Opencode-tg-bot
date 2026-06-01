@@ -21,6 +21,7 @@ import {
 import {
   getCurrentTelegramConversationScope,
   getCurrentTelegramConversationScopeKey,
+  runWithTelegramConversationScope,
 } from "../telegram/scope.js";
 
 interface ScopedPinnedRuntime {
@@ -726,8 +727,11 @@ class PinnedMessageManager {
         logger.debug(`[PinnedManager] Updated pinned message: ${runtime.state.messageId}`);
 
         if (this.onKeyboardUpdateCallback && runtime.state.tokensLimit > 0) {
+          const keyboardUpdateScope = getCurrentTelegramConversationScope();
           setImmediate(() => {
-            this.onKeyboardUpdateCallback?.(runtime.state.tokensUsed, runtime.state.tokensLimit);
+            runWithTelegramConversationScope(keyboardUpdateScope, () => {
+              this.onKeyboardUpdateCallback?.(runtime.state.tokensUsed, runtime.state.tokensLimit);
+            });
           });
         }
       } catch (err: unknown) {

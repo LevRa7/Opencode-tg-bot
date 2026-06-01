@@ -23,9 +23,9 @@ export async function shareCommand(ctx: Context): Promise<void> {
       return;
     }
 
-    const url = (data as any)?.url;
-    if (url) {
-      await ctx.reply(t("share.success", { url }));
+    const shareUrl = (data as any)?.share?.url;
+    if (shareUrl) {
+      await ctx.reply(t("share.success", { url: shareUrl }));
     } else {
       await ctx.reply(t("share.success", { url: "Session is now shared" }));
     }

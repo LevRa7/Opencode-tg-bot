@@ -54,6 +54,7 @@ import {
   handleSkillTextArguments,
 } from "./commands/skills.js";
 import { handleMcpsCallback, mcpsCommand } from "./commands/mcps.js";
+import { connectCommand, handleProviderAuth } from "./commands/connect.js";
 import {
   handleQuestionCallback,
   showCurrentQuestion,
@@ -3716,6 +3717,7 @@ export function createBot(): Bot<Context> {
   bot.command("mcps", mcpsCommand);
   bot.command("ssh", sshCommand);
   bot.command("server", handleServer);
+  bot.command("connect", connectCommand);
 
   bot.on("message:text", unknownCommandMiddleware);
 
@@ -3753,9 +3755,18 @@ export function createBot(): Bot<Context> {
       const handledLs = await handleLsCallback(ctx);
       const handledSkills = await handleSkillsCallback(ctx, { bot, ensureEventSubscription });
       const handledMcps = await handleMcpsCallback(ctx);
+      const callbackData = ctx.callbackQuery?.data ?? "";
+      let handledConnect = false;
+      const providerAuthMatch = /^provider:auth:(.+)$/.exec(callbackData);
+      if (providerAuthMatch) {
+        const providerId = providerAuthMatch[1];
+        await handleProviderAuth(ctx, providerId);
+        await ctx.answerCallbackQuery();
+        handledConnect = true;
+      }
 
       logger.debug(
-        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, backgroundSession=${handledBackgroundSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, settings=${handledSettings}, worktree=${handledWorktree}, open=${handledOpen}, ls=${handledLs}, skills=${handledSkills}, mcps=${handledMcps}`,
+        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, backgroundSession=${handledBackgroundSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, settings=${handledSettings}, worktree=${handledWorktree}, open=${handledOpen}, ls=${handledLs}, skills=${handledSkills}, mcps=${handledMcps}, connect=${handledConnect}`,
       );
 
       if (
@@ -3779,7 +3790,8 @@ export function createBot(): Bot<Context> {
         !handledOpen &&
         !handledLs &&
         !handledSkills &&
-        !handledMcps
+        !handledMcps &&
+        !handledConnect
       ) {
         logger.debug("Unknown callback query:", ctx.callbackQuery?.data);
         await ctx.answerCallbackQuery({ text: t("callback.unknown_command") });

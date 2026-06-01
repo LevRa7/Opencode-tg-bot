@@ -28,6 +28,7 @@ export const es: I18nDictionary = {
   // TODO-translate
   "cmd.description.server": "Show server URL and status",
   "cmd.description.help": "Ayuda",
+  "cmd.description.connect": "Conectar proveedores de IA",
 
   // TODO-translate
   "server.info": "OpenCode Server: {url}",
@@ -905,4 +906,11 @@ export const es: I18nDictionary = {
   "ssh.invalid_format": "❌ Invalid format. Example: root@192.168.1.1:22",
   "ssh.connection_not_found": "Connection not found.",
   "ssh.connecting_saved": "⏳ Connecting to saved server...",
+
+  "connect.error": "Error al obtener los proveedores. Configure los proveedores en OpenCode.",
+  "connect.empty": "No hay proveedores configurados. Agregue proveedores en la configuración de OpenCode.",
+  "connect.select": "Seleccione un proveedor para conectar:",
+  "connect.auth_error": "Error de autenticación. Inténtelo de nuevo.",
+  "connect.auth_url": "Abra esta URL para autenticarse:\n{url}",
+  "connect.authorized": "Autorizado correctamente con el proveedor.",
 };

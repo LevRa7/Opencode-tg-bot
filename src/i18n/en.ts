@@ -25,6 +25,7 @@ export const en = {
   "cmd.description.opencode_stop": "Stop OpenCode server",
   "cmd.description.server": "Show server URL and status",
   "cmd.description.help": "Help",
+  "cmd.description.connect": "Connect AI providers",
 
   "server.info": "OpenCode Server: {url}",
   "server.healthy": "Server is healthy.",
@@ -882,6 +883,12 @@ export const en = {
   "ssh.invalid_format": "❌ Invalid format. Example: root@192.168.1.1:22",
   "ssh.connection_not_found": "Connection not found.",
   "ssh.connecting_saved": "⏳ Connecting to saved server...",
+  "connect.error": "Failed to list providers. Check that providers are configured in OpenCode.",
+  "connect.empty": "No providers configured. Add providers in your OpenCode configuration.",
+  "connect.select": "Select a provider to connect:",
+  "connect.auth_error": "Failed to authenticate with provider. Please try again.",
+  "connect.auth_url": "Open this URL to authenticate:\n{url}",
+  "connect.authorized": "Successfully authorized with the provider.",
 } as const;
 
 export type I18nKey = keyof typeof en;

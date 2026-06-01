@@ -28,6 +28,7 @@ export const ru: I18nDictionary = {
   // TODO-translate
   "cmd.description.server": "Показать URL и статус сервера",
   "cmd.description.help": "Справка",
+  "cmd.description.connect": "Подключить AI провайдеров",
 
   // TODO-translate
   "server.info": "OpenCode Server: {url}",
@@ -889,4 +890,11 @@ export const ru: I18nDictionary = {
   "ssh.invalid_format": "❌ Неверный формат. Пример: root@192.168.1.1:22",
   "ssh.connection_not_found": "Подключение не найдено.",
   "ssh.connecting_saved": "⏳ Подключение к сохранённому серверу...",
+
+  "connect.error": "Не удалось получить список провайдеров. Проверьте настройки провайдеров в OpenCode.",
+  "connect.empty": "Провайдеры не настроены. Добавьте провайдеров в конфигурации OpenCode.",
+  "connect.select": "Выберите провайдера для подключения:",
+  "connect.auth_error": "Ошибка аутентификации. Попробуйте ещё раз.",
+  "connect.auth_url": "Откройте этот URL для аутентификации:\n{url}",
+  "connect.authorized": "Успешная авторизация с провайдером.",
 };

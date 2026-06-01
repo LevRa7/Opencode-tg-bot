@@ -28,6 +28,7 @@ export const de: I18nDictionary = {
   // TODO-translate
   "cmd.description.server": "Show server URL and status",
   "cmd.description.help": "Hilfe",
+  "cmd.description.connect": "AI-Provider verbinden",
 
   // TODO-translate
   "server.info": "OpenCode Server: {url}",
@@ -907,4 +908,11 @@ export const de: I18nDictionary = {
   "ssh.invalid_format": "❌ Invalid format. Example: root@192.168.1.1:22",
   "ssh.connection_not_found": "Connection not found.",
   "ssh.connecting_saved": "⏳ Connecting to saved server...",
+
+  "connect.error": "Fehler beim Abrufen der Provider. Konfigurieren Sie Provider in OpenCode.",
+  "connect.empty": "Keine Provider konfiguriert. Fügen Sie Provider in Ihrer OpenCode-Konfiguration hinzu.",
+  "connect.select": "Provider zum Verbinden auswählen:",
+  "connect.auth_error": "Authentifizierung fehlgeschlagen. Bitte versuchen Sie es erneut.",
+  "connect.auth_url": "Öffnen Sie diese URL zur Authentifizierung:\n{url}",
+  "connect.authorized": "Erfolgreich mit dem Provider autorisiert.",
 };

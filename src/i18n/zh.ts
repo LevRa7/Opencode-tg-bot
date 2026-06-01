@@ -28,6 +28,7 @@ export const zh: I18nDictionary = {
   // TODO-translate
   "cmd.description.server": "Show server URL and status",
   "cmd.description.help": "帮助",
+  "cmd.description.connect": "连接 AI 提供方",
 
   // TODO-translate
   "server.info": "OpenCode Server: {url}",
@@ -834,4 +835,11 @@ export const zh: I18nDictionary = {
   "ssh.invalid_format": "❌ Invalid format. Example: root@192.168.1.1:22",
   "ssh.connection_not_found": "Connection not found.",
   "ssh.connecting_saved": "⏳ Connecting to saved server...",
+
+  "connect.error": "获取提供方列表失败。请在 OpenCode 中配置提供方。",
+  "connect.empty": "未配置提供方。请在 OpenCode 配置中添加提供方。",
+  "connect.select": "选择要连接的提供方：",
+  "connect.auth_error": "认证失败。请重试。",
+  "connect.auth_url": "请打开此 URL 进行认证：\n{url}",
+  "connect.authorized": "已成功授权该提供方。",
 };

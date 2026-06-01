@@ -3,19 +3,19 @@ import { opencodeClient } from "../../opencode/client.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 
-export async function providersCommand(ctx: Context): Promise<void> {
+export async function connectCommand(ctx: Context): Promise<void> {
   try {
     const { data: providerData, error } = await opencodeClient.provider.list();
 
     if (error || !providerData) {
-      logger.error("[Providers] Failed to list providers:", error);
-      await ctx.reply(t("providers.error"));
+      logger.error("[Connect] Failed to list providers:", error);
+      await ctx.reply(t("connect.error"));
       return;
     }
 
     const providerList = providerData.all ?? [];
     if (providerList.length === 0) {
-      await ctx.reply(t("providers.empty"));
+      await ctx.reply(t("connect.empty"));
       return;
     }
 
@@ -24,10 +24,10 @@ export async function providersCommand(ctx: Context): Promise<void> {
       keyboard.text(p.name ?? p.id, `provider:auth:${p.id}`).row();
     }
 
-    await ctx.reply(t("providers.select"), { reply_markup: keyboard });
+    await ctx.reply(t("connect.select"), { reply_markup: keyboard });
   } catch (err) {
-    logger.error("[Providers] Error:", err);
-    await ctx.reply(t("providers.error"));
+    logger.error("[Connect] Error:", err);
+    await ctx.reply(t("connect.error"));
   }
 }
 
@@ -39,20 +39,20 @@ export async function handleProviderAuth(ctx: Context, providerId: string): Prom
     });
 
     if (error) {
-      logger.error("[Providers] OAuth authorize error:", error);
-      await ctx.reply(t("providers.auth_error"));
+      logger.error("[Connect] OAuth authorize error:", error);
+      await ctx.reply(t("connect.auth_error"));
       return;
     }
 
     const authData = data as { url?: string; instructions?: string } | undefined;
     const authUrl = authData?.url;
     if (authUrl) {
-      await ctx.reply(t("providers.auth_url", { url: authUrl }));
+      await ctx.reply(t("connect.auth_url", { url: authUrl }));
     } else {
-      await ctx.reply(t("providers.authorized"));
+      await ctx.reply(t("connect.authorized"));
     }
   } catch (err) {
-    logger.error("[Providers] Auth error:", err);
-    await ctx.reply(t("providers.auth_error"));
+    logger.error("[Connect] Auth error:", err);
+    await ctx.reply(t("connect.auth_error"));
   }
 }

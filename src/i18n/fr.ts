@@ -28,6 +28,7 @@ export const fr: I18nDictionary = {
   // TODO-translate
   "cmd.description.server": "Show server URL and status",
   "cmd.description.help": "Aide",
+  "cmd.description.connect": "Connecter des fournisseurs dIA",
 
   // TODO-translate
   "server.info": "OpenCode Server: {url}",
@@ -909,4 +910,11 @@ export const fr: I18nDictionary = {
   "ssh.invalid_format": "❌ Invalid format. Example: root@192.168.1.1:22",
   "ssh.connection_not_found": "Connection not found.",
   "ssh.connecting_saved": "⏳ Connecting to saved server...",
+
+  "connect.error": "Impossible de récupérer la liste des fournisseurs. Configurez les fournisseurs dans OpenCode.",
+  "connect.empty": "Aucun fournisseur configuré. Ajoutez des fournisseurs dans votre configuration OpenCode.",
+  "connect.select": "Sélectionnez un fournisseur :",
+  "connect.auth_error": "Échec de l'authentification. Veuillez réessayer.",
+  "connect.auth_url": "Ouvrez cette URL pour vous authentifier :\n{url}",
+  "connect.authorized": "Autorisé avec succès auprès du fournisseur.",
 };

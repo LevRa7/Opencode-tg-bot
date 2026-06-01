@@ -7,6 +7,7 @@ import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { clearActiveInlineMenu } from "../handlers/inline-menu.js";
 import { execSync } from "node:child_process";
+import { sshManager } from "../../utils/ssh-manager.js";
 
 const POPULAR_PROVIDERS = ["openai", "google", "anthropic", "deepseek", "vertex", "perplexity"];
 const apiKeyPromptByUser = new Map<number, { providerId: string; chatId: number }>();
@@ -219,8 +220,17 @@ async function restartProviderServer(): Promise<void> {
         logger.info("[Connect] Restarting Docker container " + containerName);
         execSync("docker stop " + containerName, { timeout: 15000 });
         execSync("docker start " + containerName, { timeout: 15000 });
-        logger.info("[Connect] Docker container restarted, waiting for server...");
-        await new Promise(r => setTimeout(r, 10000));
+        logger.info("[Connect] Docker container restarted, rebuilding tunnel...");
+        // Rebuild SSH tunnel to match new container port
+        const sshUser = route.userId;
+        if (sshUser) {
+          try {
+            await sshManager.bootstrapRemoteServer(sshUser);
+          } catch (e) {
+            logger.error("[Connect] Tunnel rebuild error:", e);
+          }
+        }
+        await new Promise(r => setTimeout(r, 3000));
       } catch (err) {
         logger.error("[Connect] Docker restart error:", err);
       }

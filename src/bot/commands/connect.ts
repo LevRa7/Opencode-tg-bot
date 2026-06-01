@@ -133,14 +133,22 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
   if (oauthPending) {
     oauthCallbackByUser.delete(userId);
     try {
+      // Parse code from URL if full callback URL was pasted
+      let code = text;
+      try {
+        const url = new URL(text);
+        const codeParam = url.searchParams.get("code");
+        if (codeParam) code = codeParam;
+      } catch {}
+      
       const project = getCurrentProject();
-      const { error } = await opencodeClient.provider.oauth.callback({ providerID: oauthPending.providerId, directory: project?.worktree, code: text });
-      if (error) { await ctx.reply(t("connect.auth_error")); return; }
+      const { error } = await opencodeClient.provider.oauth.callback({ providerID: oauthPending.providerId, directory: project?.worktree, code });
+      if (error) { logger.error("[Connect] OAuth callback error:", error); await ctx.reply(t("connect.auth_error")); return; }
       await ctx.reply(t("connect.authorized"));
       await ctx.reply("Restarting OpenCode server to apply changes...");
-      await processManager.restartTenantRuntimes();
-      await ctx.reply("Server restarted.");
-    } catch (err) { await ctx.reply(t("connect.auth_error")); }
+      await processManager.stop(); await processManager.start();
+      await ctx.reply("Server restarted. Provider available in /model.");
+    } catch (err) { logger.error("[Connect] OAuth callback error:", err); await ctx.reply(t("connect.auth_error")); }
     return;
   }
 }

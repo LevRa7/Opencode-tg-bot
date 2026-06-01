@@ -29,8 +29,7 @@ async function healthWithTimeout(
       new Promise<typeof HEALTH_CHECK_TIMED_OUT>((resolve) => {
         timeout = setTimeout(() => {
           controller.abort();
-          resolve(HEALTH_CHECK_TIMED_OUT);
-        }, timeoutMs);
+          resolve(HEALTH_CHECK_TIMED_OUT);        }, timeoutMs);
       }),
     ]);
   } finally {
@@ -84,11 +83,9 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
           await sshManager.connect(userId, conn.details, conn.auth, conn.deployTarget);
           await sshManager.bootstrapRemoteServer(userId);
           await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, t("ssh.success"));
-          logger.info("[Bot] SSH reconnected and remote OpenCode server started for user", userId);
-        } catch (err) {
+          logger.info("[Bot] SSH reconnected and remote OpenCode server started for user", userId);        } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           await ctx.reply("❌ " + msg + "\n\nИспользуйте /ssh для подключения.");
-
         }
         return;
       }
@@ -127,8 +124,7 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
       await ctx.reply(
         t("opencode_start.already_running_managed", {
           pid: runtimeInfo.pid ?? "-",
-          seconds: uptime,
-        }),
+          seconds: uptime,        }),
         withMessageThreadId(undefined, messageThreadId),
       );
       await refreshSessionCacheAfterOpencodeReady("opencode_start_already_running");
@@ -139,8 +135,7 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
     if (existingHealth?.data?.healthy) {
       await ctx.reply(
         t("opencode_start.already_running_external", {
-          version: existingHealth.data.version || t("common.unknown"),
-        }),
+          version: existingHealth.data.version || t("common.unknown"),        }),
         withMessageThreadId(undefined, messageThreadId),
       );
       return;
@@ -171,8 +166,7 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
         chatId: ctx.chat.id,
         messageId: statusMessage.message_id,
         text: t("opencode_start.started_not_ready", {
-          pid: processManager.getCurrentRuntimeInfo().pid ?? "-",
-        }),
+          pid: processManager.getCurrentRuntimeInfo().pid ?? "-",        }),
       });
       return;
     }

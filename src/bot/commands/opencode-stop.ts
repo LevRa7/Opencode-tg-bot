@@ -22,7 +22,7 @@ export async function opencodeStopCommand(ctx: CommandContext<Context>) {
     if (userId && sshManager.isSshActive(userId)) {
       const statusMsg = await ctx.reply("⏳ " + t("opencode_stop.stopping", { pid: "SSH" }), withMessageThreadId(undefined, messageThreadId));
       await sshManager.disconnect(userId);
-      await ctx.editMessageText(t("opencode_stop.success"));
+      await ctx.api.editMessageText(ctx.chat.id, statusMsg.message_id, t("opencode_stop.success"));
       logger.info("[Bot] SSH disconnected and remote OpenCode server stopped for user", userId);
       return;
     }

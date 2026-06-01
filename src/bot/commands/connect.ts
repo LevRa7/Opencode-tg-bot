@@ -184,6 +184,10 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
 
 async function restartProviderServer(): Promise<void> {
   const route = getCurrentOpencodeRoute();
+  // For SSH, provider changes are applied directly to the remote server — no restart needed
+  if (route.runtimeKey.startsWith("ssh:")) {
+    return;
+  }
   if (route.kind === "host") {
     await processManager.stop();
     await processManager.start();

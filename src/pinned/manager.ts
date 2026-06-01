@@ -353,9 +353,12 @@ class PinnedMessageManager {
     if (runtime.updateDebounceTimer) {
       clearTimeout(runtime.updateDebounceTimer);
     }
+    const updateScope = getCurrentTelegramConversationScope();
     runtime.updateDebounceTimer = setTimeout(() => {
       runtime.updateDebounceTimer = null;
-      void this.updatePinnedMessage();
+      runWithTelegramConversationScope(updateScope, () => {
+        void this.updatePinnedMessage();
+      });
     }, 1000);
   }
 

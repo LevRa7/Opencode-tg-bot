@@ -17,22 +17,6 @@ export async function opencodeStopCommand(ctx: CommandContext<Context>) {
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
 
   try {
-    if (ctx.from?.id && sshManager.isSshActive(ctx.from.id)) {
-      const conn = sshManager.getActiveConnection(ctx.from.id);
-      const details = conn?.details;
-      if (details) {
-        await ctx.reply(
-          t("ssh.active_status", {
-            username: details.username,
-            host: details.host,
-            port: String(details.port ?? 22),
-          }) + "\n\nДля отключения используйте /ssh → Disconnect",
-          withMessageThreadId(undefined, messageThreadId),
-        );
-      }
-      return;
-    }
-
     const localTarget = resolveLocalOpencodeTarget(config.opencode.apiUrl);
     if (!localTarget) {
       await ctx.reply(

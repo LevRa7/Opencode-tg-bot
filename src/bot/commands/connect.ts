@@ -55,6 +55,7 @@ export async function connectCommand(ctx: Context): Promise<void> {
     for (const p of providerList) {
       keyboard.text((p.hasAuth ? "🔑 " : "🔧 ") + (p.name ?? p.id ?? "?"), "provider:auth:" + (p.id ?? p.name)).row();
     }
+    keyboard.text(t("inline.button.cancel"), "connect:cancel").row();
     await ctx.reply(t("connect.select"), { reply_markup: keyboard });
   } catch (err) { logger.error("[Connect] Error:", err); clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.error")); }
 }
@@ -79,6 +80,7 @@ export async function handleProviderAuth(ctx: Context, providerId: string): Prom
     methods.forEach((m: any, i: number) => {
       keyboard.text((m.type === "oauth" ? "🔐 " : "🔑 ") + m.label, "provider:start:" + providerId + ":" + i).row();
     });
+    keyboard.text(t("inline.button.cancel"), "connect:cancel").row();
     await ctx.reply(t("connect.choose_method"), { reply_markup: keyboard });
     await ctx.answerCallbackQuery();
   } catch (err) { clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); }
@@ -136,6 +138,7 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
       const { error } = await opencodeClient.auth.set({ providerID: keyPending.providerId, directory: project?.worktree, auth: { type: "api", key: text } });
       if (error) { await ctx.reply(t("connect.auth_error")); return; }
       await ctx.reply(t("connect.authorized"));
+      clearActiveInlineMenu("connect_success");
       await ctx.reply("Restarting OpenCode server to apply changes...");
       await restartProviderServer();
       await ctx.reply("Server restarted. Provider available in /model.");
@@ -170,6 +173,7 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
       } as any);
       if (error) { logger.error("[Connect] OAuth callback error:", error); clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); return; }
       await ctx.reply(t("connect.authorized"));
+      clearActiveInlineMenu("connect_success");
       await ctx.reply("Restarting OpenCode server to apply changes...");
       await restartProviderServer();
       await ctx.reply("Server restarted. Provider available in /model.");

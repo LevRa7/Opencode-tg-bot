@@ -66,7 +66,7 @@ import { handleAgentSelect, cycleAgentMode } from "./handlers/agent.js";
 import { handleModelSelect, showModelSelectionMenu } from "./handlers/model.js";
 import { handleVariantSelect } from "./handlers/variant.js";
 import { handleCompactConfirm } from "./handlers/context.js";
-import { handleInlineMenuCancel } from "./handlers/inline-menu.js";
+import { handleInlineMenuCancel, clearActiveInlineMenu } from "./handlers/inline-menu.js";
 import { questionManager } from "../question/manager.js";
 import { interactionManager } from "../interaction/manager.js";
 import { clearAllInteractionState } from "../interaction/cleanup.js";
@@ -3677,7 +3677,18 @@ export function createBot(): Bot<Context> {
     return next();
   });
 
-  // Intercept API key input for provider connection (MUST be first)
+  bot.use(authMiddleware);
+  bot.use(ensureCommandsInitialized);
+  bot.use((ctx, next) => {
+    const scope = extractTelegramConversationScopeFromContext(ctx);
+    return runWithTelegramConversationScope(scope, () => {
+      threadContextManager.activateFromContext(ctx);
+      return next();
+    });
+  });
+  bot.use(interactionGuardMiddleware);
+
+  // Intercept API key / OAuth callback input after scope is set
   bot.on("message:text", async (ctx, next) => {
     const text = ctx.message?.text?.trim();
     const userId = ctx.from?.id;
@@ -3689,17 +3700,6 @@ export function createBot(): Bot<Context> {
     }
     await next();
   });
-
-  bot.use(authMiddleware);
-  bot.use(ensureCommandsInitialized);
-  bot.use((ctx, next) => {
-    const scope = extractTelegramConversationScopeFromContext(ctx);
-    return runWithTelegramConversationScope(scope, () => {
-      threadContextManager.activateFromContext(ctx);
-      return next();
-    });
-  });
-  bot.use(interactionGuardMiddleware);
 
   const blockMenuWhileInteractionActive = async (ctx: Context): Promise<boolean> => {
     const activeInteraction = interactionManager.getSnapshot();
@@ -3800,6 +3800,12 @@ export function createBot(): Bot<Context> {
       const handledMcps = await handleMcpsCallback(ctx);
       const callbackData = ctx.callbackQuery?.data ?? "";
       let handledConnect = false;
+      if (callbackData === "connect:cancel") {
+        clearActiveInlineMenu("connect_cancel");
+        await ctx.reply(t("inline.cancelled_callback"));
+        await ctx.answerCallbackQuery();
+        return;
+      }
       const providerStartMatch = /^provider:start:(.+):(\d+)$/.exec(callbackData);
       if (providerStartMatch) {
         const pid = providerStartMatch[1];

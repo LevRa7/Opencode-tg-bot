@@ -52,11 +52,11 @@ export async function handleServer(ctx: Context): Promise<void> {
       await ctx.reply(t("server.unavailable"));
     } else {
       await ctx.reply(t("server.healthy"));
-      if (config.opencode.username && config.opencode.password) {
+      if (config.opencode.username) {
         await ctx.reply(
           t("server.credentials", {
             user: config.opencode.username,
-            pass: config.opencode.password,
+            pass: config.opencode.password || "(not set)",
           }),
           { parse_mode: "MarkdownV2" }
         );

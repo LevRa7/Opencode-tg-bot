@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     message_streaming_enabled         INTEGER NOT NULL DEFAULT 1,
     thinking_clear_mode               INTEGER NOT NULL DEFAULT 0,
     locale                            TEXT,
+    server_password                  TEXT,
     hide_thinking_messages            INTEGER NOT NULL DEFAULT 0,
     hide_tool_call_messages           INTEGER NOT NULL DEFAULT 0,
     hide_tool_file_messages           INTEGER NOT NULL DEFAULT 0,

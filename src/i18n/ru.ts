@@ -546,6 +546,7 @@ export const ru: I18nDictionary = {
     "Выберите язык интерфейса.\nВведите номер языка из списка или код локали.\nНажмите Enter, чтобы оставить язык по умолчанию: {defaultLocale}\n{options}\n> ",
   "runtime.wizard.language_invalid":
     "Введите номер языка из списка или поддерживаемый код локали.\n",
+  "runtime.wizard.server_password_generated": "Сгенерирован пароль сервера: {password}",
   "runtime.wizard.language_selected": "Выбран язык: {language}\n",
   "runtime.wizard.token_required": "Токен обязателен. Попробуйте еще раз.\n",
   "runtime.wizard.token_invalid":

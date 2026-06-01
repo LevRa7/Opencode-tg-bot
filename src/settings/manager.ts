@@ -343,6 +343,27 @@ export function clearSession(): void {
   if (scopeKey) convBindings.upsert(scopeKey, { session: null });
 }
 
+
+
+// ====== SERVER PASSWORD ======
+
+export function getServerPassword(userId?: number): string | undefined {
+  const uid = userId ?? (getActiveUserScopeKey() ? Number(getActiveUserScopeKey()) : undefined);
+  if (!uid) return undefined;
+  return userPrefs.get(uid)?.server_password ?? undefined;
+}
+
+export function setServerPassword(userId: number, password: string): void {
+  userPrefs.upsert(userId, { server_password: password });
+}
+
+export function generateServerPassword(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  let pw = "";
+  for (let i = 0; i < 16; i++) pw += chars[Math.floor(Math.random() * chars.length)];
+  return pw;
+}
+
 // ====== TTS ======
 
 export function isTtsEnabled(): boolean {

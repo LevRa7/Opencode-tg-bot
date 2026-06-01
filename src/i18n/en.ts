@@ -545,6 +545,7 @@ export const en = {
     "Select interface language.\nEnter the language number from the list or locale code.\nPress Enter to keep default language: {defaultLocale}\n{options}\n> ",
   "runtime.wizard.language_invalid":
     "Enter a language number from the list or a supported locale code.\n",
+  "runtime.wizard.server_password_generated": "Generated server password: {password}",
   "runtime.wizard.language_selected": "Selected language: {language}\n",
   "runtime.wizard.token_required": "Token is required. Please try again.\n",
   "runtime.wizard.token_invalid":

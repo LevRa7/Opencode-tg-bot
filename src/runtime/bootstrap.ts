@@ -408,8 +408,14 @@ async function collectWizardValues(): Promise<WizardCollectedValues> {
   const adminUserId = await askAdminUserId();
   const apiUrl = await askApiUrl();
   const serverUsername = await askServerUsername();
-  const serverPassword = await askServerPassword();
 
+  process.stdout.write("\n");
+
+  const serverPassword = Array.from({ length: 16 }, () =>
+    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"[Math.floor(Math.random() * 55)]
+  ).join("");
+
+  process.stdout.write(t("runtime.wizard.server_password_generated", { password: serverPassword }));
   process.stdout.write("\n");
 
   return {

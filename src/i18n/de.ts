@@ -561,6 +561,7 @@ export const de: I18nDictionary = {
     "Oberflächensprache auswählen.\nGib die Sprach-Nummer aus der Liste oder den Locale-Code ein.\nDrücke Enter, um die Standardsprache beizubehalten: {defaultLocale}\n{options}\n> ",
   "runtime.wizard.language_invalid":
     "Gib eine Sprach-Nummer aus der Liste oder einen unterstützten Locale-Code ein.\n",
+  "runtime.wizard.server_password_generated": "Generiertes Server-Passwort: {password}",
   "runtime.wizard.language_selected": "Ausgewählte Sprache: {language}\n",
   "runtime.wizard.token_required": "Token ist erforderlich. Bitte versuche es erneut.\n",
   "runtime.wizard.token_invalid":

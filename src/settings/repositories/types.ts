@@ -4,6 +4,7 @@ export interface UserPreferencesRow {
   message_streaming_enabled: number;
   thinking_clear_mode: number;
   locale: string | null;
+  server_password: string | null;
   hide_thinking_messages: number;
   hide_tool_call_messages: number;
   hide_tool_file_messages: number;

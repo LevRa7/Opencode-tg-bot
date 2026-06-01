@@ -510,6 +510,7 @@ export const zh: I18nDictionary = {
   "runtime.wizard.ask_language":
     "请选择界面语言。\n输入列表中的语言编号或 locale code。\n按 Enter 保持默认语言：{defaultLocale}\n{options}\n> ",
   "runtime.wizard.language_invalid": "请输入列表中的语言编号或受支持的 locale code。\n",
+  "runtime.wizard.server_password_generated": "已生成服务器密码: {password}",
   "runtime.wizard.language_selected": "已选择语言：{language}\n",
   "runtime.wizard.token_required": "必须提供 token。请重试。\n",
   "runtime.wizard.token_invalid": "token 看起来无效（期望格式 <id>:<secret>）。请重试。\n",

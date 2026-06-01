@@ -903,7 +903,7 @@ export const ru: I18nDictionary = {
   "connect.choose_method": "Выберите способ авторизации:",
   "connect.pick": "Выберите провайдера:",
   "connect.authorized": "Провайдер успешно авторизован.",
-  "connect.auth_url": "Откройте URL для аутентификации:\\n{url}",
+  "connect.auth_url": "Откройте URL для аутентификации:\n{url}",
   "connect.auth_error": "Ошибка аутентификации. Попробуйте ещё раз.",
   "connect.select": "Выберите провайдера для подключения:",
   "connect.empty": "Нет настроенных AI провайдеров.",

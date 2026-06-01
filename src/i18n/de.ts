@@ -921,7 +921,7 @@ export const de: I18nDictionary = {
   "connect.choose_method": "Choose auth method:",
   "connect.pick": "Select a provider:",
   "connect.authorized": "Successfully authorized with the provider.",
-  "connect.auth_url": "Open this URL to authenticate:\\n{url}",
+  "connect.auth_url": "Open this URL to authenticate:\n{url}",
   "connect.auth_error": "Authentication failed. Please try again.",
   "connect.select": "Select a provider to connect:",
   "connect.empty": "No AI providers configured.",

@@ -3782,15 +3782,15 @@ export function createBot(): Bot<Context> {
       const callbackData = ctx.callbackQuery?.data ?? "";
       let handledConnect = false;
       const providerStartMatch = /^provider:start:(.+):(\d+)$/.exec(callbackData);
-    if (providerStartMatch) {
-      const pid = providerStartMatch[1];
-      const idx = parseInt(providerStartMatch[2], 10);
-      await startProviderAuth(ctx, pid, idx);
-      await ctx.answerCallbackQuery().catch(() => {});
-      return;
-    }
+      if (providerStartMatch) {
+        const pid = providerStartMatch[1];
+        const idx = parseInt(providerStartMatch[2], 10);
+        await startProviderAuth(ctx, pid, idx);
+        await ctx.answerCallbackQuery().catch(() => {});
+        return;
+      }
 
-    const providerAuthMatch = /^provider:auth:(.+)$/.exec(callbackData);
+      const providerAuthMatch = /^provider:auth:(.+)$/.exec(callbackData);
       if (providerAuthMatch) {
         const providerId = providerAuthMatch[1];
         await handleProviderAuth(ctx, providerId);

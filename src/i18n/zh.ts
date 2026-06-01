@@ -862,4 +862,5 @@ export const zh: I18nDictionary = {
   "mcp.oauth_success": "{name} 的 MCP OAuth 已完成。",
   // TODO-translate
   "mcp.oauth_error": "MCP OAuth 错误：{error}",
+  "connect.enter_key": "输入 {name} 的 API 密钥：",
 };

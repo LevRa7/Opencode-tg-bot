@@ -917,4 +917,5 @@ export const ru: I18nDictionary = {
   "mcp.oauth_success": "MCP OAuth завершён для {name}.",
   // TODO-translate
   "mcp.oauth_error": "Ошибка MCP OAuth: {error}",
+  "connect.enter_key": "Введите API ключ для {name}:",
 };

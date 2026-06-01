@@ -27,7 +27,7 @@ import { handleSettingsCallback, settingsCommand } from "./commands/settings.js"
 import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand } from "./commands/abort.js";
 import { handleServer } from "./commands/server.js";
-import { connectCommand, handleProviderAuth } from "./commands/connect.js";
+import { connectCommand, handleProviderAuth, handleProviderApiKey, isProviderApiKeyPrompt } from "./commands/connect.js";
 import { shareCommand, unshareCommand } from "./commands/share.js";
 import { detachCommand } from "./commands/detach.js";
 import { opencodeStartCommand } from "./commands/opencode-start.js";
@@ -3707,6 +3707,20 @@ export function createBot(): Bot<Context> {
   bot.command("new", newCommand);
   bot.command("abort", abortCommand);
   bot.command("detach", detachCommand);
+  // Intercept API key input for provider connection
+  bot.on("message:text", async (ctx, next) => {
+    const text = ctx.message?.text?.trim();
+    const userId = ctx.from?.id;
+    if (userId && text && text.length > 0 && text.length < 500) {
+      const pending = isProviderApiKeyPrompt(userId);
+      if (pending) {
+        await handleProviderApiKey(ctx, text);
+        return;
+      }
+    }
+    await next();
+  });
+
   bot.command("share", shareCommand);
   bot.command("unshare", unshareCommand);
   bot.command("server", handleServer);

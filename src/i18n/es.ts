@@ -933,4 +933,5 @@ export const es: I18nDictionary = {
   "mcp.oauth_success": "MCP OAuth completado para {name}.",
   // TODO-translate
   "mcp.oauth_error": "Error de MCP OAuth: {error}",
+  "connect.enter_key": "Introduce la clave API para {name}:",
 };

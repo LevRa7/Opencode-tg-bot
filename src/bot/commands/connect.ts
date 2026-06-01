@@ -145,20 +145,23 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
   if (oauthPending) {
     oauthCallbackByUser.delete(userId);
     try {
-      // Parse code from URL if full callback URL was pasted
+      // Parse code AND state from callback URL — server needs both to find the OAuth session
       let code = text;
+      let state = "";
       try {
         const url = new URL(text);
         const codeParam = url.searchParams.get("code");
+        const stateParam = url.searchParams.get("state");
         if (codeParam) code = codeParam;
+        if (stateParam) state = stateParam;
       } catch {}
 
-      // Use $body_ prefix to bypass SDK buildClientParams overwrite bug
-      // (multiple body-mapped params overwrite each other instead of merging)
       const project = getCurrentProject();
+      logger.debug("[Connect] OAuth callback:", oauthPending.providerId, "codeLen:", code.length, "hasState:", !!state);
       const { error } = await opencodeClient.provider.oauth.callback({
         $body_code: code,
         $body_method: oauthPending.methodIndex,
+        $body_state: state,
         providerID: oauthPending.providerId,
         directory: project?.worktree,
       } as any);

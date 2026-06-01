@@ -2,6 +2,7 @@ import { Context, InlineKeyboard } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentProject } from "../../settings/manager.js";
 import { processManager } from "../../process/manager.js";
+import { getCurrentOpencodeRoute } from "../../opencode/client.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 
@@ -146,7 +147,13 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
       if (error) { logger.error("[Connect] OAuth callback error:", error); await ctx.reply(t("connect.auth_error")); return; }
       await ctx.reply(t("connect.authorized"));
       await ctx.reply("Restarting OpenCode server to apply changes...");
-      await processManager.stop(); await processManager.start();
+        const route = getCurrentOpencodeRoute();
+  if (route.kind === "host") {
+    await processManager.stop();
+    await processManager.start();
+  } else {
+    await processManager.restartTenantRuntimes();
+  }
       await ctx.reply("Server restarted. Provider available in /model.");
     } catch (err) { logger.error("[Connect] OAuth callback error:", err); await ctx.reply(t("connect.auth_error")); }
     return;

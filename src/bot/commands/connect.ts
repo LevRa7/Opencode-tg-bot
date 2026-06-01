@@ -101,6 +101,7 @@ async function startApiKeyFlow(ctx: Context, providerId: string): Promise<void> 
   const userId = ctx.from?.id, chatId = ctx.chat?.id;
   if (!userId || !chatId) return;
   apiKeyPromptByUser.set(userId, { providerId, chatId });
+  clearActiveInlineMenu("connect_api_key_prompt");
   await ctx.reply(t("connect.enter_key", { name: providerId }));
   await ctx.answerCallbackQuery();
 }
@@ -114,6 +115,7 @@ async function startOAuthFlow(ctx: Context, providerId: string, methodIndex: num
     if (authData?.url) {
       const userId = ctx.from?.id, chatId = ctx.chat?.id;
       if (userId && chatId) oauthCallbackByUser.set(userId, { providerId, chatId, methodIndex });
+      clearActiveInlineMenu("connect_oauth_prompt");
       await ctx.reply(t("connect.auth_url", { url: authData.url }));
       await ctx.reply(t("connect.oauth_callback_prompt", { name: providerId }));
     } else {

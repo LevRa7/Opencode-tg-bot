@@ -677,6 +677,7 @@ class SshManager {
         await this.waitForRemoteServerReady(executeCommand, remotePort);
         // Rebuild the SSH tunnel to point at the container's port
         await this.rebuildTunnel(userId, remotePort);
+        await executeCommand(`iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || true`).catch(() => {});
       } else {
         // No existing container — create a fresh one
 

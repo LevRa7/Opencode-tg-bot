@@ -4,6 +4,8 @@ import { getCurrentProject } from "../../settings/manager.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 
+const POPULAR_PROVIDERS = ["openai", "google", "anthropic", "deepseek", "vertex", "perplexity"];
+
 const apiKeyPromptByUser = new Map<number, { providerId: string; chatId: number }>();
 
 export function isProviderApiKeyPrompt(userId: number): string | undefined {
@@ -26,11 +28,26 @@ export async function connectCommand(ctx: Context): Promise<void> {
       return;
     }
 
-    const providerList = (providerData as any)?.all ?? (providerData as any)?.providers ?? [];
-    if (providerList.length === 0) {
+    const rawList = (providerData as any)?.all ?? (providerData as any)?.providers ?? [];
+    if (rawList.length === 0) {
       await ctx.reply(t("connect.empty"));
       return;
     }
+
+    // Sort: popular first, then alphabetical
+    const popular: any[] = [];
+    const rest: any[] = [];
+    for (const p of rawList) {
+      const id = (p.id ?? p.name ?? "").toLowerCase();
+      if (POPULAR_PROVIDERS.some(pp => id.includes(pp))) {
+        popular.push(p);
+      } else {
+        rest.push(p);
+      }
+    }
+    popular.sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
+    rest.sort((a, b) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
+    const providerList = [...popular, ...rest];
 
     const keyboard = new InlineKeyboard();
     for (const p of providerList) {

@@ -3658,6 +3658,19 @@ export function createBot(): Bot<Context> {
     return next();
   });
 
+  // Intercept API key input for provider connection (MUST be first)
+  bot.on("message:text", async (ctx, next) => {
+    const text = ctx.message?.text?.trim();
+    const userId = ctx.from?.id;
+    if (userId && text && text.length < 500) {
+      if (isProviderApiKeyPrompt(userId)) {
+        await handleProviderApiKey(ctx, text);
+        return;
+      }
+    }
+    await next();
+  });
+
   bot.use(authMiddleware);
   bot.use(ensureCommandsInitialized);
   bot.use((ctx, next) => {
@@ -3707,19 +3720,6 @@ export function createBot(): Bot<Context> {
   bot.command("new", newCommand);
   bot.command("abort", abortCommand);
   bot.command("detach", detachCommand);
-  // Intercept API key input for provider connection
-  bot.on("message:text", async (ctx, next) => {
-    const text = ctx.message?.text?.trim();
-    const userId = ctx.from?.id;
-    if (userId && text && text.length > 0 && text.length < 500) {
-      const pending = isProviderApiKeyPrompt(userId);
-      if (pending) {
-        await handleProviderApiKey(ctx, text);
-        return;
-      }
-    }
-    await next();
-  });
 
   bot.command("share", shareCommand);
   bot.command("unshare", unshareCommand);

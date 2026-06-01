@@ -21,6 +21,7 @@ export const zh: I18nDictionary = {
   "cmd.description.compact": "Compact current session context",
   "cmd.description.settings": "用户设置",
   "cmd.description.stream": "切换消息流式输出",
+  "cmd.description.ssh": "管理远程 SSH 服务器",
   "cmd.description.restart": "重启机器人进程",
   "cmd.description.opencode_start": "启动 OpenCode 服务器",
   "cmd.description.opencode_stop": "停止 OpenCode 服务器",

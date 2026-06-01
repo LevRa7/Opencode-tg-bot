@@ -19,6 +19,7 @@ export const en = {
   "cmd.description.compact": "Compact current session context",
   "cmd.description.settings": "User settings",
   "cmd.description.stream": "Toggle message streaming",
+  "cmd.description.ssh": "Manage remote SSH servers",
   "cmd.description.restart": "Restart bot process",
   "cmd.description.opencode_start": "Start OpenCode server",
   "cmd.description.opencode_stop": "Stop OpenCode server",

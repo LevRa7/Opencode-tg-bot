@@ -21,6 +21,7 @@ export const fr: I18nDictionary = {
   "cmd.description.compact": "Compact current session context",
   "cmd.description.settings": "Paramètres utilisateur",
   "cmd.description.stream": "Activer ou désactiver le streaming",
+  "cmd.description.ssh": "Gérer les serveurs SSH distants",
   "cmd.description.restart": "Redémarrer le processus du bot",
   "cmd.description.opencode_start": "Démarrer le serveur OpenCode",
   "cmd.description.opencode_stop": "Arrêter le serveur OpenCode",

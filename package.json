@@ -65,6 +65,7 @@
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "socks-proxy-agent": "^8.0.5",
+    "ssh2": "^1.16.0",
     "unified": "^11.0.5"
   },
   "devDependencies": {

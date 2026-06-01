@@ -21,6 +21,7 @@ export const ru: I18nDictionary = {
   "cmd.description.compact": "Сжать контекст текущей сессии",
   "cmd.description.settings": "Настройки пользователя",
   "cmd.description.stream": "Переключить стриминг сообщений",
+  "cmd.description.ssh": "Управление удаленными SSH-серверами",
   "cmd.description.restart": "Перезапустить процесс бота",
   "cmd.description.opencode_start": "Запустить OpenCode сервер",
   "cmd.description.opencode_stop": "Остановить OpenCode сервер",

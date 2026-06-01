@@ -34,6 +34,7 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "open", descriptionKey: "cmd.description.open" },
   { command: "ls", descriptionKey: "cmd.description.ls" },
   { command: "stream", descriptionKey: "cmd.description.stream" },
+  { command: "ssh", descriptionKey: "cmd.description.ssh" },
   { command: "restart", descriptionKey: "cmd.description.restart", adminOnly: true },
   { command: "opencode_start", descriptionKey: "cmd.description.opencode_start" },
   { command: "opencode_stop", descriptionKey: "cmd.description.opencode_stop" },

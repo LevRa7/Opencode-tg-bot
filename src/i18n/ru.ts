@@ -919,4 +919,7 @@ export const ru: I18nDictionary = {
   "mcp.oauth_error": "Ошибка MCP OAuth: {error}",
   "connect.enter_key": "Введите API ключ для {name}:",
   "model.menu.add_provider": "➕ Добавить провайдера",
+"connect.pick": "TODO",
+  "connect.choose_method": "TODO",
+  "connect.no_methods": "TODO",
 };

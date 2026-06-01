@@ -42,6 +42,9 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "connect", descriptionKey: "cmd.description.connect" },
   { command: "server", descriptionKey: "cmd.description.server" },
   { command: "help", descriptionKey: "cmd.description.help" },
+  { command: "connect", descriptionKey: "cmd.description.connect" },
+  { command: "share", descriptionKey: "cmd.description.share" },
+  { command: "server", descriptionKey: "cmd.description.server" },
 ];
 
 export function getLocalizedBotCommands(options?: { isAdmin?: boolean }): BotCommandDefinition[] {

@@ -901,6 +901,9 @@ export const en = {
   "mcp.oauth_error": "MCP OAuth failed: {error}",
   "connect.enter_key": "Enter API key for {name}:",
   "model.menu.add_provider": "➕ Add provider",
+"connect.pick": "Select a provider:",
+  "connect.choose_method": "Choose auth method:",
+  "connect.no_methods": "No auth methods available.",
 } as const;
 
 export type I18nKey = keyof typeof en;

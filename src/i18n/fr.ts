@@ -939,4 +939,7 @@ export const fr: I18nDictionary = {
   "mcp.oauth_error": "Erreur MCP OAuth : {error}",
   "connect.enter_key": "Entrez la clé API pour {name} :",
   "model.menu.add_provider": "➕ Ajouter un fournisseur",
+"connect.pick": "TODO",
+  "connect.choose_method": "TODO",
+  "connect.no_methods": "TODO",
 };

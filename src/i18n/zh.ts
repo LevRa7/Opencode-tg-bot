@@ -864,4 +864,7 @@ export const zh: I18nDictionary = {
   "mcp.oauth_error": "MCP OAuth 错误：{error}",
   "connect.enter_key": "输入 {name} 的 API 密钥：",
   "model.menu.add_provider": "➕ 添加提供商",
+"connect.pick": "TODO",
+  "connect.choose_method": "TODO",
+  "connect.no_methods": "TODO",
 };

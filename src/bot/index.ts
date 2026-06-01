@@ -27,7 +27,7 @@ import { handleSettingsCallback, settingsCommand } from "./commands/settings.js"
 import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand } from "./commands/abort.js";
 import { handleServer } from "./commands/server.js";
-import { connectCommand, handleProviderAuth, handleProviderApiKey, isProviderApiKeyPrompt } from "./commands/connect.js";
+import { connectCommand, handleProviderAuth, handleProviderApiKey, isProviderApiKeyPrompt, startProviderAuth } from "./commands/connect.js";
 import { shareCommand, unshareCommand } from "./commands/share.js";
 import { detachCommand } from "./commands/detach.js";
 import { opencodeStartCommand } from "./commands/opencode-start.js";
@@ -3776,7 +3776,16 @@ export function createBot(): Bot<Context> {
       const handledMcps = await handleMcpsCallback(ctx);
       const callbackData = ctx.callbackQuery?.data ?? "";
       let handledConnect = false;
-      const providerAuthMatch = /^provider:auth:(.+)$/.exec(callbackData);
+      const providerStartMatch = /^provider:start:(.+):(\d+)$/.exec(callbackData);
+    if (providerStartMatch) {
+      const pid = providerStartMatch[1];
+      const idx = parseInt(providerStartMatch[2], 10);
+      await startProviderAuth(ctx, pid, idx);
+      await ctx.answerCallbackQuery().catch(() => {});
+      return;
+    }
+
+    const providerAuthMatch = /^provider:auth:(.+)$/.exec(callbackData);
       if (providerAuthMatch) {
         const providerId = providerAuthMatch[1];
         await handleProviderAuth(ctx, providerId);

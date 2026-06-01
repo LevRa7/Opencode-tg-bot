@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { t } from "../../i18n/index.js";
 import { getTenantBrowserRoots } from "./browser-roots.js";
+import { sshManager } from "../../utils/ssh-manager.js";
 
 export interface DirectoryEntry {
   name: string;
@@ -47,10 +48,88 @@ export function pathToDisplayPath(absolutePath: string): string {
   return absolutePath;
 }
 
-export async function scanDirectory(
+function pathToDisplayPathRemote(absolutePath: string, remoteHome: string): string {
+  if (absolutePath === remoteHome) {
+    return "~";
+  }
+  if (absolutePath.startsWith(remoteHome + "/")) {
+    return "~" + absolutePath.slice(remoteHome.length);
+  }
+  return absolutePath;
+}
+
+async function scanDirectoryRemote(
+  userId: number,
   dirPath: string,
   page: number = 0,
 ): Promise<DirectoryScanResult | DirectoryScanError> {
+  try {
+    const output = await sshManager.executeRemoteCommand(
+      userId,
+      `ls -1FL "${dirPath}" 2>/dev/null`,
+    );
+    const lines = output.split("\n").filter((l) => l.length > 0);
+
+    const subdirs: DirectoryEntry[] = [];
+    for (const line of lines) {
+      if (!line.endsWith("/")) continue;
+      const name = line.slice(0, -1);
+      if (name === "." || name === ".." || name.startsWith(".")) continue;
+      subdirs.push({
+        name,
+        fullPath: dirPath.endsWith("/") ? `${dirPath}${name}` : `${dirPath}/${name}`,
+      });
+    }
+
+    subdirs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+
+    const parentPath = path.posix.dirname(dirPath);
+    const hasParent = dirPath !== "/";
+
+    const totalPages = Math.max(1, Math.ceil(subdirs.length / MAX_ENTRIES_PER_PAGE));
+    const safePage = Math.max(0, Math.min(page, totalPages - 1));
+
+    const start = safePage * MAX_ENTRIES_PER_PAGE;
+    const pageEntries = subdirs.slice(start, start + MAX_ENTRIES_PER_PAGE);
+
+    const remoteHome = await sshManager.getRemoteHomeDir(userId);
+
+    return {
+      entries: pageEntries,
+      totalCount: subdirs.length,
+      page: safePage,
+      currentPath: dirPath,
+      displayPath: pathToDisplayPathRemote(dirPath, remoteHome),
+      hasParent,
+      parentPath: hasParent ? parentPath : null,
+    };
+  } catch (error) {
+    if (error instanceof Error) {
+      const msg = error.message;
+      if (msg.includes("No such file") || msg.includes("not found")) {
+        return { error: `Directory not found: ${dirPath}`, code: "ENOENT" };
+      }
+      if (msg.includes("Permission denied")) {
+        return { error: `Permission denied: ${dirPath}`, code: "EACCES" };
+      }
+    }
+
+    return {
+      error: error instanceof Error ? error.message : "Unknown error",
+      code: "UNKNOWN",
+    };
+  }
+}
+
+export async function scanDirectory(
+  dirPath: string,
+  page: number = 0,
+  userId?: number,
+): Promise<DirectoryScanResult | DirectoryScanError> {
+  if (userId && sshManager.isSshActive(userId)) {
+    return scanDirectoryRemote(userId, dirPath, page);
+  }
+
   try {
     const entries = await fs.readdir(dirPath, { withFileTypes: true });
     const subdirs: DirectoryEntry[] = [];

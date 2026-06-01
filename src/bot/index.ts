@@ -37,6 +37,11 @@ import {
   handleCommandsCallback,
   handleCommandTextArguments,
 } from "./commands/commands.js";
+import {
+  sshCommand,
+  handleSshCallback,
+  handleSshTextArguments,
+} from "./commands/ssh.js";
 import { streamCommand } from "./commands/stream.js";
 import { ttsCommand } from "./commands/tts.js";
 import { worktreeCommand, handleWorktreeCallback } from "./commands/worktree.js";
@@ -3713,6 +3718,7 @@ export function createBot(): Bot<Context> {
   bot.command("ls", lsCommand);
   bot.command("skills", skillsCommand);
   bot.command("mcps", mcpsCommand);
+  bot.command("ssh", sshCommand);
 
   bot.on("message:text", unknownCommandMiddleware);
 
@@ -3725,6 +3731,10 @@ export function createBot(): Bot<Context> {
       if (handledInlineCancel) {
         clearOpenPathIndex();
         clearLsPathIndex();
+      }
+      const handledSsh = await handleSshCallback(ctx);
+      if (handledSsh) {
+        return;
       }
       const handledSession = await handleSessionSelect(ctx);
       const handledBackgroundSession = await handleBackgroundSessionOpen(ctx);
@@ -4015,6 +4025,11 @@ export function createBot(): Bot<Context> {
 
     const handledRename = await handleRenameTextAnswer(ctx);
     if (handledRename) {
+      return;
+    }
+
+    const handledSshArgs = await handleSshTextArguments(ctx);
+    if (handledSshArgs) {
       return;
     }
 

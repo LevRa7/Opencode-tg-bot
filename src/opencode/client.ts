@@ -3,6 +3,8 @@ import { config } from "../config.js";
 import { processManager } from "../process/manager.js";
 import { getTenantRuntimeInfo } from "../settings/manager.js";
 import { getCurrentTelegramConversationScope } from "../telegram/scope.js";
+import { logger } from "../utils/logger.js";
+import { sshManager } from "../utils/ssh-manager.js";
 
 type OpencodeClient = ReturnType<typeof createOpencodeClient>;
 
@@ -50,9 +52,22 @@ function getCurrentScopeUserId(): number | null {
 
 export async function ensureCurrentOpencodeRouteReady(): Promise<void> {
   const userId = getCurrentScopeUserId();
-  if (userId === null || userId === config.telegram.adminUserId) {
-    return;
+  if (userId === null) return;
+
+  // SSH takes priority — verify the tunnel is actually healthy
+  if (sshManager.isSshActive(userId)) {
+    const healthy = await sshManager.isTunnelHealthy(userId);
+    if (!healthy) {
+      logger.warn(`[OpenCodeClient] SSH tunnel unhealthy for user ${userId}, auto-disconnecting`);
+      await sshManager.disconnect(userId).catch(() => {});
+      // Fall through to local / tenant logic below
+    } else {
+      return;
+    }
   }
+
+  // Admin users use the host server directly
+  if (userId === config.telegram.adminUserId) return;
 
   const result = await processManager.ensureRuntime();
   if (!result.success) {
@@ -62,6 +77,23 @@ export async function ensureCurrentOpencodeRouteReady(): Promise<void> {
 
 export function getCurrentOpencodeRoute(): OpencodeRoute {
   const scope = getCurrentTelegramConversationScope();
+
+  // SSH always takes top priority — even for admin users
+  if (scope && sshManager.isSshActive(scope.userId)) {
+    const localPort = sshManager.getLocalPort(scope.userId);
+    if (localPort) {
+      return {
+        runtimeKey: `ssh:${scope.userId}`,
+        baseUrl: `http://127.0.0.1:${localPort}`,
+        kind: "tenant",
+        userId: scope.userId,
+        chatId: scope.chatId,
+        tenantId: `ssh-${scope.userId}`,
+      };
+    }
+  }
+
+  // Admin users (without SSH) use the host server
   if (!scope || scope.userId === config.telegram.adminUserId) {
     return {
       runtimeKey: "host",

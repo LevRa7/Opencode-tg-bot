@@ -7,6 +7,7 @@ import {
   killServerProcess,
 } from "../../opencode/process.js";
 import { processManager } from "../../process/manager.js";
+import { sshManager } from "../../utils/ssh-manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { editBotText } from "../utils/telegram-text.js";
@@ -16,6 +17,22 @@ export async function opencodeStopCommand(ctx: CommandContext<Context>) {
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
 
   try {
+    if (ctx.from?.id && sshManager.isSshActive(ctx.from.id)) {
+      const conn = sshManager.getActiveConnection(ctx.from.id);
+      const details = conn?.details;
+      if (details) {
+        await ctx.reply(
+          t("ssh.active_status", {
+            username: details.username,
+            host: details.host,
+            port: String(details.port ?? 22),
+          }) + "\n\nДля отключения используйте /ssh → Disconnect",
+          withMessageThreadId(undefined, messageThreadId),
+        );
+      }
+      return;
+    }
+
     const localTarget = resolveLocalOpencodeTarget(config.opencode.apiUrl);
     if (!localTarget) {
       await ctx.reply(

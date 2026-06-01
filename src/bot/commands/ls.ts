@@ -15,6 +15,7 @@ import { formatFileSize } from "../utils/file-download.js";
 import { getTenantBrowserRoots, isWithinAllowedTenantRoot, isAllowedTenantRoot } from "../utils/browser-roots.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { sshManager } from "../../utils/ssh-manager.js";
 
 const CALLBACK_PREFIX = "ls:";
 const CALLBACK_NAV_PREFIX = "ls:nav:";
@@ -71,8 +72,18 @@ function pathToDisplayPath(absolutePath: string): string {
   return absolutePath;
 }
 
+function pathToDisplayPathRemote(absolutePath: string, remoteHome: string): string {
+  if (absolutePath === remoteHome) {
+    return "~";
+  }
+  if (absolutePath.startsWith(remoteHome + "/")) {
+    return `~${absolutePath.slice(remoteHome.length)}`;
+  }
+  return absolutePath;
+}
+
 function usesWindowsPath(filePath: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(filePath) || filePath.startsWith("\\\\");
+  return /^[A-Za-z]:[\\\/]/.test(filePath) || filePath.startsWith("\\\\");
 }
 
 function getPathApi(filePath: string): typeof path.posix {
@@ -95,7 +106,14 @@ function getRootPath(filePath: string): string {
   return getPathApi(filePath).parse(filePath).root;
 }
 
-
+/**
+ * Basic path traversal prevention for SSH remote paths.
+ * Rejects paths containing `..` segments.
+ */
+function isSafeRemotePath(remotePath: string): boolean {
+  const segments = remotePath.split("/");
+  return !segments.includes("..");
+}
 
 function getProjectRoot(): string | null {
   return getCurrentProject()?.worktree ?? null;
@@ -193,7 +211,8 @@ function decodeBackCallback(data: string): { path: string; page: number } | null
   return decodePathWithPageCallback(data, CALLBACK_BACK_PREFIX);
 }
 
-async function scanDirectory(
+async function scanDirectoryRemote(
+  userId: number,
   dirPath: string,
   page: number = 0,
 ): Promise<
@@ -207,6 +226,73 @@ async function scanDirectory(
     }
   | { error: string }
 > {
+  try {
+    if (!isSafeRemotePath(dirPath)) {
+      return { error: t("ls.access_denied") };
+    }
+    const output = await sshManager.executeRemoteCommand(userId, `ls -1aFL "${dirPath}" 2>/dev/null`);
+    const lines = output.split("\n").filter((l) => l.length > 0);
+
+    const entries: LsEntry[] = [];
+    for (const line of lines) {
+      const name = line.endsWith("/") ? line.slice(0, -1) : line.replace(/[*@=|]$/, "");
+      if (name === "." || name === "..") continue;
+
+      const isDir = line.endsWith("/");
+      entries.push({
+        name,
+        fullPath: dirPath.endsWith("/") ? `${dirPath}${name}` : `${dirPath}/${name}`,
+        type: isDir ? "directory" : "file",
+      });
+    }
+
+    entries.sort((left, right) => {
+      if (left.type !== right.type) {
+        return left.type === "directory" ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+    });
+
+    const totalPages = Math.max(1, Math.ceil(entries.length / MAX_ENTRIES_PER_PAGE));
+    const safePage = Math.max(0, Math.min(page, totalPages - 1));
+    const startIndex = safePage * MAX_ENTRIES_PER_PAGE;
+
+    const remoteHome = await sshManager.getRemoteHomeDir(userId);
+
+    return {
+      entries: entries.slice(startIndex, startIndex + MAX_ENTRIES_PER_PAGE),
+      totalCount: entries.length,
+      currentPath: dirPath,
+      displayPath: pathToDisplayPathRemote(dirPath, remoteHome),
+      hasParent: dirPath !== "/",
+      page: safePage,
+    };
+  } catch (error) {
+    return {
+      error: `${t("ls.scan_error")}: ${error instanceof Error ? error.message : "Unknown error"}`,
+    };
+  }
+}
+
+async function scanDirectory(
+  dirPath: string,
+  page: number = 0,
+  userId?: number,
+): Promise<
+  | {
+      entries: LsEntry[];
+      totalCount: number;
+      currentPath: string;
+      displayPath: string;
+      hasParent: boolean;
+      page: number;
+    }
+  | { error: string }
+> {
+  if (userId && sshManager.isSshActive(userId)) {
+    return scanDirectoryRemote(userId, dirPath, page);
+  }
+
   try {
     if (!isWithinAllowedTenantRoot(dirPath)) {
       return { error: t("ls.access_denied") };
@@ -248,6 +334,7 @@ function buildBrowseKeyboard(
   hasParent: boolean,
   page: number,
   totalCount: number,
+  isRemote: boolean,
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   const totalPages = Math.max(1, Math.ceil(totalCount / MAX_ENTRIES_PER_PAGE));
@@ -259,8 +346,14 @@ function buildBrowseKeyboard(
         : encodeFileCallback(entry.fullPath, page);
     keyboard.text(label, callbackData).row();
   }
-  if (hasParent && !isAllowedTenantRoot(currentPath)) {
-    keyboard.text(t("open.back"), encodePathForCallback(CALLBACK_NAV_PREFIX, getParentPath(currentPath))).row();
+  if (isRemote) {
+    if (hasParent && currentPath !== "/") {
+      keyboard.text(t("open.back"), encodePathForCallback(CALLBACK_NAV_PREFIX, getParentPath(currentPath))).row();
+    }
+  } else {
+    if (hasParent && !isAllowedTenantRoot(currentPath)) {
+      keyboard.text(t("open.back"), encodePathForCallback(CALLBACK_NAV_PREFIX, getParentPath(currentPath))).row();
+    }
   }
   if (totalPages > 1) {
     if (page > 0) {
@@ -289,33 +382,70 @@ function buildFileDetailsKeyboard(filePath: string, page: number): InlineKeyboar
   return keyboard;
 }
 
-function hasBrowseActions(currentPath: string, hasParent: boolean, totalCount: number): boolean {
+function hasBrowseActions(currentPath: string, hasParent: boolean, totalCount: number, isRemote: boolean): boolean {
   if (totalCount > 0) {
     return true;
+  }
+  if (isRemote) {
+    return hasParent && currentPath !== "/";
   }
   return hasParent && !isAllowedTenantRoot(currentPath);
 }
 
-async function renderBrowseView(dirPath: string, page: number = 0) {
-  const result = await scanDirectory(dirPath, page);
+async function renderBrowseView(dirPath: string, page: number = 0, userId?: number) {
+  const result = await scanDirectory(dirPath, page, userId);
   if ("error" in result) {
     return result;
   }
+  const isRemote = !!userId && sshManager.isSshActive(userId);
   const totalPages = Math.max(1, Math.ceil(result.totalCount / MAX_ENTRIES_PER_PAGE));
   return {
     text: buildLsHeader(result.displayPath, result.totalCount, result.page, totalPages),
-    hasActions: hasBrowseActions(result.currentPath, result.hasParent, result.totalCount),
+    hasActions: hasBrowseActions(result.currentPath, result.hasParent, result.totalCount, isRemote),
     keyboard: buildBrowseKeyboard(
       result.entries,
       result.currentPath,
       result.hasParent,
       result.page,
       result.totalCount,
+      isRemote,
     ),
   };
 }
 
-async function getFileDetails(filePath: string): Promise<FileDetails | { error: string }> {
+async function getFileDetailsRemote(userId: number, filePath: string): Promise<FileDetails | { error: string }> {
+  try {
+    if (!isSafeRemotePath(filePath)) {
+      return { error: t("ls.access_denied") };
+    }
+    const statOutput = await sshManager.executeRemoteCommand(userId, `stat -c '%s %Y' "${filePath}" 2>/dev/null`);
+    const parts = statOutput.trim().split(" ");
+    if (parts.length < 2) {
+      return { error: t("commands.download.not_file") };
+    }
+    const size = parseInt(parts[0], 10);
+    const mtime = parseInt(parts[1], 10);
+    if (isNaN(size) || isNaN(mtime)) {
+      return { error: t("commands.download.not_file") };
+    }
+    return {
+      name: path.posix.basename(filePath),
+      fullPath: filePath,
+      size,
+      modified: new Date(mtime * 1000),
+    };
+  } catch (error) {
+    return {
+      error: `${t("ls.scan_error")}: ${error instanceof Error ? error.message : "Unknown error"}`,
+    };
+  }
+}
+
+async function getFileDetails(filePath: string, userId?: number): Promise<FileDetails | { error: string }> {
+  if (userId && sshManager.isSshActive(userId)) {
+    return getFileDetailsRemote(userId, filePath);
+  }
+
   try {
     if (!isWithinAllowedTenantRoot(filePath)) {
       return { error: t("ls.access_denied") };
@@ -337,8 +467,8 @@ async function getFileDetails(filePath: string): Promise<FileDetails | { error: 
   }
 }
 
-async function renderFileDetailsView(filePath: string, page: number) {
-  const fileDetails = await getFileDetails(filePath);
+async function renderFileDetailsView(filePath: string, page: number, userId?: number) {
+  const fileDetails = await getFileDetails(filePath, userId);
   if ("error" in fileDetails) {
     return fileDetails;
   }
@@ -348,7 +478,15 @@ async function renderFileDetailsView(filePath: string, page: number) {
   };
 }
 
-function resolveInitialDirectory(userId?: number): string | null {
+async function resolveInitialDirectory(userId?: number): Promise<string | null> {
+  if (userId && sshManager.isSshActive(userId)) {
+    const cachedDirectory = sessionDirectories.get(userId);
+    if (cachedDirectory) {
+      return cachedDirectory;
+    }
+    return sshManager.getRemoteHomeDir(userId);
+  }
+
   const roots = getTenantBrowserRoots();
   const rootDir = roots.length > 0 ? roots[0] : getProjectRoot();
   if (!rootDir) {
@@ -378,22 +516,37 @@ export async function lsCommand(ctx: CommandContext<Context>): Promise<void> {
     return;
   }
   clearLsPathIndex();
-  const roots = getTenantBrowserRoots();
-  if (roots.length === 0) {
-    await ctx.reply(t("bot.project_not_selected"));
-    return;
+  const userId = ctx.from?.id;
+  const isRemote = !!userId && sshManager.isSshActive(userId);
+
+  if (!isRemote) {
+    const roots = getTenantBrowserRoots();
+    if (roots.length === 0) {
+      await ctx.reply(t("bot.project_not_selected"));
+      return;
+    }
   }
+
   const args = typeof ctx.match === "string" ? ctx.match.trim() : undefined;
-  const targetDir = args || resolveInitialDirectory(ctx.from?.id);
+  const targetDir = args || (await resolveInitialDirectory(userId));
   if (!targetDir) {
     await ctx.reply(t("bot.project_not_selected"));
     return;
   }
-  if (!isWithinAllowedTenantRoot(targetDir)) {
-    await ctx.reply(`❌ ${t("ls.access_denied")}`);
-    return;
+
+  if (!isRemote) {
+    if (!isWithinAllowedTenantRoot(targetDir)) {
+      await ctx.reply(`❌ ${t("ls.access_denied")}`);
+      return;
+    }
+  } else {
+    if (!isSafeRemotePath(targetDir)) {
+      await ctx.reply(`❌ ${t("ls.access_denied")}`);
+      return;
+    }
   }
-  const view = await renderBrowseView(targetDir);
+
+  const view = await renderBrowseView(targetDir, 0, userId);
   if ("error" in view) {
     await ctx.reply(`❌ ${view.error}`);
     return;
@@ -417,7 +570,8 @@ export async function lsCommand(ctx: CommandContext<Context>): Promise<void> {
 }
 
 async function navigateTo(ctx: Context, dirPath: string, page: number = 0): Promise<void> {
-  const view = await renderBrowseView(dirPath, page);
+  const userId = ctx.from?.id;
+  const view = await renderBrowseView(dirPath, page, userId);
   if ("error" in view) {
     await ctx.answerCallbackQuery({ text: view.error });
     return;
@@ -430,13 +584,37 @@ async function navigateTo(ctx: Context, dirPath: string, page: number = 0): Prom
 }
 
 async function showFileDetails(ctx: Context, filePath: string, page: number): Promise<void> {
-  const view = await renderFileDetailsView(filePath, page);
+  const userId = ctx.from?.id;
+  const view = await renderFileDetailsView(filePath, page, userId);
   if ("error" in view) {
     await ctx.answerCallbackQuery({ text: view.error });
     return;
   }
   await ctx.answerCallbackQuery();
   await ctx.editMessageText(view.text, { parse_mode: "HTML", reply_markup: view.keyboard });
+}
+
+async function downloadRemoteFileAndClose(ctx: Context, filePath: string, userId: number): Promise<void> {
+  await ctx.answerCallbackQuery({ text: t("commands.download.downloading") });
+  try {
+    const tmpDir = os.tmpdir();
+    const fileName = path.posix.basename(filePath);
+    const localTmp = path.join(tmpDir, `ssh-download-${userId}-${Date.now()}-${fileName}`);
+    await sshManager.downloadRemoteFile(userId, filePath, localTmp);
+    const downloaded = await sendDownloadedFile(ctx, localTmp, { announce: false });
+    // Clean up temp file
+    await fs.unlink(localTmp).catch(() => {});
+    if (!downloaded) {
+      return;
+    }
+  } catch (error) {
+    logger.error("[Ls] Error downloading remote file:", error);
+    await ctx.reply(`❌ ${t("commands.download.error")}`);
+    return;
+  }
+  clearActiveInlineMenu("ls_downloaded");
+  clearLsPathIndex();
+  await ctx.deleteMessage().catch(() => {});
 }
 
 async function downloadFileAndClose(ctx: Context, filePath: string): Promise<void> {
@@ -448,6 +626,13 @@ async function downloadFileAndClose(ctx: Context, filePath: string): Promise<voi
   clearActiveInlineMenu("ls_downloaded");
   clearLsPathIndex();
   await ctx.deleteMessage().catch(() => {});
+}
+
+function isAccessAllowed(targetPath: string, userId: number | undefined): boolean {
+  if (userId && sshManager.isSshActive(userId)) {
+    return isSafeRemotePath(targetPath);
+  }
+  return isWithinAllowedTenantRoot(targetPath);
 }
 
 export async function handleLsCallback(ctx: Context): Promise<boolean> {
@@ -463,10 +648,12 @@ export async function handleLsCallback(ctx: Context): Promise<boolean> {
   if (!isActiveMenu) {
     return true;
   }
+  const userId = ctx.from?.id;
+  const isRemote = !!userId && sshManager.isSshActive(userId);
   try {
     const navPath = decodePathFromCallback(CALLBACK_NAV_PREFIX, data);
     if (navPath !== null) {
-      if (!isWithinAllowedTenantRoot(navPath)) {
+      if (!isAccessAllowed(navPath, userId)) {
         await ctx.answerCallbackQuery({ text: t("ls.access_denied") });
         return true;
       }
@@ -475,7 +662,7 @@ export async function handleLsCallback(ctx: Context): Promise<boolean> {
     }
     const pageInfo = decodePaginationCallback(data);
     if (pageInfo !== null) {
-      if (!isWithinAllowedTenantRoot(pageInfo.path)) {
+      if (!isAccessAllowed(pageInfo.path, userId)) {
         await ctx.answerCallbackQuery({ text: t("ls.access_denied") });
         return true;
       }
@@ -484,7 +671,7 @@ export async function handleLsCallback(ctx: Context): Promise<boolean> {
     }
     const fileInfo = decodeFileCallback(data);
     if (fileInfo !== null) {
-      if (!isWithinAllowedTenantRoot(fileInfo.path)) {
+      if (!isAccessAllowed(fileInfo.path, userId)) {
         await ctx.answerCallbackQuery({ text: t("ls.access_denied") });
         return true;
       }
@@ -493,16 +680,20 @@ export async function handleLsCallback(ctx: Context): Promise<boolean> {
     }
     const downloadPath = decodePathFromCallback(CALLBACK_DOWNLOAD_PREFIX, data);
     if (downloadPath !== null) {
-      if (!isWithinAllowedTenantRoot(downloadPath)) {
+      if (!isAccessAllowed(downloadPath, userId)) {
         await ctx.answerCallbackQuery({ text: t("ls.access_denied") });
         return true;
       }
-      await downloadFileAndClose(ctx, downloadPath);
+      if (isRemote && userId) {
+        await downloadRemoteFileAndClose(ctx, downloadPath, userId);
+      } else {
+        await downloadFileAndClose(ctx, downloadPath);
+      }
       return true;
     }
     const backInfo = decodeBackCallback(data);
     if (backInfo !== null) {
-      if (!isWithinAllowedTenantRoot(backInfo.path)) {
+      if (!isAccessAllowed(backInfo.path, userId)) {
         await ctx.answerCallbackQuery({ text: t("ls.access_denied") });
         return true;
       }

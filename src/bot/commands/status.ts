@@ -10,6 +10,7 @@ import { processManager } from "../../process/manager.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { getGitWorktreeContext } from "../../git/worktree.js";
+import { sshManager } from "../../utils/ssh-manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { sendBotText } from "../utils/telegram-text.js";
@@ -43,7 +44,21 @@ export async function statusCommand(ctx: CommandContext<Context>) {
       message += `${t("status.line.uptime_sec", { seconds: uptime })}\n`;
     }
 
-    if (runtimeInfo.kind === "tenant") {
+    const userId = ctx.from?.id;
+
+    if (userId && sshManager.isSshActive(userId)) {
+      const conn = sshManager.getActiveConnection(userId);
+      const details = conn?.details;
+      if (details) {
+        const targetLabel = conn?.deployTarget === "docker" ? "Docker" : "Host";
+        message += `${t("status.runtime.ssh", {
+          user: details.username,
+          host: details.host,
+          port: String(details.port ?? 22),
+          target: targetLabel,
+        })}\n`;
+      }
+    } else if (runtimeInfo.kind === "tenant") {
       message += `${t("status.runtime.tenant")}\n`;
       if (runtimeInfo.port) {
         message += `${t("status.line.port", { port: runtimeInfo.port })}\n`;

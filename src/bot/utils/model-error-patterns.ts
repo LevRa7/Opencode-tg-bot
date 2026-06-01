@@ -23,6 +23,11 @@ const MODEL_UNAVAILABLE_PATTERNS: RegExp[] = [
   /client.?id/i,
   /could not determine/i,
   /provider.*returns?.*same.*error/i,
+  /no\s+endpoints?\sfound/i,
+  /endpoint/i,
+  /tool.?use/i,
+  /no\s+endpoint/i,
+  /provider.?routing/i,
 ];
 
 export function isModelUnavailableError(message: string): boolean {

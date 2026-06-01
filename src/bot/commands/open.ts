@@ -20,6 +20,7 @@ import { getCurrentTelegramConversationScopeKey } from "../../telegram/scope.js"
 import { clearScopeOpenPathIndex, encodeScopedPathReference, decodeScopedPathReference } from "../runtime/scope-open-state.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { sshManager } from "../../utils/ssh-manager.js";
 
 const CALLBACK_PREFIX = "open:";
 const CALLBACK_NAV_PREFIX = "open:nav:";
@@ -38,6 +39,15 @@ interface OpenCallbackDeps {
  * drive letters (e.g. `C:\`) and is already used as a prefix delimiter.
  */
 const PAGE_SEPARATOR = "|";
+
+/**
+ * Basic path traversal prevention for SSH remote paths.
+ * Rejects paths containing `..` segments.
+ */
+function isSafeRemotePath(remotePath: string): boolean {
+  const segments = remotePath.split("/");
+  return !segments.includes("..");
+}
 
 function truncateLabel(label: string, maxLen: number = MAX_BUTTON_LABEL_LENGTH): string {
   if (label.length <= maxLen) {
@@ -130,12 +140,20 @@ function decodePaginationCallback(data: string): { path: string; page: number } 
   return { path: resolvedPath, page: pageNum };
 }
 
+function isAccessAllowed(targetPath: string, userId: number | undefined): boolean {
+  if (userId && sshManager.isSshActive(userId)) {
+    return isSafeRemotePath(targetPath);
+  }
+  return isWithinAllowedTenantRoot(targetPath);
+}
+
 function buildBrowseKeyboard(
   entries: DirectoryEntry[],
   currentPath: string,
   hasParent: boolean,
   page: number,
   totalCount: number,
+  isRemote: boolean,
 ): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   const totalPages = Math.max(1, Math.ceil(totalCount / MAX_ENTRIES_PER_PAGE));
@@ -147,21 +165,29 @@ function buildBrowseKeyboard(
   }
 
   // Navigation: Up + Back to roots
-  // Suppress "Up" when at an allowed root (don't let user navigate above it)
-  const atRoot = isAllowedTenantRoot(currentPath);
-  const showUp = hasParent && !atRoot;
-  const roots = getTenantBrowserRoots();
-  const showRoots = roots.length > 1;
+  if (isRemote) {
+    // In SSH mode: allow navigating up as long as not at root "/"
+    if (hasParent && currentPath !== "/") {
+      const parentPath = path.posix.dirname(currentPath);
+      keyboard.text(t("open.back"), encodePathForCallback(CALLBACK_NAV_PREFIX, parentPath)).row();
+    }
+  } else {
+    // Suppress "Up" when at an allowed root (don't let user navigate above it)
+    const atRoot = isAllowedTenantRoot(currentPath);
+    const showUp = hasParent && !atRoot;
+    const roots = getTenantBrowserRoots();
+    const showRoots = roots.length > 1;
 
-  if (showUp || showRoots) {
-    if (showUp) {
-      const parentPath = path.dirname(currentPath);
-      keyboard.text(t("open.back"), encodePathForCallback(CALLBACK_NAV_PREFIX, parentPath));
+    if (showUp || showRoots) {
+      if (showUp) {
+        const parentPath = path.dirname(currentPath);
+        keyboard.text(t("open.back"), encodePathForCallback(CALLBACK_NAV_PREFIX, parentPath));
+      }
+      if (showRoots) {
+        keyboard.text(t("open.roots"), CALLBACK_ROOTS);
+      }
+      keyboard.row();
     }
-    if (showRoots) {
-      keyboard.text(t("open.roots"), CALLBACK_ROOTS);
-    }
-    keyboard.row();
   }
 
   // Pagination
@@ -186,17 +212,18 @@ function buildBrowseKeyboard(
   return keyboard;
 }
 
-async function renderBrowseView(dirPath: string, page: number = 0) {
-  const result = await scanDirectory(dirPath, page);
+async function renderBrowseView(dirPath: string, page: number = 0, userId?: number) {
+  const result = await scanDirectory(dirPath, page, userId);
 
   if (isScanError(result)) {
     return { error: result.error };
   }
 
   const { entries, totalCount, page: clampedPage, currentPath, displayPath, hasParent } = result;
+  const isRemote = !!userId && sshManager.isSshActive(userId);
   const totalPages = Math.max(1, Math.ceil(totalCount / MAX_ENTRIES_PER_PAGE));
   const header = buildTreeHeader(displayPath, totalCount, clampedPage, totalPages);
-  const keyboard = buildBrowseKeyboard(entries, currentPath, hasParent, clampedPage, totalCount);
+  const keyboard = buildBrowseKeyboard(entries, currentPath, hasParent, clampedPage, totalCount, isRemote);
 
   return { text: header, keyboard };
 }
@@ -224,14 +251,16 @@ export async function openCommand(ctx: CommandContext<Context>) {
     // Reset path index for new interaction
     clearOpenPathIndex();
 
-  const roots = getTenantBrowserRoots();
+    const userId = ctx.from?.id;
+    const isRemote = !!userId && sshManager.isSshActive(userId);
 
     let text: string;
     let keyboard: InlineKeyboard;
 
-    if (roots.length === 1) {
-      // Single root — navigate directly into it
-      const view = await renderBrowseView(roots[0]);
+    if (isRemote) {
+      // SSH mode — start from remote home directory
+      const remoteHome = await sshManager.getRemoteHomeDir(userId);
+      const view = await renderBrowseView(remoteHome, 0, userId);
       if ("error" in view) {
         await ctx.reply(t("open.scan_error", { error: view.error }));
         return;
@@ -239,9 +268,22 @@ export async function openCommand(ctx: CommandContext<Context>) {
       text = view.text;
       keyboard = view.keyboard;
     } else {
-      // Multiple roots — show root selection
-      text = t("open.select_root");
-      keyboard = buildRootsKeyboard();
+      const roots = getTenantBrowserRoots();
+
+      if (roots.length === 1) {
+        // Single root — navigate directly into it
+        const view = await renderBrowseView(roots[0]);
+        if ("error" in view) {
+          await ctx.reply(t("open.scan_error", { error: view.error }));
+          return;
+        }
+        text = view.text;
+        keyboard = view.keyboard;
+      } else {
+        // Multiple roots — show root selection
+        text = t("open.select_root");
+        keyboard = buildRootsKeyboard();
+      }
     }
 
     const message = await ctx.reply(text, { reply_markup: keyboard });
@@ -279,8 +321,10 @@ export async function handleOpenCallback(
     return true;
   }
 
+  const userId = ctx.from?.id;
+
   try {
-    // Back to root selection (multi-root mode)
+    // Back to root selection (multi-root mode) — only in local mode
     if (data === CALLBACK_ROOTS) {
       await showRoots(ctx);
       return true;
@@ -289,29 +333,29 @@ export async function handleOpenCallback(
     // Navigate into a directory (including "up")
     const navPath = decodePathFromCallback(CALLBACK_NAV_PREFIX, data);
     if (navPath !== null) {
-      if (!isWithinAllowedTenantRoot(navPath)) {
+      if (!isAccessAllowed(navPath, userId)) {
         await ctx.answerCallbackQuery({ text: t("open.access_denied") });
         return true;
       }
-      await navigateTo(ctx, navPath);
+      await navigateTo(ctx, navPath, 0, userId);
       return true;
     }
 
     // Pagination
     const pageInfo = decodePaginationCallback(data);
     if (pageInfo !== null) {
-      if (!isWithinAllowedTenantRoot(pageInfo.path)) {
+      if (!isAccessAllowed(pageInfo.path, userId)) {
         await ctx.answerCallbackQuery({ text: t("open.access_denied") });
         return true;
       }
-      await navigateTo(ctx, pageInfo.path, pageInfo.page);
+      await navigateTo(ctx, pageInfo.path, pageInfo.page, userId);
       return true;
     }
 
     // Select directory as project
     const selectPath = decodePathFromCallback(CALLBACK_SELECT_PREFIX, data);
     if (selectPath !== null) {
-      if (!isWithinAllowedTenantRoot(selectPath)) {
+      if (!isAccessAllowed(selectPath, userId)) {
         await ctx.answerCallbackQuery({ text: t("open.access_denied") });
         return true;
       }
@@ -335,8 +379,8 @@ async function showRoots(ctx: Context) {
   await ctx.editMessageText(text, { reply_markup: keyboard });
 }
 
-async function navigateTo(ctx: Context, dirPath: string, page: number = 0) {
-  const view = await renderBrowseView(dirPath, page);
+async function navigateTo(ctx: Context, dirPath: string, page: number = 0, userId?: number) {
+  const view = await renderBrowseView(dirPath, page, userId);
 
   if ("error" in view) {
     await ctx.answerCallbackQuery({ text: view.error });

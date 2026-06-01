@@ -5,6 +5,7 @@ import { resolveLocalOpencodeTarget } from "../../opencode/process.js";
 import { refreshSessionCacheAfterOpencodeReady } from "../../opencode/ready-refresh.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { processManager } from "../../process/manager.js";
+import { sshManager } from "../../utils/ssh-manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { editBotText } from "../utils/telegram-text.js";
@@ -72,6 +73,23 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
 
   try {
+    if (ctx.from?.id && sshManager.isSshActive(ctx.from.id)) {
+      const conn = sshManager.getActiveConnection(ctx.from.id);
+      const details = conn?.details;
+      const isHealthy = await sshManager.isTunnelHealthy(ctx.from.id);
+      if (details) {
+        await ctx.reply(
+          t("ssh.active_status", {
+            username: details.username,
+            host: details.host,
+            port: String(details.port ?? 22),
+          }) + (isHealthy ? "" : " ⚠️"),
+          withMessageThreadId(undefined, messageThreadId),
+        );
+      }
+      return;
+    }
+
     const localTarget = resolveLocalOpencodeTarget(config.opencode.apiUrl);
     if (!localTarget) {
       await ctx.reply(

@@ -3,9 +3,9 @@ import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2";
 import { opencodeClient } from "../../opencode/client.js";
 import { clearSession, getCurrentSession, setCurrentSession } from "../../session/manager.js";
 import { ingestSessionInfoForCache } from "../../session/cache-manager.js";
-import { getCurrentProject, setConversationCurrentProject } from "../../settings/manager.js";
+import { getCurrentProject, setConversationCurrentProject, clearProject } from "../../settings/manager.js";
 import { getStoredAgent } from "../../agent/manager.js";
-import { getStoredModel, switchToFallbackModel, getFallbackModel } from "../../model/manager.js";
+import { getStoredModel, switchToFallbackModel, getFallbackModel, getRuntimeModelCatalog } from "../../model/manager.js";
 import { isModelUnavailableError } from "../utils/model-error-patterns.js";
 import { deletePromptRetryContext, setPromptRetryContext } from "./prompt-context.js";
 import { formatVariantForButton } from "../../variant/manager.js";
@@ -31,6 +31,7 @@ import { foregroundSessionState } from "../../scheduled-task/foreground-state.js
 import { threadContextManager } from "../../thread/manager.js";
 import { getDefaultProject } from "../../project/manager.js";
 import { processManager } from "../../process/manager.js";
+import { sshManager } from "../../utils/ssh-manager.js";
 import { assistantRunState } from "../assistant-run-state.js";
 import { IncomingMediaBatch } from "../incoming-media-batch.js";
 import { extractMessageMetadata, type ResolvedDeferredItem } from "../../media/batch-types.js";
@@ -49,6 +50,10 @@ import { externalInputSuppression } from "../../external-input/suppression.js";
 
 const PROMPT_TIMEOUT_MS = 60_000;
 
+// Track whether SSH was active per conversation scope so we can detect
+// connects / disconnects and reset session + project accordingly.
+const sshActiveByScope = new Map<string, boolean>();
+
 function getEffectivePromptText(parts: Array<TextPartInput | FilePartInput>): string | null {
   const firstTextPart = parts.find(
     (part): part is TextPartInput => part.type === "text" && typeof part.text === "string",
@@ -60,6 +65,37 @@ function getEffectivePromptText(parts: Array<TextPartInput | FilePartInput>): st
 function isNetworkError(error: unknown): boolean {
   const errorText = String(error).toLowerCase();
   return errorText.includes("fetch failed") || errorText.includes("econnrefused");
+}
+
+function isSessionNotFoundError(error: unknown): boolean {
+  if (!error) return false;
+
+  // Plain string
+  if (typeof error === "string") {
+    const t = error.toLowerCase();
+    return t.includes("session not found") || t.includes("notfounderror");
+  }
+
+  // SDK error object — check nested fields before falling back to stringify
+  if (typeof error === "object") {
+    const obj = error as Record<string, unknown>;
+
+    if (typeof obj.message === "string" && obj.message.toLowerCase().includes("session not found")) return true;
+    if (typeof obj.name === "string" && obj.name.toLowerCase().includes("notfound")) return true;
+
+    const data = obj.data as Record<string, unknown> | undefined;
+    if (data && typeof data.message === "string" && data.message.toLowerCase().includes("session not found")) return true;
+
+    // Last resort
+    try {
+      const t = JSON.stringify(error).toLowerCase();
+      return t.includes("session not found") || t.includes("notfounderror");
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
 }
 
 function getSdkResponseError(result: unknown): unknown | null {
@@ -76,6 +112,59 @@ interface RetryPromptOptions {
   logRetrySuccess: boolean;
   routingContext: PromptRoutingContext;
   promptErrorLogContext: Record<string, unknown>;
+}
+
+async function retryPromptWithSshRecovery({
+  promptOptions,
+  sessionId,
+  logRetrySuccess,
+  routingContext,
+  promptErrorLogContext,
+}: RetryPromptOptions): Promise<{ error: unknown | null }> {
+  const userId = routingContext.scope?.userId;
+  if (!userId || !sshManager.isSshActive(userId)) {
+    return { error: new Error("not-ssh") };
+  }
+
+  const healthy = await sshManager.isTunnelHealthy(userId);
+  if (healthy) {
+    // Tunnel is fine, no recovery needed — just retry
+  } else {
+    logger.warn(`[Bot] SSH tunnel unhealthy for user ${userId}, attempting reconnection`);
+    const credentials = await sshManager.loadCredentials(userId);
+    if (!credentials) {
+      logger.error(`[Bot] No saved SSH credentials for user ${userId}, cannot recover`);
+      await sshManager.disconnect(userId).catch(() => {});
+      return { error: new Error("ssh recovery failed: no saved credentials") };
+    }
+
+    try {
+      await sshManager.connect(userId, credentials.details, credentials.auth, credentials.deployTarget);
+      await sshManager.bootstrapRemoteServer(userId);
+      logger.info(`[Bot] SSH connection recovered for user ${userId}`);
+    } catch (reconnectErr) {
+      logger.error(`[Bot] SSH reconnection failed for user ${userId}:`, reconnectErr);
+      await sshManager.disconnect(userId).catch(() => {});
+      return { error: new Error(`ssh recovery failed: ${String(reconnectErr)}`) };
+    }
+  }
+
+  logger.info(`[Bot] Retrying session.promptAsync after SSH recovery: sessionId=${sessionId}`);
+  try {
+    const retryResult = await opencodeClient.session.promptAsync(promptOptions);
+    const retryError = getSdkResponseError(retryResult);
+    if (retryError) {
+      logger.error("[Bot] session.promptAsync SSH-recovery retry also returned an error", promptErrorLogContext);
+      return { error: retryError };
+    }
+    if (logRetrySuccess) {
+      logger.info("[Bot] session.prompt SSH-recovery retry succeeded");
+    }
+    return { error: null };
+  } catch (retryError) {
+    logger.error("[Bot] session.promptAsync SSH-recovery retry also threw:", retryError);
+    return { error: retryError };
+  }
 }
 
 async function retryPromptWithTenantRestart({
@@ -411,6 +500,60 @@ export async function processUserPrompt(
   const scope = extractTelegramConversationScopeFromContext(ctx);
   const target = extractThreadTargetFromContext(ctx);
 
+  // Detect SSH connect / disconnect and reset session + project.
+  // Scope is guaranteed to be set here (unlike in callback handlers).
+  if (scope) {
+    const scopeKey = buildTelegramConversationScopeKey(scope);
+    const sshNow = sshManager.isSshActive(scope.userId);
+    const sshBefore = sshActiveByScope.get(scopeKey);
+    if (sshBefore !== undefined && sshBefore !== sshNow) {
+      logger.info(
+        `[Bot] SSH state changed ${sshBefore} -> ${sshNow} for scope ${scopeKey}, clearing session + project`,
+      );
+      clearSession();
+      clearProject();
+
+      // Refresh model catalog from the target server and verify
+      // the current model exists there.  If not, fall back to the
+      // default model for this server.
+      try {
+        const catalog = await getRuntimeModelCatalog({ force: true });
+        const currentModel = getStoredModel();
+        if (currentModel.providerID && currentModel.modelID) {
+          const provider = catalog.providers.find(
+            (p) => p.providerID === currentModel.providerID,
+          );
+          const modelExists = provider?.models.some(
+            (m) => m.modelID === currentModel.modelID,
+          );
+          if (!modelExists) {
+            logger.info(
+              `[Bot] Model ${currentModel.providerID}/${currentModel.modelID} not available on target server, falling back`,
+            );
+            switchToFallbackModel();
+          }
+        }
+
+        // Update the reply keyboard so the user sees the correct model
+        // and context for the newly active server.
+        if (!pinnedMessageManager.isInitialized()) {
+          pinnedMessageManager.initialize(bot.api, ctx.chat!.id);
+        }
+        if (pinnedMessageManager.getContextLimit() === 0) {
+          await pinnedMessageManager.refreshContextLimit();
+        }
+        keyboardManager.initialize(bot.api, ctx.chat!.id);
+        const contextInfo = pinnedMessageManager.getContextInfo();
+        if (contextInfo) {
+          keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
+        }
+      } catch (err) {
+        logger.warn("[Bot] Failed to refresh model catalog on SSH state change:", err);
+      }
+    }
+    sshActiveByScope.set(scopeKey, sshNow);
+  }
+
   if (!target) {
     logger.error("[Bot] Cannot process prompt: Telegram target is missing");
     await ctx.reply(t("error.generic"));
@@ -426,6 +569,36 @@ export async function processUserPrompt(
   keyboardManager.initialize(bot.api, ctx.chat!.id);
 
   let currentSession = getCurrentSession();
+
+  // When SSH is active the current session may have been created on the local
+  // OpenCode server.  Verify it exists on the remote end; if not, discard it
+  // so a fresh session is created transparently.
+  if (currentSession && scope && sshManager.isSshActive(scope.userId)) {
+    const sessionIdToVerify = currentSession.id;
+    const sessionDirToVerify = currentSession.directory;
+    try {
+      const { data: statusData, error: statusErr } = await opencodeClient.session.status({
+        directory: sessionDirToVerify,
+      });
+      if (
+        statusErr ||
+        !statusData ||
+        !(statusData as Record<string, unknown>)[sessionIdToVerify]
+      ) {
+        logger.info(
+          `[Bot] Session ${sessionIdToVerify} not found on remote server (SSH active), discarding`,
+        );
+        clearSession();
+        currentSession = null;
+      }
+    } catch {
+      logger.warn(
+        `[Bot] Failed to verify session ${sessionIdToVerify} (SSH active), discarding`,
+      );
+      clearSession();
+      currentSession = null;
+    }
+  }
 
   if (currentSession && currentSession.directory !== currentProject.worktree) {
     logger.warn(
@@ -677,6 +850,23 @@ export async function processUserPrompt(
         const error = getSdkResponseError(result);
         if (error) {
           if (isNetworkError(error)) {
+            // When SSH is active, try SSH tunnel recovery first
+            if (routingContext.scope?.userId && sshManager.isSshActive(routingContext.scope.userId)) {
+              logger.warn(
+                `[Bot] session.prompt returned network error with SSH active, attempting SSH recovery: sessionId=${currentSession.id}`,
+              );
+              const sshRetryResult = await retryPromptWithSshRecovery({
+                promptOptions,
+                sessionId: currentSession.id,
+                logRetrySuccess: true,
+                routingContext,
+                promptErrorLogContext,
+              });
+              if (!sshRetryResult.error) {
+                return;
+              }
+            }
+
             logger.warn(
               `[Bot] session.prompt returned network error, attempting tenant restart and retry: sessionId=${currentSession.id}`,
             );
@@ -691,6 +881,43 @@ export async function processUserPrompt(
               return;
             }
             // Retry failed — give up
+          }
+
+          if (isSessionNotFoundError(error) && routingContext.scope?.userId && sshManager.isSshActive(routingContext.scope.userId)) {
+            logger.warn(
+              `[Bot] Session not found on remote server after SSH switch, creating new session: oldSessionId=${currentSession.id}`,
+            );
+            try {
+              // Create a fresh session on the remote server
+              const { data: newSession, error: createError } = await opencodeClient.session.create({
+                directory: currentSession.directory,
+              });
+              if (createError || !newSession) {
+                logger.error("[Bot] Failed to create session on remote server", createError);
+              } else {
+                logger.info(`[Bot] Created new session on remote server: id=${newSession.id}`);
+                setCurrentSession({ id: newSession.id, title: newSession.title, directory: currentSession.directory });
+                const newPromptOptions = { ...promptOptions, sessionID: newSession.id };
+                const retryResult = await opencodeClient.session.promptAsync(newPromptOptions);
+                const retryError = getSdkResponseError(retryResult);
+                if (!retryError) {
+                  logger.info("[Bot] Session-recreate retry succeeded");
+                  if (!routingContext.suppressSendErrorMessage) {
+                    void runWithTelegramConversationScope(routingContext.scope, () =>
+                      routingContext.bot.api.sendMessage(
+                        routingContext.target.chatId,
+                        t("bot.session_recreated_remote"),
+                        withMessageThreadId(undefined, routingContext.target.messageThreadId),
+                      ).catch(() => {}),
+                    ).catch(() => {});
+                  }
+                  return;
+                }
+                logger.error("[Bot] Session-recreate retry also failed", retryError);
+              }
+            } catch (recreateErr) {
+              logger.error("[Bot] Session-recreate error:", recreateErr);
+            }
           }
 
           const errorText = String(error);
@@ -764,6 +991,23 @@ export async function processUserPrompt(
       },
       onError: async (error) => {
         if (isNetworkError(error)) {
+          // When SSH is active, try SSH tunnel recovery first
+          if (routingContext.scope?.userId && sshManager.isSshActive(routingContext.scope.userId)) {
+            logger.warn(
+              `[Bot] session.prompt threw network error with SSH active, attempting SSH recovery: sessionId=${currentSession.id}`,
+            );
+            const sshRetryResult = await retryPromptWithSshRecovery({
+              promptOptions,
+              sessionId: currentSession.id,
+              logRetrySuccess: true,
+              routingContext,
+              promptErrorLogContext,
+            });
+            if (!sshRetryResult.error) {
+              return;
+            }
+          }
+
           logger.warn(
             `[Bot] session.prompt failed with network error, attempting tenant restart and retry: sessionId=${currentSession.id}`,
           );
@@ -778,6 +1022,42 @@ export async function processUserPrompt(
             return;
           }
           // Retry failed — give up
+        }
+
+        if (isSessionNotFoundError(error) && routingContext.scope?.userId && sshManager.isSshActive(routingContext.scope.userId)) {
+          logger.warn(
+            `[Bot] Session not found on remote server (exception), creating new session: oldSessionId=${currentSession.id}`,
+          );
+          try {
+            const { data: newSession, error: createError } = await opencodeClient.session.create({
+              directory: currentSession.directory,
+            });
+            if (createError || !newSession) {
+              logger.error("[Bot] Failed to create session on remote server", createError);
+            } else {
+              logger.info(`[Bot] Created new session on remote server (onError): id=${newSession.id}`);
+              setCurrentSession({ id: newSession.id, title: newSession.title, directory: currentSession.directory });
+              const newPromptOptions = { ...promptOptions, sessionID: newSession.id };
+              const retryResult = await opencodeClient.session.promptAsync(newPromptOptions);
+              const retryError = getSdkResponseError(retryResult);
+              if (!retryError) {
+                logger.info("[Bot] Session-recreate retry (onError) succeeded");
+                if (!routingContext.suppressSendErrorMessage) {
+                  void runWithTelegramConversationScope(routingContext.scope, () =>
+                    routingContext.bot.api.sendMessage(
+                      routingContext.target.chatId,
+                      t("bot.session_recreated_remote"),
+                      withMessageThreadId(undefined, routingContext.target.messageThreadId),
+                    ).catch(() => {}),
+                  ).catch(() => {});
+                }
+                return;
+              }
+              logger.error("[Bot] Session-recreate retry (onError) also failed", retryError);
+            }
+          } catch (recreateErr) {
+            logger.error("[Bot] Session-recreate (onError) error:", recreateErr);
+          }
         }
 
         const errorText = String(error);

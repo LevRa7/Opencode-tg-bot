@@ -1,6 +1,6 @@
 import { CommandContext, Context, InlineKeyboard } from "grammy";
 import { config } from "../../config.js";
-import { getGitWorktreeContext, type GitWorktreeEntry } from "../../git/worktree.js";
+import { getGitWorktreeContext, getGitWorktreeContextRemote, type GitWorktreeEntry } from "../../git/worktree.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
 import { getProjectByWorktree, getProjects } from "../../project/manager.js";
 import { upsertSessionDirectory } from "../../session/cache-manager.js";
@@ -16,6 +16,7 @@ import {
 import { switchToProject } from "../utils/switch-project.js";
 import { isForegroundBusy, replyBusyBlocked } from "../utils/busy-guard.js";
 import { buildProjectButtonLabel, calculateProjectsPaginationRange } from "./projects.js";
+import { sshManager } from "../../utils/ssh-manager.js";
 
 const MAX_INLINE_BUTTON_LABEL_LENGTH = 64;
 const WORKTREE_CALLBACK_PREFIX = "worktree:";
@@ -137,13 +138,16 @@ function buildWorktreeMenuView(
   };
 }
 
-async function loadCurrentWorktreeContext() {
+async function loadCurrentWorktreeContext(userId?: number) {
   const currentProject = getCurrentProject();
   if (!currentProject) {
     return { currentProject: null, context: null };
   }
 
-  const context = await getGitWorktreeContext(currentProject.worktree);
+  const isRemote = !!userId && sshManager.isSshActive(userId);
+  const context = isRemote
+    ? await getGitWorktreeContextRemote(userId, currentProject.worktree)
+    : await getGitWorktreeContext(currentProject.worktree);
   if (!context) {
     return { currentProject, context: null };
   }
@@ -168,7 +172,7 @@ export async function worktreeCommand(ctx: CommandContext<Context>) {
       return;
     }
 
-    const { currentProject, context } = await loadCurrentWorktreeContext();
+    const { currentProject, context } = await loadCurrentWorktreeContext(ctx.from?.id);
 
     if (!currentProject) {
       await ctx.reply(
@@ -235,7 +239,7 @@ export async function handleWorktreeCallback(
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
 
   try {
-    const { currentProject, context } = await loadCurrentWorktreeContext();
+    const { currentProject, context } = await loadCurrentWorktreeContext(ctx.from?.id);
 
     if (!currentProject) {
       clearAllInteractionState("worktree_project_missing");

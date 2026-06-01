@@ -1,105 +1,52 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { runWithTelegramConversationScope } from "../../src/telegram/scope.js";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { getCurrentOpencodeRoute } from "../../src/opencode/client.js";
+import { sshManager } from "../../src/utils/ssh-manager.js";
+import { getCurrentTelegramConversationScope } from "../../src/telegram/scope.js";
 
-const mocked = vi.hoisted(() => ({
-  createOpencodeClientMock: vi.fn((options: unknown) => ({
-    options,
-    marker: Symbol("client"),
-    global: { health: vi.fn().mockResolvedValue({ data: { healthy: true }, error: null }) },
-  })),
-  ensureRuntimeMock: vi.fn().mockResolvedValue({ success: true }),
-}));
+vi.mock("../../src/telegram/scope.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/telegram/scope.js")>();
+  return {
+    ...actual,
+    getCurrentTelegramConversationScope: vi.fn(),
+  };
+});
 
-vi.mock("@opencode-ai/sdk/v2", () => ({
-  createOpencodeClient: mocked.createOpencodeClientMock,
-}));
-
-vi.mock("../../src/process/manager.js", () => ({
-  processManager: {
-    ensureRuntime: mocked.ensureRuntimeMock,
+vi.mock("../../src/utils/ssh-manager.js", () => ({
+  sshManager: {
+    isSshActive: vi.fn(),
+    getLocalPort: vi.fn(),
   },
 }));
 
-import {
-  __resetOpencodeClientRegistryForTests,
-  getOpencodeClientForCurrentScope,
-  opencodeClient,
-} from "../../src/opencode/client.js";
-import { __resetSettingsForTests, setTenantRuntimeInfo } from "../../src/settings/manager.js";
-
 describe("opencode/client", () => {
-  beforeEach(async () => {
-    __resetOpencodeClientRegistryForTests();
-    await __resetSettingsForTests();
-    mocked.createOpencodeClientMock.mockClear();
-    mocked.ensureRuntimeMock.mockClear();
-    mocked.ensureRuntimeMock.mockResolvedValue({ success: true });
+  beforeEach(() => {
+    vi.resetAllMocks();
   });
 
-  it("reuses the same client inside one telegram scope", () => {
-    const scope = { userId: 1, chatId: 100, messageThreadId: 10 };
+  it("hijacks route if active SSH session exists for user", () => {
+    const mockScope = { userId: 12345, chatId: 67890 };
+    vi.mocked(getCurrentTelegramConversationScope).mockReturnValue(mockScope as any);
+    vi.mocked(sshManager.isSshActive).mockReturnValue(true);
+    vi.mocked(sshManager.getLocalPort).mockReturnValue(49888);
 
-    const [clientA, clientB] = runWithTelegramConversationScope(scope, () => [
-      getOpencodeClientForCurrentScope(),
-      getOpencodeClientForCurrentScope(),
-    ]);
+    const route = getCurrentOpencodeRoute();
 
-    expect(clientA).toBe(clientB);
-    expect(mocked.createOpencodeClientMock).toHaveBeenCalledTimes(1);
+    expect(route).toEqual({
+      runtimeKey: "ssh:12345",
+      baseUrl: "http://127.0.0.1:49888",
+      kind: "tenant",
+      userId: 12345,
+      chatId: 67890,
+      tenantId: "ssh-12345",
+    });
   });
 
-  it("creates separate clients for different runtime base urls", async () => {
-    const scopeA = { userId: 1, chatId: 100, messageThreadId: 10 };
-    const scopeB = { userId: 2, chatId: 100, messageThreadId: 10 };
+  it("falls back to default tenant route if SSH is not active for user", () => {
+    const mockScope = { userId: 12345, chatId: 67890 };
+    vi.mocked(getCurrentTelegramConversationScope).mockReturnValue(mockScope as any);
+    vi.mocked(sshManager.isSshActive).mockReturnValue(false);
 
-    await setTenantRuntimeInfo(1, {
-      userId: 1,
-      chatId: 100,
-      tenantId: "tg-1",
-      baseUrl: "http://127.0.0.1:4101",
-    });
-    await setTenantRuntimeInfo(2, {
-      userId: 2,
-      chatId: 100,
-      tenantId: "tg-2",
-      baseUrl: "http://127.0.0.1:4102",
-    });
-
-    const clientA = runWithTelegramConversationScope(scopeA, () => getOpencodeClientForCurrentScope());
-    const clientB = runWithTelegramConversationScope(scopeB, () => getOpencodeClientForCurrentScope());
-
-    expect(clientA).not.toBe(clientB);
-    expect(mocked.createOpencodeClientMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("routes proxy calls through the active telegram scope", async () => {
-    const scopeA = { userId: 1, chatId: 100, messageThreadId: 10 };
-    const scopeB = { userId: 2, chatId: 100, messageThreadId: 10 };
-
-    await setTenantRuntimeInfo(1, {
-      userId: 1,
-      chatId: 100,
-      tenantId: "tg-1",
-      baseUrl: "http://127.0.0.1:4101",
-    });
-    await setTenantRuntimeInfo(2, {
-      userId: 2,
-      chatId: 100,
-      tenantId: "tg-2",
-      baseUrl: "http://127.0.0.1:4102",
-    });
-
-    await runWithTelegramConversationScope(scopeA, () => opencodeClient.global.health());
-    await runWithTelegramConversationScope(scopeB, () => opencodeClient.global.health());
-
-    expect(mocked.createOpencodeClientMock).toHaveBeenCalledTimes(2);
-    expect(mocked.createOpencodeClientMock).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ baseUrl: "http://127.0.0.1:4101" }),
-    );
-    expect(mocked.createOpencodeClientMock).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ baseUrl: "http://127.0.0.1:4102" }),
-    );
+    const route = getCurrentOpencodeRoute();
+    expect(route.runtimeKey).not.toContain("ssh");
   });
 });

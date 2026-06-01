@@ -14,6 +14,7 @@ import {
 } from "../settings/manager.js";
 import { getCurrentTelegramConversationScope } from "../telegram/scope.js";
 import { logger } from "../utils/logger.js";
+import { sshManager } from "../utils/ssh-manager.js";
 import type {
   ProcessManagerInterface,
   ProcessOperationResult,
@@ -75,6 +76,9 @@ class ProcessManager implements ProcessManagerInterface {
 
     // Start periodic tenant health watcher to detect and recover from dead tenants
     this.startTenantWatcher();
+
+    // Recover saved SSH connections in the background
+    void sshManager.recoverAll();
   }
 
   private tenantWatcherTimer: ReturnType<typeof setInterval> | null = null;
@@ -154,16 +158,16 @@ class ProcessManager implements ProcessManagerInterface {
         windowsHide: isWindows,
       });
 
+      childProcess.on("error", (err) => {
+        logger.error("[ProcessManager] Host process error:", err);
+        this.cleanupHostRuntime();
+      });
+
       if (!childProcess.pid) {
         throw new Error(
           "Failed to start OpenCode server process. Ensure 'opencode' is installed and available in PATH.",
         );
       }
-
-      childProcess.on("error", (err) => {
-        logger.error("[ProcessManager] Host process error:", err);
-        this.cleanupHostRuntime();
-      });
 
       childProcess.on("exit", (code, signal) => {
         logger.info(`[ProcessManager] Host process exited: code=${code}, signal=${signal}`);
@@ -617,23 +621,30 @@ class ProcessManager implements ProcessManagerInterface {
     pollMs: number,
   ): Promise<boolean> {
     const startedAt = Date.now();
+    logger.debug(`[ProcessManager] waitForHealth started for ${baseUrl}`);
 
+    let attempt = 0;
     while (Date.now() - startedAt < timeoutMs) {
+      attempt++;
       try {
+        logger.debug(`[ProcessManager] waitForHealth attempt ${attempt} for ${baseUrl}`);
         const response = await fetch(`${baseUrl}/global/health`, {
           headers: this.getOpencodeAuthHeaders(),
+          signal: AbortSignal.timeout(2000),
         });
 
+        logger.debug(`[ProcessManager] waitForHealth response status: ${response.status}`);
         if (response.ok) {
           return true;
         }
-      } catch {
-        // ignore until timeout
+      } catch (err) {
+        logger.debug(`[ProcessManager] waitForHealth attempt ${attempt} failed:`, err);
       }
 
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
 
+    logger.debug(`[ProcessManager] waitForHealth timeout reached for ${baseUrl}`);
     return false;
   }
 

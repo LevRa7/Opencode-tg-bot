@@ -96,6 +96,7 @@ export const en = {
   "bot.creating_session": "🔄 Creating a new session...",
   "bot.create_session_error":
     "🔴 Failed to create session. Try /new or check server status with /status.",
+  "bot.session_recreated_remote": "🔄 Session recreated on remote server.",
   "bot.session_created": "✅ Session created: {title}",
   "bot.session_busy":
     "⏳ Agent is already running a task. Wait for completion or use /abort to interrupt current run.",
@@ -689,6 +690,7 @@ export const en = {
   "restart.admin_only": "This command is available only to the admin.",
 
   "status.runtime.tenant": "Runtime: tenant",
+  "status.runtime.ssh": "🔌 SSH {user}@{host}:{port} ({target})",
   "status.runtime.host": "Runtime: host",
   "status.line.port": "Port: {port}",
   "status.line.tenant": "Tenant: {tenantId}",
@@ -850,6 +852,31 @@ export const en = {
   "worktree.selected":
     "✅ Worktree selected: {worktree}\n\n📋 Session was reset. Use /sessions or /new to continue.",
   "worktree.selection_missing_callback": "Selected worktree is no longer available",
+
+  "ssh.prompt.conn_str": "🔌 Please send the SSH connection string in format `username@host:port` (e.g. `root@192.168.1.100:22`)",
+  "ssh.prompt.auth_method": "🔑 Select SSH authentication method:",
+  "ssh.prompt.password": "💬 Please send your SSH password:",
+  "ssh.prompt.private_key": "📝 Please paste your SSH Private Key content:",
+  "ssh.prompt.target": "🚀 Select deployment target for OpenCode server:",
+  "ssh.success": "✅ SSH connection and OpenCode tunnel established successfully!",
+  "ssh.error": "🔴 SSH setup error: {error}",
+  "ssh.button.password": "🔑 Password",
+  "ssh.button.private_key": "📝 Private Key",
+  "ssh.button.docker": "🐳 Docker Container",
+  "ssh.button.host": "💻 Host System",
+  "ssh.button.cancel": "❌ Cancel",
+  "ssh.cancelled": "❌ SSH configuration cancelled.",
+  "ssh.active_status": "🟢 SSH active: {username}@{host}:{port}",
+  "ssh.button.disconnect": "🔌 Disconnect",
+  "ssh.button.new_connection": "➕ New connection",
+  "ssh.button.connect": "Подключить",
+  "ssh.button.delete": "❌",
+  "ssh.saved_connections_title": "📋 Saved SSH connections:",
+  "ssh.no_saved_connections": "No saved SSH connections found.",
+  "ssh.connection_deleted": "🗑️ Connection deleted.",
+  "ssh.invalid_format": "❌ Invalid format. Example: root@192.168.1.1:22",
+  "ssh.connection_not_found": "Connection not found.",
+  "ssh.connecting_saved": "⏳ Connecting to saved server...",
 } as const;
 
 export type I18nKey = keyof typeof en;

@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { sshManager } from "../utils/ssh-manager.js";
+
 const GIT_HEADS_PREFIX = "refs/heads/";
 const GIT_WORKTREES_MARKER = `${path.sep}.git${path.sep}worktrees${path.sep}`;
 const GIT_WORKTREE_LIST_MAX_BUFFER = 1024 * 1024;
@@ -28,6 +30,10 @@ interface ParsedGitWorktreeEntry {
 function normalizePathKey(value: string): string {
   const normalized = path.resolve(value).replace(/[\\/]+$/, "");
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function normalizeRemotePathKey(value: string): string {
+  return value.replace(/\/+$/, "");
 }
 
 function normalizeBranchName(value: string): string {
@@ -192,6 +198,151 @@ export async function getGitWorktreeContext(worktree: string): Promise<GitWorktr
     worktrees.push(currentEntry);
   } else if (!currentEntry.branch) {
     currentEntry.branch = await readHeadBranch(gitDir);
+  }
+
+  worktrees.sort((left, right) => {
+    if (left.isMain !== right.isMain) {
+      return left.isMain ? -1 : 1;
+    }
+
+    if (left.path === right.path) {
+      return 0;
+    }
+
+    return left.path.localeCompare(right.path);
+  });
+
+  return {
+    mainProjectPath,
+    activeWorktreePath,
+    branch: currentEntry.branch,
+    isLinkedWorktree: activeWorktreeKey !== mainProjectKey,
+    worktrees,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Remote (SSH) variants
+// ---------------------------------------------------------------------------
+
+const REMOTE_WORKTREES_MARKER = "/.git/worktrees/";
+
+async function resolveGitDirRemote(userId: number, worktree: string): Promise<string | null> {
+  const gitPath = `${worktree}/.git`;
+  try {
+    // Check if .git is a directory or a file
+    const typeOutput = (
+      await sshManager.executeRemoteCommand(
+        userId,
+        `if [ -d "${gitPath}" ]; then echo dir; elif [ -f "${gitPath}" ]; then echo file; else echo none; fi`,
+      )
+    ).trim();
+
+    if (typeOutput === "dir") {
+      return gitPath;
+    }
+
+    if (typeOutput !== "file") {
+      return null;
+    }
+
+    // It's a file — read the gitdir pointer
+    const gitPointer = (
+      await sshManager.executeRemoteCommand(userId, `cat "${gitPath}"`)
+    ).trim();
+    const match = gitPointer.match(/^gitdir:\s*(.+)$/i);
+    if (!match) {
+      return null;
+    }
+
+    const pointed = match[1].trim();
+    if (path.posix.isAbsolute(pointed)) {
+      return pointed;
+    }
+    return path.posix.resolve(worktree, pointed);
+  } catch {
+    return null;
+  }
+}
+
+function deriveMainProjectPathRemote(activeWorktreePath: string, gitDir: string): string {
+  if (path.posix.basename(gitDir).toLowerCase() === ".git") {
+    return activeWorktreePath;
+  }
+
+  if (gitDir.includes(REMOTE_WORKTREES_MARKER)) {
+    return path.posix.resolve(gitDir, "..", "..", "..");
+  }
+
+  return activeWorktreePath;
+}
+
+async function runGitWorktreeListRemote(
+  userId: number,
+  worktree: string,
+): Promise<ParsedGitWorktreeEntry[]> {
+  const stdout = await sshManager.executeRemoteCommand(
+    userId,
+    `cd "${worktree}" && git worktree list --porcelain`,
+  );
+  return parseGitWorktreeList(stdout);
+}
+
+async function readHeadBranchRemote(
+  userId: number,
+  gitDir: string,
+): Promise<string | null> {
+  try {
+    const headPath = `${gitDir}/HEAD`;
+    const headContent = (
+      await sshManager.executeRemoteCommand(userId, `cat "${headPath}"`)
+    ).trim();
+    const match = headContent.match(/^ref:\s+(.+)$/);
+    return match ? normalizeBranchName(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getGitWorktreeContextRemote(
+  userId: number,
+  worktree: string,
+): Promise<GitWorktreeContext | null> {
+  const activeWorktreePath = worktree.replace(/\/+$/, "");
+  const gitDir = await resolveGitDirRemote(userId, activeWorktreePath);
+  if (!gitDir) {
+    return null;
+  }
+
+  const mainProjectPath = deriveMainProjectPathRemote(activeWorktreePath, gitDir);
+  const activeWorktreeKey = normalizeRemotePathKey(activeWorktreePath);
+  const mainProjectKey = normalizeRemotePathKey(mainProjectPath);
+
+  const parsedEntries = await runGitWorktreeListRemote(userId, activeWorktreePath);
+  const worktrees = parsedEntries.map((entry) => {
+    const entryPath = entry.path.replace(/\/+$/, "");
+    const entryKey = normalizeRemotePathKey(entryPath);
+
+    return {
+      path: entryPath,
+      branch: entry.branch,
+      isCurrent: entryKey === activeWorktreeKey,
+      isMain: entryKey === mainProjectKey,
+    } satisfies GitWorktreeEntry;
+  });
+
+  let currentEntry = worktrees.find((entry) => entry.isCurrent) ?? null;
+
+  if (!currentEntry) {
+    currentEntry = {
+      path: activeWorktreePath,
+      branch: await readHeadBranchRemote(userId, gitDir),
+      isCurrent: true,
+      isMain: activeWorktreeKey === mainProjectKey,
+    };
+    worktrees.push(currentEntry);
+  } else if (!currentEntry.branch) {
+    currentEntry.branch = await readHeadBranchRemote(userId, gitDir);
   }
 
   worktrees.sort((left, right) => {

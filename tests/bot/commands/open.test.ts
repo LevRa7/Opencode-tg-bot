@@ -54,6 +54,15 @@ vi.mock("../../../src/bot/utils/browser-roots.js", () => ({
   isAllowedTenantRoot: mocked.isAllowedTenantRootMock,
 }));
 
+vi.mock("../../../src/utils/ssh-manager.js", () => ({
+  sshManager: {
+    isSshActive: vi.fn(() => false),
+    executeRemoteCommand: vi.fn(),
+    getRemoteHomeDir: vi.fn(),
+    downloadRemoteFile: vi.fn(),
+  },
+}));
+
 vi.mock("../../../src/bot/handlers/inline-menu.js", () => ({
   appendInlineMenuCancelButton: vi.fn((kb: unknown) => kb),
   ensureActiveInlineMenu: mocked.ensureActiveInlineMenuMock,
@@ -208,7 +217,7 @@ describe("open command", () => {
       const ctx = createCommandContext();
       await openCommand(ctx as never);
 
-      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith("/home/user", 0);
+      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith("/home/user", 0, undefined);
       expect(ctx.reply).toHaveBeenCalledTimes(1);
       // Verify interaction was registered
       expect(mocked.interactionStartMock).toHaveBeenCalledWith(
@@ -317,7 +326,7 @@ describe("open command", () => {
       const result = await handleOpenCallback(ctx);
 
       expect(result).toBe(true);
-      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(targetPath, 0);
+      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(targetPath, 0, undefined);
       expect(ctx.editMessageText).toHaveBeenCalled();
     });
 
@@ -331,7 +340,7 @@ describe("open command", () => {
       const result = await handleOpenCallback(ctx);
 
       expect(result).toBe(true);
-      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(parentPath, 0);
+      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(parentPath, 0, undefined);
     });
 
     it("should handle pagination callback", async () => {
@@ -344,7 +353,7 @@ describe("open command", () => {
       const result = await handleOpenCallback(ctx);
 
       expect(result).toBe(true);
-      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(currentPath, 1);
+      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(currentPath, 1, undefined);
     });
 
     it("should select directory as project on open:sel: callback", async () => {
@@ -493,7 +502,7 @@ describe("open command", () => {
 
       expect(result).toBe(true);
       // Prove the path was decoded correctly — scanDirectory received the original long path
-      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(longPath, 0);
+      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(longPath, 0, undefined);
     });
   });
 
@@ -533,7 +542,7 @@ describe("open command", () => {
       vi.mocked(getCurrentTelegramConversationScopeKey).mockReturnValue("topic-a");
       const navA = createCallbackContext(callbackA);
       expect(await handleOpenCallback(navA)).toBe(true);
-      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(longPathA, 0);
+      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(longPathA, 0, undefined);
     });
   });
 
@@ -572,7 +581,7 @@ describe("open command", () => {
       await openCommand(ctx as never);
 
       expect(mocked.getTenantBrowserRootsMock).toHaveBeenCalled();
-      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith("/home/me/Workspaces/tenant-abc/workspace", 0);
+      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith("/home/me/Workspaces/tenant-abc/workspace", 0, undefined);
     });
 
     it("should fall back to global roots when no tenant runtime", async () => {
@@ -634,7 +643,7 @@ describe("open command", () => {
       const navCtxB = createCallbackContext(callbackB);
       const resultB = await handleOpenCallback(navCtxB);
       expect(resultB).toBe(true);
-      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(longPathB, 0);
+      expect(mocked.scanDirectoryMock).toHaveBeenCalledWith(longPathB, 0, undefined);
     });
   });
 });

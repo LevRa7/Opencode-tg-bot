@@ -135,6 +135,10 @@ opencode-telegram config
 | `/ls`             | Browse directory contents in a paginated menu                |
 | `/skills`         | List available skills                                        |
 | `/worktree`       | Manage worktrees                                             |
+| `/ssh`            | Connect to remote servers via SSH and Docker           |
+| `/connect`        | Add AI providers via API key or OAuth                  |
+| `/share`          | Share/unshare sessions with the community              |
+| `/server`         | Show OpenCode server URL and health                    |
 | `/help`           | Show available commands                                      |
 
 Any regular text message is sent as a prompt to the coding agent only when no blocking interaction is active. Voice/audio messages are transcribed and then sent as prompts when STT is configured. When a chat or forum topic is attached to a session, follow-up updates and external-input notices stay scoped to that same conversation target.

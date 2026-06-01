@@ -6,56 +6,37 @@ import { logger } from "../../utils/logger.js";
 
 export async function connectCommand(ctx: Context): Promise<void> {
   try {
-    const { data: providerData, error } = await opencodeClient.provider.list();
+    const project = getCurrentProject();
+    const { data: providerData, error } = await opencodeClient.provider.list({
+      directory: project?.worktree,
+    });
 
     if (error || !providerData) {
-      logger.error("[Connect] Failed to list providers:", error);
       await ctx.reply(t("connect.error"));
       return;
     }
 
-    const providerList = (providerData as any)?.all ?? [];
+    const providerList = (providerData as any)?.all ?? (providerData as any)?.providers ?? [];
     if (providerList.length === 0) {
       await ctx.reply(t("connect.empty"));
       return;
     }
 
-    const keyboard = new InlineKeyboard();
+    let text = "";
     for (const p of providerList) {
-      keyboard.text(p.name ?? p.id, `provider:auth:${p.id}`).row();
+      const name = p.name ?? p.id ?? "unknown";
+      const models = p.models?.length ? p.models.join(", ") : "—";
+      text += `🔹 <b>${name}</b>\n   Models: ${models}\n\n`;
     }
+    text += "Configure providers via opencode.json or the OpenCode Web UI.";
 
-    await ctx.reply(t("connect.select"), { reply_markup: keyboard });
+    await ctx.reply(text, { parse_mode: "HTML" });
   } catch (err) {
     logger.error("[Connect] Error:", err);
     await ctx.reply(t("connect.error"));
   }
 }
 
-export async function handleProviderAuth(ctx: Context, providerId: string): Promise<void> {
-  try {
-    const project = getCurrentProject();
-    const { data, error } = await opencodeClient.provider.oauth.authorize({
-      providerID: providerId,
-      method: 0,
-      directory: project?.worktree,
-    });
-
-    if (error) {
-      logger.error("[Connect] OAuth authorize error:", error);
-      await ctx.reply(t("connect.auth_error"));
-      return;
-    }
-
-    const authData = data as { url?: string; instructions?: string } | undefined;
-    const authUrl = authData?.url;
-    if (authUrl) {
-      await ctx.reply(t("connect.auth_url", { url: authUrl }));
-    } else {
-      await ctx.reply(t("connect.authorized"));
-    }
-  } catch (err) {
-    logger.error("[Connect] Auth error:", err);
-    await ctx.reply(t("connect.auth_error"));
-  }
+export async function handleProviderAuth(_ctx: Context, _providerId: string): Promise<void> {
+  // No-op: provider auth is handled via opencode.json config or Web UI
 }

@@ -34,6 +34,9 @@ Languages: English (`en`), Deutsch (`de`), Español (`es`), Français (`fr`), Р
 - **Interactive Q&A** — answer agent questions and approve permissions via inline buttons
 - **Thought translation** — model reasoning blocks are automatically translated into your selected language via a local [LibreTranslate](https://libretranslate.com) server. Translated headlines appear in chat (`💭`/`🧠`), and full reasoning text in Telegraph pages is replaced with the translated version in the background
 - **Multi-user / Tenancy** — the bot supports multiple users via `TELEGRAM_ALLOWED_USER_IDS`. Each user gets their own isolated OpenCode runtime and settings
+- **SSH remote connections** — connect to a remote server via SSH and run OpenCode inside a Docker container. All operations (prompts, sessions, provider management) transparently route through the SSH tunnel. Supports key-based and password authentication
+- **Provider management** — add AI providers (OpenAI, Anthropic, Google, OpenRouter, etc.) via `/connect`. Supports API key and OAuth authentication. Provider configuration persists across bot and container restarts via Docker volumes
+- **Server control** — `/opencode_stop` and `/opencode_start` work with SSH connections — stop/start the remote OpenCode server without affecting the host
 - **Multi-threaded (Forum Topics)** — the bot works in both private chats and Telegram group/forum topics. Each topic can have its own session attachment, model, and settings, keeping conversations organized
 - **Voice prompts** — send voice/audio messages, transcribe them via a Whisper-compatible API, and optionally enable spoken replies with `/tts`
 - **Optional auto-restart** — monitor the local OpenCode server and restart it automatically after stop/crash when enabled in config

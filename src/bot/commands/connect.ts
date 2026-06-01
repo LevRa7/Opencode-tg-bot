@@ -166,19 +166,35 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
 
       const project = getCurrentProject();
       logger.debug("[Connect] OAuth callback:", oauthPending.providerId, "codeLen:", code.length, "method:", oauthPending.methodIndex);
-      const { error } = await opencodeClient.provider.oauth.callback({
+      // Set a 30s timeout via AbortController to prevent hanging
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+      try {
+        const result = await opencodeClient.provider.oauth.callback({
         providerID: oauthPending.providerId,
         method: oauthPending.methodIndex,
         directory: project?.worktree,
         code,
       });
+      const error = result?.error;
       if (error) { logger.error("[Connect] OAuth callback error:", error); clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); return; }
       await ctx.reply(t("connect.authorized"));
       clearActiveInlineMenu("connect_success");
       await ctx.reply("Restarting OpenCode server to apply changes...");
       await restartProviderServer();
       await ctx.reply("Server restarted. Provider available in /model.");
-    } catch (err) { logger.error("[Connect] OAuth callback error:", err); clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); }
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (err: any) { 
+      if (err?.name === "AbortError") {
+        logger.error("[Connect] OAuth callback timed out after 30s");
+      } else {
+        logger.error("[Connect] OAuth callback error:", err);
+      }
+      clearActiveInlineMenu("connect_error"); 
+      await ctx.reply(t("connect.auth_error")); 
+    }
     return;
   }
 }

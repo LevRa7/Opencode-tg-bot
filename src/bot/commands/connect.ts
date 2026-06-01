@@ -8,7 +8,7 @@ import { logger } from "../../utils/logger.js";
 
 const POPULAR_PROVIDERS = ["openai", "google", "anthropic", "deepseek", "vertex", "perplexity"];
 const apiKeyPromptByUser = new Map<number, { providerId: string; chatId: number }>();
-const oauthCallbackByUser = new Map<number, { providerId: string; chatId: number }>();
+const oauthCallbackByUser = new Map<number, { providerId: string; chatId: number; methodIndex: number }>();
 
 export function isProviderApiKeyPrompt(userId: number): string | undefined {
   return apiKeyPromptByUser.get(userId)?.providerId;
@@ -97,7 +97,7 @@ async function startOAuthFlow(ctx: Context, providerId: string, methodIndex: num
     const authData = data as { url?: string };
     if (authData?.url) {
       const userId = ctx.from?.id, chatId = ctx.chat?.id;
-      if (userId && chatId) oauthCallbackByUser.set(userId, { providerId, chatId });
+      if (userId && chatId) oauthCallbackByUser.set(userId, { providerId, chatId, methodIndex });
       await ctx.reply(t("connect.auth_url", { url: authData.url }));
       await ctx.reply(t("connect.oauth_callback_prompt", { name: providerId }));
     } else {
@@ -143,7 +143,7 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
       } catch {}
       
       const project = getCurrentProject();
-      const { error } = await opencodeClient.provider.oauth.callback({ providerID: oauthPending.providerId, directory: project?.worktree, code });
+      const { error } = await opencodeClient.provider.oauth.callback({ providerID: oauthPending.providerId, method: oauthPending.methodIndex, directory: project?.worktree, code });
       if (error) { logger.error("[Connect] OAuth callback error:", error); await ctx.reply(t("connect.auth_error")); return; }
       await ctx.reply(t("connect.authorized"));
       await ctx.reply("Restarting OpenCode server to apply changes...");

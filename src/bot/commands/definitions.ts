@@ -35,19 +35,13 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "ls", descriptionKey: "cmd.description.ls" },
   { command: "stream", descriptionKey: "cmd.description.stream" },
   { command: "ssh", descriptionKey: "cmd.description.ssh" },
-  { command: "share", descriptionKey: "cmd.description.share" },
-  { command: "connect", descriptionKey: "cmd.description.connect" },
   { command: "restart", descriptionKey: "cmd.description.restart", adminOnly: true },
   { command: "opencode_start", descriptionKey: "cmd.description.opencode_start" },
   { command: "opencode_stop", descriptionKey: "cmd.description.opencode_stop" },
+  { command: "share", descriptionKey: "cmd.description.share" },
+  { command: "connect", descriptionKey: "cmd.description.connect" },
   { command: "server", descriptionKey: "cmd.description.server" },
   { command: "help", descriptionKey: "cmd.description.help" },
-  { command: "connect", descriptionKey: "cmd.description.connect" },
-  { command: "share", descriptionKey: "cmd.description.share" },
-  { command: "server", descriptionKey: "cmd.description.server" },
-  { command: "connect", descriptionKey: "cmd.description.connect" },
-  { command: "share", descriptionKey: "cmd.description.share" },
-  { command: "server", descriptionKey: "cmd.description.server" },
 ];
 
 export function getLocalizedBotCommands(options?: { isAdmin?: boolean }): BotCommandDefinition[] {

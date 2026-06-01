@@ -918,4 +918,5 @@ export const ru: I18nDictionary = {
   // TODO-translate
   "mcp.oauth_error": "Ошибка MCP OAuth: {error}",
   "connect.enter_key": "Введите API ключ для {name}:",
+  "model.menu.add_provider": "➕ Добавить провайдера",
 };

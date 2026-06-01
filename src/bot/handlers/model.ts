@@ -150,6 +150,9 @@ function buildProviderSelectionKeyboard(
     keyboard.text(label, buildProviderCallback(provider.providerID)).row();
   });
 
+  // Add provider button
+  keyboard.text(t("model.menu.add_provider"), "model:add_provider").row();
+
   return keyboard;
 }
 

@@ -900,6 +900,7 @@ export const en = {
   "mcp.oauth_success": "MCP OAuth completed for {name}.",
   "mcp.oauth_error": "MCP OAuth failed: {error}",
   "connect.enter_key": "Enter API key for {name}:",
+  "model.menu.add_provider": "➕ Add provider",
 } as const;
 
 export type I18nKey = keyof typeof en;

@@ -863,4 +863,5 @@ export const zh: I18nDictionary = {
   // TODO-translate
   "mcp.oauth_error": "MCP OAuth 错误：{error}",
   "connect.enter_key": "输入 {name} 的 API 密钥：",
+  "model.menu.add_provider": "➕ 添加提供商",
 };

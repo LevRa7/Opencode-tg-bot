@@ -688,7 +688,10 @@ class SshManager {
         await executeCommand(`fuser -k ${remotePort}/tcp 2>/dev/null || true`);
 
         // 6. Start the opencode server container
-        const dockerCmd = `docker run -d --name opencode-serve-tg-${userId} -p ${remotePort}:${remotePort} -e OPENCODE_DISABLE_EXTERNAL_SKILLS=true opencode-tenant:latest serve --hostname 0.0.0.0 --port ${remotePort}`;
+        const volumeName = `opencode-data-tg-${userId}`;
+        // Ensure volume exists
+        await executeCommand(`docker volume create ${volumeName}`).catch(() => {});
+        const dockerCmd = `docker run -d --name opencode-serve-tg-${userId} -v ${volumeName}:/root/.local/share/opencode -p ${remotePort}:${remotePort} -e OPENCODE_DISABLE_EXTERNAL_SKILLS=true opencode-tenant:latest serve --hostname 0.0.0.0 --port ${remotePort}`;
         try {
           await executeCommand(dockerCmd);
         } catch (err) {

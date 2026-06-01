@@ -17,6 +17,16 @@ export async function opencodeStopCommand(ctx: CommandContext<Context>) {
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
 
   try {
+    // If SSH is active, disconnect SSH (which stops the remote OpenCode server)
+    const userId = ctx.from?.id;
+    if (userId && sshManager.isSshActive(userId)) {
+      const statusMsg = await ctx.reply("⏳ " + t("opencode_stop.stopping", { pid: "SSH" }), withMessageThreadId(undefined, messageThreadId));
+      await sshManager.disconnect(userId);
+      await ctx.editMessageText(t("opencode_stop.success"));
+      logger.info("[Bot] SSH disconnected and remote OpenCode server stopped for user", userId);
+      return;
+    }
+
     const localTarget = resolveLocalOpencodeTarget(config.opencode.apiUrl);
     if (!localTarget) {
       await ctx.reply(

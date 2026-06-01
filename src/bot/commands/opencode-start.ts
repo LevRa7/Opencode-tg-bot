@@ -73,6 +73,43 @@ export async function opencodeStartCommand(ctx: CommandContext<Context>) {
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
 
   try {
+    // If SSH was used before and is now disconnected, reconnect it
+    const userId = ctx.from?.id;
+    if (userId && !sshManager.isSshActive(userId)) {
+      const savedConns = await sshManager.getSavedConnections(userId);
+      if (savedConns.length > 0) {
+        const conn = savedConns[0];
+        const statusMsg = await ctx.reply("⏳ " + t("ssh.connecting_saved"), withMessageThreadId(undefined, messageThreadId));
+        try {
+          await sshManager.connect(userId, conn.details, conn.auth, conn.deployTarget);
+          await sshManager.bootstrapRemoteServer(userId);
+          await ctx.api.editMessageText(ctx.chat!.id, statusMsg.message_id, t("ssh.success"));
+          logger.info("[Bot] SSH reconnected and remote OpenCode server started for user", userId);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await ctx.reply("❌ " + msg + "\n\nИспользуйте /ssh для подключения.");
+
+        }
+        return;
+      }
+    }
+    // If SSH is already active, nothing to do
+    if (userId && sshManager.isSshActive(userId)) {
+      const conn = sshManager.getActiveConnection(userId);
+      const details = conn?.details;
+      if (details) {
+        await ctx.reply(
+          t("ssh.active_status", {
+            username: details.username,
+            host: details.host,
+            port: String(details.port ?? 22),
+          }) + "\n\nДля перезапуска используйте /ssh → Disconnect, затем /opencode_start.",
+          withMessageThreadId(undefined, messageThreadId),
+        );
+      }
+      return;
+    }
+
     const localTarget = resolveLocalOpencodeTarget(config.opencode.apiUrl);
     if (!localTarget) {
       await ctx.reply(

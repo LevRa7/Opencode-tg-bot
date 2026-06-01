@@ -25,17 +25,7 @@ export const de: I18nDictionary = {
   "cmd.description.restart": "Bot-Prozess neu starten",
   "cmd.description.opencode_start": "OpenCode-Server starten",
   "cmd.description.opencode_stop": "OpenCode-Server stoppen",
-  // TODO-translate
-  "cmd.description.server": "Show server URL and status",
   "cmd.description.help": "Hilfe",
-  "cmd.description.connect": "AI-Provider verbinden",
-
-  // TODO-translate
-  "server.info": "OpenCode Server: {url}",
-  // TODO-translate
-  "server.healthy": "Server is healthy.",
-  // TODO-translate
-  "server.unavailable": "Server is unavailable.",
 
   "callback.unknown_command": "Unbekannter Befehl",
   "callback.processing_error": "Verarbeitungsfehler",
@@ -908,37 +898,33 @@ export const de: I18nDictionary = {
   "ssh.invalid_format": "❌ Invalid format. Example: root@192.168.1.1:22",
   "ssh.connection_not_found": "Connection not found.",
   "ssh.connecting_saved": "⏳ Connecting to saved server...",
-
-  "connect.error": "Fehler beim Abrufen der Provider. Konfigurieren Sie Provider in OpenCode.",
-  "connect.empty": "Keine Provider konfiguriert. Fügen Sie Provider in Ihrer OpenCode-Konfiguration hinzu.",
-  "connect.select": "Provider zum Verbinden auswählen:",
-  "connect.auth_error": "Authentifizierung fehlgeschlagen. Bitte versuchen Sie es erneut.",
-  "connect.auth_url": "Öffnen Sie diese URL zur Authentifizierung:\n{url}",
-  "connect.authorized": "Erfolgreich mit dem Provider autorisiert.",
-  // TODO-translate
-  "cmd.description.share": "Sitzung teilen",
-  // TODO-translate
-  "share.no_session": "Keine aktive Sitzung zum Teilen.",
-  // TODO-translate
-  "share.error": "Fehler beim Teilen der Sitzung.",
-  // TODO-translate
-  "share.success": "Sitzung geteilt: {url}",
-  // TODO-translate
-  "share.unshare_error": "Fehler beim Aufheben der Sitzungsfreigabe.",
-  // TODO-translate
-  "share.unshared": "Sitzungsfreigabe aufgehoben.",
-  // TODO-translate
-  "mcps.button.oauth": "Authentifizieren",
-  // TODO-translate
-  "mcp.oauth_starting": "Starte OAuth für {name}...",
-  // TODO-translate
-  "mcp.oauth_success": "MCP OAuth abgeschlossen für {name}.",
-  // TODO-translate
-  "mcp.oauth_error": "MCP OAuth Fehler: {error}",
-  "connect.enter_key": "API-Schlüssel für {name} eingeben:",
-  "model.menu.add_provider": "➕ Anbieter hinzufügen",
-"connect.pick": "TODO",
-  "connect.choose_method": "TODO",
-  "connect.no_methods": "TODO",
-"connect.oauth_callback_prompt": "TODO",
+  "model.menu.add_provider": "Add provider",
+  "mcp.oauth_error": "MCP OAuth failed: {error}",
+  "mcp.oauth_success": "MCP OAuth completed for {name}.",
+  "mcp.oauth_starting": "Starting OAuth for {name}...",
+  "mcps.button.oauth": "Authenticate",
+  "share.unshared": "Session sharing revoked.",
+  "share.unshare_error": "Failed to unshare session.",
+  "share.success": "Session shared: {url}",
+  "share.error": "Failed to share session.",
+  "share.no_session": "No active session to share.",
+  "cmd.description.share": "Share current session",
+  "server.unavailable": "Server is unavailable.",
+  "server.healthy": "Server is healthy.",
+  "server.info": "OpenCode Server: {url}",
+  "cmd.description.server": "Show server URL and status",
+  "connect.oauth_callback_prompt": "After authorizing, paste the callback URL or code here:",
+  "connect.ready": "Server restarted.",
+  "connect.restarting": "Restarting server...",
+  "connect.enter_key": "Enter API key for {name}:",
+  "connect.no_methods": "No auth methods available.",
+  "connect.choose_method": "Choose auth method:",
+  "connect.pick": "Select a provider:",
+  "connect.authorized": "Successfully authorized with the provider.",
+  "connect.auth_url": "Open this URL to authenticate:\\n{url}",
+  "connect.auth_error": "Authentication failed. Please try again.",
+  "connect.select": "Select a provider to connect:",
+  "connect.empty": "No AI providers configured.",
+  "connect.error": "Failed to list providers.",
+  "cmd.description.connect": "Connect AI providers",
 };

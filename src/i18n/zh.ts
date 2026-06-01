@@ -25,17 +25,7 @@ export const zh: I18nDictionary = {
   "cmd.description.restart": "重启机器人进程",
   "cmd.description.opencode_start": "启动 OpenCode 服务器",
   "cmd.description.opencode_stop": "停止 OpenCode 服务器",
-  // TODO-translate
-  "cmd.description.server": "Show server URL and status",
   "cmd.description.help": "帮助",
-  "cmd.description.connect": "连接 AI 提供方",
-
-  // TODO-translate
-  "server.info": "OpenCode Server: {url}",
-  // TODO-translate
-  "server.healthy": "Server is healthy.",
-  // TODO-translate
-  "server.unavailable": "Server is unavailable.",
 
   "callback.unknown_command": "未知命令",
   "callback.processing_error": "处理错误",
@@ -835,37 +825,33 @@ export const zh: I18nDictionary = {
   "ssh.invalid_format": "❌ Invalid format. Example: root@192.168.1.1:22",
   "ssh.connection_not_found": "Connection not found.",
   "ssh.connecting_saved": "⏳ Connecting to saved server...",
-
-  "connect.error": "获取提供方列表失败。请在 OpenCode 中配置提供方。",
-  "connect.empty": "未配置提供方。请在 OpenCode 配置中添加提供方。",
-  "connect.select": "选择要连接的提供方：",
-  "connect.auth_error": "认证失败。请重试。",
-  "connect.auth_url": "请打开此 URL 进行认证：\n{url}",
-  "connect.authorized": "已成功授权该提供方。",
-  // TODO-translate
-  "cmd.description.share": "分享会话",
-  // TODO-translate
-  "share.no_session": "没有活动的会话可分享。",
-  // TODO-translate
-  "share.error": "分享会话失败。",
-  // TODO-translate
-  "share.success": "会话已分享：{url}",
-  // TODO-translate
-  "share.unshare_error": "取消分享失败。",
-  // TODO-translate
-  "share.unshared": "会话分享已取消。",
-  // TODO-translate
-  "mcps.button.oauth": "认证",
-  // TODO-translate
-  "mcp.oauth_starting": "正在启动 {name} 的 OAuth...",
-  // TODO-translate
-  "mcp.oauth_success": "{name} 的 MCP OAuth 已完成。",
-  // TODO-translate
-  "mcp.oauth_error": "MCP OAuth 错误：{error}",
-  "connect.enter_key": "输入 {name} 的 API 密钥：",
-  "model.menu.add_provider": "➕ 添加提供商",
-"connect.pick": "TODO",
-  "connect.choose_method": "TODO",
-  "connect.no_methods": "TODO",
-"connect.oauth_callback_prompt": "TODO",
+  "model.menu.add_provider": "Add provider",
+  "mcp.oauth_error": "MCP OAuth failed: {error}",
+  "mcp.oauth_success": "MCP OAuth completed for {name}.",
+  "mcp.oauth_starting": "Starting OAuth for {name}...",
+  "mcps.button.oauth": "Authenticate",
+  "share.unshared": "Session sharing revoked.",
+  "share.unshare_error": "Failed to unshare session.",
+  "share.success": "Session shared: {url}",
+  "share.error": "Failed to share session.",
+  "share.no_session": "No active session to share.",
+  "cmd.description.share": "Share current session",
+  "server.unavailable": "Server is unavailable.",
+  "server.healthy": "Server is healthy.",
+  "server.info": "OpenCode Server: {url}",
+  "cmd.description.server": "Show server URL and status",
+  "connect.oauth_callback_prompt": "After authorizing, paste the callback URL or code here:",
+  "connect.ready": "Server restarted.",
+  "connect.restarting": "Restarting server...",
+  "connect.enter_key": "Enter API key for {name}:",
+  "connect.no_methods": "No auth methods available.",
+  "connect.choose_method": "Choose auth method:",
+  "connect.pick": "Select a provider:",
+  "connect.authorized": "Successfully authorized with the provider.",
+  "connect.auth_url": "Open this URL to authenticate:\\n{url}",
+  "connect.auth_error": "Authentication failed. Please try again.",
+  "connect.select": "Select a provider to connect:",
+  "connect.empty": "No AI providers configured.",
+  "connect.error": "Failed to list providers.",
+  "cmd.description.connect": "Connect AI providers",
 };

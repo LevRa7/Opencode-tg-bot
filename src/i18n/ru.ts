@@ -25,17 +25,7 @@ export const ru: I18nDictionary = {
   "cmd.description.restart": "Перезапустить процесс бота",
   "cmd.description.opencode_start": "Запустить OpenCode сервер",
   "cmd.description.opencode_stop": "Остановить OpenCode сервер",
-  // TODO-translate
-  "cmd.description.server": "Показать URL и статус сервера",
   "cmd.description.help": "Справка",
-  "cmd.description.connect": "Подключить AI провайдеров",
-
-  // TODO-translate
-  "server.info": "OpenCode Server: {url}",
-  // TODO-translate
-  "server.healthy": "Server is healthy.",
-  // TODO-translate
-  "server.unavailable": "Server is unavailable.",
 
   "callback.unknown_command": "Неизвестная команда",
   "callback.processing_error": "Ошибка обработки",
@@ -890,37 +880,33 @@ export const ru: I18nDictionary = {
   "ssh.invalid_format": "❌ Неверный формат. Пример: root@192.168.1.1:22",
   "ssh.connection_not_found": "Подключение не найдено.",
   "ssh.connecting_saved": "⏳ Подключение к сохранённому серверу...",
-
-  "connect.error": "Не удалось получить список провайдеров. Проверьте настройки провайдеров в OpenCode.",
-  "connect.empty": "Провайдеры не настроены. Добавьте провайдеров в конфигурации OpenCode.",
-  "connect.select": "Выберите провайдера для подключения:",
-  "connect.auth_error": "Ошибка аутентификации. Попробуйте ещё раз.",
-  "connect.auth_url": "Откройте этот URL для аутентификации:\n{url}",
-  "connect.authorized": "Успешная авторизация с провайдером.",
-  // TODO-translate
-  "cmd.description.share": "Поделиться сессией",
-  // TODO-translate
-  "share.no_session": "Нет активной сессии для отправки.",
-  // TODO-translate
-  "share.error": "Не удалось поделиться сессией.",
-  // TODO-translate
-  "share.success": "Сессия доступна по ссылке: {url}",
-  // TODO-translate
-  "share.unshare_error": "Не удалось отозвать доступ к сессии.",
-  // TODO-translate
-  "share.unshared": "Доступ к сессии отозван.",
-  // TODO-translate
-  "mcps.button.oauth": "Аутентификация",
-  // TODO-translate
-  "mcp.oauth_starting": "Запуск OAuth для {name}...",
-  // TODO-translate
-  "mcp.oauth_success": "MCP OAuth завершён для {name}.",
-  // TODO-translate
-  "mcp.oauth_error": "Ошибка MCP OAuth: {error}",
-  "connect.enter_key": "Введите API ключ для {name}:",
   "model.menu.add_provider": "➕ Добавить провайдера",
-"connect.pick": "TODO",
-  "connect.choose_method": "TODO",
-  "connect.no_methods": "TODO",
-"connect.oauth_callback_prompt": "После авторизации вставьте сюда callback URL или код:",
+  "mcp.oauth_error": "Ошибка MCP OAuth: {error}",
+  "mcp.oauth_success": "MCP OAuth завершён для {name}.",
+  "mcp.oauth_starting": "Запуск OAuth для {name}...",
+  "mcps.button.oauth": "Аутентификация",
+  "share.unshared": "Доступ отозван.",
+  "share.unshare_error": "Не удалось отозвать доступ.",
+  "share.success": "Сессия доступна: {url}",
+  "share.error": "Не удалось поделиться сессией.",
+  "share.no_session": "Нет активной сессии.",
+  "cmd.description.share": "Поделиться сессией",
+  "server.unavailable": "Сервер недоступен.",
+  "server.healthy": "Сервер доступен.",
+  "server.info": "OpenCode сервер: {url}",
+  "cmd.description.server": "URL и статус сервера",
+  "connect.oauth_callback_prompt": "После авторизации вставьте callback URL или код:",
+  "connect.ready": "Сервер перезапущен.",
+  "connect.restarting": "Перезапуск сервера...",
+  "connect.enter_key": "Введите API ключ для {name}:",
+  "connect.no_methods": "Нет доступных способов авторизации.",
+  "connect.choose_method": "Выберите способ авторизации:",
+  "connect.pick": "Выберите провайдера:",
+  "connect.authorized": "Провайдер успешно авторизован.",
+  "connect.auth_url": "Откройте URL для аутентификации:\\n{url}",
+  "connect.auth_error": "Ошибка аутентификации. Попробуйте ещё раз.",
+  "connect.select": "Выберите провайдера для подключения:",
+  "connect.empty": "Нет настроенных AI провайдеров.",
+  "connect.error": "Не удалось получить список провайдеров.",
+  "cmd.description.connect": "Подключить AI провайдеров",
 };

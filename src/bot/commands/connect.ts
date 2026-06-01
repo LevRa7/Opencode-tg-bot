@@ -153,26 +153,22 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
   if (oauthPending) {
     oauthCallbackByUser.delete(userId);
     try {
-      // Parse code AND state from callback URL — server needs state to find OAuth session
+      // Parse code from URL if full callback URL was pasted
       let code = text;
-      let state = "";
       try {
         const url = new URL(text);
         const codeParam = url.searchParams.get("code");
-        const stateParam = url.searchParams.get("state");
         if (codeParam) code = codeParam;
-        if (stateParam) state = stateParam;
       } catch {}
 
       const project = getCurrentProject();
-      logger.debug("[Connect] OAuth callback:", oauthPending.providerId, "codeLen:", code.length, "hasState:", !!state);
+      logger.debug("[Connect] OAuth callback:", oauthPending.providerId, "codeLen:", code.length, "method:", oauthPending.methodIndex);
       const { error } = await opencodeClient.provider.oauth.callback({
-        $body_code: code,
-        $body_method: oauthPending.methodIndex,
-        $body_state: state,
         providerID: oauthPending.providerId,
+        method: oauthPending.methodIndex,
         directory: project?.worktree,
-      } as any);
+        code,
+      });
       if (error) { logger.error("[Connect] OAuth callback error:", error); clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); return; }
       await ctx.reply(t("connect.authorized"));
       clearActiveInlineMenu("connect_success");

@@ -191,7 +191,7 @@ async function restartProviderServer(): Promise<void> {
     if (userId) {
       try {
         logger.info("[Connect] Restarting Docker container opencode-serve-tg-" + userId);
-        await sshManager.executeRemoteCommand(userId, "/usr/bin/docker restart opencode-serve-tg-" + userId);
+        await sshManager.executeRemoteCommand(userId, "/usr/bin/docker stop opencode-serve-tg-" + userId + " && /usr/bin/docker start opencode-serve-tg-" + userId);
         logger.info("[Connect] Docker container restarted, waiting for server...");
         // Give the server time to restart
         await new Promise(r => setTimeout(r, 8000));

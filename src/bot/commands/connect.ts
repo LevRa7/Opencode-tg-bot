@@ -1,5 +1,6 @@
 import { Context, InlineKeyboard } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
+import { getCurrentProject } from "../../settings/manager.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 
@@ -33,9 +34,11 @@ export async function connectCommand(ctx: Context): Promise<void> {
 
 export async function handleProviderAuth(ctx: Context, providerId: string): Promise<void> {
   try {
+    const project = getCurrentProject();
     const { data, error } = await opencodeClient.provider.oauth.authorize({
       providerID: providerId,
       method: 0,
+      directory: project?.worktree,
     });
 
     if (error) {

@@ -5,6 +5,7 @@ import { processManager } from "../../process/manager.js";
 import { getCurrentOpencodeRoute } from "../../opencode/client.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
+import { clearActiveInlineMenu } from "../handlers/inline-menu.js";
 
 const POPULAR_PROVIDERS = ["openai", "google", "anthropic", "deepseek", "vertex", "perplexity"];
 const apiKeyPromptByUser = new Map<number, { providerId: string; chatId: number }>();
@@ -23,7 +24,6 @@ export function clearOAuthCallbackPrompt(userId: number): void {
   oauthCallbackByUser.delete(userId);
 }
 
-// === Prompt interceptor for BOTH API key and OAuth code ===
 export function isAnyProviderPrompt(userId: number): boolean {
   return apiKeyPromptByUser.has(userId) || oauthCallbackByUser.has(userId);
 }
@@ -47,7 +47,7 @@ export async function connectCommand(ctx: Context): Promise<void> {
     const keyboard = new InlineKeyboard();
     for (const p of providerList) keyboard.text(p.name ?? p.id ?? "?", "provider:auth:" + p.id).row();
     await ctx.reply(t("connect.select"), { reply_markup: keyboard });
-  } catch (err) { logger.error("[Connect] Error:", err); await ctx.reply(t("connect.error")); }
+  } catch (err) { logger.error("[Connect] Error:", err); clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.error")); }
 }
 
 export async function handleProviderAuth(ctx: Context, providerId: string): Promise<void> {
@@ -55,7 +55,7 @@ export async function handleProviderAuth(ctx: Context, providerId: string): Prom
     const project = getCurrentProject();
     const { data: authData } = await opencodeClient.provider.auth({ directory: project?.worktree });
     const methods = (authData as Record<string, any[]>)?.[providerId] ?? [];
-    if (methods.length === 0) { await ctx.reply(t("connect.no_methods")); await ctx.answerCallbackQuery(); return; }
+    if (methods.length === 0) { await ctx.reply(t("connect.no_methods")); await ctx.answerCallbackQuery(); clearActiveInlineMenu("connect_no_methods"); return; }
     if (methods.length === 1) {
       if (methods[0].type === "api") await startApiKeyFlow(ctx, providerId);
       else await startOAuthFlow(ctx, providerId, 0);
@@ -67,7 +67,7 @@ export async function handleProviderAuth(ctx: Context, providerId: string): Prom
     });
     await ctx.reply(t("connect.choose_method"), { reply_markup: keyboard });
     await ctx.answerCallbackQuery();
-  } catch (err) { await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); }
+  } catch (err) { clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); }
 }
 
 export async function startProviderAuth(ctx: Context, providerId: string, methodIndex: number): Promise<void> {
@@ -78,7 +78,7 @@ export async function startProviderAuth(ctx: Context, providerId: string, method
     if (methodIndex >= methods.length) { await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); return; }
     if (methods[methodIndex].type === "api") await startApiKeyFlow(ctx, providerId);
     else await startOAuthFlow(ctx, providerId, methodIndex);
-  } catch (err) { await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); }
+  } catch (err) { clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); }
 }
 
 async function startApiKeyFlow(ctx: Context, providerId: string): Promise<void> {
@@ -104,7 +104,7 @@ async function startOAuthFlow(ctx: Context, providerId: string, methodIndex: num
       await ctx.reply(t("connect.authorized"));
     }
     await ctx.answerCallbackQuery();
-  } catch (err) { await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); }
+  } catch (err) { clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); }
 }
 
 // === Handle API key OR OAuth code submission ===
@@ -123,9 +123,9 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
       if (error) { await ctx.reply(t("connect.auth_error")); return; }
       await ctx.reply(t("connect.authorized"));
       await ctx.reply("Restarting OpenCode server to apply changes...");
-      await processManager.restartTenantRuntimes();
+      await restartProviderServer();
       await ctx.reply("Server restarted. Provider available in /model.");
-    } catch (err) { await ctx.reply(t("connect.auth_error")); }
+    } catch (err) { clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); }
     return;
   }
 
@@ -141,21 +141,32 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
         const codeParam = url.searchParams.get("code");
         if (codeParam) code = codeParam;
       } catch {}
-      
+
+      // Use $body_ prefix to bypass SDK buildClientParams overwrite bug
+      // (multiple body-mapped params overwrite each other instead of merging)
       const project = getCurrentProject();
-      const { error } = await opencodeClient.provider.oauth.callback({ providerID: oauthPending.providerId, method: oauthPending.methodIndex, directory: project?.worktree, code });
-      if (error) { logger.error("[Connect] OAuth callback error:", error); await ctx.reply(t("connect.auth_error")); return; }
+      const { error } = await opencodeClient.provider.oauth.callback({
+        $body_code: code,
+        $body_method: oauthPending.methodIndex,
+        providerID: oauthPending.providerId,
+        directory: project?.worktree,
+      } as any);
+      if (error) { logger.error("[Connect] OAuth callback error:", error); clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); return; }
       await ctx.reply(t("connect.authorized"));
       await ctx.reply("Restarting OpenCode server to apply changes...");
-        const route = getCurrentOpencodeRoute();
+      await restartProviderServer();
+      await ctx.reply("Server restarted. Provider available in /model.");
+    } catch (err) { logger.error("[Connect] OAuth callback error:", err); clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); }
+    return;
+  }
+}
+
+async function restartProviderServer(): Promise<void> {
+  const route = getCurrentOpencodeRoute();
   if (route.kind === "host") {
     await processManager.stop();
     await processManager.start();
   } else {
     await processManager.restartTenantRuntimes();
-  }
-      await ctx.reply("Server restarted. Provider available in /model.");
-    } catch (err) { logger.error("[Connect] OAuth callback error:", err); await ctx.reply(t("connect.auth_error")); }
-    return;
   }
 }

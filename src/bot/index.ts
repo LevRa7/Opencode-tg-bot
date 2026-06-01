@@ -2558,53 +2558,60 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
   });
 
-  summaryAggregator.setOnTokens(async (tokens, isCompleted) => {
-    if (!pinnedMessageManager.isInitialized()) {
+  summaryAggregator.setOnTokens(async (sessionId, tokens, isCompleted) => {
+    const scope = threadContextManager.getSessionScope(sessionId);
+    if (!scope) {
       return;
     }
-
-    try {
-      logger.debug(
-        `[Bot] Received tokens: input=${tokens.input}, output=${tokens.output}, completed=${isCompleted}`,
-      );
-
-      const contextSize = tokens.input + tokens.cacheRead;
-      const contextLimit = pinnedMessageManager.getContextLimit();
-
-      // Skip non-completed messages with zero context: a new assistant message
-      // starts with tokens={input:0, ...} which would overwrite valid context
-      // from the previous step. Only accept zeros from completed messages.
-      if (!isCompleted && contextSize === 0) {
-        logger.debug("[Bot] Skipping zero-token intermediate update");
+    await runWithTelegramConversationScope(scope, async () => {
+      if (!pinnedMessageManager.isInitialized()) {
         return;
       }
 
-      // Update both keyboard and pinned state in memory (keeps them in sync)
-      if (contextLimit > 0) {
-        keyboardManager.updateContext(contextSize, contextLimit);
-      }
-      pinnedMessageManager.updateTokensSilent(tokens);
+      try {
+        logger.debug(
+          `[Bot] Received tokens: input=${tokens.input}, output=${tokens.output}, completed=${isCompleted}`,
+        );
 
-      // Full pinned message update (API call) only on completed messages
-      if (isCompleted) {
-        await pinnedMessageManager.onMessageComplete(tokens);
+        const contextSize = tokens.input + tokens.cacheRead;
+        const contextLimit = pinnedMessageManager.getContextLimit();
+
+        if (!isCompleted && contextSize === 0) {
+          logger.debug("[Bot] Skipping zero-token intermediate update");
+          return;
+        }
+
+        if (contextLimit > 0) {
+          keyboardManager.updateContext(contextSize, contextLimit);
+        }
+        pinnedMessageManager.updateTokensSilent(tokens);
+
+        if (isCompleted) {
+          await pinnedMessageManager.onMessageComplete(tokens);
+        }
+      } catch (err) {
+        logger.error("[Bot] Error updating pinned message with tokens:", err);
       }
-    } catch (err) {
-      logger.error("[Bot] Error updating pinned message with tokens:", err);
-    }
+    });
   });
 
-  summaryAggregator.setOnCost(async (cost) => {
-    if (!pinnedMessageManager.isInitialized()) {
+  summaryAggregator.setOnCost(async (sessionId, cost) => {
+    const scope = threadContextManager.getSessionScope(sessionId);
+    if (!scope) {
       return;
     }
+    await runWithTelegramConversationScope(scope, async () => {
+      if (!pinnedMessageManager.isInitialized()) {
+        return;
+      }
 
-    try {
-      logger.debug(`[Bot] Cost update: $${cost.toFixed(2)}`);
-      await pinnedMessageManager.onCostUpdate(cost);
-    } catch (err) {
-      logger.error("[Bot] Error updating cost:", err);
-    }
+      try {
+        logger.debug(`[Bot] Cost update: $${cost.toFixed(2)}`);
+        await pinnedMessageManager.onCostUpdate(cost);
+      } catch (err) {
+        logger.error("[Bot] Error updating cost:", err);
+      }
+    });
   });
 
   summaryAggregator.setOnSessionCompacted(async (sessionId, directory) => {
@@ -3098,23 +3105,35 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     toolCallStreamer.replaceByPrefix(sessionId, SESSION_RETRY_PREFIX, retryMessage);
   });
 
-  summaryAggregator.setOnSessionDiff(async (_sessionId, diffs) => {
-    if (!pinnedMessageManager.isInitialized()) {
+  summaryAggregator.setOnSessionDiff(async (sessionId, diffs) => {
+    const scope = threadContextManager.getSessionScope(sessionId);
+    if (!scope) {
       return;
     }
+    await runWithTelegramConversationScope(scope, async () => {
+      if (!pinnedMessageManager.isInitialized()) {
+        return;
+      }
 
-    try {
-      await pinnedMessageManager.onSessionDiff(diffs);
-    } catch (err) {
-      logger.error("[Bot] Error updating session diff:", err);
-    }
+      try {
+        await pinnedMessageManager.onSessionDiff(diffs);
+      } catch (err) {
+        logger.error("[Bot] Error updating session diff:", err);
+      }
+    });
   });
 
-  summaryAggregator.setOnFileChange((change) => {
-    if (!pinnedMessageManager.isInitialized()) {
+  summaryAggregator.setOnFileChange((sessionId, change) => {
+    const scope = threadContextManager.getSessionScope(sessionId);
+    if (!scope) {
       return;
     }
-    pinnedMessageManager.addFileChange(change);
+    runWithTelegramConversationScope(scope, () => {
+      if (!pinnedMessageManager.isInitialized()) {
+        return;
+      }
+      pinnedMessageManager.addFileChange(change);
+    });
   });
 
   pinnedMessageManager.setOnKeyboardUpdate(async (tokensUsed, tokensLimit) => {

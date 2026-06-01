@@ -63,6 +63,10 @@ export async function connectCommand(ctx: Context): Promise<void> {
 
 export async function handleProviderAuth(ctx: Context, providerId: string): Promise<void> {
   try {
+    // Remove the method selection keyboard
+    if (ctx.callbackQuery?.message?.message_id) {
+      ctx.api.editMessageReplyMarkup(ctx.chat!.id!, ctx.callbackQuery.message.message_id, {}).catch(() => {});
+    }
     const project = getCurrentProject();
     const { data: authData } = await opencodeClient.provider.auth({ directory: project?.worktree });
     const methods = (authData as Record<string, any[]>)?.[providerId] ?? [];
@@ -218,19 +222,7 @@ async function restartProviderServer(): Promise<void> {
         logger.info("[Connect] Docker container restarted, waiting for server...");
         await new Promise(r => setTimeout(r, 10000));
       } catch (err) {
-        logger.error("[Connect] SSH restart error:", err);
-        // Fallback: disconnect and reconnect from bot side
-        try {
-          await sshManager.disconnect(userId);
-          const savedConns = await sshManager.getSavedConnections(userId);
-          if (savedConns.length > 0) {
-            const conn = savedConns[0];
-            await sshManager.connect(userId, conn.details, conn.auth, conn.deployTarget);
-            await sshManager.bootstrapRemoteServer(userId);
-          }
-        } catch (e2) {
-          logger.error("[Connect] SSH fallback restart error:", e2);
-        }
+        logger.error("[Connect] Docker restart error:", err);
       }
     }
     return;

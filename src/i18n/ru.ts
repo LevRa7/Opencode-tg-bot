@@ -25,7 +25,16 @@ export const ru: I18nDictionary = {
   "cmd.description.restart": "Перезапустить процесс бота",
   "cmd.description.opencode_start": "Запустить OpenCode сервер",
   "cmd.description.opencode_stop": "Остановить OpenCode сервер",
+  // TODO-translate
+  "cmd.description.server": "Показать URL и статус сервера",
   "cmd.description.help": "Справка",
+
+  // TODO-translate
+  "server.info": "OpenCode Server: {url}",
+  // TODO-translate
+  "server.healthy": "Server is healthy.",
+  // TODO-translate
+  "server.unavailable": "Server is unavailable.",
 
   "callback.unknown_command": "Неизвестная команда",
   "callback.processing_error": "Ошибка обработки",

@@ -25,7 +25,16 @@ export const zh: I18nDictionary = {
   "cmd.description.restart": "重启机器人进程",
   "cmd.description.opencode_start": "启动 OpenCode 服务器",
   "cmd.description.opencode_stop": "停止 OpenCode 服务器",
+  // TODO-translate
+  "cmd.description.server": "Show server URL and status",
   "cmd.description.help": "帮助",
+
+  // TODO-translate
+  "server.info": "OpenCode Server: {url}",
+  // TODO-translate
+  "server.healthy": "Server is healthy.",
+  // TODO-translate
+  "server.unavailable": "Server is unavailable.",
 
   "callback.unknown_command": "未知命令",
   "callback.processing_error": "处理错误",

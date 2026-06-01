@@ -19,6 +19,7 @@ import {
   MODEL_BUTTON_TEXT_PATTERN,
 } from "./message-patterns.js";
 import { sessionsCommand, handleSessionSelect, handleBackgroundSessionOpen, buildBackgroundSessionOpenKeyboard } from "./commands/sessions.js";
+import { handleServer } from "./commands/server.js";
 import { newCommand } from "./commands/new.js";
 import { modelCommand } from "./commands/model.js";
 import { variantCommand } from "./commands/variant.js";
@@ -2164,11 +2165,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       return;
     }
 
-    if (assistantRunState.isFinalResponsePublished(toolInfo.sessionId)) {
-      orderedPublication.resolve(null);
-      return;
-    }
-
     const shouldIncludeToolInfoInFileCaption =
       toolInfo.hasFileAttachment &&
       (toolInfo.tool === "write" || toolInfo.tool === "edit" || toolInfo.tool === "apply_patch");
@@ -3719,6 +3715,7 @@ export function createBot(): Bot<Context> {
   bot.command("skills", skillsCommand);
   bot.command("mcps", mcpsCommand);
   bot.command("ssh", sshCommand);
+  bot.command("server", handleServer);
 
   bot.on("message:text", unknownCommandMiddleware);
 

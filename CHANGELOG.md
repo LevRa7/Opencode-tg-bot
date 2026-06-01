@@ -16,6 +16,10 @@ Documentation rule:
 
 ### Fixed
 
+- **Fixed tool call notifications being dropped after the first assistant message.** When OpenCode produces multiple assistant messages in response to a single prompt (each with tool calls), only the first message's tool notifications were displayed. The `isFinalResponsePublished` guard in `setOnTool` (`src/bot/index.ts:2167`) blocked all subsequent tool callbacks because `markFinalResponsePublished` was called on every message completion, not just the final one. Removed the guard — `isSessionCurrent` already prevents stale notifications after session cleanup.
+  - Why: users could only see the first `bash`/`read`/etc. command executed by the agent; all subsequent tool activity was invisible.
+
+
 - Made `extractTranslationText` resilient to model responses with non-text parts (e.g. `tool_call`/`tool_result`). Previously the function filtered only `type === "text"` parts, causing intermittent translation failures when the `big-pickle` model returned tool-call parts instead of plain text.
   - Why: translation results were silently dropped for ~50% of entries, leaving English text on Telegraph pages despite successful model responses.
   - Affects: `src/translate/manager.ts`
@@ -27,6 +31,10 @@ Documentation rule:
   - Affects: `src/bot/handlers/media-group.ts`, `src/bot/handlers/document.ts`, `src/bot/handlers/prompt.ts`, `src/bot/utils/abort-error-suppression.ts`, `src/bot/commands/abort.ts`, `src/bot/middleware/interaction-guard.ts`, `src/bot/utils/busy-guard.ts`, `src/summary/aggregator.ts`, `src/bot/index.ts`, `src/i18n/*.ts`, `tests/*`
 
 ### Fixed
+
+- **Fixed tool call notifications being dropped after the first assistant message.** When OpenCode produces multiple assistant messages in response to a single prompt (each with tool calls), only the first message's tool notifications were displayed. The `isFinalResponsePublished` guard in `setOnTool` (`src/bot/index.ts:2167`) blocked all subsequent tool callbacks because `markFinalResponsePublished` was called on every message completion, not just the final one. Removed the guard — `isSessionCurrent` already prevents stale notifications after session cleanup.
+  - Why: users could only see the first `bash`/`read`/etc. command executed by the agent; all subsequent tool activity was invisible.
+
 
 - Ported upstream v0.20.5 fixes: stale busy state after abort with proper release function (`releaseAbortBusyState`), health check timeout (3s) to prevent bot polling blocks during OpenCode server start, SSE stream idle timeout (30s) with automatic reconnect, abort error suppression window (90s) to filter false "aborted" messages.
   - Why: adopt upstream bugfixes and resilience improvements while adapting to multi-user architecture with scope-aware state management.
@@ -46,6 +54,10 @@ Documentation rule:
   - Affects: `src/bot/commands/ls.ts`, `src/bot/commands/detach.ts`, `src/bot/commands/sessions.ts`, `src/bot/handlers/question.ts`, `src/background-session/tracker.ts`, `src/scheduled-task/session-ignore.ts`, `src/bot/utils/send-downloaded-file.ts`, `src/bot/utils/telegram-file-url.ts`, `src/opencode/ready-lifecycle.ts`, `src/opencode/ready-refresh.ts`, `src/utils/opencode-error.ts`, `src/bot/utils/external-user-input.ts`, `src/config.ts`, `src/i18n/*.ts`, `tests/*`
 
 ### Fixed
+
+- **Fixed tool call notifications being dropped after the first assistant message.** When OpenCode produces multiple assistant messages in response to a single prompt (each with tool calls), only the first message's tool notifications were displayed. The `isFinalResponsePublished` guard in `setOnTool` (`src/bot/index.ts:2167`) blocked all subsequent tool callbacks because `markFinalResponsePublished` was called on every message completion, not just the final one. Removed the guard — `isSessionCurrent` already prevents stale notifications after session cleanup.
+  - Why: users could only see the first `bash`/`read`/etc. command executed by the agent; all subsequent tool activity was invisible.
+
 
 - Ported upstream v0.20.4 fixes: link to localhost/broken URL error handling, cache refresh after OpenCode server start, session restore after server readiness, external user input truncation, reply keyboard context after detach, TypeError Invalid URL when `TELEGRAM_API_ROOT` unset, health check timeout to prevent bot polling blocks, OpenCode 1.14 global event stream compatibility, IPv4 forcing for Telegram API, stuck busy state after reconnect, duplicate event listener stop during detach, Windows path handling in `/ls`.
   - Why: adopt upstream bugfixes and error-handling improvements while adapting to multi-user architecture.
@@ -189,6 +201,10 @@ Documentation rule:
   - Affects: `src/bot/index.ts`, `src/bot/utils/assistant-rendering.ts`, `tests/bot/index.local-file-follow-up.test.ts`
 
 ### Fixed
+
+- **Fixed tool call notifications being dropped after the first assistant message.** When OpenCode produces multiple assistant messages in response to a single prompt (each with tool calls), only the first message's tool notifications were displayed. The `isFinalResponsePublished` guard in `setOnTool` (`src/bot/index.ts:2167`) blocked all subsequent tool callbacks because `markFinalResponsePublished` was called on every message completion, not just the final one. Removed the guard — `isSessionCurrent` already prevents stale notifications after session cleanup.
+  - Why: users could only see the first `bash`/`read`/etc. command executed by the agent; all subsequent tool activity was invisible.
+
 
 - Stabilized subagent topic delivery so child runs now use centralized topic lifecycle tracking, send the run footer only after terminal completion, auto-delete only after confirmed final delivery, and fall back through one safer Telegram text-rendering pipeline.
   - Why: child-topic replies had accumulated routing, cleanup-timing, and parse-mode regressions that made final delivery and topic cleanup unreliable.
@@ -366,6 +382,10 @@ Documentation rule:
 
 ### Fixed
 
+- **Fixed tool call notifications being dropped after the first assistant message.** When OpenCode produces multiple assistant messages in response to a single prompt (each with tool calls), only the first message's tool notifications were displayed. The `isFinalResponsePublished` guard in `setOnTool` (`src/bot/index.ts:2167`) blocked all subsequent tool callbacks because `markFinalResponsePublished` was called on every message completion, not just the final one. Removed the guard — `isSessionCurrent` already prevents stale notifications after session cleanup.
+  - Why: users could only see the first `bash`/`read`/etc. command executed by the agent; all subsequent tool activity was invisible.
+
+
 - Fixed `buildListParams` to use `getScopeCacheData()` after accepting an optional `options` parameter, preserving scope isolation for the cache.
   - Why: the previous refactor lost the `cacheData` reference needed for the watermark check.
   - Affects: `src/session/cache-manager.ts`
@@ -483,6 +503,10 @@ Documentation rule:
   - Affects: `src/bot/index.ts`, `src/bot/utils/assistant-rendering.ts`, `tests/bot/index.local-file-follow-up.test.ts`
 
 ### Fixed
+
+- **Fixed tool call notifications being dropped after the first assistant message.** When OpenCode produces multiple assistant messages in response to a single prompt (each with tool calls), only the first message's tool notifications were displayed. The `isFinalResponsePublished` guard in `setOnTool` (`src/bot/index.ts:2167`) blocked all subsequent tool callbacks because `markFinalResponsePublished` was called on every message completion, not just the final one. Removed the guard — `isSessionCurrent` already prevents stale notifications after session cleanup.
+  - Why: users could only see the first `bash`/`read`/etc. command executed by the agent; all subsequent tool activity was invisible.
+
 
 - Fixed Telegram assistant delivery ordering and resilience so durable assistant outputs now follow OpenCode event timing, active thinking and final reasoning survive Telegram `429 retry_after` without crashing the bot, long thinking HTML is chunked safely, and ordered lists stay readable instead of collapsing into repeated `1.` items.
   - Why: assistant replies, tool/subagent publications, and session footers could race each other, long/active thinking updates could break on Telegram limits or parse edges, ordered lists could render incorrectly in Telegram, and unhandled Telegram delivery failures could terminate the bot process.
@@ -627,6 +651,10 @@ Use entries in this style for future changes:
   - Affects: `<modules/managers/apis>`
 
 ### Fixed
+
+- **Fixed tool call notifications being dropped after the first assistant message.** When OpenCode produces multiple assistant messages in response to a single prompt (each with tool calls), only the first message's tool notifications were displayed. The `isFinalResponsePublished` guard in `setOnTool` (`src/bot/index.ts:2167`) blocked all subsequent tool callbacks because `markFinalResponsePublished` was called on every message completion, not just the final one. Removed the guard — `isSessionCurrent` already prevents stale notifications after session cleanup.
+  - Why: users could only see the first `bash`/`read`/etc. command executed by the agent; all subsequent tool activity was invisible.
+
 
 - Fixed `<bug or edge case>`.
   - Why: `<reason/root cause>`

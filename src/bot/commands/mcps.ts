@@ -9,6 +9,7 @@ import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils
 
 const MCPS_CALLBACK_PREFIX = "mcps:";
 const MCPS_CALLBACK_SELECT_PREFIX = `${MCPS_CALLBACK_PREFIX}select:`;
+const MCPS_CALLBACK_AUTH_PREFIX = `${MCPS_CALLBACK_PREFIX}auth:`;
 const MCPS_CALLBACK_CANCEL = `${MCPS_CALLBACK_PREFIX}cancel`;
 const MCPS_CALLBACK_BACK = `${MCPS_CALLBACK_PREFIX}back`;
 const MAX_INLINE_BUTTON_LABEL_LENGTH = 64;
@@ -148,8 +149,10 @@ function buildMcpsListKeyboard(servers: McpServerView[]): InlineKeyboard {
   return keyboard;
 }
 
-function buildMcpsDetailKeyboard(): InlineKeyboard {
+function buildMcpsDetailKeyboard(serverName: string): InlineKeyboard {
   return new InlineKeyboard()
+    .text(t("mcps.button.oauth"), `${MCPS_CALLBACK_AUTH_PREFIX}${serverName}`)
+    .row()
     .text(t("mcps.button.back"), MCPS_CALLBACK_BACK)
     .text(t("mcps.button.cancel"), MCPS_CALLBACK_CANCEL);
 }
@@ -341,10 +344,53 @@ export async function mcpsCommand(ctx: CommandContext<Context>): Promise<void> {
   }
 }
 
+export async function handleMcpAuth(ctx: Context, serverName: string): Promise<void> {
+  try {
+    const currentProject = getCurrentProject();
+    if (!currentProject) {
+      await ctx.reply(t("bot.project_not_selected"), getReplyThreadOptions(ctx));
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: t("mcp.oauth_starting", { name: serverName }) });
+
+    const { data, error } = await opencodeClient.mcp.auth.authenticate({
+      name: serverName,
+      directory: normalizeDirectoryForMcpApi(currentProject.worktree),
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    const statusText = data && typeof data === "object" && "status" in data
+      ? `${formatStatusLabel(String((data as Record<string, unknown>).status))}`
+      : "completed";
+
+    await ctx.reply(
+      t("mcp.oauth_success", { name: serverName, status: statusText }),
+      getReplyThreadOptions(ctx),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error(`[McpAuth] OAuth failed for ${serverName}:`, error);
+    await ctx.reply(
+      t("mcp.oauth_error", { error: message }),
+      getReplyThreadOptions(ctx),
+    ).catch(() => {});
+  }
+}
+
 export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
   const data = ctx.callbackQuery?.data;
   if (!data || !data.startsWith(MCPS_CALLBACK_PREFIX)) {
     return false;
+  }
+
+  if (data.startsWith(MCPS_CALLBACK_AUTH_PREFIX)) {
+    const serverName = data.slice(MCPS_CALLBACK_AUTH_PREFIX.length);
+    await handleMcpAuth(ctx, serverName);
+    return true;
   }
 
   const metadata = parseMcpsMetadata(interactionManager.getSnapshot());
@@ -406,7 +452,7 @@ export async function handleMcpsCallback(ctx: Context): Promise<boolean> {
 
     await ctx.answerCallbackQuery();
     await ctx.editMessageText(buildMcpServerDetailText(selectedServer), {
-      reply_markup: buildMcpsDetailKeyboard(),
+      reply_markup: buildMcpsDetailKeyboard(selectedServer.name),
     });
 
     interactionManager.transition({

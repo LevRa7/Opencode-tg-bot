@@ -23,7 +23,12 @@ export const en = {
   "cmd.description.restart": "Restart bot process",
   "cmd.description.opencode_start": "Start OpenCode server",
   "cmd.description.opencode_stop": "Stop OpenCode server",
+  "cmd.description.server": "Show server URL and status",
   "cmd.description.help": "Help",
+
+  "server.info": "OpenCode Server: {url}",
+  "server.healthy": "Server is healthy.",
+  "server.unavailable": "Server is unavailable.",
 
   "callback.unknown_command": "Unknown command",
   "callback.processing_error": "Processing error",

@@ -25,7 +25,16 @@ export const fr: I18nDictionary = {
   "cmd.description.restart": "Redémarrer le processus du bot",
   "cmd.description.opencode_start": "Démarrer le serveur OpenCode",
   "cmd.description.opencode_stop": "Arrêter le serveur OpenCode",
+  // TODO-translate
+  "cmd.description.server": "Show server URL and status",
   "cmd.description.help": "Aide",
+
+  // TODO-translate
+  "server.info": "OpenCode Server: {url}",
+  // TODO-translate
+  "server.healthy": "Server is healthy.",
+  // TODO-translate
+  "server.unavailable": "Server is unavailable.",
 
   "callback.unknown_command": "Commande inconnue",
   "callback.processing_error": "Erreur de traitement",

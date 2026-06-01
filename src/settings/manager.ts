@@ -317,20 +317,28 @@ export function clearProject(): void {
 
 // ====== SESSION ======
 
+let _lastSetSession: SessionInfo | undefined;
+
 export function getCurrentSession(): SessionInfo | undefined {
   const scopeKey = getActiveConversationScopeKey();
-  if (!scopeKey) return undefined;
-  const row = convBindings.get(scopeKey);
-  if (!row?.session) return undefined;
-  return JSON.parse(row.session) as SessionInfo;
+  if (scopeKey) {
+    const row = convBindings.get(scopeKey);
+    if (row?.session) return JSON.parse(row.session) as SessionInfo;
+  }
+  return _lastSetSession;
 }
 
 export function setCurrentSession(sessionInfo: SessionInfo): void {
   const scopeKey = getActiveConversationScopeKey();
-  if (scopeKey) convBindings.upsert(scopeKey, { session: JSON.stringify(sessionInfo) });
+  if (scopeKey) {
+    convBindings.upsert(scopeKey, { session: JSON.stringify(sessionInfo) });
+  } else {
+    _lastSetSession = sessionInfo;
+  }
 }
 
 export function clearSession(): void {
+  _lastSetSession = undefined;
   const scopeKey = getActiveConversationScopeKey();
   if (scopeKey) convBindings.upsert(scopeKey, { session: null });
 }

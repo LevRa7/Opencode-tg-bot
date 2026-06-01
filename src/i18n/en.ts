@@ -904,6 +904,7 @@ export const en = {
 "connect.pick": "Select a provider:",
   "connect.choose_method": "Choose auth method:",
   "connect.no_methods": "No auth methods available.",
+"connect.oauth_callback_prompt": "After authorizing, paste the callback URL or code here:",
 } as const;
 
 export type I18nKey = keyof typeof en;

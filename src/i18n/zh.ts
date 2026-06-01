@@ -867,4 +867,5 @@ export const zh: I18nDictionary = {
 "connect.pick": "TODO",
   "connect.choose_method": "TODO",
   "connect.no_methods": "TODO",
+"connect.oauth_callback_prompt": "TODO",
 };

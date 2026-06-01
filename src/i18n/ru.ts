@@ -922,4 +922,5 @@ export const ru: I18nDictionary = {
 "connect.pick": "TODO",
   "connect.choose_method": "TODO",
   "connect.no_methods": "TODO",
+"connect.oauth_callback_prompt": "После авторизации вставьте сюда callback URL или код:",
 };

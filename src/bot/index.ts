@@ -27,7 +27,7 @@ import { handleSettingsCallback, settingsCommand } from "./commands/settings.js"
 import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand } from "./commands/abort.js";
 import { handleServer } from "./commands/server.js";
-import { connectCommand, handleProviderAuth, handleProviderApiKey, isProviderApiKeyPrompt, startProviderAuth } from "./commands/connect.js";
+import { connectCommand, handleProviderAuth, handleProviderInput, isProviderApiKeyPrompt, isAnyProviderPrompt, startProviderAuth } from "./commands/connect.js";
 import { shareCommand, unshareCommand } from "./commands/share.js";
 import { detachCommand } from "./commands/detach.js";
 import { opencodeStartCommand } from "./commands/opencode-start.js";
@@ -3663,8 +3663,8 @@ export function createBot(): Bot<Context> {
     const text = ctx.message?.text?.trim();
     const userId = ctx.from?.id;
     if (userId && text && text.length < 500) {
-      if (isProviderApiKeyPrompt(userId)) {
-        await handleProviderApiKey(ctx, text);
+      if (isAnyProviderPrompt(userId)) {
+        await handleProviderInput(ctx, text);
         return;
       }
     }

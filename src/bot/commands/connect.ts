@@ -7,12 +7,24 @@ import { logger } from "../../utils/logger.js";
 
 const POPULAR_PROVIDERS = ["openai", "google", "anthropic", "deepseek", "vertex", "perplexity"];
 const apiKeyPromptByUser = new Map<number, { providerId: string; chatId: number }>();
+const oauthCallbackByUser = new Map<number, { providerId: string; chatId: number }>();
 
 export function isProviderApiKeyPrompt(userId: number): string | undefined {
   return apiKeyPromptByUser.get(userId)?.providerId;
 }
 export function clearProviderApiKeyPrompt(userId: number): void {
   apiKeyPromptByUser.delete(userId);
+}
+export function isOAuthCallbackPrompt(userId: number): string | undefined {
+  return oauthCallbackByUser.get(userId)?.providerId;
+}
+export function clearOAuthCallbackPrompt(userId: number): void {
+  oauthCallbackByUser.delete(userId);
+}
+
+// === Prompt interceptor for BOTH API key and OAuth code ===
+export function isAnyProviderPrompt(userId: number): boolean {
+  return apiKeyPromptByUser.has(userId) || oauthCallbackByUser.has(userId);
 }
 
 export async function connectCommand(ctx: Context): Promise<void> {
@@ -23,25 +35,17 @@ export async function connectCommand(ctx: Context): Promise<void> {
       opencodeClient.provider.auth({ directory: project?.worktree }),
     ]);
     const rawList = (providerData as any)?.all ?? (providerData as any)?.providers ?? [];
-    const authMethods = (authData as Record<string, Array<{ type: string; label: string }>>) ?? {};
     if (rawList.length === 0) { await ctx.reply(t("connect.empty")); return; }
     const popular: any[] = [], rest: any[] = [];
     for (const p of rawList) {
       (POPULAR_PROVIDERS.some(pp => (p.id ?? p.name ?? "").toLowerCase().includes(pp)) ? popular : rest).push(p);
     }
-    popular.sort((a,b) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
-    rest.sort((a,b) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
+    popular.sort((a: any,b: any) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
+    rest.sort((a: any,b: any) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
     const providerList = [...popular, ...rest];
-    let text = t("connect.select") + "\n\n";
-    for (const p of providerList) {
-      const methods = authMethods[p.id ?? p.name] ?? [];
-      const icons = methods.map((m: any) => m.type === "oauth" ? "🔐" : "🔑").join("");
-      text += icons + " <b>" + (p.name ?? p.id) + "</b>\n";
-    }
-    await ctx.reply(text, { parse_mode: "HTML" });
     const keyboard = new InlineKeyboard();
     for (const p of providerList) keyboard.text(p.name ?? p.id ?? "?", "provider:auth:" + p.id).row();
-    await ctx.reply(t("connect.pick"), { reply_markup: keyboard });
+    await ctx.reply(t("connect.select"), { reply_markup: keyboard });
   } catch (err) { logger.error("[Connect] Error:", err); await ctx.reply(t("connect.error")); }
 }
 
@@ -89,27 +93,54 @@ async function startOAuthFlow(ctx: Context, providerId: string, methodIndex: num
     const project = getCurrentProject();
     const { data, error } = await opencodeClient.provider.oauth.authorize({ providerID: providerId, directory: project?.worktree, method: methodIndex });
     if (error) { await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); return; }
-    const url = (data as any)?.url;
-    if (url) await ctx.reply(t("connect.auth_url", { url }));
-    else await ctx.reply(t("connect.authorized"));
+    const authData = data as { url?: string };
+    if (authData?.url) {
+      const userId = ctx.from?.id, chatId = ctx.chat?.id;
+      if (userId && chatId) oauthCallbackByUser.set(userId, { providerId, chatId });
+      await ctx.reply(t("connect.auth_url", { url: authData.url }));
+      await ctx.reply(t("connect.oauth_callback_prompt", { name: providerId }));
+    } else {
+      await ctx.reply(t("connect.authorized"));
+    }
     await ctx.answerCallbackQuery();
   } catch (err) { await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); }
 }
 
-export async function handleProviderApiKey(ctx: Context, apiKey: string): Promise<void> {
+// === Handle API key OR OAuth code submission ===
+
+export async function handleProviderInput(ctx: Context, text: string): Promise<void> {
   const userId = ctx.from?.id;
   if (!userId) return;
-  const pending = apiKeyPromptByUser.get(userId);
-  if (!pending) return;
-  apiKeyPromptByUser.delete(userId);
-  try {
-    const project = getCurrentProject();
-    const { error } = await opencodeClient.auth.set({ providerID: pending.providerId, directory: project?.worktree, auth: { type: "api", key: apiKey } });
-    if (error) { await ctx.reply(t("connect.auth_error")); return; }
-    await ctx.reply(t("connect.authorized"));
-    // Auto-restart server
-    await ctx.reply("Restarting OpenCode server to apply changes...");
-    await processManager.restartTenantRuntimes();
-    await ctx.reply("Server restarted. Provider available in /model.");
-  } catch (err) { await ctx.reply(t("connect.auth_error")); }
+
+  // API key prompt
+  const keyPending = apiKeyPromptByUser.get(userId);
+  if (keyPending) {
+    apiKeyPromptByUser.delete(userId);
+    try {
+      const project = getCurrentProject();
+      const { error } = await opencodeClient.auth.set({ providerID: keyPending.providerId, directory: project?.worktree, auth: { type: "api", key: text } });
+      if (error) { await ctx.reply(t("connect.auth_error")); return; }
+      await ctx.reply(t("connect.authorized"));
+      await ctx.reply("Restarting OpenCode server to apply changes...");
+      await processManager.restartTenantRuntimes();
+      await ctx.reply("Server restarted. Provider available in /model.");
+    } catch (err) { await ctx.reply(t("connect.auth_error")); }
+    return;
+  }
+
+  // OAuth callback
+  const oauthPending = oauthCallbackByUser.get(userId);
+  if (oauthPending) {
+    oauthCallbackByUser.delete(userId);
+    try {
+      const project = getCurrentProject();
+      const { error } = await opencodeClient.provider.oauth.callback({ providerID: oauthPending.providerId, directory: project?.worktree, code: text });
+      if (error) { await ctx.reply(t("connect.auth_error")); return; }
+      await ctx.reply(t("connect.authorized"));
+      await ctx.reply("Restarting OpenCode server to apply changes...");
+      await processManager.restartTenantRuntimes();
+      await ctx.reply("Server restarted.");
+    } catch (err) { await ctx.reply(t("connect.auth_error")); }
+    return;
+  }
 }

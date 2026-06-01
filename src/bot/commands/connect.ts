@@ -82,13 +82,19 @@ export async function handleProviderAuth(ctx: Context, providerId: string): Prom
       keyboard.text((m.type === "oauth" ? "🔐 " : "🔑 ") + m.label, "provider:start:" + providerId + ":" + i).row();
     });
     keyboard.text(t("inline.button.cancel"), "connect:cancel").row();
-    await ctx.reply(t("connect.choose_method"), { reply_markup: keyboard });
+    const msg = await ctx.reply(t("connect.choose_method"), { reply_markup: keyboard });
+    // Store messageId so the keyboard can be removed after selection
+    (ctx as any)._connectMethodMsgId = msg.message_id;
     await ctx.answerCallbackQuery();
   } catch (err) { clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); }
 }
 
 export async function startProviderAuth(ctx: Context, providerId: string, methodIndex: number): Promise<void> {
   try {
+    // Remove the method selection keyboard after user made a choice
+    if (ctx.callbackQuery?.message?.message_id) {
+      ctx.api.editMessageReplyMarkup(ctx.chat!.id!, ctx.callbackQuery.message.message_id, { reply_markup: undefined }).catch(() => {});
+    }
     const project = getCurrentProject();
     const { data: authData } = await opencodeClient.provider.auth({ directory: project?.worktree });
     const methods = (authData as Record<string, any[]>)?.[providerId] ?? [];

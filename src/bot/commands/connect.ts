@@ -186,19 +186,29 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
 async function restartProviderServer(): Promise<void> {
   const route = getCurrentOpencodeRoute();
   if (route.runtimeKey.startsWith("ssh:")) {
-    // For SSH, restart the remote Docker container to pick up provider changes
+    // Restart the remote Docker container to pick up provider changes
     const userId = route.userId;
     if (userId) {
       try {
-        await sshManager.disconnect(userId);
-        const savedConns = await sshManager.getSavedConnections(userId);
-        if (savedConns.length > 0) {
-          const conn = savedConns[0];
-          await sshManager.connect(userId, conn.details, conn.auth, conn.deployTarget);
-          await sshManager.bootstrapRemoteServer(userId);
-        }
+        logger.info("[Connect] Restarting Docker container opencode-serve-tg-" + userId);
+        await sshManager.executeRemoteCommand(userId, "docker restart opencode-serve-tg-" + userId);
+        logger.info("[Connect] Docker container restarted, waiting for server...");
+        // Give the server time to restart
+        await new Promise(r => setTimeout(r, 8000));
       } catch (err) {
         logger.error("[Connect] SSH restart error:", err);
+        // Fallback: disconnect and reconnect from bot side
+        try {
+          await sshManager.disconnect(userId);
+          const savedConns = await sshManager.getSavedConnections(userId);
+          if (savedConns.length > 0) {
+            const conn = savedConns[0];
+            await sshManager.connect(userId, conn.details, conn.auth, conn.deployTarget);
+            await sshManager.bootstrapRemoteServer(userId);
+          }
+        } catch (e2) {
+          logger.error("[Connect] SSH fallback restart error:", e2);
+        }
       }
     }
     return;

@@ -2,7 +2,7 @@ import { Context, InlineKeyboard } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentProject } from "../../settings/manager.js";
 import { processManager } from "../../process/manager.js";
-import { getCurrentOpencodeRoute } from "../../opencode/client.js";
+import { getCurrentOpencodeRoute, getHostOpencodeClient } from "../../opencode/client.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { clearActiveInlineMenu } from "../handlers/inline-menu.js";
@@ -28,6 +28,10 @@ export function isAnyProviderPrompt(userId: number): boolean {
   return apiKeyPromptByUser.has(userId) || oauthCallbackByUser.has(userId);
 }
 
+function compareProviders(a: any, b: any): number {
+  return (a.name ?? a.id ?? "").localeCompare(b.name ?? b.id ?? "");
+}
+
 export async function connectCommand(ctx: Context): Promise<void> {
   try {
     const project = getCurrentProject();
@@ -37,22 +41,20 @@ export async function connectCommand(ctx: Context): Promise<void> {
     ]);
     const rawList = (providerData as any)?.all ?? (providerData as any)?.providers ?? [];
     if (rawList.length === 0) { await ctx.reply(t("connect.empty")); return; }
-    // Filter to providers that have auth methods
-    const authMap = authData as Record<string, any[]>;
-    const authable = rawList.filter((p: any) => {
-      const id = p.id ?? p.name ?? "";
-      return Array.isArray(authMap[id]) && authMap[id].length > 0;
-    });
-    if (authable.length === 0) { await ctx.reply(t("connect.empty")); return; }
+    const hasAuth = new Set(Object.keys(authData as Record<string, any>));
     const popular: any[] = [], rest: any[] = [];
-    for (const p of authable) {
-      (POPULAR_PROVIDERS.some(pp => (p.id ?? p.name ?? "").toLowerCase().includes(pp)) ? popular : rest).push(p);
+    for (const p of rawList) {
+      const id = p.id ?? p.name ?? "";
+      const provider = { ...p, hasAuth: hasAuth.has(id) };
+      (POPULAR_PROVIDERS.some(pp => id.toLowerCase().includes(pp)) ? popular : rest).push(provider);
     }
-    popular.sort((a: any,b: any) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
-    rest.sort((a: any,b: any) => (a.name ?? a.id).localeCompare(b.name ?? b.id));
+    popular.sort(compareProviders);
+    rest.sort(compareProviders);
     const providerList = [...popular, ...rest];
     const keyboard = new InlineKeyboard();
-    for (const p of providerList) keyboard.text(p.name ?? p.id ?? "?", "provider:auth:" + p.id).row();
+    for (const p of providerList) {
+      keyboard.text((p.hasAuth ? "🔑 " : "🔧 ") + (p.name ?? p.id ?? "?"), "provider:auth:" + (p.id ?? p.name)).row();
+    }
     await ctx.reply(t("connect.select"), { reply_markup: keyboard });
   } catch (err) { logger.error("[Connect] Error:", err); clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.error")); }
 }
@@ -61,10 +63,13 @@ export async function handleProviderAuth(ctx: Context, providerId: string): Prom
   try {
     const project = getCurrentProject();
     const { data: authData } = await opencodeClient.provider.auth({ directory: project?.worktree });
-    logger.debug("[Connect] authData for", providerId, ":", JSON.stringify(authData).slice(0, 500));
     const methods = (authData as Record<string, any[]>)?.[providerId] ?? [];
-    logger.debug("[Connect] methods for", providerId, ":", methods.length, methods.map((m: any) => m.type).join(","));
-    if (methods.length === 0) { await ctx.reply(t("connect.no_methods")); await ctx.answerCallbackQuery(); clearActiveInlineMenu("connect_no_methods"); return; }
+    logger.debug("[Connect] methods for", providerId, ":", methods.length);
+    // Provider has no registered auth methods — go straight to API key entry
+    if (methods.length === 0) {
+      await startApiKeyFlow(ctx, providerId);
+      return;
+    }
     if (methods.length === 1) {
       if (methods[0].type === "api") await startApiKeyFlow(ctx, providerId);
       else await startOAuthFlow(ctx, providerId, 0);
@@ -83,9 +88,7 @@ export async function startProviderAuth(ctx: Context, providerId: string, method
   try {
     const project = getCurrentProject();
     const { data: authData } = await opencodeClient.provider.auth({ directory: project?.worktree });
-    logger.debug("[Connect] authData for", providerId, ":", JSON.stringify(authData).slice(0, 500));
     const methods = (authData as Record<string, any[]>)?.[providerId] ?? [];
-    logger.debug("[Connect] methods for", providerId, ":", methods.length, methods.map((m: any) => m.type).join(","));
     if (methodIndex >= methods.length) { await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); return; }
     if (methods[methodIndex].type === "api") await startApiKeyFlow(ctx, providerId);
     else await startOAuthFlow(ctx, providerId, methodIndex);
@@ -145,7 +148,7 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
   if (oauthPending) {
     oauthCallbackByUser.delete(userId);
     try {
-      // Parse code AND state from callback URL — server needs both to find the OAuth session
+      // Parse code AND state from callback URL — server needs state to find OAuth session
       let code = text;
       let state = "";
       try {

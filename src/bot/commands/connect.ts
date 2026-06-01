@@ -2,6 +2,7 @@ import { Context, InlineKeyboard } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentProject } from "../../settings/manager.js";
 import { processManager } from "../../process/manager.js";
+import { sshManager } from "../../utils/ssh-manager.js";
 import { getCurrentOpencodeRoute, getHostOpencodeClient } from "../../opencode/client.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
@@ -137,8 +138,10 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
     apiKeyPromptByUser.delete(userId);
     try {
       const project = getCurrentProject();
+      logger.debug("[Connect] API key auth.set for", keyPending.providerId, "route:", getCurrentOpencodeRoute().runtimeKey);
       const { error } = await opencodeClient.auth.set({ providerID: keyPending.providerId, directory: project?.worktree, auth: { type: "api", key: text } });
-      if (error) { await ctx.reply(t("connect.auth_error")); return; }
+      logger.debug("[Connect] auth.set result:", JSON.stringify({ error: !!error }));
+      if (error) { logger.error("[Connect] auth.set error:", error); await ctx.reply(t("connect.auth_error")); return; }
       await ctx.reply(t("connect.authorized"));
       clearActiveInlineMenu("connect_success");
       await ctx.reply("Restarting OpenCode server to apply changes...");
@@ -182,8 +185,22 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
 
 async function restartProviderServer(): Promise<void> {
   const route = getCurrentOpencodeRoute();
-  // For SSH, provider changes are applied directly to the remote server — no restart needed
   if (route.runtimeKey.startsWith("ssh:")) {
+    // For SSH, restart the remote Docker container to pick up provider changes
+    const userId = route.userId;
+    if (userId) {
+      try {
+        await sshManager.disconnect(userId);
+        const savedConns = await sshManager.getSavedConnections(userId);
+        if (savedConns.length > 0) {
+          const conn = savedConns[0];
+          await sshManager.connect(userId, conn.details, conn.auth, conn.deployTarget);
+          await sshManager.bootstrapRemoteServer(userId);
+        }
+      } catch (err) {
+        logger.error("[Connect] SSH restart error:", err);
+      }
+    }
     return;
   }
   if (route.kind === "host") {

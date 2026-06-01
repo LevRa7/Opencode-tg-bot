@@ -3761,6 +3761,11 @@ export function createBot(): Bot<Context> {
       const handledAccessApproval = await handleAccessApprovalCallback(ctx);
       const handledPermission = await handlePermissionCallback(ctx);
       const handledAgent = await handleAgentSelect(ctx);
+      if (ctx.callbackQuery?.data === "model:add_provider") {
+        await connectCommand(ctx);
+        await ctx.answerCallbackQuery().catch(() => {});
+        return;
+      }
       const handledModel = await handleModelSelect(ctx);
       const handledVariant = await handleVariantSelect(ctx);
       const handledCompactConfirm = await handleCompactConfirm(ctx);

@@ -2,11 +2,11 @@ import { Context, InlineKeyboard } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentProject } from "../../settings/manager.js";
 import { processManager } from "../../process/manager.js";
-import { sshManager } from "../../utils/ssh-manager.js";
 import { getCurrentOpencodeRoute, getHostOpencodeClient } from "../../opencode/client.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { clearActiveInlineMenu } from "../handlers/inline-menu.js";
+import { execSync } from "node:child_process";
 
 const POPULAR_PROVIDERS = ["openai", "google", "anthropic", "deepseek", "vertex", "perplexity"];
 const apiKeyPromptByUser = new Map<number, { providerId: string; chatId: number }>();
@@ -186,15 +186,15 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
 async function restartProviderServer(): Promise<void> {
   const route = getCurrentOpencodeRoute();
   if (route.runtimeKey.startsWith("ssh:")) {
-    // Restart the remote Docker container to pick up provider changes
     const userId = route.userId;
     if (userId) {
       try {
-        logger.info("[Connect] Restarting Docker container opencode-serve-tg-" + userId);
-        await sshManager.executeRemoteCommand(userId, "/usr/bin/docker stop opencode-serve-tg-" + userId + " && /usr/bin/docker start opencode-serve-tg-" + userId);
+        const containerName = "opencode-serve-tg-" + userId;
+        logger.info("[Connect] Restarting Docker container " + containerName);
+        execSync("docker stop " + containerName, { timeout: 15000 });
+        execSync("docker start " + containerName, { timeout: 15000 });
         logger.info("[Connect] Docker container restarted, waiting for server...");
-        // Give the server time to restart
-        await new Promise(r => setTimeout(r, 8000));
+        await new Promise(r => setTimeout(r, 10000));
       } catch (err) {
         logger.error("[Connect] SSH restart error:", err);
         // Fallback: disconnect and reconnect from bot side

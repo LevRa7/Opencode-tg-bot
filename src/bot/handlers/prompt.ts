@@ -577,14 +577,11 @@ export async function processUserPrompt(
     const sessionIdToVerify = currentSession.id;
     const sessionDirToVerify = currentSession.directory;
     try {
-      const { data: statusData, error: statusErr } = await opencodeClient.session.status({
+      const { data: sessionData, error: sessionErr } = await opencodeClient.session.get({
         directory: sessionDirToVerify,
+        sessionID: sessionIdToVerify,
       });
-      if (
-        statusErr ||
-        !statusData ||
-        !(statusData as Record<string, unknown>)[sessionIdToVerify]
-      ) {
+      if (sessionErr || !sessionData) {
         logger.info(
           `[Bot] Session ${sessionIdToVerify} not found on remote server (SSH active), discarding`,
         );

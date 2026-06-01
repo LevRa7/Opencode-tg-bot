@@ -918,23 +918,23 @@ export const fr: I18nDictionary = {
   "connect.auth_url": "Ouvrez cette URL pour vous authentifier :\n{url}",
   "connect.authorized": "Autorisé avec succès auprès du fournisseur.",
   // TODO-translate
-  "cmd.description.share": "TODO",
+  "cmd.description.share": "Partager la session",
   // TODO-translate
-  "share.no_session": "TODO",
+  "share.no_session": "Aucune session active à partager.",
   // TODO-translate
-  "share.error": "TODO",
+  "share.error": "Échec du partage de la session.",
   // TODO-translate
-  "share.success": "TODO",
+  "share.success": "Session partagée : {url}",
   // TODO-translate
-  "share.unshare_error": "TODO",
+  "share.unshare_error": "Échec de la révocation du partage.",
   // TODO-translate
-  "share.unshared": "TODO",
+  "share.unshared": "Partage de session révoqué.",
   // TODO-translate
-  "mcps.button.oauth": "TODO",
+  "mcps.button.oauth": "Authentifier",
   // TODO-translate
-  "mcp.oauth_starting": "TODO",
+  "mcp.oauth_starting": "Démarrage OAuth pour {name}...",
   // TODO-translate
-  "mcp.oauth_success": "TODO",
+  "mcp.oauth_success": "MCP OAuth terminé pour {name}.",
   // TODO-translate
-  "mcp.oauth_error": "TODO",
+  "mcp.oauth_error": "Erreur MCP OAuth : {error}",
 };

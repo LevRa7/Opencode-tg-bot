@@ -898,23 +898,23 @@ export const ru: I18nDictionary = {
   "connect.auth_url": "Откройте этот URL для аутентификации:\n{url}",
   "connect.authorized": "Успешная авторизация с провайдером.",
   // TODO-translate
-  "cmd.description.share": "TODO",
+  "cmd.description.share": "Поделиться сессией",
   // TODO-translate
-  "share.no_session": "TODO",
+  "share.no_session": "Нет активной сессии для отправки.",
   // TODO-translate
-  "share.error": "TODO",
+  "share.error": "Не удалось поделиться сессией.",
   // TODO-translate
-  "share.success": "TODO",
+  "share.success": "Сессия доступна по ссылке: {url}",
   // TODO-translate
-  "share.unshare_error": "TODO",
+  "share.unshare_error": "Не удалось отозвать доступ к сессии.",
   // TODO-translate
-  "share.unshared": "TODO",
+  "share.unshared": "Доступ к сессии отозван.",
   // TODO-translate
-  "mcps.button.oauth": "TODO",
+  "mcps.button.oauth": "Аутентификация",
   // TODO-translate
-  "mcp.oauth_starting": "TODO",
+  "mcp.oauth_starting": "Запуск OAuth для {name}...",
   // TODO-translate
-  "mcp.oauth_success": "TODO",
+  "mcp.oauth_success": "MCP OAuth завершён для {name}.",
   // TODO-translate
-  "mcp.oauth_error": "TODO",
+  "mcp.oauth_error": "Ошибка MCP OAuth: {error}",
 };

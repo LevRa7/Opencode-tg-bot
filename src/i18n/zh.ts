@@ -843,23 +843,23 @@ export const zh: I18nDictionary = {
   "connect.auth_url": "请打开此 URL 进行认证：\n{url}",
   "connect.authorized": "已成功授权该提供方。",
   // TODO-translate
-  "cmd.description.share": "TODO",
+  "cmd.description.share": "分享会话",
   // TODO-translate
-  "share.no_session": "TODO",
+  "share.no_session": "没有活动的会话可分享。",
   // TODO-translate
-  "share.error": "TODO",
+  "share.error": "分享会话失败。",
   // TODO-translate
-  "share.success": "TODO",
+  "share.success": "会话已分享：{url}",
   // TODO-translate
-  "share.unshare_error": "TODO",
+  "share.unshare_error": "取消分享失败。",
   // TODO-translate
-  "share.unshared": "TODO",
+  "share.unshared": "会话分享已取消。",
   // TODO-translate
-  "mcps.button.oauth": "TODO",
+  "mcps.button.oauth": "认证",
   // TODO-translate
-  "mcp.oauth_starting": "TODO",
+  "mcp.oauth_starting": "正在启动 {name} 的 OAuth...",
   // TODO-translate
-  "mcp.oauth_success": "TODO",
+  "mcp.oauth_success": "{name} 的 MCP OAuth 已完成。",
   // TODO-translate
-  "mcp.oauth_error": "TODO",
+  "mcp.oauth_error": "MCP OAuth 错误：{error}",
 };

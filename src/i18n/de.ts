@@ -916,23 +916,23 @@ export const de: I18nDictionary = {
   "connect.auth_url": "Öffnen Sie diese URL zur Authentifizierung:\n{url}",
   "connect.authorized": "Erfolgreich mit dem Provider autorisiert.",
   // TODO-translate
-  "cmd.description.share": "TODO",
+  "cmd.description.share": "Sitzung teilen",
   // TODO-translate
-  "share.no_session": "TODO",
+  "share.no_session": "Keine aktive Sitzung zum Teilen.",
   // TODO-translate
-  "share.error": "TODO",
+  "share.error": "Fehler beim Teilen der Sitzung.",
   // TODO-translate
-  "share.success": "TODO",
+  "share.success": "Sitzung geteilt: {url}",
   // TODO-translate
-  "share.unshare_error": "TODO",
+  "share.unshare_error": "Fehler beim Aufheben der Sitzungsfreigabe.",
   // TODO-translate
-  "share.unshared": "TODO",
+  "share.unshared": "Sitzungsfreigabe aufgehoben.",
   // TODO-translate
-  "mcps.button.oauth": "TODO",
+  "mcps.button.oauth": "Authentifizieren",
   // TODO-translate
-  "mcp.oauth_starting": "TODO",
+  "mcp.oauth_starting": "Starte OAuth für {name}...",
   // TODO-translate
-  "mcp.oauth_success": "TODO",
+  "mcp.oauth_success": "MCP OAuth abgeschlossen für {name}.",
   // TODO-translate
-  "mcp.oauth_error": "TODO",
+  "mcp.oauth_error": "MCP OAuth Fehler: {error}",
 };

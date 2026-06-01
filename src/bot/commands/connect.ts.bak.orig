@@ -1,7 +1,8 @@
-import { Context, InlineKeyboard, type Api } from "grammy";
-import { opencodeClient, getCurrentOpencodeRoute, getHostOpencodeClient } from "../../opencode/client.js";
+import { Context, InlineKeyboard } from "grammy";
+import { opencodeClient } from "../../opencode/client.js";
 import { getCurrentProject } from "../../settings/manager.js";
 import { processManager } from "../../process/manager.js";
+import { getCurrentOpencodeRoute, getHostOpencodeClient } from "../../opencode/client.js";
 import { t } from "../../i18n/index.js";
 import { logger } from "../../utils/logger.js";
 import { clearActiveInlineMenu } from "../handlers/inline-menu.js";
@@ -10,12 +11,7 @@ import { sshManager } from "../../utils/ssh-manager.js";
 
 const POPULAR_PROVIDERS = ["openai", "google", "anthropic", "deepseek", "vertex", "perplexity"];
 const apiKeyPromptByUser = new Map<number, { providerId: string; chatId: number }>();
-const oauthPollingByUser = new Map<number, { providerId: string; chatId: number; methodIndex: number }>();
-
-const activeOAuthPolls = new Set<string>();
-
-const OAUTH_POLL_TIMEOUT_MS = 120_000;
-const OAUTH_POLL_INTERVAL_MS = 3000;
+const oauthCallbackByUser = new Map<number, { providerId: string; chatId: number; methodIndex: number }>();
 
 export function isProviderApiKeyPrompt(userId: number): string | undefined {
   return apiKeyPromptByUser.get(userId)?.providerId;
@@ -24,14 +20,14 @@ export function clearProviderApiKeyPrompt(userId: number): void {
   apiKeyPromptByUser.delete(userId);
 }
 export function isOAuthCallbackPrompt(userId: number): string | undefined {
-  return oauthPollingByUser.get(userId)?.providerId;
+  return oauthCallbackByUser.get(userId)?.providerId;
 }
 export function clearOAuthCallbackPrompt(userId: number): void {
-  oauthPollingByUser.delete(userId);
+  oauthCallbackByUser.delete(userId);
 }
 
 export function isAnyProviderPrompt(userId: number): boolean {
-  return apiKeyPromptByUser.has(userId) || oauthPollingByUser.has(userId);
+  return apiKeyPromptByUser.has(userId) || oauthCallbackByUser.has(userId);
 }
 
 function compareProviders(a: any, b: any): number {
@@ -68,6 +64,7 @@ export async function connectCommand(ctx: Context): Promise<void> {
 
 export async function handleProviderAuth(ctx: Context, providerId: string): Promise<void> {
   try {
+    // Remove the method selection keyboard
     if (ctx.callbackQuery?.message?.message_id) {
       ctx.api.editMessageReplyMarkup(ctx.chat!.id!, ctx.callbackQuery.message.message_id, {}).catch(() => {});
     }
@@ -75,6 +72,7 @@ export async function handleProviderAuth(ctx: Context, providerId: string): Prom
     const { data: authData } = await opencodeClient.provider.auth({ directory: project?.worktree });
     const methods = (authData as Record<string, any[]>)?.[providerId] ?? [];
     logger.debug("[Connect] methods for", providerId, ":", methods.length);
+    // Provider has no registered auth methods — go straight to API key entry
     if (methods.length === 0) {
       await startApiKeyFlow(ctx, providerId);
       return;
@@ -90,6 +88,7 @@ export async function handleProviderAuth(ctx: Context, providerId: string): Prom
     });
     keyboard.text(t("inline.button.cancel"), "connect:cancel").row();
     const msg = await ctx.reply(t("connect.choose_method"), { reply_markup: keyboard });
+    // Store messageId so the keyboard can be removed after selection
     (ctx as any)._connectMethodMsgId = msg.message_id;
     await ctx.answerCallbackQuery();
   } catch (err) { clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); }
@@ -97,6 +96,7 @@ export async function handleProviderAuth(ctx: Context, providerId: string): Prom
 
 export async function startProviderAuth(ctx: Context, providerId: string, methodIndex: number): Promise<void> {
   try {
+    // Remove the method selection keyboard after user made a choice
     if (ctx.callbackQuery?.message?.message_id) {
       ctx.api.editMessageReplyMarkup(ctx.chat!.id!, ctx.callbackQuery.message.message_id, { reply_markup: undefined }).catch(() => {});
     }
@@ -123,120 +123,27 @@ async function startOAuthFlow(ctx: Context, providerId: string, methodIndex: num
     const project = getCurrentProject();
     const { data, error } = await opencodeClient.provider.oauth.authorize({ providerID: providerId, directory: project?.worktree, method: methodIndex });
     if (error) { await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); return; }
-    const authData = data as { url?: string; instructions?: string };
+    const authData = data as { url?: string };
     if (authData?.url) {
-      clearActiveInlineMenu("connect_oauth_prompt");
-
-      let message = t("connect.auth_url", { url: authData.url });
-      if (authData.instructions) {
-        message += "\n\n" + authData.instructions;
-      }
-      await ctx.reply(message);
-
       const userId = ctx.from?.id, chatId = ctx.chat?.id;
-      if (userId && chatId) oauthPollingByUser.set(userId, { providerId, chatId, methodIndex });
-
-      // Start background polling immediately (non-blocking).
-      // The OpenCode server handles OAuth via its local listener on port 1455.
-      // If the user's browser is on the same machine, the callback reaches the server.
-      // If on a different device, the user should use the device code method (headless)
-      // or API key method instead.
-      const api = ctx.api;
-      const route = getCurrentOpencodeRoute();
-      const worktree = project?.worktree;
-      startOAuthPolling(api, chatId!, providerId, worktree, route).catch((pollErr) => {
-        logger.error("[Connect] OAuth polling fatal error:", pollErr);
-      });
-
-      await ctx.reply(t("connect.oauth_polling", { name: providerId }));
+      if (userId && chatId) oauthCallbackByUser.set(userId, { providerId, chatId, methodIndex });
+      clearActiveInlineMenu("connect_oauth_prompt");
+      await ctx.reply(t("connect.auth_url", { url: authData.url }));
+      await ctx.reply(t("connect.oauth_callback_prompt", { name: providerId }));
     } else {
       await ctx.reply(t("connect.authorized"));
-      clearActiveInlineMenu("connect_success");
-      await restartProviderServer();
     }
     await ctx.answerCallbackQuery();
   } catch (err) { clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); await ctx.answerCallbackQuery(); }
 }
 
-// === OAuth background polling ===
-
-async function startOAuthPolling(
-  api: Api,
-  chatId: number,
-  providerId: string,
-  worktree: string | undefined,
-  route: ReturnType<typeof getCurrentOpencodeRoute>,
-): Promise<void> {
-  const pollKey = `${chatId}:${providerId}`;
-  if (activeOAuthPolls.has(pollKey)) {
-    logger.debug("[Connect] OAuth poll already active for", pollKey);
-    return;
-  }
-  activeOAuthPolls.add(pollKey);
-
-  const startTime = Date.now();
-  let timedOut = true;
-
-  try {
-    while (Date.now() - startTime < OAUTH_POLL_TIMEOUT_MS) {
-      await new Promise(r => setTimeout(r, OAUTH_POLL_INTERVAL_MS));
-
-      // Stop if user started a different OAuth flow
-      const stillPolling = Array.from(oauthPollingByUser.values()).some(
-        v => v.providerId === providerId && v.chatId === chatId,
-      );
-      if (!stillPolling) {
-        timedOut = false;
-        return;
-      }
-
-      try {
-        const ctrl = new AbortController();
-        const ctrlTimeout = setTimeout(() => ctrl.abort(), 10000);
-        try {
-          const { data } = await opencodeClient.provider.list({ directory: worktree });
-          const connected = (data as any)?.connected ?? [];
-          if (connected.includes(providerId)) {
-            timedOut = false;
-            oauthPollingByUser.forEach((v, k) => {
-              if (v.providerId === providerId && v.chatId === chatId) oauthPollingByUser.delete(k);
-            });
-            await api.sendMessage(chatId, t("connect.authorized")).catch(() => {});
-            clearActiveInlineMenu("connect_success");
-            await api.sendMessage(chatId, t("connect.restarting")).catch(() => {});
-            await restartProviderServerForRoute(route);
-            await api.sendMessage(chatId, t("connect.ready")).catch(() => {});
-            return;
-          }
-        } finally {
-          clearTimeout(ctrlTimeout);
-        }
-      } catch (err: any) {
-        if (err?.name === "AbortError") {
-          logger.warn("[Connect] OAuth poll request timed out (10s)");
-        } else {
-          logger.warn("[Connect] OAuth poll error:", err);
-        }
-      }
-    }
-  } finally {
-    activeOAuthPolls.delete(pollKey);
-  }
-
-  if (timedOut) {
-    oauthPollingByUser.forEach((v, k) => {
-      if (v.providerId === providerId && v.chatId === chatId) oauthPollingByUser.delete(k);
-    });
-    await api.sendMessage(chatId, t("connect.oauth_timeout", { name: providerId })).catch(() => {});
-  }
-}
-
-// === Handle API key input ===
+// === Handle API key OR OAuth code submission ===
 
 export async function handleProviderInput(ctx: Context, text: string): Promise<void> {
   const userId = ctx.from?.id;
   if (!userId) return;
 
+  // API key prompt
   const keyPending = apiKeyPromptByUser.get(userId);
   if (keyPending) {
     apiKeyPromptByUser.delete(userId);
@@ -248,103 +155,63 @@ export async function handleProviderInput(ctx: Context, text: string): Promise<v
       if (error) { logger.error("[Connect] auth.set error:", error); await ctx.reply(t("connect.auth_error")); return; }
       await ctx.reply(t("connect.authorized"));
       clearActiveInlineMenu("connect_success");
-      await ctx.reply(t("connect.restarting"));
+      await ctx.reply("Restarting OpenCode server to apply changes...");
       await restartProviderServer();
-      await ctx.reply(t("connect.ready"));
+      await ctx.reply("Server restarted. Provider available in /model.");
     } catch (err) { clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); }
     return;
   }
 
-  // OAuth callback — user pasted the callback URL/code from a different device.
-  // Don't await the callback call (server endpoint may hang).
-  // Respond immediately, try callback in background, polling handles fallback.
-  const oauthPending = oauthPollingByUser.get(userId);
+  // OAuth callback
+  const oauthPending = oauthCallbackByUser.get(userId);
   if (oauthPending) {
-    oauthPollingByUser.delete(userId);
+    oauthCallbackByUser.delete(userId);
     try {
       // Parse code from URL if full callback URL was pasted
-      let code = text.trim();
+      let code = text;
       try {
-        const parsed = new URL(text);
-        const codeParam = parsed.searchParams.get("code");
+        const url = new URL(text);
+        const codeParam = url.searchParams.get("code");
         if (codeParam) code = codeParam;
       } catch {}
 
       const project = getCurrentProject();
-      logger.debug("[Connect] OAuth code received for", oauthPending.providerId, "len:", code.length);
-
-      // Respond immediately — don't make user wait
-      await ctx.reply(t("connect.oauth_checking", { name: oauthPending.providerId }));
-
-      // Try callback in background (fire-and-forget)
-      const api = ctx.api;
-      const chatId = ctx.chat!.id!;
-      const route = getCurrentOpencodeRoute();
-      const worktree = project?.worktree;
-      tryOAuthCallbackInBackground(
-        api, chatId, oauthPending.providerId, oauthPending.methodIndex, worktree, code, route,
-      );
-    } catch (err) {
-      logger.error("[Connect] OAuth input processing error:", err);
-      await ctx.reply(t("connect.auth_error"));
+      logger.debug("[Connect] OAuth callback:", oauthPending.providerId, "codeLen:", code.length, "method:", oauthPending.methodIndex);
+      // Set a 30s timeout via AbortController to prevent hanging
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+      try {
+        const result = await opencodeClient.provider.oauth.callback({
+        providerID: oauthPending.providerId,
+        method: oauthPending.methodIndex,
+        directory: project?.worktree,
+        code,
+      });
+      const error = result?.error;
+      if (error) { logger.error("[Connect] OAuth callback error:", error); clearActiveInlineMenu("connect_error"); await ctx.reply(t("connect.auth_error")); return; }
+      await ctx.reply(t("connect.authorized"));
+      clearActiveInlineMenu("connect_success");
+      await ctx.reply("Restarting OpenCode server to apply changes...");
+      await restartProviderServer();
+      await ctx.reply("Server restarted. Provider available in /model.");
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch (err: any) { 
+      if (err?.name === "AbortError") {
+        logger.error("[Connect] OAuth callback timed out after 30s");
+      } else {
+        logger.error("[Connect] OAuth callback error:", err);
+      }
+      clearActiveInlineMenu("connect_error"); 
+      await ctx.reply(t("connect.auth_error")); 
     }
     return;
   }
 }
 
-// === Background OAuth callback attempt ===
-
-async function tryOAuthCallbackInBackground(
-  api: Api,
-  chatId: number,
-  providerId: string,
-  methodIndex: number,
-  worktree: string | undefined,
-  code: string,
-  route: ReturnType<typeof getCurrentOpencodeRoute>,
-): Promise<void> {
-  const CALLBACK_TIMEOUT_MS = 45_000;
-
-  const ctrl = new AbortController();
-  const timeoutHandle = setTimeout(() => ctrl.abort(), CALLBACK_TIMEOUT_MS);
-
-  try {
-    const { data: cbData, error: cbError } = await opencodeClient.provider.oauth.callback(
-      {
-        providerID: providerId,
-        method: methodIndex,
-        directory: worktree,
-        code,
-      },
-      { signal: ctrl.signal },
-    );
-
-    if (!cbError && cbData !== undefined) {
-      logger.info("[Connect] Background OAuth callback succeeded for", providerId);
-      await api.sendMessage(chatId, t("connect.authorized")).catch(() => {});
-      clearActiveInlineMenu("connect_success");
-      await api.sendMessage(chatId, t("connect.restarting")).catch(() => {});
-      await restartProviderServerForRoute(route);
-      await api.sendMessage(chatId, t("connect.ready")).catch(() => {});
-    }
-  } catch (err: any) {
-    if (err?.name === "AbortError") {
-      logger.warn("[Connect] Background OAuth callback timed out for", providerId);
-      await api.sendMessage(chatId, t("connect.oauth_timeout", { name: providerId })).catch(() => {});
-    } else {
-      logger.warn("[Connect] Background OAuth callback error:", err);
-      await api.sendMessage(chatId, t("connect.auth_error")).catch(() => {});
-    }
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
-}
-
 async function restartProviderServer(): Promise<void> {
-  await restartProviderServerForRoute(getCurrentOpencodeRoute());
-}
-
-export async function restartProviderServerForRoute(route: ReturnType<typeof getCurrentOpencodeRoute>): Promise<void> {
+  const route = getCurrentOpencodeRoute();
   if (route.runtimeKey.startsWith("ssh:")) {
     const userId = route.userId;
     if (userId) {
@@ -354,6 +221,7 @@ export async function restartProviderServerForRoute(route: ReturnType<typeof get
         execSync("docker stop " + containerName, { timeout: 15000 });
         execSync("docker start " + containerName, { timeout: 15000 });
         logger.info("[Connect] Docker container restarted, rebuilding tunnel...");
+        // Rebuild SSH tunnel to match new container port
         const sshUser = route.userId;
         if (sshUser) {
           try {

@@ -16,10 +16,12 @@ import {
   appendInlineMenuCancelButton,
   clearActiveInlineMenu,
   ensureActiveInlineMenu,
+  INLINE_MENU_TTL_MS,
   replyWithInlineMenu,
 } from "./inline-menu.js";
 import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
+import { interactionManager } from "../../interaction/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import type { I18nKey } from "../../i18n/en.js";
 
@@ -70,6 +72,10 @@ function buildProviderPageCallback(providerID: string, page: number): string {
   return `${MODEL_PROVIDER_PAGE_CALLBACK_PREFIX}${encodeCallbackToken(providerID)}:${page}`;
 }
 
+function buildModelCallback(providerID: string, modelIndex: number): string {
+  return `${MODEL_CALLBACK_PREFIX}${encodeCallbackToken(providerID)}:${modelIndex}`;
+}
+
 function parseProviderPageCallback(data: string): { providerID: string; page: number } | null {
   if (!data.startsWith(MODEL_PROVIDER_PAGE_CALLBACK_PREFIX)) {
     return null;
@@ -110,7 +116,7 @@ function parseProviderCallback(data: string): string | null {
   return tryDecodeCallbackToken(encodedProviderID);
 }
 
-function parseModelCallback(data: string): { providerID: string; modelID: string } | null {
+function parseModelCallback(data: string): ({ providerID: string; modelID: string; _modelIndex?: number }) | null {
   if (!data.startsWith(MODEL_CALLBACK_PREFIX)) {
     return null;
   }
@@ -122,13 +128,31 @@ function parseModelCallback(data: string): { providerID: string; modelID: string
   }
 
   const providerID = tryDecodeCallbackToken(payload.slice(0, separatorIndex));
-  const modelID = tryDecodeCallbackToken(payload.slice(separatorIndex + 1));
+  const rawModelPart = payload.slice(separatorIndex + 1);
+  const modelIndex = Number(rawModelPart);
 
-  if (!providerID || !modelID) {
+  if (!providerID) {
+    return null;
+  }
+
+  if (Number.isInteger(modelIndex) && modelIndex >= 0) {
+    return { providerID, modelID: String(modelIndex), _modelIndex: modelIndex };
+  }
+
+  const modelID = tryDecodeCallbackToken(rawModelPart);
+  if (!modelID) {
     return null;
   }
 
   return { providerID, modelID };
+}
+
+function isNumericModelCallback(parsed: { providerID: string; modelID: string; _modelIndex?: number } | null): parsed is {
+  providerID: string;
+  modelID: string;
+  _modelIndex: number;
+} {
+  return parsed !== null && parsed._modelIndex !== undefined && typeof parsed._modelIndex === "number";
 }
 
 function findProvider(
@@ -162,6 +186,23 @@ function buildProviderSelectionText(currentModel: ModelInfo): string {
   });
 }
 
+function refreshInlineMenuState(ctx: Context): void {
+  const messageId = ctx.callbackQuery?.message?.message_id;
+  if (messageId === undefined) {
+    return;
+  }
+
+  interactionManager.start({
+    kind: "inline",
+    expectedInput: "callback",
+    expiresInMs: INLINE_MENU_TTL_MS,
+    metadata: {
+      menuKind: "model",
+      messageId,
+    },
+  });
+}
+
 function normalizePage(
   requestedPage: number,
   itemCount: number,
@@ -189,17 +230,15 @@ function buildProviderModelsKeyboard(
   const pageStart = page * MODELS_PER_PAGE;
   const pageModels = provider.models.slice(pageStart, pageStart + MODELS_PER_PAGE);
 
-  pageModels.forEach((model) => {
+  pageModels.forEach((model, modelIndex) => {
     const isActive =
       currentModel.providerID === model.providerID && currentModel.modelID === model.modelID;
     const label = isActive
       ? `✅ ${formatModelForButton(model.providerID, model.modelID)}`
       : formatModelForButton(model.providerID, model.modelID);
+    const globalModelIndex = pageStart + modelIndex;
     keyboard
-      .text(
-        label,
-        `${MODEL_CALLBACK_PREFIX}${encodeCallbackToken(model.providerID)}:${encodeCallbackToken(model.modelID)}`,
-      )
+      .text(label, buildModelCallback(model.providerID, globalModelIndex))
       .row();
   });
 
@@ -260,6 +299,7 @@ async function renderProviderSelection(
   await ctx.editMessageText(buildProviderSelectionText(currentModel), {
     reply_markup: keyboard,
   });
+  refreshInlineMenuState(ctx);
 }
 
 export async function applySelectedModel(
@@ -306,6 +346,7 @@ async function renderProviderModels(
   await ctx.editMessageText(buildProviderModelsText(provider, currentModel, requestedPage), {
     reply_markup: buildProviderModelsKeyboard(provider, currentModel, requestedPage),
   });
+  refreshInlineMenuState(ctx);
 }
 
 export async function handleModelSelect(ctx: Context): Promise<boolean> {
@@ -364,10 +405,7 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
 
     const catalog = await getRuntimeModelCatalog();
     const provider = findProvider(catalog, parsedModel.providerID);
-    const modelExists =
-      provider?.models.some((model) => model.modelID === parsedModel.modelID) ?? false;
-
-    if (!provider || !modelExists) {
+    if (!provider) {
       await ctx
         .answerCallbackQuery({
           text: t("model.menu.model_stale_callback"),
@@ -377,9 +415,38 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
       return true;
     }
 
+    let resolvedModelID: string;
+
+    if (isNumericModelCallback(parsedModel)) {
+      const modelFromIndex = provider.models[parsedModel._modelIndex];
+      if (!modelFromIndex) {
+        await ctx
+          .answerCallbackQuery({
+            text: t("model.menu.model_stale_callback"),
+            show_alert: true,
+          })
+          .catch(() => {});
+        return true;
+      }
+      resolvedModelID = modelFromIndex.modelID;
+    } else {
+      const modelExists =
+        provider.models.some((model) => model.modelID === parsedModel.modelID);
+      if (!modelExists) {
+        await ctx
+          .answerCallbackQuery({
+            text: t("model.menu.model_stale_callback"),
+            show_alert: true,
+          })
+          .catch(() => {});
+        return true;
+      }
+      resolvedModelID = parsedModel.modelID;
+    }
+
     const modelInfo: ModelInfo = {
       providerID: parsedModel.providerID,
-      modelID: parsedModel.modelID,
+      modelID: resolvedModelID,
       variant: "default",
     };
 
@@ -400,7 +467,6 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
 
     return true;
   } catch (err) {
-    clearActiveInlineMenu("model_select_error");
     logger.error("[ModelHandler] Error handling model select:", err);
     await ctx.answerCallbackQuery({ text: t("model.change_error_callback") }).catch(() => {});
     return false;

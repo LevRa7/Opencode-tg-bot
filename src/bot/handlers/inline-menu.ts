@@ -11,7 +11,7 @@ import {
 
 const INLINE_MENU_CANCEL_PREFIX = "inline:cancel:";
 const LEGACY_CONTEXT_CANCEL_CALLBACK = "compact:cancel";
-const INLINE_MENU_TTL_MS = 5 * 60 * 1000;
+export const INLINE_MENU_TTL_MS = 5 * 60 * 1000;
 
 const INLINE_MENU_KINDS = [
   "project",

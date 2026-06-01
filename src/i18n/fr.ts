@@ -917,4 +917,24 @@ export const fr: I18nDictionary = {
   "connect.auth_error": "Échec de l'authentification. Veuillez réessayer.",
   "connect.auth_url": "Ouvrez cette URL pour vous authentifier :\n{url}",
   "connect.authorized": "Autorisé avec succès auprès du fournisseur.",
+  // TODO-translate
+  "cmd.description.share": "TODO",
+  // TODO-translate
+  "share.no_session": "TODO",
+  // TODO-translate
+  "share.error": "TODO",
+  // TODO-translate
+  "share.success": "TODO",
+  // TODO-translate
+  "share.unshare_error": "TODO",
+  // TODO-translate
+  "share.unshared": "TODO",
+  // TODO-translate
+  "mcps.button.oauth": "TODO",
+  // TODO-translate
+  "mcp.oauth_starting": "TODO",
+  // TODO-translate
+  "mcp.oauth_success": "TODO",
+  // TODO-translate
+  "mcp.oauth_error": "TODO",
 };

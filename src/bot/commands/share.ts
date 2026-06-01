@@ -23,8 +23,12 @@ export async function shareCommand(ctx: Context): Promise<void> {
       return;
     }
 
-    const shareUrl = data?.share?.url ?? "Session shared.";
-    await ctx.reply(t("share.success", { url: shareUrl }));
+    const url = (data as any)?.url;
+    if (url) {
+      await ctx.reply(t("share.success", { url }));
+    } else {
+      await ctx.reply(t("share.success", { url: "Session is now shared" }));
+    }
   } catch (err) {
     logger.error("[Share] Error:", err);
     await ctx.reply(t("share.error"));
@@ -45,14 +49,12 @@ export async function unshareCommand(ctx: Context): Promise<void> {
     });
 
     if (error) {
-      logger.error("[Share] Failed to unshare session:", error);
       await ctx.reply(t("share.unshare_error"));
       return;
     }
 
     await ctx.reply(t("share.unshared"));
   } catch (err) {
-    logger.error("[Share] Unshare error:", err);
     await ctx.reply(t("share.unshare_error"));
   }
 }

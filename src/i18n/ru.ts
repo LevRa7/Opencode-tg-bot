@@ -897,4 +897,24 @@ export const ru: I18nDictionary = {
   "connect.auth_error": "Ошибка аутентификации. Попробуйте ещё раз.",
   "connect.auth_url": "Откройте этот URL для аутентификации:\n{url}",
   "connect.authorized": "Успешная авторизация с провайдером.",
+  // TODO-translate
+  "cmd.description.share": "TODO",
+  // TODO-translate
+  "share.no_session": "TODO",
+  // TODO-translate
+  "share.error": "TODO",
+  // TODO-translate
+  "share.success": "TODO",
+  // TODO-translate
+  "share.unshare_error": "TODO",
+  // TODO-translate
+  "share.unshared": "TODO",
+  // TODO-translate
+  "mcps.button.oauth": "TODO",
+  // TODO-translate
+  "mcp.oauth_starting": "TODO",
+  // TODO-translate
+  "mcp.oauth_success": "TODO",
+  // TODO-translate
+  "mcp.oauth_error": "TODO",
 };

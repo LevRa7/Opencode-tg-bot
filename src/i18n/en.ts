@@ -889,6 +889,16 @@ export const en = {
   "connect.auth_error": "Failed to authenticate with provider. Please try again.",
   "connect.auth_url": "Open this URL to authenticate:\n{url}",
   "connect.authorized": "Successfully authorized with the provider.",
+  "cmd.description.share": "Share current session",
+  "share.no_session": "No active session to share.",
+  "share.error": "Failed to share session.",
+  "share.success": "Session shared: {url}",
+  "share.unshare_error": "Failed to unshare session.",
+  "share.unshared": "Session sharing revoked.",
+  "mcps.button.oauth": "Authenticate",
+  "mcp.oauth_starting": "Starting OAuth for {name}...",
+  "mcp.oauth_success": "MCP OAuth completed for {name}.",
+  "mcp.oauth_error": "MCP OAuth failed: {error}",
 } as const;
 
 export type I18nKey = keyof typeof en;

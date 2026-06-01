@@ -842,4 +842,24 @@ export const zh: I18nDictionary = {
   "connect.auth_error": "认证失败。请重试。",
   "connect.auth_url": "请打开此 URL 进行认证：\n{url}",
   "connect.authorized": "已成功授权该提供方。",
+  // TODO-translate
+  "cmd.description.share": "TODO",
+  // TODO-translate
+  "share.no_session": "TODO",
+  // TODO-translate
+  "share.error": "TODO",
+  // TODO-translate
+  "share.success": "TODO",
+  // TODO-translate
+  "share.unshare_error": "TODO",
+  // TODO-translate
+  "share.unshared": "TODO",
+  // TODO-translate
+  "mcps.button.oauth": "TODO",
+  // TODO-translate
+  "mcp.oauth_starting": "TODO",
+  // TODO-translate
+  "mcp.oauth_success": "TODO",
+  // TODO-translate
+  "mcp.oauth_error": "TODO",
 };

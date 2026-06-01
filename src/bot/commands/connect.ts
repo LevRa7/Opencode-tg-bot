@@ -13,7 +13,7 @@ export async function connectCommand(ctx: Context): Promise<void> {
       return;
     }
 
-    const providerList = providerData.all ?? [];
+    const providerList = (providerData as any)?.all ?? [];
     if (providerList.length === 0) {
       await ctx.reply(t("connect.empty"));
       return;

@@ -19,7 +19,6 @@ import {
   MODEL_BUTTON_TEXT_PATTERN,
 } from "./message-patterns.js";
 import { sessionsCommand, handleSessionSelect, handleBackgroundSessionOpen, buildBackgroundSessionOpenKeyboard } from "./commands/sessions.js";
-import { handleServer } from "./commands/server.js";
 import { newCommand } from "./commands/new.js";
 import { modelCommand } from "./commands/model.js";
 import { variantCommand } from "./commands/variant.js";
@@ -27,6 +26,9 @@ import { compactCommand } from "./commands/compact.js";
 import { handleSettingsCallback, settingsCommand } from "./commands/settings.js";
 import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand } from "./commands/abort.js";
+import { handleServer } from "./commands/server.js";
+import { connectCommand, handleProviderAuth } from "./commands/connect.js";
+import { shareCommand, unshareCommand } from "./commands/share.js";
 import { detachCommand } from "./commands/detach.js";
 import { opencodeStartCommand } from "./commands/opencode-start.js";
 import { opencodeStopCommand } from "./commands/opencode-stop.js";
@@ -54,7 +56,6 @@ import {
   handleSkillTextArguments,
 } from "./commands/skills.js";
 import { handleMcpsCallback, mcpsCommand } from "./commands/mcps.js";
-import { connectCommand, handleProviderAuth } from "./commands/connect.js";
 import {
   handleQuestionCallback,
   showCurrentQuestion,
@@ -3706,6 +3707,10 @@ export function createBot(): Bot<Context> {
   bot.command("new", newCommand);
   bot.command("abort", abortCommand);
   bot.command("detach", detachCommand);
+  bot.command("share", shareCommand);
+  bot.command("unshare", unshareCommand);
+  bot.command("server", handleServer);
+  bot.command("connect", connectCommand);
   bot.command("task", taskCommand);
   bot.command("tasklist", taskListCommand);
   bot.command("rename", renameCommand);

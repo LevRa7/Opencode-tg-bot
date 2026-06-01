@@ -913,4 +913,24 @@ export const es: I18nDictionary = {
   "connect.auth_error": "Error de autenticación. Inténtelo de nuevo.",
   "connect.auth_url": "Abra esta URL para autenticarse:\n{url}",
   "connect.authorized": "Autorizado correctamente con el proveedor.",
+  // TODO-translate
+  "cmd.description.share": "TODO",
+  // TODO-translate
+  "share.no_session": "TODO",
+  // TODO-translate
+  "share.error": "TODO",
+  // TODO-translate
+  "share.success": "TODO",
+  // TODO-translate
+  "share.unshare_error": "TODO",
+  // TODO-translate
+  "share.unshared": "TODO",
+  // TODO-translate
+  "mcps.button.oauth": "TODO",
+  // TODO-translate
+  "mcp.oauth_starting": "TODO",
+  // TODO-translate
+  "mcp.oauth_success": "TODO",
+  // TODO-translate
+  "mcp.oauth_error": "TODO",
 };

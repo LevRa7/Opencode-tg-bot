@@ -150,7 +150,7 @@ class ProcessManager implements ProcessManagerInterface {
 
       const isWindows = process.platform === "win32";
       const command = isWindows ? "cmd.exe" : "opencode";
-      const args = isWindows ? ["/c", "opencode", "serve"] : ["serve"];
+      const args = isWindows ? ["/c", "opencode", "serve", "--hostname", "0.0.0.0"] : ["serve", "--hostname", "0.0.0.0"];
 
       const childProcess = spawn(command, args, {
         detached: false,

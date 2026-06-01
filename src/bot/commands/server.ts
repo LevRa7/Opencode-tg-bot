@@ -52,6 +52,15 @@ export async function handleServer(ctx: Context): Promise<void> {
       await ctx.reply(t("server.unavailable"));
     } else {
       await ctx.reply(t("server.healthy"));
+      if (config.opencode.username && config.opencode.password) {
+        await ctx.reply(
+          t("server.credentials", {
+            user: config.opencode.username,
+            pass: config.opencode.password,
+          }),
+          { parse_mode: "MarkdownV2" }
+        );
+      }
     }
   } catch {
     await ctx.reply(t("server.unavailable"));

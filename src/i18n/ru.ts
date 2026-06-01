@@ -893,6 +893,7 @@ export const ru: I18nDictionary = {
   "cmd.description.share": "Поделиться сессией",
   "server.unavailable": "Сервер недоступен.",
   "server.healthy": "Сервер доступен.",
+  "server.credentials": "||Login: `{user}`  Password: `{pass}`||",
   "server.info": "OpenCode сервер: {url}",
   "cmd.description.server": "URL и статус сервера",
   "connect.oauth_polling": "Ожидание авторизации... Сервер определит её автоматически (браузер должен быть на той же машине).",

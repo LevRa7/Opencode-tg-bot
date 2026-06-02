@@ -597,7 +597,8 @@ class SshManager {
     userId: number,
     details: SshDetails,
     auth: SshAuth,
-    deployTarget: "docker" | "host"
+    deployTarget: "docker" | "host",
+    retries: number = 2,
   ): Promise<number> {
     // If already connected, disconnect first
     if (this.isSshActive(userId)) {
@@ -606,6 +607,7 @@ class SshManager {
 
     logger.info(`[SSHManager] Connecting SSH for user ${userId} to ${details.username}@${details.host}:${details.port}`);
 
+    const doConnect = (attempt: number): Promise<number> => {
     return new Promise<number>((resolve, reject) => {
       const client = new Client();
 
@@ -665,9 +667,14 @@ class SshManager {
       });
 
       client.on("error", (err: Error) => {
-        logger.error(`[SSHManager] SSH Client error for user ${userId}:`, err);
-        this.activeConnections.delete(userId);
-        reject(err);
+        if (attempt < retries) {
+          logger.warn(`[SSHManager] SSH handshake failed (attempt ${attempt}/${retries+1}), retrying in 3s...`);
+          setTimeout(() => resolve(doConnect(attempt + 1)), 3000);
+        } else {
+          logger.error(`[SSHManager] SSH Client error for user ${userId}:`, err);
+          this.activeConnections.delete(userId);
+          reject(err);
+        }
       });
 
       client.on("end", () => {
@@ -694,11 +701,14 @@ class SshManager {
         username: details.username,
         password: auth.password,
         privateKey: auth.privateKey,
-        readyTimeout: 20000,
+        readyTimeout: 30000,
         keepaliveInterval: 10000,
         keepaliveCountMax: 3,
       });
     });
+    };
+
+    return doConnect(1);
   }
 
   async bootstrapRemoteServer(userId: number): Promise<void> {

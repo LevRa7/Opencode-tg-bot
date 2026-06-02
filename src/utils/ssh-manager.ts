@@ -777,13 +777,8 @@ class SshManager {
         await this.waitForRemoteServerReady(executeCommand, remotePort);
         // Rebuild the SSH tunnel to point at the container's port
         await this.rebuildTunnel(userId, remotePort);
-      // Open port in all common firewall systems
-      const fwCmd = [
-        `iptables -C INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null`,
-        `ufw status 2>/dev/null | grep -q active && ufw allow ${remotePort}/tcp 2>/dev/null; true`,
-        `firewall-cmd --state 2>/dev/null | grep -q running && firewall-cmd --add-port=${remotePort}/tcp --permanent 2>/dev/null && firewall-cmd --reload 2>/dev/null; true`,
-      ].join("; ");
-      await executeCommand(fwCmd, 15000).catch(() => {});
+      // Open firewall port via iptables
+      await executeCommand(`iptables -C INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || true`, 10000).catch(() => {});
       } else {
         // No existing container — create a fresh one
 
@@ -926,13 +921,8 @@ class SshManager {
       await executeCommand(`iptables -t nat -C OUTPUT -p tcp --dport 4096 -j REDIRECT --to-port ${remotePort} 2>/dev/null || iptables -t nat -A OUTPUT -p tcp --dport 4096 -j REDIRECT --to-port ${remotePort} 2>/dev/null || true`, 10000).catch(() => {});
 
       // Open firewall port for the opencode server on the remote host
-      // Open port in all common firewall systems
-      const fwCmd = [
-        `iptables -C INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null`,
-        `ufw status 2>/dev/null | grep -q active && ufw allow ${remotePort}/tcp 2>/dev/null; true`,
-        `firewall-cmd --state 2>/dev/null | grep -q running && firewall-cmd --add-port=${remotePort}/tcp --permanent 2>/dev/null && firewall-cmd --reload 2>/dev/null; true`,
-      ].join("; ");
-      await executeCommand(fwCmd, 15000).catch(() => {});
+      // Open firewall port via iptables
+      await executeCommand(`iptables -C INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || true`, 10000).catch(() => {});
 
       // 7. Verify the tunnel actually works before declaring success
       const healthy = await this.isTunnelHealthy(userId);

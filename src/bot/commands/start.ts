@@ -13,6 +13,7 @@ import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { getCurrentTelegramConversationScope } from "../../telegram/scope.js";
+import { showWebPanelOnboarding } from "../../server/start-flow.js";
 
 export async function startCommand(ctx: Context): Promise<void> {
   if (ctx.chat) {
@@ -62,4 +63,6 @@ export async function startCommand(ctx: Context): Promise<void> {
     t("start.welcome"),
     withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
   );
+
+  await showWebPanelOnboarding(ctx);
 }

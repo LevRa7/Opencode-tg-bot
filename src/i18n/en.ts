@@ -893,7 +893,7 @@ export const en = {
   "server.healthy": "Server is healthy.",
   "server.credentials": "Login: ||{user}||\nPassword: ||{pass}||",
   "server.info": "OpenCode Server: {url}",
-  "cmd.description.server": "Show server URL and status",
+  "cmd.description.server": "OpenCode web panel",
   "connect.oauth_polling": "Waiting for authorization... The server will detect it automatically (browser must be on the same machine).",
   "connect.oauth_checking": "Checking authorization status...",
   "connect.oauth_timeout": "Authorization timed out for {name}. Please try again or use the API key method.",

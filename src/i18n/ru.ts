@@ -896,7 +896,7 @@ export const ru: I18nDictionary = {
   "server.healthy": "Сервер доступен.",
   "server.credentials": "Login: ||{user}||\nPassword: ||{pass}||",
   "server.info": "OpenCode сервер: {url}",
-  "cmd.description.server": "URL и статус сервера",
+  "cmd.description.server": "Веб-панель OpenCode",
   "connect.oauth_polling": "Ожидание авторизации... Сервер определит её автоматически (браузер должен быть на той же машине).",
   "connect.oauth_checking": "Проверяю статус авторизации...",
   "connect.oauth_timeout": "Время авторизации {name} истекло. Попробуйте ещё раз или используйте API ключ.",

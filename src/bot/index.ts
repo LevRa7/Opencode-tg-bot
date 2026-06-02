@@ -27,6 +27,8 @@ import { handleSettingsCallback, settingsCommand } from "./commands/settings.js"
 import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand } from "./commands/abort.js";
 import { handleServer } from "./commands/server.js";
+import { serverWebCommand, handleServerCallback } from "./commands/server-web.js";
+import { handleOnboardingCallback, showWebPanelOnboarding } from "../server/start-flow.js";
 import { connectCommand, handleProviderAuth, handleProviderInput, isProviderApiKeyPrompt, isAnyProviderPrompt, startProviderAuth } from "./commands/connect.js";
 import { shareCommand, unshareCommand } from "./commands/share.js";
 import { detachCommand } from "./commands/detach.js";
@@ -3757,7 +3759,7 @@ export function createBot(): Bot<Context> {
 
   bot.command("share", shareCommand);
   bot.command("unshare", unshareCommand);
-  bot.command("server", handleServer);
+  bot.command("server", serverWebCommand);
   bot.command("connect", connectCommand);
   bot.command("task", taskCommand);
   bot.command("tasklist", taskListCommand);
@@ -3769,8 +3771,6 @@ export function createBot(): Bot<Context> {
   bot.command("skills", skillsCommand);
   bot.command("mcps", mcpsCommand);
   bot.command("ssh", sshCommand);
-  bot.command("server", handleServer);
-  bot.command("connect", connectCommand);
 
   bot.on("message:text", unknownCommandMiddleware);
 
@@ -3813,6 +3813,8 @@ export function createBot(): Bot<Context> {
       const handledLs = await handleLsCallback(ctx);
       const handledSkills = await handleSkillsCallback(ctx, { bot, ensureEventSubscription });
       const handledMcps = await handleMcpsCallback(ctx);
+      const handledServerCb = await handleServerCallback(ctx);
+      const handledOnboarding = await handleOnboardingCallback(ctx);
       const callbackData = ctx.callbackQuery?.data ?? "";
       let handledConnect = false;
       if (callbackData === "connect:cancel") {
@@ -3839,7 +3841,7 @@ export function createBot(): Bot<Context> {
       }
 
       logger.debug(
-        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, backgroundSession=${handledBackgroundSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, settings=${handledSettings}, worktree=${handledWorktree}, open=${handledOpen}, ls=${handledLs}, skills=${handledSkills}, mcps=${handledMcps}, connect=${handledConnect}`,
+        `[Bot] Callback handled: inlineCancel=${handledInlineCancel}, session=${handledSession}, backgroundSession=${handledBackgroundSession}, project=${handledProject}, question=${handledQuestion}, accessApproval=${handledAccessApproval}, permission=${handledPermission}, agent=${handledAgent}, model=${handledModel}, variant=${handledVariant}, compactConfirm=${handledCompactConfirm}, task=${handledTask}, taskList=${handledTaskList}, rename=${handledRenameCancel}, commands=${handledCommands}, settings=${handledSettings}, worktree=${handledWorktree}, open=${handledOpen}, ls=${handledLs}, skills=${handledSkills}, mcps=${handledMcps}, serverCb=${handledServerCb}, onboarding=${handledOnboarding}, connect=${handledConnect}`,
       );
 
       if (
@@ -3864,6 +3866,8 @@ export function createBot(): Bot<Context> {
         !handledLs &&
         !handledSkills &&
         !handledMcps &&
+        !handledServerCb &&
+        !handledOnboarding &&
         !handledConnect
       ) {
         logger.debug("Unknown callback query:", ctx.callbackQuery?.data);

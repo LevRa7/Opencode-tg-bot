@@ -172,27 +172,33 @@ class SshManager {
           this.stopHealthMonitor(userId);
           return;
         }
-        const healthy = await this.isTunnelHealthy(userId);
+        // Retry health check up to 2 times to avoid false positives from transient issues
+        let healthy = false;
+        for (let hc = 0; hc < 2; hc++) {
+          healthy = await this.isTunnelHealthy(userId);
+          if (healthy) break;
+          await new Promise((r) => setTimeout(r, 1000));
+        }
         if (!healthy) {
           logger.warn(`[SSHManager] Health monitor detected unhealthy tunnel for user ${userId}, attempting reconnect`);
           this.stopHealthMonitor(userId);
-          // Use the active connection's own details for reconnection
-          // to avoid picking the wrong saved connection from the list
           const activeConn = this.activeConnections.get(userId);
           if (!activeConn) {
             logger.error(`[SSHManager] Health monitor: no active connection for user ${userId}`);
             return;
           }
-          const reconnectDetails = activeConn.details;
-          const reconnectAuth = { password: activeConn.opencodePassword };
-          const reconnectTarget = activeConn.deployTarget;
-          try {
-            await this.connect(userId, reconnectDetails, reconnectAuth, reconnectTarget);
-            await this.bootstrapRemoteServer(userId);
-            logger.info(`[SSHManager] Health monitor reconnected SSH for user ${userId}`);
-          } catch (err) {
-            logger.error(`[SSHManager] Health monitor failed to reconnect for user ${userId}:`, err);
-            await this.disconnect(userId).catch(() => {});
+          const saved = await this.loadSavedByDetails(userId, activeConn.details);
+          if (saved) {
+            try {
+              await this.connect(userId, saved.details, saved.auth, saved.deployTarget);
+              await this.bootstrapRemoteServer(userId);
+              logger.info(`[SSHManager] Health monitor reconnected SSH for user ${userId}`);
+            } catch (err) {
+              logger.error(`[SSHManager] Health monitor failed to reconnect for user ${userId}:`, err);
+              await this.disconnect(userId).catch(() => {});
+            }
+          } else {
+            logger.warn(`[SSHManager] Health monitor: no saved connection for ${userId}, cannot reconnect`);
           }
         }
       } catch (err) {

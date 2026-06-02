@@ -921,6 +921,10 @@ class SshManager {
       // 6. Rebuild the SSH tunnel to point at the actual remote port
       await this.rebuildTunnel(userId, remotePort);
 
+      // Forward standard port 4096 to the actual port (easier access + standard opencode port)
+      await executeCommand(`iptables -t nat -C PREROUTING -p tcp --dport 4096 -j REDIRECT --to-port ${remotePort} 2>/dev/null || iptables -t nat -A PREROUTING -p tcp --dport 4096 -j REDIRECT --to-port ${remotePort} 2>/dev/null || true`, 10000).catch(() => {});
+      await executeCommand(`iptables -t nat -C OUTPUT -p tcp --dport 4096 -j REDIRECT --to-port ${remotePort} 2>/dev/null || iptables -t nat -A OUTPUT -p tcp --dport 4096 -j REDIRECT --to-port ${remotePort} 2>/dev/null || true`, 10000).catch(() => {});
+
       // Open firewall port for the opencode server on the remote host
       // Open port in all common firewall systems
       const fwCmd = [

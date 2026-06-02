@@ -2,6 +2,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { handleAuthRequest } from "./auth-handler.js";
+import { handleProxyRequest } from "./proxy.js";
 import { logger } from "../utils/logger.js";
 
 const PORT = 80;
@@ -55,6 +56,25 @@ function createServer(): http.Server {
       res.writeHead(204);
       res.end();
       return;
+    }
+
+    const host = req.headers.host || "";
+    const hostPart = host.split(":")[0];
+    const baseDomain = "smart-server.online";
+    if (hostPart !== "localhost" && hostPart !== "127.0.0.1") {
+      if (hostPart.endsWith(`.${baseDomain}`) || hostPart === baseDomain) {
+        try {
+          await handleProxyRequest(req, res, host);
+          return;
+        } catch (err) {
+          logger.error("[HTTP] Proxy error", err);
+          if (!res.headersSent) {
+            res.writeHead(502, { "Content-Type": "text/plain" });
+            res.end("Proxy error");
+          }
+          return;
+        }
+      }
     }
 
     // POST /api/auth

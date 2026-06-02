@@ -64,3 +64,23 @@ restart, it always reconnected even if the user had disconnected.
 | `src/utils/ssh-manager.ts` | Added `opencodePassword` to interfaces, `SshConnectionsStore`, store read/write, `setActiveConnectionId`, `loadSavedByDetails`, updated `recoverAll`, added iptables to host path, added password to docker/host commands |
 | `src/bot/commands/ssh.ts` | `doConnect` uses `saveConnection` + sets active, `ACTION_CONNECT` sets active, `ACTION_DISCONNECT` clears active |
 | `src/bot/commands/server.ts` | Shows SSH connection's password when SSH is active |
+
+## 4. Fast reconnection
+
+### Problem
+Every SSH reconnect ran full bootstrap (SFTP upload, install check, server restart)
+even if the remote server was already running. This made reconnects slow.
+
+### Fix
+- Added `lastRemotePort?: number` to both `SavedSshConnection` and `SshConnection`
+- In host path of `bootstrapRemoteServer`, BEFORE full setup:
+  1. Try `curl -sf http://127.0.0.1:lastRemotePort/health` (5s timeout)
+  2. If healthy → `rebuildTunnel` + `iptables -C` check + `isTunnelHealthy` → return
+  3. If not → full bootstrap
+- After successful bootstrap (both Docker and Host), save `lastRemotePort` to the saved connection record
+- On next reconnect, the saved port is tried first → ~2s instead of ~60s
+- Docker path already had container reuse; `lastRemotePort` is now also saved for consistency
+
+### Firewall idempotency
+- Changed `iptables -A` (always add) to `iptables -C || iptables -A` (check first, add if missing)
+- Applied to both Docker and Host paths

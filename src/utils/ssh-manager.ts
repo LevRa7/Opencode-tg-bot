@@ -29,6 +29,7 @@ export interface SavedSshConnection {
   auth: SshAuth;
   deployTarget: "docker" | "host";
   opencodePassword?: string;
+  lastRemotePort?: number;
 }
 
 export interface SshConnectionsStore {
@@ -44,6 +45,7 @@ export interface SshConnection {
   details: SshDetails;
   deployTarget: "docker" | "host";
   opencodePassword?: string;
+  lastRemotePort?: number;
 }
 
 class SshManager {
@@ -575,6 +577,7 @@ class SshManager {
               details,
               deployTarget,
               opencodePassword: savedConn?.opencodePassword,
+              lastRemotePort: savedConn?.lastRemotePort,
             });
             resolve(localPort);
           });
@@ -724,6 +727,8 @@ class SshManager {
         }
       }
 
+      let remotePort: number;
+
       // 3. Check if a container with this name already exists
       let containerExists = false;
       try {
@@ -756,7 +761,7 @@ class SshManager {
             `docker port opencode-serve-tg-${userId} 2>/dev/null | head -1 | grep -oE '[0-9]+$'`
           )
         ).trim();
-        const remotePort = parseInt(portMapping, 10);
+        remotePort = parseInt(portMapping, 10);
         if (isNaN(remotePort)) {
           throw new Error(
             "Не удалось определить порт существующего Docker-контейнера. " +
@@ -771,16 +776,16 @@ class SshManager {
         await this.waitForRemoteServerReady(executeCommand, remotePort);
         // Rebuild the SSH tunnel to point at the container's port
         await this.rebuildTunnel(userId, remotePort);
-        await executeCommand(`iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || true`).catch(() => {});
+        await executeCommand(`iptables -C INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || true`).catch(() => {});
       } else {
         // No existing container — create a fresh one
 
         // 4. Find a free port on the remote server
-        const remotePort = await this.findFreeRemotePort(executeCommand);
+        remotePort = await this.findFreeRemotePort(executeCommand);
         logger.info(`[SSHManager] Using remote port ${remotePort} for Docker container`);
 
         // 5. Kill any process that might still be holding this port
-        await executeCommand(`fuser -k ${remotePort}/tcp 2>/dev/null || true`);
+        await executeCommand(`lsof -ti:${remotePort} 2>/dev/null | xargs kill -9 2>/dev/null; true`);
 
         // 6. Start the opencode server container
         const volumeName = `opencode-data-tg-${userId}`;
@@ -812,10 +817,42 @@ class SshManager {
           `docker logs opencode-serve-tg-${userId}`
         );
       }
+      // Save the remote port for quick reconnection next time
+      conn.lastRemotePort = remotePort;
+      const dSaved = await this.loadSavedByDetails(userId, conn.details);
+      if (dSaved) {
+        dSaved.lastRemotePort = remotePort;
+        const dConns = await this.loadConnectionsList(userId);
+        const dIdx = dConns.findIndex((c) => c.id === dSaved.id);
+        if (dIdx >= 0) {
+          dConns[dIdx].lastRemotePort = remotePort;
+          await this.persistConnectionsList(userId, dConns);
+        }
+      }
       logger.info(`[SSHManager] SSH tunnel verified healthy after Docker bootstrap for user ${userId}`);
     } else {
-      // 1. Host installation: Unpack docker image context/files and native skills directly on host
-      // Upload skills and helper scripts using SFTP
+      // 1. Quick reconnect: if we know a previous remote port, try reusing it
+      const savedConn = await this.loadSavedByDetails(userId, conn.details);
+      if (savedConn?.lastRemotePort) {
+        logger.info(`[SSHManager] Trying quick reconnect on saved port ${savedConn.lastRemotePort}...`);
+        try {
+          await executeCommand(`curl -sf http://127.0.0.1:${savedConn.lastRemotePort}/health`, 5000);
+          // Server is alive — just rebuild the tunnel and verify
+          logger.info(`[SSHManager] Remote server is alive on port ${savedConn.lastRemotePort}, reusing`);
+          await this.rebuildTunnel(userId, savedConn.lastRemotePort);
+          const healthy = await this.isTunnelHealthy(userId);
+          if (healthy) {
+            conn.lastRemotePort = savedConn.lastRemotePort;
+            logger.info(`[SSHManager] Quick reconnect successful on port ${savedConn.lastRemotePort}`);
+            return;
+          }
+          logger.warn(`[SSHManager] Tunnel unhealthy after quick reconnect, falling back to full bootstrap`);
+        } catch {
+          logger.info(`[SSHManager] Quick reconnect failed (server not responding), doing full bootstrap`);
+        }
+      }
+
+      // Full host installation
       await this.uploadSkillsAndHelpers(userId);
 
       // 2. Start OpenCode server directly on remote host
@@ -845,7 +882,7 @@ class SshManager {
 
       // 4. Start opencode serve on remote host with custom PATH prepended and password.
       const opencodePw = conn.opencodePassword || crypto.randomBytes(16).toString("hex");
-      const startCmd = `nohup sh -c 'export PATH=\$HOME/.config/opencode/bin:\$PATH; exec env OPENCODE_SERVER_PASSWORD=${opencodePw} ${serveExecutable} serve --port ${remotePort}' </dev/null >/tmp/opencode.log 2>&1 &`;
+      const startCmd = `nohup sh -c 'export PATH=$HOME/.config/opencode/bin:$PATH; exec env OPENCODE_SERVER_PASSWORD=${opencodePw} ${serveExecutable} serve --hostname 0.0.0.0 --port ${remotePort}' </dev/null >/tmp/opencode.log 2>&1 &`;
       await executeCommand(startCmd, 10000);
       logger.info(`[SSHManager] OpenCode server process started on remote host (port ${remotePort})`);
 
@@ -856,7 +893,7 @@ class SshManager {
       await this.rebuildTunnel(userId, remotePort);
 
       // Open firewall port for the opencode server on the remote host
-      await executeCommand(`iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || true`).catch(() => {});
+      await executeCommand(`iptables -C INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || true`).catch(() => {});
 
       // 7. Verify the tunnel actually works before declaring success
       const healthy = await this.isTunnelHealthy(userId);
@@ -866,6 +903,17 @@ class SshManager {
           "Туннель SSH установлен, но OpenCode сервер на удаленном хосте не отвечает. " +
           "Проверьте логи на удаленном сервере: /tmp/opencode.log"
         );
+      }
+      // Save the remote port for quick reconnection next time
+      conn.lastRemotePort = remotePort;
+      if (savedConn) {
+        savedConn.lastRemotePort = remotePort;
+        const allConns = await this.loadConnectionsList(userId);
+        const idx = allConns.findIndex((c) => c.id === savedConn.id);
+        if (idx >= 0) {
+          allConns[idx].lastRemotePort = remotePort;
+          await this.persistConnectionsList(userId, allConns);
+        }
       }
       logger.info(`[SSHManager] SSH tunnel verified healthy after host bootstrap for user ${userId}`);
     }
@@ -898,7 +946,7 @@ class SshManager {
       }
     }
 
-    logger.warn(`[SSHManager] Remote server on port ${port} did not respond after ${maxAttempts} attempts, proceeding anyway`);
+    throw new Error(`Remote server on port ${port} did not become ready after ${maxAttempts} attempts`);
   }
 
   private async uploadSkillsAndHelpers(userId: number): Promise<void> {

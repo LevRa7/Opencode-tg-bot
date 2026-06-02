@@ -3158,8 +3158,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
   });
 
-  logger.info(`[Bot] Subscribing to OpenCode events for project: ${directory}`);
+  logger.warn(`[Bot] ensureEventSubscription: directory=${directory}`);
   subscribeToEvents(directory, (event) => {
+    if (!((event as { type: string }).type === "server.heartbeat" || (event as { type: string }).type === "server.connected")) {
+      logger.debug(`[Bot] SSE event: type=${(event as {type:string}).type}`, event);
+    }
     if ((event as { type: string }).type === "server.heartbeat") {
       void reconcileBusyState(directory);
     }

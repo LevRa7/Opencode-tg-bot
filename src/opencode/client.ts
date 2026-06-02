@@ -102,10 +102,10 @@ export function getCurrentOpencodeRoute(): OpencodeRoute {
         runtimeKey: `ssh:${scope.userId}`,
         baseUrl: `http://127.0.0.1:${localPort}`,
         kind: "tenant",
+        password: conn?.opencodePassword,
         userId: scope.userId,
         chatId: scope.chatId,
         tenantId: `ssh-${scope.userId}`,
-        password: conn?.opencodePassword,
       };
     }
   }
@@ -146,7 +146,8 @@ export function getCurrentOpencodeRuntimeKey(): string {
 }
 
 export function getOpencodeClientForCurrentScope(): OpencodeClient {
-  return getClientForBaseUrl(getCurrentOpencodeRoute().baseUrl);
+  const route = getCurrentOpencodeRoute();
+  return getClientForBaseUrl(route.baseUrl, route.password);
 }
 
 export function __resetOpencodeClientRegistryForTests(): void {

@@ -237,6 +237,7 @@ async function subscribeToLegacyEventStream(
 
 export async function subscribeToEvents(directory: string, callback: EventCallback): Promise<void> {
   await ensureCurrentOpencodeRouteReady();
+  logger.warn(`[Events] subscribeToEvents called: directory=${directory}, key=${getCurrentOpencodeRuntimeKey()}`);
 
   const listenerKey = buildListenerKey(directory);
   const state = getListenerState(listenerKey);
@@ -261,6 +262,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
       let attemptAbort: ReturnType<typeof createAttemptAbortController> | null = null;
       try {
         await ensureCurrentOpencodeRouteReady();
+  logger.warn(`[Events] subscribeToEvents called: directory=${directory}, key=${getCurrentOpencodeRuntimeKey()}`);
 
         let subscription: EventStreamSubscription;
         attemptAbort = createAttemptAbortController(controller.signal);
@@ -270,7 +272,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
         } else {
           try {
             subscription = await subscribeToGlobalEventStream(attemptAbort.controller.signal);
-            logger.debug(`Using global OpenCode event stream for ${listenerKey}`);
+            logger.warn(`[Events] Using GLOBAL stream for ${listenerKey}`);
           } catch (error) {
             if (controller.signal.aborted || !state.isListening) {
               throw error;
@@ -284,12 +286,14 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
               `Global event stream unavailable for ${listenerKey}, falling back to project event stream`,
               error,
             );
+            logger.warn(`[Events] Using LEGACY stream for ${listenerKey}`);
             subscription = await subscribeToLegacyEventStream(directory, attemptAbort.controller.signal);
           }
         }
 
         reconnectAttempt = 0;
         state.eventStream = subscription.stream;
+        logger.warn(`[Events] Stream connected for ${listenerKey} (source=${subscription.source})`);
         let usefulEventCount = 0;
 
         try {
@@ -327,6 +331,9 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
               continue;
             }
 
+            if (usefulEventCount === 0) {
+              logger.warn(`[Events] First useful event: type=${normalizedEvent.type}`);
+            }
             if (normalizedEvent.type !== "server.connected") {
               usefulEventCount++;
             }

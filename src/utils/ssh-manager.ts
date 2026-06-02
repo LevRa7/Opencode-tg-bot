@@ -894,7 +894,7 @@ class SshManager {
 
       // 4. Start opencode serve on remote host with custom PATH prepended and password.
       const opencodePw = conn.opencodePassword || crypto.randomBytes(16).toString("hex");
-      const startCmd = `export PATH=$HOME/.config/opencode/bin:$PATH && OPENCODE_SERVER_PASSWORD=${opencodePw} nohup ${serveExecutable} serve --port ${remotePort} >/tmp/opencode.log 2>&1 & disown`;
+      const startCmd = `export PATH=$HOME/.config/opencode/bin:$PATH && OPENCODE_SERVER_PASSWORD=${opencodePw} nohup ${serveExecutable} serve --hostname 0.0.0.0 --port ${remotePort} >/tmp/opencode.log 2>&1 & disown`;
       try {
         await executeCommand(startCmd, 5000);
       } catch {

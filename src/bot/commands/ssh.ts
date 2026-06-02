@@ -3,6 +3,7 @@ import { sshManager, type SshDetails, type SshAuth, type SavedSshConnection } fr
 import { interactionManager } from "../../interaction/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { logger } from "../../utils/logger.js";
+import { stopEventListening } from "../../opencode/events.js";
 import { t } from "../../i18n/index.js";
 
 const PREFIX = "ssh:";
@@ -155,6 +156,7 @@ export async function handleSshCallback(ctx: Context): Promise<boolean> {
   if (data === ACTION_DISCONNECT) {
     await sshManager.disconnect(userId);
     await sshManager.setActiveConnectionId(userId, null);
+    stopEventListening();
     await ctx.answerCallbackQuery({ text: t("ssh.cancelled") });
     await renderConnectionsMenu(ctx, userId, true);
     return true;

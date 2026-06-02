@@ -53,7 +53,13 @@ export async function handleServer(ctx: Context): Promise<void> {
       healthStatus = "\u274c " + t("server.unavailable");
     } else {
       healthStatus = "\u2705 " + t("server.healthy");
-      const pw = config.opencode.password || "(not set)";
+      let pw = config.opencode.password || "(not set)";
+      if (scope && sshManager.isSshActive(scope.userId)) {
+        const conn = sshManager.getActiveConnection(scope.userId);
+        if (conn?.opencodePassword) {
+          pw = conn.opencodePassword;
+        }
+      }
       if (config.opencode.username) {
         credsBlock = "\n" + t("server.credentials", {
           user: escapeMd2(config.opencode.username),

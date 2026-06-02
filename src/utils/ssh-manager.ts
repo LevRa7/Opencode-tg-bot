@@ -791,7 +791,19 @@ class SshManager {
         const volumeName = `opencode-data-tg-${userId}`;
         // Ensure volume exists
         await executeCommand(`docker volume create ${volumeName}`).catch(() => {});
-        const opencodePw = conn.opencodePassword || crypto.randomBytes(16).toString("hex");
+        let opencodePw = conn.opencodePassword;
+        if (!opencodePw) {
+          opencodePw = crypto.randomBytes(16).toString("hex");
+          conn.opencodePassword = opencodePw;
+          try {
+            const pwSaved = await this.loadSavedByDetails(userId, conn.details);
+            if (pwSaved) { pwSaved.opencodePassword = opencodePw;
+              const pwConns = await this.loadConnectionsList(userId);
+              const pwIdx = pwConns.findIndex((c) => c.id === pwSaved.id);
+              if (pwIdx >= 0) { pwConns[pwIdx].opencodePassword = opencodePw; await this.persistConnectionsList(userId, pwConns); }
+            }
+          } catch {}
+        }
         const dockerCmd = `docker run -d --name opencode-serve-tg-${userId} -v ${volumeName}:/root/.local/share/opencode -p ${remotePort}:${remotePort} -e OPENCODE_DISABLE_EXTERNAL_SKILLS=true -e OPENCODE_SERVER_PASSWORD=${opencodePw} opencode-tenant:latest serve --hostname 0.0.0.0 --port ${remotePort}`;
         try {
           await executeCommand(dockerCmd);

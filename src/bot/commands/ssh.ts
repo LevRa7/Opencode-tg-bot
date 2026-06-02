@@ -5,6 +5,8 @@ import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils
 import { logger } from "../../utils/logger.js";
 import { stopEventListening } from "../../opencode/events.js";
 import { t } from "../../i18n/index.js";
+import { SubdomainManager } from "../../server/subdomain-manager.js";
+import { getSubdomainsRepository } from "../../settings/manager.js";
 
 const PREFIX = "ssh:";
 const ACTION_CONNECT = "ssh:conn:";
@@ -106,6 +108,8 @@ async function doConnect(
 ): Promise<void> {
   await ctx.editMessageText("⏳ " + t("ssh.connecting_saved") + "...").catch(() => {});
 
+  let savedConnectionId: string | undefined;
+
   try {
     const timeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("SSH bootstrap timed out after 3 minutes")), 180_000),
@@ -114,11 +118,30 @@ async function doConnect(
       (async () => {
         await sshManager.connect(userId, details, auth, deployTarget);
         await sshManager.bootstrapRemoteServer(userId);
-        await sshManager.saveCredentials(userId, details, auth, deployTarget);
+        savedConnectionId = await sshManager.saveConnection(userId, details, auth, deployTarget);
       })(),
       timeout,
     ]);
     await ctx.editMessageText(t("ssh.success")).catch(() => {});
+
+    if (savedConnectionId) {
+      const subdomainManager = new SubdomainManager(getSubdomainsRepository());
+      const subdomain = subdomainManager.ensureSshSubdomain(
+        userId,
+        ctx.from?.username,
+        details.host.split(":")[0].replace(/\./g, "-"),
+        deployTarget === "docker" ? "ssh-docker" : "ssh-host",
+        savedConnectionId,
+      );
+
+      const fullDomain = `${subdomain.subdomain}.smart-server.online`;
+      await ctx.reply(
+        `SSH веб-панель: https://${fullDomain}\n` +
+        `Логин: ${subdomain.username}\n` +
+        `Пароль: <code>${subdomain.password}</code>`,
+        { parse_mode: "HTML" }
+      );
+    }
   } catch (err) {
     await sshManager.disconnect(userId).catch(() => {});
     const msg = err instanceof Error ? err.message : String(err);

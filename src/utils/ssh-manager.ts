@@ -882,8 +882,18 @@ class SshManager {
 
       // 4. Start opencode serve on remote host with custom PATH prepended and password.
       const opencodePw = conn.opencodePassword || crypto.randomBytes(16).toString("hex");
-      const startCmd = `nohup sh -c 'export PATH=$HOME/.config/opencode/bin:$PATH; exec env OPENCODE_SERVER_PASSWORD=${opencodePw} ${serveExecutable} serve --hostname 0.0.0.0 --port ${remotePort}' </dev/null >/tmp/opencode.log 2>&1 &`;
-      await executeCommand(startCmd, 10000);
+      const startCmd = `export PATH=$HOME/.config/opencode/bin:$PATH && OPENCODE_SERVER_PASSWORD=${opencodePw} nohup ${serveExecutable} serve --port ${remotePort} >/tmp/opencode.log 2>&1 & disown`;
+      try {
+        await executeCommand(startCmd, 5000);
+      } catch {
+        logger.warn(`[SSHManager] Start command timed out (expected if SSH server blocks on background), checking if server is running...`);
+      }
+      // Give the server a moment to start and write its log
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        const logCheck = await executeCommand("tail -5 /tmp/opencode.log 2>/dev/null || echo '(empty)'");
+        logger.info(`[SSHManager] Server startup log: ${logCheck.trim().slice(0, 300)}`);
+      } catch {}
       logger.info(`[SSHManager] OpenCode server process started on remote host (port ${remotePort})`);
 
       // 5. Wait for the server to become ready
@@ -935,7 +945,8 @@ class SshManager {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        await executeCommand(`curl -sf http://127.0.0.1:${port}/health 2>/dev/null || curl -sf http://127.0.0.1:${port}/ 2>/dev/null`);
+        // Check if the port is listening (avoids HTTP auth issues)
+        await executeCommand(`timeout 2 nc -z 127.0.0.1 ${port} 2>/dev/null`);
         logger.info(`[SSHManager] Remote server is ready on port ${port} (attempt ${attempt})`);
         return;
       } catch {
@@ -946,7 +957,12 @@ class SshManager {
       }
     }
 
-    throw new Error(`Remote server on port ${port} did not become ready after ${maxAttempts} attempts`);
+    let serverLog = "";
+    try {
+      serverLog = await executeCommand("tail -20 /tmp/opencode.log 2>/dev/null || echo '(log empty)'");
+    } catch {}
+    logger.error();
+    throw new Error();
   }
 
   private async uploadSkillsAndHelpers(userId: number): Promise<void> {

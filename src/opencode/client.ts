@@ -15,6 +15,7 @@ type OpencodeRoute = {
   userId?: number;
   chatId?: number;
   tenantId?: string;
+  password?: string;
 };
 
 const clientCache = new Map<string, OpencodeClient>();
@@ -28,17 +29,23 @@ function getAuthHeader(): string | undefined {
   return `Basic ${Buffer.from(credentials).toString("base64")}`;
 }
 
-function getClientForBaseUrl(baseUrl: string): OpencodeClient {
-  const cachedClient = clientCache.get(baseUrl);
+function getClientForBaseUrl(baseUrl: string, password?: string): OpencodeClient {
+  const cacheKey = password ? `${baseUrl}:${password}` : baseUrl;
+  const cachedClient = clientCache.get(cacheKey);
   if (cachedClient) {
     return cachedClient;
   }
 
+  const effectivePassword = password || config.opencode.password;
+  const authHeader = effectivePassword
+    ? `Basic ${Buffer.from(`${config.opencode.username || "opencode"}:${effectivePassword}`).toString("base64")}`
+    : undefined;
+
   const client = createOpencodeClient({
     baseUrl,
-    headers: config.opencode.password ? { Authorization: getAuthHeader() } : undefined,
+    headers: authHeader ? { Authorization: authHeader } : undefined,
   });
-  clientCache.set(baseUrl, client);
+  clientCache.set(cacheKey, client);
   return client;
 }
 
@@ -88,6 +95,7 @@ export function getCurrentOpencodeRoute(): OpencodeRoute {
   if (scope && sshManager.isSshActive(scope.userId)) {
     const localPort = sshManager.getLocalPort(scope.userId);
     if (localPort) {
+      const conn = sshManager.getActiveConnection(scope.userId);
       return {
         runtimeKey: `ssh:${scope.userId}`,
         baseUrl: `http://127.0.0.1:${localPort}`,
@@ -95,6 +103,7 @@ export function getCurrentOpencodeRoute(): OpencodeRoute {
         userId: scope.userId,
         chatId: scope.chatId,
         tenantId: `ssh-${scope.userId}`,
+        password: conn?.opencodePassword,
       };
     }
   }
@@ -168,7 +177,9 @@ function createClientProxy(path: PropertyKey[] = []): unknown {
     async apply(_target, _thisArg, argArray) {
       await ensureCurrentOpencodeRouteReady();
       const route = getCurrentOpencodeRoute();
-      const client = getClientForBaseUrl(route.baseUrl);
+      const client = route.password
+        ? getClientForBaseUrl(route.baseUrl, route.password)
+        : getClientForBaseUrl(route.baseUrl);
       const fn = resolvePath(client, path);
       const receiver = resolvePath(client, path.slice(0, -1));
 

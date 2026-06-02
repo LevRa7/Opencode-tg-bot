@@ -38,6 +38,10 @@ import {
   type ContextBindingsRepository,
   createContextBindingsRepository,
 } from "./repositories/context-bindings.js";
+import {
+  type SubdomainsRepository,
+  createSubdomainsRepository,
+} from "./repositories/subdomains.js";
 import Database from "better-sqlite3";
 
 // ====== TYPE EXPORTS (unchanged from original) ======
@@ -188,6 +192,7 @@ let scheduling: SchedulingRepository = createSchedulingRepository(_defaultDb);
 let runtime: RuntimeRepository = createRuntimeRepository(_defaultDb);
 let sessionAttach: SessionAttachmentsRepository = createSessionAttachmentsRepository(_defaultDb);
 let ctxBindings: ContextBindingsRepository = createContextBindingsRepository(_defaultDb);
+let _subdomainsRepo: SubdomainsRepository | null = null;
 let dbInstance: Database.Database | null = _defaultDb;
 
 // ====== INITIALIZATION ======
@@ -213,6 +218,7 @@ export async function loadSettings(): Promise<void> {
   runtime = createRuntimeRepository(dbInstance);
   sessionAttach = createSessionAttachmentsRepository(dbInstance);
   ctxBindings = createContextBindingsRepository(dbInstance);
+  _subdomainsRepo = null;
 }
 
 export function disposeDatabase(): void {
@@ -224,6 +230,15 @@ export function disposeDatabase(): void {
     testDbInstance.close();
     testDbInstance = null;
   }
+}
+
+// ====== SUBDOMAINS REPOSITORY ACCESSOR ======
+
+export function getSubdomainsRepository(): SubdomainsRepository {
+  if (!_subdomainsRepo) {
+    _subdomainsRepo = createSubdomainsRepository(dbInstance!);
+  }
+  return _subdomainsRepo;
 }
 
 // ====== SCOPE HELPERS ======
@@ -865,4 +880,5 @@ export async function __resetSettingsForTests(): Promise<void> {
   runtime = createRuntimeRepository(dbInstance);
   sessionAttach = createSessionAttachmentsRepository(dbInstance);
   ctxBindings = createContextBindingsRepository(dbInstance);
+  _subdomainsRepo = null;
 }

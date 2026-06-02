@@ -481,19 +481,19 @@ describe("settings/manager scoped state", () => {
     expect(getCurrentSession()).toBeUndefined();
   });
 
-  it("does not inherit global project and session inside a new scoped topic", () => {
+  it("falls back to globally set session from a new scoped topic", () => {
     setCurrentProject({ id: "project-global", worktree: "/repo-global" });
     setCurrentSession({ id: "session-global", title: "Global", directory: "/repo-global" });
 
-    expect(
-      runWithTelegramConversationScope(scopeAOtherTopic, () => ({
-        project: getCurrentProject(),
-        session: getCurrentSession(),
-      })),
-    ).toEqual({
-      project: undefined,
-      session: undefined,
-    });
+    const result = runWithTelegramConversationScope(scopeAOtherTopic, () => ({
+      project: getCurrentProject(),
+      session: getCurrentSession(),
+    }));
+
+    // Project remains scope-isolated (no cross-scope fallback for project)
+    expect(result.project).toBeUndefined();
+    // Session falls back to _lastSetSession when topic scope has no session
+    expect(result.session).toEqual({ id: "session-global", title: "Global", directory: "/repo-global" });
   });
 
   it("clears only the active scoped state without erasing the user default project", async () => {
@@ -623,4 +623,45 @@ describe("settings/manager scoped state", () => {
 
     expect(runWithTelegramConversationScope(scopeA, () => getReasoningMode())).toBe(1);
   });
+
+  it("fallbacks session to _lastSetSession when topic scope has no session", () => {
+    // Simulate: user selects session in main thread (sessions command callback)
+    runWithTelegramConversationScope(scopeAMainThread, () => {
+      setCurrentProject({ id: "project-a", worktree: "/repo-a" });
+      setCurrentSession({ id: "session-from-main", title: "Selected from main thread", directory: "/repo-a" });
+    });
+
+    // Simulate: user sends message from a specific topic (different messageThreadId)
+    const result = runWithTelegramConversationScope(scopeA, () => ({
+      project: getCurrentProject(),
+      session: getCurrentSession(),
+    }));
+
+    // Should have project from current scope and session from _lastSetSession fallback
+    expect(result.project).toEqual({ id: "project-a", worktree: "/repo-a" });
+    expect(result.session).toEqual({ id: "session-from-main", title: "Selected from main thread", directory: "/repo-a" });
+  });
+
+  it("uses exact scope match over _lastSetSession when direct binding exists", () => {
+    // Set different sessions in main thread and topic scope
+    runWithTelegramConversationScope(scopeAMainThread, () => {
+      setCurrentProject({ id: "project-main", worktree: "/repo-main" });
+      setCurrentSession({ id: "session-main", title: "Main thread session", directory: "/repo-main" });
+    });
+
+    runWithTelegramConversationScope(scopeA, () => {
+      setCurrentProject({ id: "project-topic", worktree: "/repo-topic" });
+      setCurrentSession({ id: "session-topic", title: "Topic session", directory: "/repo-topic" });
+    });
+
+    // Should still return the scope-specific session
+    const result = runWithTelegramConversationScope(scopeA, () => ({
+      project: getCurrentProject(),
+      session: getCurrentSession(),
+    }));
+
+    expect(result.project).toEqual({ id: "project-topic", worktree: "/repo-topic" });
+    expect(result.session).toEqual({ id: "session-topic", title: "Topic session", directory: "/repo-topic" });
+  });
+
 });

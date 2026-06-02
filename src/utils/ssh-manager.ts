@@ -52,6 +52,8 @@ class SshManager {
   private activeConnections = new Map<number, SshConnection>();
   private remoteHomeDirCache = new Map<number, string>();
   private bootstrapInProgress = new Set<number>();
+  private healthMonitorTimers = new Map<number, ReturnType<typeof setInterval>>();
+  private static readonly HEALTH_CHECK_INTERVAL_MS = 30_000;
 
   setBootstrapInProgress(userId: number, inProgress: boolean): void {
     if (inProgress) {
@@ -156,6 +158,63 @@ class SshManager {
   }
 
   /**
+   * Start a periodic health monitor for the SSH tunnel of a given user.
+   * Checks tunnel health every HEALTH_CHECK_INTERVAL_MS and auto-reconnects
+   * if the tunnel becomes unhealthy.
+   */
+  private startHealthMonitor(userId: number): void {
+    this.stopHealthMonitor(userId);
+    logger.debug(`[SSHManager] Starting health monitor for user ${userId} (interval=${SshManager.HEALTH_CHECK_INTERVAL_MS}ms)`);
+    const timer = setInterval(async () => {
+      try {
+        if (!this.isSshActive(userId)) {
+          this.stopHealthMonitor(userId);
+          return;
+        }
+        const healthy = await this.isTunnelHealthy(userId);
+        if (!healthy) {
+          logger.warn(`[SSHManager] Health monitor detected unhealthy tunnel for user ${userId}, attempting reconnect`);
+          this.stopHealthMonitor(userId);
+          // Use the active connection's own details for reconnection
+          // to avoid picking the wrong saved connection from the list
+          const activeConn = this.activeConnections.get(userId);
+          if (!activeConn) {
+            logger.error(`[SSHManager] Health monitor: no active connection for user ${userId}`);
+            return;
+          }
+          const reconnectDetails = activeConn.details;
+          const reconnectAuth = { password: activeConn.opencodePassword };
+          const reconnectTarget = activeConn.deployTarget;
+          try {
+            await this.connect(userId, reconnectDetails, reconnectAuth, reconnectTarget);
+            await this.bootstrapRemoteServer(userId);
+            logger.info(`[SSHManager] Health monitor reconnected SSH for user ${userId}`);
+          } catch (err) {
+            logger.error(`[SSHManager] Health monitor failed to reconnect for user ${userId}:`, err);
+            await this.disconnect(userId).catch(() => {});
+          }
+        }
+      } catch (err) {
+        logger.error(`[SSHManager] Health monitor error for user ${userId}:`, err);
+      }
+    }, SshManager.HEALTH_CHECK_INTERVAL_MS);
+    timer.unref();
+    this.healthMonitorTimers.set(userId, timer);
+  }
+
+  /**
+   * Stop the periodic health monitor for a given user.
+   */
+  private stopHealthMonitor(userId: number): void {
+    const existing = this.healthMonitorTimers.get(userId);
+    if (existing) {
+      clearInterval(existing);
+      this.healthMonitorTimers.delete(userId);
+      logger.debug(`[SSHManager] Stopped health monitor for user ${userId}`);
+    }
+  }
+
+  /**
    * Check whether the SSH tunnel is actually working by making a quick HTTP
    * request to the local tunnel endpoint.  Returns true only when the remote
    * OpenCode server responds (any HTTP status).
@@ -215,6 +274,17 @@ class SshManager {
     if (!conn) return;
 
     logger.info(`[SSHManager] Disconnecting SSH for user ${userId}`);
+    this.stopHealthMonitor(userId);
+    // Cleanup iptables rules added for this SSH tunnel
+    const localPort = conn.localPort;
+    if (localPort) {
+      try {
+        const { execSync } = await import("node:child_process");
+        execSync(`iptables -t nat -D PREROUTING -p tcp --dport 4096 -j REDIRECT --to-port ${localPort} 2>/dev/null || true`, { timeout: 5000 });
+        execSync(`iptables -t nat -D OUTPUT -p tcp --dport 4096 -j REDIRECT --to-port ${localPort} 2>/dev/null || true`, { timeout: 5000 });
+        execSync(`iptables -D INPUT -p tcp --dport ${localPort} -j ACCEPT 2>/dev/null || true`, { timeout: 5000 });
+      } catch {}
+    }
     conn.server.close();
     conn.client.end();
     this.activeConnections.delete(userId);
@@ -602,6 +672,19 @@ class SshManager {
       client.on("end", () => {
         logger.info(`[SSHManager] SSH connection ended for user ${userId}`);
         this.disconnect(userId).catch(() => {});
+        // Auto-reconnect to saved connection if available
+        this.loadSavedByDetails(userId, details).then((saved) => {
+          if (saved) {
+            logger.info(`[SSHManager] Auto-reconnecting SSH for user ${userId}...`);
+            this.connect(userId, saved.details, saved.auth, saved.deployTarget).then(() => {
+              return this.bootstrapRemoteServer(userId);
+            }).then(() => {
+              logger.info(`[SSHManager] Auto-reconnect successful for user ${userId}`);
+            }).catch((err) => {
+              logger.warn(`[SSHManager] Auto-reconnect failed for user ${userId}: ${err.message}`);
+            });
+          }
+        });
       });
 
       client.connect({
@@ -611,6 +694,8 @@ class SshManager {
         password: auth.password,
         privateKey: auth.privateKey,
         readyTimeout: 20000,
+        keepaliveInterval: 10000,
+        keepaliveCountMax: 3,
       });
     });
   }
@@ -850,6 +935,7 @@ class SshManager {
         // Local connections to 127.0.0.1:4096 bypass PREROUTING and reach the local server
         try { execSync(`iptables -t nat -C PREROUTING -p tcp --dport 4096 -j REDIRECT --to-port ${conn.localPort} 2>/dev/null || iptables -t nat -A PREROUTING -p tcp --dport 4096 -j REDIRECT --to-port ${conn.localPort} 2>/dev/null || true`, { timeout: 5000 }); } catch {}
       } catch {}
+      this.startHealthMonitor(userId);
       logger.info(`[SSHManager] SSH tunnel verified healthy after Docker bootstrap for user ${userId}`);
     } else {
       // 1. Quick reconnect: if we know a previous remote port, try reusing it
@@ -865,6 +951,7 @@ class SshManager {
           if (healthy) {
             conn.lastRemotePort = savedConn.lastRemotePort;
             logger.info(`[SSHManager] Quick reconnect successful on port ${savedConn.lastRemotePort}`);
+            this.startHealthMonitor(userId);
             return;
           }
           logger.warn(`[SSHManager] Tunnel unhealthy after quick reconnect, falling back to full bootstrap`);
@@ -958,6 +1045,7 @@ class SshManager {
         // Local connections to 127.0.0.1:4096 bypass PREROUTING and reach the local server
         try { execSync(`iptables -t nat -C PREROUTING -p tcp --dport 4096 -j REDIRECT --to-port ${conn.localPort} 2>/dev/null || iptables -t nat -A PREROUTING -p tcp --dport 4096 -j REDIRECT --to-port ${conn.localPort} 2>/dev/null || true`, { timeout: 5000 }); } catch {}
       } catch {}
+      this.startHealthMonitor(userId);
       logger.info(`[SSHManager] SSH tunnel verified healthy after host bootstrap for user ${userId}`);
     }
   } finally {
@@ -1131,5 +1219,29 @@ class SshManager {
     }
   }
 }
+
+// Cleanup stale iptables rules from previous bot sessions on module load
+try {
+  const { execSync } = await import("node:child_process");
+  // Remove any REDIRECT rules for port 4096 that might be stale (keep trying until none left)
+  while (true) {
+    try {
+      execSync(`iptables -t nat -D PREROUTING -p tcp --dport 4096 -j REDIRECT 2>/dev/null`, { timeout: 5000 });
+    } catch { break; }
+  }
+  while (true) {
+    try {
+      execSync(`iptables -t nat -D OUTPUT -p tcp --dport 4096 -j REDIRECT 2>/dev/null`, { timeout: 5000 });
+    } catch { break; }
+  }
+  // Remove ACCEPT rules for the tunnel port range that might be stale
+  const lines = execSync(`iptables-save 2>/dev/null | grep "INPUT.*--dport 496" || true`, { timeout: 5000 }).toString();
+  for (const line of lines.split("\n").filter(l => l.trim())) {
+    const m = line.match(/--dport (\d+)/);
+    if (m) {
+      execSync(`iptables -D INPUT -p tcp --dport ${m[1]} -j ACCEPT 2>/dev/null || true`, { timeout: 2000 });
+    }
+  }
+} catch {}
 
 export const sshManager = new SshManager();

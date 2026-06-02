@@ -329,11 +329,10 @@ export function getCurrentSession(): SessionInfo | undefined {
 }
 
 export function setCurrentSession(sessionInfo: SessionInfo): void {
+  _lastSetSession = sessionInfo;
   const scopeKey = getActiveConversationScopeKey();
   if (scopeKey) {
     convBindings.upsert(scopeKey, { session: JSON.stringify(sessionInfo) });
-  } else {
-    _lastSetSession = sessionInfo;
   }
 }
 
@@ -836,6 +835,7 @@ export function setPendingAccessRequests(requests: AccessApprovalRequest[]): Pro
 let testDbInstance: Database.Database | null = null;
 
 export async function __resetSettingsForTests(): Promise<void> {
+  _lastSetSession = undefined;
   if (dbInstance) {
     closeDatabase(dbInstance);
     dbInstance = null;

@@ -26,7 +26,7 @@ type OptionalGlobalEventClient = {
 
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
-let sseIdleTimeoutMs = 30_000;
+let sseIdleTimeoutMs = 120_000;
 const FATAL_NO_STREAM_ERROR = "No stream returned from event subscription";
 const SSE_IDLE_TIMEOUT_ERROR = "SSE stream idle timeout";
 
@@ -234,7 +234,7 @@ async function subscribeToLegacyEventStream(
   return { source: "legacy", stream: result.stream };
 }
 
-export async function subscribeToEvents(directory: string, callback: EventCallback): Promise<void> {
+export async function subscribeToEvents(directory: string, callback: EventCallback, onReconnect?: () => void): Promise<void> {
   await ensureCurrentOpencodeRouteReady();
 
   const listenerKey = buildListenerKey(directory);
@@ -289,6 +289,7 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
 
         reconnectAttempt = 0;
         state.eventStream = subscription.stream;
+        onReconnect?.();
         let usefulEventCount = 0;
 
         try {

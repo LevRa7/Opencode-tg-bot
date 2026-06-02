@@ -456,6 +456,23 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
       directory: currentProject.worktree,
     };
     setCurrentSession(sessionInfo);
+    // Auto-abort the session if it was left busy from a previous run
+    // so the user can immediately send a new prompt after selecting it.
+    safeBackgroundTask({
+      taskName: "auto-abort-busy-session",
+      task: async () => {
+        try {
+          const { data: statusData } = await opencodeClient.session.status({ directory: currentProject.worktree });
+          const sessionStatus = (statusData as Record<string, { type?: string }> | undefined)?.[session.id];
+          if (sessionStatus?.type === "busy") {
+            logger.info(`[Sessions] Session ${session.id} was busy, auto-aborting before selection`);
+            await opencodeClient.session.abort({ sessionID: session.id, directory: currentProject.worktree });
+          }
+        } catch (err) {
+          logger.debug(`[Sessions] Non-critical error checking busy state for session ${session.id}: ${err}`);
+        }
+      },
+    });
     const activeScope = threadContextManager.getActiveScope();
     if (activeScope) {
       await attachSessionForScope({

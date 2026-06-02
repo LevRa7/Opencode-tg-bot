@@ -1754,9 +1754,13 @@ async function catchUpMissedAssistantMessagesOnReconnect(directory: string): Pro
       continue;
     }
     try {
-      await botApi.sendMessage(target.chatId, messageText, {
-        parse_mode: config.bot.messageFormatMode === "markdown" ? "MarkdownV2" : undefined,
-        message_thread_id: target.messageThreadId,
+      const { sendMessageWithMarkdownFallback } = await import("./utils/send-with-markdown-fallback.js");
+      await sendMessageWithMarkdownFallback({
+        api: botApi,
+        chatId: target.chatId,
+        text: messageText,
+        parseMode: config.bot.messageFormatMode === "markdown" ? "MarkdownV2" : undefined,
+        messageThreadId: target.messageThreadId,
       });
     } catch (err) {
       logger.warn(`[CatchUp] Failed to deliver: ${err instanceof Error ? err.message : err}`);

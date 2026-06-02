@@ -37,6 +37,7 @@ vi.mock("../../src/runtime/docker.js", () => ({
 }));
 
 vi.mock("../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   loadSettings: loadSettingsMock,
   disposeDatabase: vi.fn(),
 }));

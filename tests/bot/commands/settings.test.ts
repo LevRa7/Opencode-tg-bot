@@ -21,6 +21,7 @@ const mocked = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   getUserLocale: vi.fn(() => mocked.userLocale),
   setUserLocale: vi.fn((locale: "en" | "ru") => {
     mocked.setUserLocaleMock(locale);

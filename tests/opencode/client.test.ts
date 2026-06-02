@@ -15,6 +15,7 @@ vi.mock("../../src/utils/ssh-manager.js", () => ({
   sshManager: {
     isSshActive: vi.fn(),
     getLocalPort: vi.fn(),
+    getActiveConnection: vi.fn(),
   },
 }));
 
@@ -35,6 +36,7 @@ describe("opencode/client", () => {
       runtimeKey: "ssh:12345",
       baseUrl: "http://127.0.0.1:49888",
       kind: "tenant",
+      password: undefined,
       userId: 12345,
       chatId: 67890,
       tenantId: "ssh-12345",

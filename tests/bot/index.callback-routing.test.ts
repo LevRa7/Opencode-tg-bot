@@ -517,6 +517,7 @@ vi.mock("../../src/bot/utils/message-thread.js", () => ({
   withMessageThreadId: vi.fn((options) => options),
 }));
 vi.mock("../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   getApprovedTelegramUserIds: getApprovedTelegramUserIdsMock,
   getUserLocale: getUserLocaleMock,
   getReasoningMode: vi.fn(() => 0),

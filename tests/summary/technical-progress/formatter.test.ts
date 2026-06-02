@@ -10,6 +10,7 @@ import { buildProgressMetric } from "../../../src/summary/technical-progress/met
 import { buildProgressTitle } from "../../../src/summary/technical-progress/title.js";
 
 vi.mock("../../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   getCurrentProject: () => ({ id: "p1", name: "repo", worktree: "D:/repo" }),
 }));
 

@@ -195,6 +195,7 @@ vi.mock("../../src/session/manager.js", () => ({
 }));
 
 vi.mock("../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   getCurrentProject: getCurrentProjectMock,
   setCurrentProject: vi.fn(),
   getReasoningMode: vi.fn(() => 0),

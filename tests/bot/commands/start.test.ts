@@ -38,6 +38,7 @@ vi.mock("../../../src/session/manager.js", () => ({
 }));
 
 vi.mock("../../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   clearProject: mocked.clearProjectMock,
   getThreadContextBindings: vi.fn(() => []),
   setThreadContextBindings: vi.fn().mockResolvedValue(undefined),

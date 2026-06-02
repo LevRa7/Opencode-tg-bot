@@ -26,6 +26,7 @@ const mocked = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   setCurrentProject: mocked.setCurrentProjectMock,
 }));
 vi.mock("../../../src/session/manager.js", () => ({

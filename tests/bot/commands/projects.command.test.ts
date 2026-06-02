@@ -20,6 +20,7 @@ vi.mock("../../../src/project/manager.js", () => ({
 }));
 
 vi.mock("../../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   getCurrentProject: vi.fn(() => null),
   setCurrentProject: vi.fn(),
 }));

@@ -27,6 +27,7 @@ vi.mock("../../../src/config.js", () => ({
 }));
 
 vi.mock("../../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   getApprovedTelegramUserIds: vi.fn(() => [...settingsState.approvedTelegramUserIds]),
   getPendingAccessRequests: vi.fn(() =>
     settingsState.pendingAccessRequests.map((request) => ({ ...request })),

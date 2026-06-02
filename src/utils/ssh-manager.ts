@@ -414,9 +414,7 @@ class SshManager {
       existing.auth = auth;
       existing.deployTarget = deployTarget;
       existing.label = this.buildConnectionLabel(details, deployTarget);
-      if (!existing.opencodePassword) {
-        existing.opencodePassword = crypto.randomBytes(16).toString("hex");
-      }
+      existing.opencodePassword = auth.password || existing.opencodePassword || crypto.randomBytes(16).toString("hex");
       await this.persistConnectionsList(userId, connections);
       logger.info(`[SSHManager] Updated saved SSH connection ${existing.id} for user ${userId}`);
       return existing.id;
@@ -424,7 +422,7 @@ class SshManager {
 
     const id = this.generateConnectionId();
     const label = this.buildConnectionLabel(details, deployTarget);
-    const opencodePassword = crypto.randomBytes(16).toString("hex");
+    const opencodePassword = auth.password || crypto.randomBytes(16).toString("hex");
     connections.push({ id, label, details, auth, deployTarget, opencodePassword });
     await this.persistConnectionsList(userId, connections);
     logger.info(`[SSHManager] Saved new SSH connection ${id} for user ${userId}`);

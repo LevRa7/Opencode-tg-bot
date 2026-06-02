@@ -1,5 +1,5 @@
 import { Context } from "grammy";
-import { opencodeClient } from "../../opencode/client.js";
+import { opencodeClient, getCurrentOpencodeRoute } from "../../opencode/client.js";
 import { config } from "../../config.js";
 import { t } from "../../i18n/index.js";
 import { getTenantRuntimeInfo } from "../../settings/manager.js";
@@ -56,13 +56,10 @@ export async function handleServer(ctx: Context): Promise<void> {
       healthStatus = "\u274c " + t("server.unavailable");
     } else {
       healthStatus = "\u2705 " + t("server.healthy");
-      let pw = config.opencode.password || "(not set)";
-      if (scope && sshManager.isSshActive(scope.userId)) {
-        const conn = sshManager.getActiveConnection(scope.userId);
-        logger.debug(`[ServerCmd] SSH active, opencodePassword=${conn?.opencodePassword ? "SET" : "UNDEFINED"}`);
-        if (conn?.opencodePassword) {
-          pw = conn.opencodePassword;
-        }
+      let pw = "(not set)";
+      const route = getCurrentOpencodeRoute();
+      if (route.password) {
+        pw = route.password;
       }
       if (config.opencode.username) {
         credsBlock = "\n" + t("server.credentials", {

@@ -1,7 +1,7 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2";
 import { config } from "../config.js";
 import { processManager } from "../process/manager.js";
-import { getTenantRuntimeInfo } from "../settings/manager.js";
+import { getOrCreateServerPassword, getTenantRuntimeInfo } from "../settings/manager.js";
 import { getCurrentTelegramConversationScope } from "../telegram/scope.js";
 import { logger } from "../utils/logger.js";
 import { sshManager } from "../utils/ssh-manager.js";
@@ -20,38 +20,28 @@ type OpencodeRoute = {
 
 const clientCache = new Map<string, OpencodeClient>();
 
-function getAuthHeader(): string | undefined {
-  if (!config.opencode.password) {
-    return undefined;
-  }
-
-  const credentials = `${config.opencode.username}:${config.opencode.password}`;
-  return `Basic ${Buffer.from(credentials).toString("base64")}`;
-}
-
 function getClientForBaseUrl(baseUrl: string, password?: string): OpencodeClient {
-  const cacheKey = password ? `${baseUrl}:${password}` : baseUrl;
+  const cacheKey = password ? `${baseUrl}::${password}` : baseUrl;
   const cachedClient = clientCache.get(cacheKey);
   if (cachedClient) {
     return cachedClient;
   }
 
-  const effectivePassword = password || config.opencode.password;
-  logger.debug(`[Client] Creating client for ${baseUrl}, pw=${effectivePassword ? "SET("+effectivePassword.slice(0,8)+"...)" : "NONE"}`);
-  const authHeader = effectivePassword
-    ? `Basic ${Buffer.from(`${config.opencode.username || "opencode"}:${effectivePassword}`).toString("base64")}`
-    : undefined;
+  logger.debug(`[Client] Creating client for ${baseUrl}, pw=${password ? "SET" : "NONE"}`);
 
   const client = createOpencodeClient({
     baseUrl,
-    headers: authHeader ? { Authorization: authHeader } : undefined,
+    headers: password
+      ? { Authorization: `Basic ${Buffer.from(`${config.opencode.username || "opencode"}:${password}`).toString("base64")}` }
+      : undefined,
   });
   clientCache.set(cacheKey, client);
   return client;
 }
 
 export function getHostOpencodeClient(): OpencodeClient {
-  return getClientForBaseUrl(config.opencode.apiUrl);
+  const adminId = config.telegram.adminUserId;
+  return getClientForBaseUrl(config.opencode.apiUrl, adminId ? getOrCreateServerPassword(adminId, config.opencode.password) : undefined);
 }
 
 function getCurrentScopeUserId(): number | null {
@@ -97,7 +87,7 @@ export function getCurrentOpencodeRoute(): OpencodeRoute {
     const localPort = sshManager.getLocalPort(scope.userId);
     if (localPort) {
       const conn = sshManager.getActiveConnection(scope.userId);
-      logger.debug(`[Route] SSH route: password=${conn?.opencodePassword ? "SET("+conn.opencodePassword.slice(0,8)+"...)" : "UNDEFINED"}`);
+      logger.debug(`[Route] SSH route: password=${conn?.opencodePassword ? "SET" : "UNDEFINED"}`);
       return {
         runtimeKey: `ssh:${scope.userId}`,
         baseUrl: `http://127.0.0.1:${localPort}`,
@@ -112,14 +102,17 @@ export function getCurrentOpencodeRoute(): OpencodeRoute {
 
   // Admin users (without SSH) use the host server
   if (!scope || scope.userId === config.telegram.adminUserId) {
+    const adminId = config.telegram.adminUserId;
     return {
       runtimeKey: "host",
       baseUrl: config.opencode.apiUrl,
       kind: "host",
+      password: adminId ? getOrCreateServerPassword(adminId, config.opencode.password) : undefined,
     };
   }
 
   const tenantRuntime = getTenantRuntimeInfo(scope.userId);
+  const tenantPassword = getOrCreateServerPassword(scope.userId);
   if (!tenantRuntime) {
     return {
       runtimeKey: `tenant-pending:${scope.userId}`,
@@ -128,6 +121,7 @@ export function getCurrentOpencodeRoute(): OpencodeRoute {
       userId: scope.userId,
       chatId: scope.chatId,
       tenantId: `tg-${scope.userId}`,
+      password: tenantPassword,
     };
   }
 
@@ -138,6 +132,7 @@ export function getCurrentOpencodeRoute(): OpencodeRoute {
     userId: tenantRuntime.userId,
     chatId: tenantRuntime.chatId,
     tenantId: tenantRuntime.tenantId,
+    password: tenantPassword,
   };
 }
 
@@ -180,9 +175,7 @@ function createClientProxy(path: PropertyKey[] = []): unknown {
     async apply(_target, _thisArg, argArray) {
       await ensureCurrentOpencodeRouteReady();
       const route = getCurrentOpencodeRoute();
-      const client = route.password
-        ? getClientForBaseUrl(route.baseUrl, route.password)
-        : getClientForBaseUrl(route.baseUrl);
+      const client = getClientForBaseUrl(route.baseUrl, route.password);
       const fn = resolvePath(client, path);
       const receiver = resolvePath(client, path.slice(0, -1));
 

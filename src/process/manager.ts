@@ -5,6 +5,7 @@ import { config } from "../config.js";
 import {
   clearServerProcess,
   clearTenantRuntimeInfo,
+  getOrCreateServerPassword,
   getServerProcess,
   getTenantRuntimeInfo,
   getTenantRuntimes,
@@ -116,7 +117,7 @@ class ProcessManager implements ProcessManagerInterface {
       }
 
       // Process alive but check HTTP health
-      if (runtime.baseUrl && !await this.isTenantHttpHealthy(runtime.baseUrl)) {
+      if (runtime.baseUrl && !await this.isTenantHttpHealthy(runtime.baseUrl, runtime.userId)) {
         logger.warn(
           `[ProcessManager] Tenant HTTP unhealthy: userId=${runtime.userId}, pid=${runtime.pid}, baseUrl=${runtime.baseUrl}`,
         );
@@ -152,10 +153,16 @@ class ProcessManager implements ProcessManagerInterface {
       const command = isWindows ? "cmd.exe" : "opencode";
       const args = isWindows ? ["/c", "opencode", "serve", "--hostname", "0.0.0.0"] : ["serve", "--hostname", "0.0.0.0"];
 
+      const adminPw = getOrCreateServerPassword(config.telegram.adminUserId, config.opencode.password);
+
       const childProcess = spawn(command, args, {
         detached: false,
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: isWindows,
+        env: {
+          ...process.env,
+          OPENCODE_SERVER_PASSWORD: adminPw,
+        },
       });
 
       childProcess.on("error", (err) => {
@@ -394,7 +401,7 @@ class ProcessManager implements ProcessManagerInterface {
     if (existingRuntime?.pid && this.isProcessAlive(existingRuntime.pid)) {
       // Process is alive, but verify HTTP server is actually responding.
       // A zombie process can pass PID check while its HTTP server is dead.
-      if (existingRuntime.baseUrl && await this.isTenantHttpHealthy(existingRuntime.baseUrl)) {
+      if (existingRuntime.baseUrl && await this.isTenantHttpHealthy(existingRuntime.baseUrl, userId)) {
         return { success: true };
       }
 
@@ -423,7 +430,7 @@ class ProcessManager implements ProcessManagerInterface {
       return startResult;
     }
 
-    const ready = await this.waitForTenantHealth(baseUrl);
+    const ready = await this.waitForTenantHealth(baseUrl, userId);
     if (!ready) {
       return { success: false, error: `Tenant runtime did not become ready at ${baseUrl}` };
     }
@@ -466,7 +473,7 @@ class ProcessManager implements ProcessManagerInterface {
         return startResult;
       }
 
-      const ready = await this.waitForTenantHealth(runtime.baseUrl);
+      const ready = await this.waitForTenantHealth(runtime.baseUrl, runtime.userId);
       if (!ready) {
         const runningRuntime = getTenantRuntimeInfo(runtime.userId);
         if (runningRuntime?.pid) {
@@ -533,6 +540,8 @@ class ProcessManager implements ProcessManagerInterface {
         `[ProcessManager] Starting tenant runtime: userId=${runtime.userId}, port=${runtime.port}, tenantId=${runtime.tenantId}`,
       );
 
+      const tenantPw = getOrCreateServerPassword(runtime.userId);
+
       const childProcess = spawn("bash", [TENANT_LAUNCH_SCRIPT_PATH], {
         detached: false,
         stdio: ["ignore", "pipe", "pipe"],
@@ -543,6 +552,7 @@ class ProcessManager implements ProcessManagerInterface {
           TG_ID: String(runtime.userId),
           TG_CHAT_ID: String(runtime.chatId),
           TG_TENANT_ID: runtime.tenantId,
+          OPENCODE_SERVER_PASSWORD: tenantPw,
         },
       });
 
@@ -592,21 +602,23 @@ class ProcessManager implements ProcessManagerInterface {
   }
 
   private async waitForHostHealth(): Promise<boolean> {
-    return this.waitForHealth(config.opencode.apiUrl, HOST_HEALTH_TIMEOUT_MS, HOST_HEALTH_POLL_MS);
+    return this.waitForHealth(config.opencode.apiUrl, HOST_HEALTH_TIMEOUT_MS, HOST_HEALTH_POLL_MS,
+      getOrCreateServerPassword(config.telegram.adminUserId, config.opencode.password));
   }
 
-  private async waitForTenantHealth(baseUrl: string): Promise<boolean> {
-    return this.waitForHealth(baseUrl, TENANT_HEALTH_TIMEOUT_MS, TENANT_HEALTH_POLL_MS);
+  private async waitForTenantHealth(baseUrl: string, userId: number): Promise<boolean> {
+    return this.waitForHealth(baseUrl, TENANT_HEALTH_TIMEOUT_MS, TENANT_HEALTH_POLL_MS,
+      getOrCreateServerPassword(userId));
   }
 
   /**
    * Quick HTTP health check for a tenant.
    * Returns true if the tenant responds to /global/health within a short timeout.
    */
-  private async isTenantHttpHealthy(baseUrl: string): Promise<boolean> {
+  private async isTenantHttpHealthy(baseUrl: string, userId: number): Promise<boolean> {
     try {
       const response = await fetch(`${baseUrl}/global/health`, {
-        headers: this.getOpencodeAuthHeaders(),
+        headers: this.getOpencodeAuthHeaders(getOrCreateServerPassword(userId)),
         signal: AbortSignal.timeout(5000),
       });
       return response.ok;
@@ -619,6 +631,7 @@ class ProcessManager implements ProcessManagerInterface {
     baseUrl: string,
     timeoutMs: number,
     pollMs: number,
+    password: string,
   ): Promise<boolean> {
     const startedAt = Date.now();
     logger.debug(`[ProcessManager] waitForHealth started for ${baseUrl}`);
@@ -629,7 +642,7 @@ class ProcessManager implements ProcessManagerInterface {
       try {
         logger.debug(`[ProcessManager] waitForHealth attempt ${attempt} for ${baseUrl}`);
         const response = await fetch(`${baseUrl}/global/health`, {
-          headers: this.getOpencodeAuthHeaders(),
+          headers: this.getOpencodeAuthHeaders(password),
           signal: AbortSignal.timeout(2000),
         });
 
@@ -648,12 +661,8 @@ class ProcessManager implements ProcessManagerInterface {
     return false;
   }
 
-  private getOpencodeAuthHeaders(): Record<string, string> | undefined {
-    if (!config.opencode.password) {
-      return undefined;
-    }
-
-    const credentials = `${config.opencode.username}:${config.opencode.password}`;
+  private getOpencodeAuthHeaders(password: string): Record<string, string> {
+    const credentials = `${config.opencode.username || "opencode"}:${password}`;
     return {
       Authorization: `Basic ${Buffer.from(credentials).toString("base64")}`,
     };

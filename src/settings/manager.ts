@@ -363,6 +363,20 @@ export function generateServerPassword(): string {
   return pw;
 }
 
+const serverPasswordCache = new Map<number, string>();
+
+export function getOrCreateServerPassword(userId: number, seed?: string): string {
+  const cached = serverPasswordCache.get(userId);
+  if (cached) return cached;
+  const existing = getServerPassword(userId);
+  const pw = existing || seed || generateServerPassword();
+  if (!existing) {
+    setServerPassword(userId, pw);
+  }
+  serverPasswordCache.set(userId, pw);
+  return pw;
+}
+
 // ====== TTS ======
 
 export function isTtsEnabled(): boolean {

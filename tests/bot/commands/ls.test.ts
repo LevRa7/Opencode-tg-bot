@@ -47,6 +47,7 @@ vi.mock("../../../src/bot/utils/busy-guard.js", () => ({
 }));
 
 vi.mock("../../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   getCurrentProject: mocked.getCurrentProjectMock,
 }));
 

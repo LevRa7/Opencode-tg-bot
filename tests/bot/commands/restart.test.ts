@@ -37,6 +37,7 @@ vi.mock("../../../src/process/manager.js", () => ({
 }));
 
 vi.mock("../../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   getLastRestartRequest: vi.fn(() => mocked.lastRestartRequest),
   setLastRestartRequest: mocked.setLastRestartRequestMock,
 }));

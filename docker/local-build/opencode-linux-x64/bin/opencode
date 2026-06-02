@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+set -eu
+if [ "${1:-}" = "--version" ]; then
+  printf 'opencode smoke-build\n'
+  exit 0
+fi
+printf 'smoke opencode stub\n'

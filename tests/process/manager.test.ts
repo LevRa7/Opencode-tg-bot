@@ -53,6 +53,7 @@ vi.mock("child_process", () => ({
 }));
 
 vi.mock("../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   getServerProcess: getServerProcessMock,
   setServerProcess: setServerProcessMock,
   clearServerProcess: clearServerProcessMock,

@@ -19,6 +19,7 @@ const mocked = vi.hoisted(() => ({
 vi.mock("../../src/opencode/client.js", () => ({ opencodeClient: mocked.opencodeClient }));
 vi.mock("../../src/session/manager.js", () => ({ getCurrentSession: mocked.getCurrentSession }));
 vi.mock("../../src/settings/manager.js", () => ({
+  getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   getCurrentProject: mocked.getCurrentProject,
   getPinnedMessageId: mocked.getPinnedMessageId,
   setPinnedMessageId: mocked.setPinnedMessageId,

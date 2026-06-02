@@ -40,6 +40,12 @@ vi.mock("../../src/settings/manager.js", () => ({
   getOrCreateServerPassword: vi.fn(() => "test-pw-" + Math.random().toString(36).slice(2, 8)),
   loadSettings: loadSettingsMock,
   disposeDatabase: vi.fn(),
+  getSubdomainsRepository: vi.fn(() => ({
+    getByUserId: vi.fn(() => null),
+    getBySubdomain: vi.fn(() => null),
+    upsert: vi.fn(),
+    deleteByUserId: vi.fn(),
+  })),
 }));
 
 vi.mock("../../src/process/manager.js", () => ({
@@ -61,6 +67,11 @@ vi.mock("../../src/scheduled-task/runtime.js", () => ({
 
 vi.mock("../../src/bot/index.js", () => ({
   createBot: createBotMock,
+}));
+
+vi.mock("../../src/server/index.js", () => ({
+  startHttpServer: vi.fn(() => Promise.resolve()),
+  stopHttpServer: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("../../src/config.js", () => ({

@@ -17,6 +17,7 @@ import { getRuntimePaths } from "../runtime/paths.js";
 import { stopBotContainers } from "../runtime/docker.js";
 import { safeBackgroundTask } from "../utils/safe-background-task.js";
 import { logger } from "../utils/logger.js";
+import { startHttpServer, stopHttpServer } from "../server/index.js";
 import { t, type Locale } from "../i18n/index.js";
 
 const STARTUP_LOCK_FILE_NAME = "bot-start.lock";
@@ -199,11 +200,14 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
         },
       });
     }
+
+    await startHttpServer();
   } finally {
     process.off("SIGINT", handleSignal);
     process.off("SIGTERM", handleSignal);
     autoRestartMonitor?.stop();
     processManager.dispose();
+    await stopHttpServer();
     await shutdownBotContainers();
     await releaseStartupLock();
     disposeDatabase();

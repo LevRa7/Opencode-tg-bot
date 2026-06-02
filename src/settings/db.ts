@@ -102,6 +102,13 @@ export function openDatabase(filePath: string): Database.Database {
 
   db.exec(DDL);
 
+  // Ensure server_password column exists (may be missing in databases created from older DDL)
+  try {
+    db.prepare("ALTER TABLE user_preferences ADD COLUMN server_password TEXT").run();
+  } catch {
+    // Column already exists — ignore
+  }
+
   logger.info("[DB] Database opened and tables ensured");
   return db;
 }

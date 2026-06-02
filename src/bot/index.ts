@@ -1672,102 +1672,11 @@ async function deliverBackgroundSessionNotification(
  * Uses session.messages() to find the latest completed assistant message.
  */
 
-/**
- * Called on every message.updated event to track delivered messages
- * and prevent duplicates on reconnect.
- */
-async function catchUpMissedAssistantMessages(
-  event: { type: string; properties?: Record<string, unknown> },
-  _directory: string,
-): Promise<void> {
-  if (event.type !== "message.updated") return;
-  const info = (
-    event.properties as {
-      info?: { id?: string; sessionID?: string; role?: string; time?: { completed?: number } };
-    }
-  ).info;
-  if (!info || info.role !== "assistant" || !info.time?.completed || !info.id) return;
-  deliveredAssistantMessageIds.add(info.id);
-}
 
-/** Set of assistant message IDs already delivered via SSE */
-const deliveredAssistantMessageIds = new Set<string>();
 
-/**
- * Called after SSE event stream reconnects.
- * Fetches recent session messages and delivers any completed
- * assistant messages that arrived during the disconnect window.
- */
-async function catchUpMissedAssistantMessagesOnReconnect(directory: string): Promise<void> {
-  const session = getCurrentSession();
-  if (!session || !session.id) {
-    logger.debug("[CatchUp] No active session, skipping catch-up on reconnect");
-    return;
-  }
 
-  let messagesData: Array<{
-    info?: { id?: string; role?: string; time?: { completed?: number }; sessionID?: string };
-    parts?: Array<{ type?: string; text?: string }>;
-  }> = [];
 
-  try {
-    const { data, error } = await opencodeClient.session.messages({
-      sessionID: session.id,
-      directory: session.directory,
-    });
-    if (error || !data) {
-      logger.debug(`[CatchUp] Failed to fetch messages: ${String(error)}`);
-      return;
-    }
-    messagesData = (data as unknown) as Array<{
-    info?: { id?: string; role?: string; time?: { completed?: number }; sessionID?: string };
-    parts?: Array<{ type?: string; text?: string }>;
-  }>;
-  } catch (err) {
-    logger.debug(`[CatchUp] Error fetching messages: ${err instanceof Error ? err.message : err}`);
-    return;
-  }
 
-  for (const msg of messagesData) {
-    const info = msg.info;
-    if (!info || info.role !== "assistant" || !info.time?.completed || !info.id) continue;
-    if (deliveredAssistantMessageIds.has(info.id)) continue;
-
-    deliveredAssistantMessageIds.add(info.id);
-    const parts = msg.parts;
-    if (!parts || parts.length === 0) continue;
-
-    const messageText = parts.filter((p) => p.type === "text").map((p) => p.text).join("").trim();
-    if (!messageText) continue;
-
-    const sessionId = info.sessionID || session.id;
-    const target = getSessionDeliveryTarget(sessionId);
-    if (!target) {
-      logger.debug(`[CatchUp] No delivery target for session ${sessionId}`);
-      continue;
-    }
-
-    logger.info(`[CatchUp] Delivering missed assistant message ${info.id} for session ${sessionId}`);
-    const botApi = getSessionRoutingApi(sessionId);
-    if (!botApi) {
-      logger.debug(`[CatchUp] No bot API for session ${sessionId}`);
-      continue;
-    }
-    try {
-      const { sendMessageWithMarkdownFallback } = await import("./utils/send-with-markdown-fallback.js");
-      await sendMessageWithMarkdownFallback({
-        api: botApi,
-        chatId: target.chatId,
-        text: messageText,
-        parseMode: config.bot.messageFormatMode === "markdown" ? "MarkdownV2" : undefined,
-        useHtmlFallback: true,
-        messageThreadId: target.messageThreadId,
-      });
-    } catch (err) {
-      logger.warn(`[CatchUp] Failed to deliver: ${err instanceof Error ? err.message : err}`);
-    }
-  }
-}
 
 async function ensureEventSubscription(directory: string): Promise<void> {
   if (!directory) {
@@ -3251,7 +3160,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
   logger.info(`[Bot] Subscribing to OpenCode events for project: ${directory}`);
   subscribeToEvents(directory, (event) => {
-    void catchUpMissedAssistantMessages(event, directory);
     if ((event as { type: string }).type === "server.heartbeat") {
       void reconcileBusyState(directory);
     }
@@ -3703,8 +3611,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
 
     summaryAggregator.processEvent(event);
-  }, () => {
-    void catchUpMissedAssistantMessagesOnReconnect(directory);
   }).catch((err) => {
     logger.error("Failed to subscribe to events:", err);
   });

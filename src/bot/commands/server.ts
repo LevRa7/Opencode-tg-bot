@@ -65,12 +65,16 @@ export async function handleServer(ctx: Context): Promise<void> {
     healthStatus = "\u274c " + t("server.unavailable");
   }
 
-  const lines = [
-    t("server.info", { url: serverUrl }),
-    externalUrl ? "External: " + externalUrl : "",
-    healthStatus,
-    credsBlock,
-  ].filter(Boolean);
+  // Escape all parts for MarkdownV2, but preserve ||...|| spoiler syntax
+  const infoLine = t("server.info", { url: escapeMd2(serverUrl) });
+  const extLine = externalUrl ? "External: " + escapeMd2(externalUrl) : "";
+  const statusLine = escapeMd2(healthStatus);
 
-  await ctx.reply(lines.join("\n"), { parse_mode: "MarkdownV2" });
+  const parts = [infoLine, extLine, statusLine].filter(Boolean);
+  let finalMsg = parts.join("\n");
+  if (credsBlock) {
+    finalMsg += credsBlock;
+  }
+
+  await ctx.reply(finalMsg, { parse_mode: "MarkdownV2" });
 }

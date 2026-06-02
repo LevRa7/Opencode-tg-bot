@@ -28,6 +28,12 @@ export interface SavedSshConnection {
   details: SshDetails;
   auth: SshAuth;
   deployTarget: "docker" | "host";
+  opencodePassword?: string;
+}
+
+export interface SshConnectionsStore {
+  activeConnectionId: string | null;
+  connections: SavedSshConnection[];
 }
 
 export interface SshConnection {
@@ -37,6 +43,7 @@ export interface SshConnection {
   remotePort: number;
   details: SshDetails;
   deployTarget: "docker" | "host";
+  opencodePassword?: string;
 }
 
 class SshManager {
@@ -252,25 +259,61 @@ class SshManager {
     return `${details.username}@${details.host}:${details.port} (${target})`;
   }
 
-  private async loadConnectionsList(userId: number): Promise<SavedSshConnection[]> {
+  private async loadConnectionsStore(userId: number): Promise<SshConnectionsStore> {
     const filePath = this.getConnectionsPath(userId);
     try {
       const content = await fs.readFile(filePath, "utf-8");
       const { encrypted } = JSON.parse(content);
       const key = await this.getOrCreateEncryptionKey(userId);
       const decrypted = decryptData(encrypted, key);
-      return JSON.parse(decrypted) as SavedSshConnection[];
+      const parsed = JSON.parse(decrypted);
+      // Handle old format (plain array) vs new format ({ activeConnectionId, connections })
+      if (Array.isArray(parsed)) {
+        return { activeConnectionId: null, connections: parsed as SavedSshConnection[] };
+      }
+      return parsed as SshConnectionsStore;
     } catch {
-      return [];
+      return { activeConnectionId: null, connections: [] };
     }
   }
 
-  private async persistConnectionsList(userId: number, connections: SavedSshConnection[]): Promise<void> {
+  private async loadConnectionsList(userId: number): Promise<SavedSshConnection[]> {
+    const store = await this.loadConnectionsStore(userId);
+    return store.connections;
+  }
+
+  private async getActiveConnectionId(userId: number): Promise<string | null> {
+    const store = await this.loadConnectionsStore(userId);
+    return store.activeConnectionId;
+  }
+
+  async setActiveConnectionId(userId: number, connectionId: string | null): Promise<void> {
+    const store = await this.loadConnectionsStore(userId);
+    store.activeConnectionId = connectionId;
+    await this.persistConnectionsList(userId, store.connections, store);
+  }
+
+  private async persistConnectionsList(userId: number, connections: SavedSshConnection[], existingStore?: SshConnectionsStore): Promise<void> {
     const filePath = this.getConnectionsPath(userId);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
 
+    const store: SshConnectionsStore = existingStore || {
+      activeConnectionId: null,
+      connections,
+    };
+    // If no store was passed, preserve existing activeConnectionId
+    if (!existingStore) {
+      try {
+        const prev = await this.loadConnectionsStore(userId);
+        store.activeConnectionId = prev.activeConnectionId;
+      } catch {
+        store.activeConnectionId = null;
+      }
+    }
+    store.connections = connections;
+
     const key = await this.getOrCreateEncryptionKey(userId);
-    const data = JSON.stringify(connections);
+    const data = JSON.stringify(store);
     const encrypted = encryptData(data, key);
 
     await fs.writeFile(filePath, JSON.stringify({ encrypted }), { mode: 0o600 });
@@ -293,6 +336,9 @@ class SshManager {
       existing.auth = auth;
       existing.deployTarget = deployTarget;
       existing.label = this.buildConnectionLabel(details, deployTarget);
+      if (!existing.opencodePassword) {
+        existing.opencodePassword = crypto.randomBytes(16).toString("hex");
+      }
       await this.persistConnectionsList(userId, connections);
       logger.info(`[SSHManager] Updated saved SSH connection ${existing.id} for user ${userId}`);
       return existing.id;
@@ -300,7 +346,8 @@ class SshManager {
 
     const id = this.generateConnectionId();
     const label = this.buildConnectionLabel(details, deployTarget);
-    connections.push({ id, label, details, auth, deployTarget });
+    const opencodePassword = crypto.randomBytes(16).toString("hex");
+    connections.push({ id, label, details, auth, deployTarget, opencodePassword });
     await this.persistConnectionsList(userId, connections);
     logger.info(`[SSHManager] Saved new SSH connection ${id} for user ${userId}`);
     return id;
@@ -517,8 +564,9 @@ class SshManager {
             );
           });
 
-          server.listen(localPort, "127.0.0.1", () => {
+          server.listen(localPort, "127.0.0.1", async () => {
             logger.info(`[SSHManager] SSH connection ready, temporary tunnel on 127.0.0.1:${localPort} (remote port will be set during bootstrap)`);
+            const savedConn = await this.loadSavedByDetails(userId, details);
             this.activeConnections.set(userId, {
               client,
               server,
@@ -526,6 +574,7 @@ class SshManager {
               remotePort: tempRemotePort,
               details,
               deployTarget,
+              opencodePassword: savedConn?.opencodePassword,
             });
             resolve(localPort);
           });
@@ -737,7 +786,8 @@ class SshManager {
         const volumeName = `opencode-data-tg-${userId}`;
         // Ensure volume exists
         await executeCommand(`docker volume create ${volumeName}`).catch(() => {});
-        const dockerCmd = `docker run -d --name opencode-serve-tg-${userId} -v ${volumeName}:/root/.local/share/opencode -p ${remotePort}:${remotePort} -e OPENCODE_DISABLE_EXTERNAL_SKILLS=true opencode-tenant:latest serve --hostname 0.0.0.0 --port ${remotePort}`;
+        const opencodePw = conn.opencodePassword || crypto.randomBytes(16).toString("hex");
+        const dockerCmd = `docker run -d --name opencode-serve-tg-${userId} -v ${volumeName}:/root/.local/share/opencode -p ${remotePort}:${remotePort} -e OPENCODE_DISABLE_EXTERNAL_SKILLS=true -e OPENCODE_SERVER_PASSWORD=${opencodePw} opencode-tenant:latest serve --hostname 0.0.0.0 --port ${remotePort}`;
         try {
           await executeCommand(dockerCmd);
         } catch (err) {
@@ -793,9 +843,9 @@ class SshManager {
       // Kill any process that might still be holding the target port
       await executeCommand(`lsof -ti:${remotePort} 2>/dev/null | xargs kill -9 2>/dev/null; true`, 10000);
 
-      // 4. Start opencode serve on remote host with custom PATH prepended.
-      // Use setsid to fully detach from the SSH exec channel, preventing hangs.
-      const startCmd = `nohup sh -c 'export PATH=\$HOME/.config/opencode/bin:\$PATH; exec ${serveExecutable} serve --port ${remotePort}' </dev/null >/tmp/opencode.log 2>&1 &`;
+      // 4. Start opencode serve on remote host with custom PATH prepended and password.
+      const opencodePw = conn.opencodePassword || crypto.randomBytes(16).toString("hex");
+      const startCmd = `nohup sh -c 'export PATH=\$HOME/.config/opencode/bin:\$PATH; exec env OPENCODE_SERVER_PASSWORD=${opencodePw} ${serveExecutable} serve --port ${remotePort}' </dev/null >/tmp/opencode.log 2>&1 &`;
       await executeCommand(startCmd, 10000);
       logger.info(`[SSHManager] OpenCode server process started on remote host (port ${remotePort})`);
 
@@ -804,6 +854,9 @@ class SshManager {
 
       // 6. Rebuild the SSH tunnel to point at the actual remote port
       await this.rebuildTunnel(userId, remotePort);
+
+      // Open firewall port for the opencode server on the remote host
+      await executeCommand(`iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || true`).catch(() => {});
 
       // 7. Verify the tunnel actually works before declaring success
       const healthy = await this.isTunnelHealthy(userId);
@@ -932,6 +985,13 @@ class SshManager {
     });
   }
 
+  private async loadSavedByDetails(userId: number, details: SshDetails): Promise<SavedSshConnection | null> {
+    const connections = await this.loadConnectionsList(userId);
+    return connections.find(
+      (c) => c.details.host === details.host && c.details.username === details.username && c.details.port === details.port
+    ) || null;
+  }
+
   async recoverAll(): Promise<void> {
     const workspacesRoot = getWorkspacesRoot();
     try {
@@ -944,17 +1004,28 @@ class SshManager {
         const userId = parseInt(entry.name.slice(3), 10);
         if (Number.isNaN(userId)) continue;
 
-        const credentials = await this.loadCredentials(userId);
-        if (!credentials) continue;
+        // Only reconnect if user had an active connection before restart
+        const activeId = await this.getActiveConnectionId(userId);
+        if (!activeId) {
+          logger.debug(`[SSHManager] No active SSH connection for user ${userId}, skipping recovery`);
+          continue;
+        }
 
-        logger.info(`[SSHManager] Background recovering SSH connection for user ${userId}`);
+        const saved = await this.loadConnectionById(userId, activeId);
+        if (!saved) {
+          logger.warn(`[SSHManager] Active connection ${activeId} not found for user ${userId}, skipping recovery`);
+          await this.setActiveConnectionId(userId, null);
+          continue;
+        }
+
+        logger.info(`[SSHManager] Background recovering SSH connection for user ${userId}: ${saved.label}`);
         try {
-          await this.connect(userId, credentials.details, credentials.auth, credentials.deployTarget);
+          await this.connect(userId, saved.details, saved.auth, saved.deployTarget);
           await this.bootstrapRemoteServer(userId);
           logger.info(`[SSHManager] Background recovered SSH connection successfully for user ${userId}`);
         } catch (err) {
           logger.error(`[SSHManager] Failed to recover SSH connection for user ${userId}:`, err);
-          // Clean up the broken connection
+          // Clean up the broken connection but keep activeConnectionId so it retries on next restart
           await this.disconnect(userId).catch(() => {});
         }
       }

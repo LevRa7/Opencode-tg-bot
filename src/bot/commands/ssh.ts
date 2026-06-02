@@ -154,6 +154,7 @@ export async function handleSshCallback(ctx: Context): Promise<boolean> {
 
   if (data === ACTION_DISCONNECT) {
     await sshManager.disconnect(userId);
+    await sshManager.setActiveConnectionId(userId, null);
     await ctx.answerCallbackQuery({ text: t("ssh.cancelled") });
     await renderConnectionsMenu(ctx, userId, true);
     return true;
@@ -188,6 +189,7 @@ export async function handleSshCallback(ctx: Context): Promise<boolean> {
     }
     await ctx.answerCallbackQuery();
     await doConnect(ctx, userId, saved.details, saved.auth, saved.deployTarget);
+    await sshManager.setActiveConnectionId(userId, id);
     interactionManager.clear("ssh_completed");
     return true;
   }

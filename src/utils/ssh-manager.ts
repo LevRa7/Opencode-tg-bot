@@ -843,10 +843,12 @@ class SshManager {
           await this.persistConnectionsList(userId, dConns);
         }
       }
-      // Open the tunnel port on the bot server for external access
+      // Bind tunnel to port 4096 for external web access (only port open on hosting provider)
       try {
         const { execSync } = await import("node:child_process");
-        execSync(`iptables -C INPUT -p tcp --dport ${conn.localPort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${conn.localPort} -j ACCEPT`, { timeout: 5000 });
+        // Redirect port 4096 to the tunnel — remote server accessible via http://BOT_IP:4096
+        // Local connections to 127.0.0.1:4096 bypass PREROUTING and reach the local server
+        try { execSync(`iptables -t nat -C PREROUTING -p tcp --dport 4096 -j REDIRECT --to-port ${conn.localPort} 2>/dev/null || iptables -t nat -A PREROUTING -p tcp --dport 4096 -j REDIRECT --to-port ${conn.localPort} 2>/dev/null || true`, { timeout: 5000 }); } catch {}
       } catch {}
       logger.info(`[SSHManager] SSH tunnel verified healthy after Docker bootstrap for user ${userId}`);
     } else {
@@ -949,10 +951,12 @@ class SshManager {
           await this.persistConnectionsList(userId, allConns);
         }
       }
-      // Open the tunnel port on the bot server for external access
+      // Bind tunnel to port 4096 for external web access (only port open on hosting provider)
       try {
         const { execSync } = await import("node:child_process");
-        execSync(`iptables -C INPUT -p tcp --dport ${conn.localPort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${conn.localPort} -j ACCEPT`, { timeout: 5000 });
+        // Redirect port 4096 to the tunnel — remote server accessible via http://BOT_IP:4096
+        // Local connections to 127.0.0.1:4096 bypass PREROUTING and reach the local server
+        try { execSync(`iptables -t nat -C PREROUTING -p tcp --dport 4096 -j REDIRECT --to-port ${conn.localPort} 2>/dev/null || iptables -t nat -A PREROUTING -p tcp --dport 4096 -j REDIRECT --to-port ${conn.localPort} 2>/dev/null || true`, { timeout: 5000 }); } catch {}
       } catch {}
       logger.info(`[SSHManager] SSH tunnel verified healthy after host bootstrap for user ${userId}`);
     }

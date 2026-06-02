@@ -304,8 +304,16 @@ export async function subscribeToEvents(directory: string, callback: EventCallba
         onReconnect?.();
         let usefulEventCount = 0;
 
+        let subscribedRuntimeKey = getCurrentOpencodeRuntimeKey();
         try {
           while (state.isListening && !controller.signal.aborted) {
+            // Check if route changed (SSH connect/disconnect), reconnect if so
+            const currentKey = getCurrentOpencodeRuntimeKey();
+            if (currentKey !== subscribedRuntimeKey) {
+              logger.debug(`[Events] Route changed from ${subscribedRuntimeKey} to ${currentKey}, reconnecting event stream`);
+              subscribedRuntimeKey = currentKey;
+              break; // Exit inner loop to re-subscribe with new route
+            }
             const readResult = await readStreamWithIdleTimeout(
               state.eventStream,
               attemptAbort.controller.signal,

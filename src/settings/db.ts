@@ -88,6 +88,18 @@ CREATE TABLE IF NOT EXISTS thread_context_bindings (
     model       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_thread_context_bindings_key ON thread_context_bindings(context_key);
+
+CREATE TABLE IF NOT EXISTS subdomains (
+    user_id         INTEGER PRIMARY KEY,
+    username        TEXT NOT NULL,
+    subdomain       TEXT NOT NULL UNIQUE,
+    password_hash   TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    ssh_connection_id TEXT,
+    hostname        TEXT,
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_subdomains_subdomain ON subdomains(subdomain);
 `;
 
 export const SETTINGS_DDL = DDL;
@@ -108,6 +120,13 @@ export function openDatabase(filePath: string): Database.Database {
   } catch {
     // Column already exists — ignore
   }
+
+  try {
+    db.prepare("ALTER TABLE subdomains ADD COLUMN ssh_connection_id TEXT").run();
+  } catch { /* ignore */ }
+  try {
+    db.prepare("ALTER TABLE subdomains ADD COLUMN hostname TEXT").run();
+  } catch { /* ignore */ }
 
   logger.info("[DB] Database opened and tables ensured");
   return db;

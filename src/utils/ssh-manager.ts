@@ -651,7 +651,8 @@ class SshManager {
 
           stream.on("close", (code: number) => {
             if (timer) clearTimeout(timer);
-            if (code !== 0) {
+            // code can be null/undefined when SSH channel closes without exit status
+            if (code !== 0 && code !== null && code !== undefined) {
               reject(new Error(`Command "${cmd}" exited with code ${code}. Stderr: ${stderr}`));
             } else {
               resolve(stdout);
@@ -848,7 +849,7 @@ class SshManager {
       if (savedConn?.lastRemotePort) {
         logger.info(`[SSHManager] Trying quick reconnect on saved port ${savedConn.lastRemotePort}...`);
         try {
-          await executeCommand(`curl -sf http://127.0.0.1:${savedConn.lastRemotePort}/health`, 5000);
+          await executeCommand(`timeout 2 nc -z 127.0.0.1 ${savedConn.lastRemotePort} 2>/dev/null`, 5000);
           // Server is alive — just rebuild the tunnel and verify
           logger.info(`[SSHManager] Remote server is alive on port ${savedConn.lastRemotePort}, reusing`);
           await this.rebuildTunnel(userId, savedConn.lastRemotePort);

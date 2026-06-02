@@ -37,6 +37,7 @@ function getClientForBaseUrl(baseUrl: string, password?: string): OpencodeClient
   }
 
   const effectivePassword = password || config.opencode.password;
+  logger.debug(`[Client] Creating client for ${baseUrl}, pw=${effectivePassword ? "SET("+effectivePassword.slice(0,8)+"...)" : "NONE"}`);
   const authHeader = effectivePassword
     ? `Basic ${Buffer.from(`${config.opencode.username || "opencode"}:${effectivePassword}`).toString("base64")}`
     : undefined;
@@ -96,6 +97,7 @@ export function getCurrentOpencodeRoute(): OpencodeRoute {
     const localPort = sshManager.getLocalPort(scope.userId);
     if (localPort) {
       const conn = sshManager.getActiveConnection(scope.userId);
+      logger.debug(`[Route] SSH route: password=${conn?.opencodePassword ? "SET("+conn.opencodePassword.slice(0,8)+"...)" : "UNDEFINED"}`);
       return {
         runtimeKey: `ssh:${scope.userId}`,
         baseUrl: `http://127.0.0.1:${localPort}`,

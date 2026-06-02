@@ -5,6 +5,7 @@ import { t } from "../../i18n/index.js";
 import { getTenantRuntimeInfo } from "../../settings/manager.js";
 import { getCurrentTelegramConversationScope } from "../../telegram/scope.js";
 import { sshManager } from "../../utils/ssh-manager.js";
+import { logger } from "../../utils/logger.js";
 
 async function getExternalUrl(): Promise<string> {
   try {
@@ -56,6 +57,7 @@ export async function handleServer(ctx: Context): Promise<void> {
       let pw = config.opencode.password || "(not set)";
       if (scope && sshManager.isSshActive(scope.userId)) {
         const conn = sshManager.getActiveConnection(scope.userId);
+        logger.debug(`[ServerCmd] SSH active, opencodePassword=${conn?.opencodePassword ? "SET" : "UNDEFINED"}`);
         if (conn?.opencodePassword) {
           pw = conn.opencodePassword;
         }
@@ -67,7 +69,9 @@ export async function handleServer(ctx: Context): Promise<void> {
         });
       }
     }
-  } catch {
+  } catch (err2) {
+    const errMsg = err2 instanceof Error ? err2.message.slice(0, 100) : String(err2).slice(0, 100);
+    logger.error(`[ServerCmd] Health check failed: ${errMsg}`);
     healthStatus = "\u274c " + t("server.unavailable");
   }
 

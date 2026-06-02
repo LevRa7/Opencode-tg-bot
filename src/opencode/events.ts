@@ -234,7 +234,19 @@ async function subscribeToLegacyEventStream(
   return { source: "legacy", stream: result.stream };
 }
 
+let lastSubscribedDirectory: string | null = null;
+
+export function getLastSubscribedDirectory(): string | null {
+  return lastSubscribedDirectory;
+}
+
+export function resetEventSubscriptions(): void {
+  listenersByRuntimeAndDirectory.clear();
+  lastSubscribedDirectory = null;
+}
+
 export async function subscribeToEvents(directory: string, callback: EventCallback, onReconnect?: () => void): Promise<void> {
+  lastSubscribedDirectory = directory;
   await ensureCurrentOpencodeRouteReady();
 
   const listenerKey = buildListenerKey(directory);

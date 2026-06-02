@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import { encryptData, decryptData } from "./ssh-encryption.js";
 import { getWorkspacesRoot } from "../runtime/paths.js";
 import { logger } from "./logger.js";
+import { resetEventSubscriptions } from "../opencode/events.js";
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -1207,6 +1208,7 @@ class SshManager {
         try {
           await this.connect(userId, saved.details, saved.auth, saved.deployTarget);
           await this.bootstrapRemoteServer(userId);
+          resetEventSubscriptions();
           logger.info(`[SSHManager] Background recovered SSH connection successfully for user ${userId}`);
         } catch (err) {
           logger.error(`[SSHManager] Failed to recover SSH connection for user ${userId}:`, err);

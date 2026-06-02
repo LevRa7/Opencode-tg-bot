@@ -777,7 +777,13 @@ class SshManager {
         await this.waitForRemoteServerReady(executeCommand, remotePort);
         // Rebuild the SSH tunnel to point at the container's port
         await this.rebuildTunnel(userId, remotePort);
-        await executeCommand(`iptables -C INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || true`).catch(() => {});
+      // Open port in all common firewall systems
+      const fwCmd = [
+        `iptables -C INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null`,
+        `ufw status 2>/dev/null | grep -q active && ufw allow ${remotePort}/tcp 2>/dev/null; true`,
+        `firewall-cmd --state 2>/dev/null | grep -q running && firewall-cmd --add-port=${remotePort}/tcp --permanent 2>/dev/null && firewall-cmd --reload 2>/dev/null; true`,
+      ].join("; ");
+      await executeCommand(fwCmd, 15000).catch(() => {});
       } else {
         // No existing container — create a fresh one
 
@@ -916,7 +922,13 @@ class SshManager {
       await this.rebuildTunnel(userId, remotePort);
 
       // Open firewall port for the opencode server on the remote host
-      await executeCommand(`iptables -C INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || true`).catch(() => {});
+      // Open port in all common firewall systems
+      const fwCmd = [
+        `iptables -C INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${remotePort} -j ACCEPT 2>/dev/null`,
+        `ufw status 2>/dev/null | grep -q active && ufw allow ${remotePort}/tcp 2>/dev/null; true`,
+        `firewall-cmd --state 2>/dev/null | grep -q running && firewall-cmd --add-port=${remotePort}/tcp --permanent 2>/dev/null && firewall-cmd --reload 2>/dev/null; true`,
+      ].join("; ");
+      await executeCommand(fwCmd, 15000).catch(() => {});
 
       // 7. Verify the tunnel actually works before declaring success
       const healthy = await this.isTunnelHealthy(userId);

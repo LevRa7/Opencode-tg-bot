@@ -1760,6 +1760,7 @@ async function catchUpMissedAssistantMessagesOnReconnect(directory: string): Pro
         chatId: target.chatId,
         text: messageText,
         parseMode: config.bot.messageFormatMode === "markdown" ? "MarkdownV2" : undefined,
+        useHtmlFallback: true,
         messageThreadId: target.messageThreadId,
       });
     } catch (err) {

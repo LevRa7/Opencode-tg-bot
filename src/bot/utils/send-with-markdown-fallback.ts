@@ -307,6 +307,21 @@ export async function sendMessageWithMarkdownFallback({
       throw error;
     }
 
+    // HTML fallback: render markdown as HTML before falling to escaped or raw
+    // Try HTML first because it can render more markdown features (*italic*, **bold**, etc.)
+    if (render.htmlFallbackText) {
+      logger.warn(
+        `[Bot] ${render.formatName} parse failed, retrying with HTML fallback`,
+      );
+      try {
+        return await api.sendMessage(chatId, render.htmlFallbackText, render.htmlFallbackOptions);
+      } catch (htmlError) {
+        if (!isTelegramParseError(htmlError)) {
+          throw htmlError;
+        }
+      }
+    }
+
     if (render.shouldRetryEscapedMarkdown && render.escapedRetryText && render.escapedRetryText !== text) {
         logger.warn(
           "[Bot] Markdown parse failed, retrying assistant message with escaped MarkdownV2",
@@ -320,20 +335,6 @@ export async function sendMessageWithMarkdownFallback({
             throw escapedError;
           }
         }
-    }
-
-    // HTML fallback: render markdown as HTML before falling to raw
-    if (render.htmlFallbackText) {
-      logger.warn(
-        `[Bot] ${render.formatName} parse failed, retrying with HTML fallback`,
-      );
-      try {
-        return await api.sendMessage(chatId, render.htmlFallbackText, render.htmlFallbackOptions);
-      } catch (htmlError) {
-        if (!isTelegramParseError(htmlError)) {
-          throw htmlError;
-        }
-      }
     }
 
     logger.warn(
@@ -372,6 +373,16 @@ export async function sendMessageDraftWithMarkdownFallback({
       throw error;
     }
 
+    if (render.htmlFallbackText) {
+      try {
+        return await api.sendMessageDraft(chatId, draftId, render.htmlFallbackText, render.htmlFallbackOptions);
+      } catch (htmlError) {
+        if (!isTelegramParseError(htmlError)) {
+          throw htmlError;
+        }
+      }
+    }
+
     if (render.shouldRetryEscapedMarkdown && render.escapedRetryText && render.escapedRetryText !== text) {
         logger.warn(
           "[Bot] Markdown parse failed, retrying assistant draft with escaped MarkdownV2",
@@ -390,16 +401,6 @@ export async function sendMessageDraftWithMarkdownFallback({
             throw escapedError;
           }
         }
-    }
-
-    if (render.htmlFallbackText) {
-      try {
-        return await api.sendMessageDraft(chatId, draftId, render.htmlFallbackText, render.htmlFallbackOptions);
-      } catch (htmlError) {
-        if (!isTelegramParseError(htmlError)) {
-          throw htmlError;
-        }
-      }
     }
 
     return api.sendMessageDraft(chatId, draftId, render.fallbackText, render.fallbackOptions);
@@ -437,6 +438,20 @@ export async function editMessageWithMarkdownFallback({
       throw error;
     }
 
+    // HTML fallback: render markdown as HTML before falling to escaped or raw
+    if (render.htmlFallbackText) {
+      logger.warn(
+        `[Bot] ${render.formatName} parse failed, retrying edit with HTML fallback`,
+      );
+      try {
+        return await api.editMessageText(chatId, messageId, render.htmlFallbackText, render.htmlFallbackOptions);
+      } catch (htmlError) {
+        if (!isTelegramParseError(htmlError)) {
+          throw htmlError;
+        }
+      }
+    }
+
     if (render.shouldRetryEscapedMarkdown && render.escapedRetryText && render.escapedRetryText !== text) {
         logger.warn(
           "[Bot] Markdown parse failed, retrying edited message with escaped MarkdownV2",
@@ -455,20 +470,6 @@ export async function editMessageWithMarkdownFallback({
             throw escapedError;
           }
         }
-    }
-
-    // HTML fallback: render markdown as HTML before falling to raw
-    if (render.htmlFallbackText) {
-      logger.warn(
-        `[Bot] ${render.formatName} parse failed, retrying edit with HTML fallback`,
-      );
-      try {
-        return await api.editMessageText(chatId, messageId, render.htmlFallbackText, render.htmlFallbackOptions);
-      } catch (htmlError) {
-        if (!isTelegramParseError(htmlError)) {
-          throw htmlError;
-        }
-      }
     }
 
     logger.warn(

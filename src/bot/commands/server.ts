@@ -31,7 +31,9 @@ export async function handleServer(ctx: Context): Promise<void> {
     if (d) {
       const target = conn?.deployTarget === "docker" ? "Docker" : "Host";
       serverUrl = `ssh://${d.username}@${d.host}:${d.port ?? 22} (${target})`;
-      externalUrl = `http://${d.host}:${conn!.remotePort}`;
+      // Use bot server's external IP with tunnel port (remote might have cloud firewall)
+      const botIp = await getExternalUrl().then(u => u ? new URL(u).hostname : d.host).catch(() => d.host);
+      externalUrl = `http://${botIp}:49600`;
     }
   }
 

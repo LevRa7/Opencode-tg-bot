@@ -566,7 +566,7 @@ class SshManager {
             );
           });
 
-          server.listen(localPort, "127.0.0.1", async () => {
+          server.listen(localPort, "0.0.0.0", async () => {
             logger.info(`[SSHManager] SSH connection ready, temporary tunnel on 127.0.0.1:${localPort} (remote port will be set during bootstrap)`);
             const savedConn = await this.loadSavedByDetails(userId, details);
             this.activeConnections.set(userId, {
@@ -843,6 +843,11 @@ class SshManager {
           await this.persistConnectionsList(userId, dConns);
         }
       }
+      // Open the tunnel port on the bot server for external access
+      try {
+        const { execSync } = await import("node:child_process");
+        execSync(`iptables -C INPUT -p tcp --dport ${conn.localPort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${conn.localPort} -j ACCEPT`, { timeout: 5000 });
+      } catch {}
       logger.info(`[SSHManager] SSH tunnel verified healthy after Docker bootstrap for user ${userId}`);
     } else {
       // 1. Quick reconnect: if we know a previous remote port, try reusing it
@@ -944,6 +949,11 @@ class SshManager {
           await this.persistConnectionsList(userId, allConns);
         }
       }
+      // Open the tunnel port on the bot server for external access
+      try {
+        const { execSync } = await import("node:child_process");
+        execSync(`iptables -C INPUT -p tcp --dport ${conn.localPort} -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport ${conn.localPort} -j ACCEPT`, { timeout: 5000 });
+      } catch {}
       logger.info(`[SSHManager] SSH tunnel verified healthy after host bootstrap for user ${userId}`);
     }
   } finally {

@@ -56,6 +56,12 @@ export async function ensureCurrentOpencodeRouteReady(): Promise<void> {
 
   // SSH takes priority — verify the tunnel is actually healthy
   if (sshManager.isSshActive(userId)) {
+    // Skip health check while bootstrap is in progress — the remote server
+    // hasn't started yet, so the tunnel would appear unhealthy and trigger
+    // an unnecessary auto-disconnect mid-bootstrap.
+    if (sshManager.isBootstrapInProgress(userId)) {
+      return;
+    }
     const healthy = await sshManager.isTunnelHealthy(userId);
     if (!healthy) {
       logger.warn(`[OpenCodeClient] SSH tunnel unhealthy for user ${userId}, auto-disconnecting`);

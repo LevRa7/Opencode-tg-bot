@@ -891,7 +891,7 @@ export const en = {
   "cmd.description.share": "Share current session",
   "server.unavailable": "Server is unavailable.",
   "server.healthy": "Server is healthy.",
-  "server.credentials": "||Login: `{user}`  Password: `{pass}`||",
+  "server.credentials": "Login: ||{user}||\nPassword: ||{pass}||",
   "server.info": "OpenCode Server: {url}",
   "cmd.description.server": "Show server URL and status",
   "connect.oauth_polling": "Waiting for authorization... The server will detect it automatically (browser must be on the same machine).",

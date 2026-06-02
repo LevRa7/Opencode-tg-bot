@@ -106,9 +106,17 @@ async function doConnect(
   await ctx.editMessageText("⏳ " + t("ssh.connecting_saved") + "...").catch(() => {});
 
   try {
-    await sshManager.connect(userId, details, auth, deployTarget);
-    await sshManager.bootstrapRemoteServer(userId);
-    await sshManager.saveCredentials(userId, details, auth, deployTarget);
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("SSH bootstrap timed out after 3 minutes")), 180_000),
+    );
+    await Promise.race([
+      (async () => {
+        await sshManager.connect(userId, details, auth, deployTarget);
+        await sshManager.bootstrapRemoteServer(userId);
+        await sshManager.saveCredentials(userId, details, auth, deployTarget);
+      })(),
+      timeout,
+    ]);
     await ctx.editMessageText(t("ssh.success")).catch(() => {});
   } catch (err) {
     await sshManager.disconnect(userId).catch(() => {});

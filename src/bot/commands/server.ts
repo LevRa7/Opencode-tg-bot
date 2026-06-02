@@ -5,7 +5,6 @@ import { t } from "../../i18n/index.js";
 import { getTenantRuntimeInfo } from "../../settings/manager.js";
 import { getCurrentTelegramConversationScope } from "../../telegram/scope.js";
 import { sshManager } from "../../utils/ssh-manager.js";
-import { logger } from "../../utils/logger.js";
 
 async function getExternalUrl(): Promise<string> {
   try {
@@ -16,54 +15,62 @@ async function getExternalUrl(): Promise<string> {
   return "";
 }
 
+function escapeMd2(text: string): string {
+  return text.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, "\\$&");
+}
+
 export async function handleServer(ctx: Context): Promise<void> {
   const scope = getCurrentTelegramConversationScope();
-  let url = "";
+  let serverUrl = "";
+  let externalUrl = "";
 
   if (scope && sshManager.isSshActive(scope.userId)) {
     const conn = sshManager.getActiveConnection(scope.userId);
-    const details = conn?.details;
-    if (details) {
-      url = `ssh://${details.username}@${details.host}:${details.port ?? 22} (Docker)`;
-      // Also show the external IP
-      const extUrl = await getExternalUrl();
-      if (extUrl) url += `\nExternal: ${extUrl}`;
+    const d = conn?.details;
+    if (d) {
+      const target = conn?.deployTarget === "docker" ? "Docker" : "Host";
+      serverUrl = `ssh://${d.username}@${d.host}:${d.port ?? 22} (${target})`;
+      externalUrl = `http://${d.host}:${conn!.remotePort}`;
     }
   }
 
-  if (!url) {
-    url = config.opencode.apiUrl;
-    // Try to replace localhost with external IP
-    if (url.includes("localhost") || url.includes("127.0.0.1")) {
-      const extUrl = await getExternalUrl();
-      if (extUrl) url += `\nExternal: ${extUrl}`;
+  if (!serverUrl) {
+    serverUrl = config.opencode.apiUrl;
+    if (serverUrl.includes("localhost") || serverUrl.includes("127.0.0.1")) {
+      externalUrl = await getExternalUrl();
     }
     if (scope && scope.userId !== config.telegram.adminUserId) {
       const runtime = getTenantRuntimeInfo(scope.userId);
-      url = runtime?.baseUrl || url;
+      serverUrl = runtime?.baseUrl || serverUrl;
     }
   }
 
-  await ctx.reply(t("server.info", { url }));
-
+  let healthStatus: string;
+  let credsBlock = "";
   try {
     const { data, error } = await opencodeClient.global.health();
     if (error || !data) {
-      await ctx.reply(t("server.unavailable"));
+      healthStatus = "\u274c " + t("server.unavailable");
     } else {
-      await ctx.reply(t("server.healthy"));
+      healthStatus = "\u2705 " + t("server.healthy");
       const pw = config.opencode.password || "(not set)";
       if (config.opencode.username) {
-        await ctx.reply(
-          t("server.credentials", {
-            user: config.opencode.username,
-            pass: pw,
-          }),
-          { parse_mode: "MarkdownV2" }
-        );
+        credsBlock = "\n" + t("server.credentials", {
+          user: escapeMd2(config.opencode.username),
+          pass: escapeMd2(pw),
+        });
       }
     }
   } catch {
-    await ctx.reply(t("server.unavailable"));
+    healthStatus = "\u274c " + t("server.unavailable");
   }
+
+  const lines = [
+    t("server.info", { url: serverUrl }),
+    externalUrl ? "External: " + externalUrl : "",
+    healthStatus,
+    credsBlock,
+  ].filter(Boolean);
+
+  await ctx.reply(lines.join("\n"), { parse_mode: "MarkdownV2" });
 }

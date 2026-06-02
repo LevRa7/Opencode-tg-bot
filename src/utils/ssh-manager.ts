@@ -42,6 +42,19 @@ export interface SshConnection {
 class SshManager {
   private activeConnections = new Map<number, SshConnection>();
   private remoteHomeDirCache = new Map<number, string>();
+  private bootstrapInProgress = new Set<number>();
+
+  setBootstrapInProgress(userId: number, inProgress: boolean): void {
+    if (inProgress) {
+      this.bootstrapInProgress.add(userId);
+    } else {
+      this.bootstrapInProgress.delete(userId);
+    }
+  }
+
+  isBootstrapInProgress(userId: number): boolean {
+    return this.bootstrapInProgress.has(userId);
+  }
 
   getActiveConnection(userId: number): SshConnection | undefined {
     return this.activeConnections.get(userId);
@@ -168,6 +181,24 @@ class SshManager {
         return false;
       }
     }
+  }
+
+  private sftpPutWithTimeout(
+    sftp: any,
+    localPath: string,
+    remotePath: string,
+    timeoutMs: number = 30000,
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`SFTP upload timed out after ${timeoutMs}ms: ${localPath} -> ${remotePath}`));
+      }, timeoutMs);
+      sftp.fastPut(localPath, remotePath, (e: any) => {
+        clearTimeout(timer);
+        if (e) reject(e);
+        else resolve();
+      });
+    });
   }
 
   async disconnect(userId: number): Promise<void> {
@@ -533,6 +564,8 @@ class SshManager {
   }
 
   async bootstrapRemoteServer(userId: number): Promise<void> {
+    this.setBootstrapInProgress(userId, true);
+    try {
     const conn = this.activeConnections.get(userId);
     if (!conn) {
       throw new Error("No active SSH connection");
@@ -541,10 +574,17 @@ class SshManager {
     logger.info(`[SSHManager] Bootstrapping remote server for user ${userId} using target: ${conn.deployTarget}`);
 
     const client = conn.client;
-    const executeCommand = (cmd: string): Promise<string> => {
+    const executeCommand = (cmd: string, timeoutMs?: number): Promise<string> => {
       return new Promise<string>((resolve, reject) => {
+        const timer = timeoutMs ? setTimeout(() => {
+          reject(new Error(`Command timed out after ${timeoutMs}ms: ${cmd}`));
+        }, timeoutMs) : null;
+
         client.exec(cmd, (err: Error | undefined, stream: any) => {
-          if (err) return reject(err);
+          if (err) {
+            if (timer) clearTimeout(timer);
+            return reject(err);
+          }
 
           let stdout = "";
           let stderr = "";
@@ -558,6 +598,7 @@ class SshManager {
           });
 
           stream.on("close", (code: number) => {
+            if (timer) clearTimeout(timer);
             if (code !== 0) {
               reject(new Error(`Command "${cmd}" exited with code ${code}. Stderr: ${stderr}`));
             } else {
@@ -571,7 +612,7 @@ class SshManager {
     if (conn.deployTarget === "docker") {
       // 1. Check if docker is installed on remote server
       try {
-        await executeCommand("docker --version");
+        await executeCommand("docker --version", 15000);
       } catch {
         throw new Error("Docker не установлен на удаленном сервере. Установите Docker или выберите тип установки 'Хост-система' (Host System).");
       }
@@ -610,7 +651,11 @@ class SshManager {
           await new Promise<void>((resolve, reject) => {
             conn.client.sftp((err: Error | undefined, sftp: any) => {
               if (err) return reject(err);
+              const timer = setTimeout(() => {
+                reject(new Error(`SFTP image upload timed out after 120000ms`));
+              }, 120000);
               sftp.fastPut(localTarPath, remoteTarPath, (e: any) => {
+                clearTimeout(timer);
                 if (e) return reject(e);
                 resolve();
               });
@@ -727,12 +772,12 @@ class SshManager {
       // We will check if `opencode` is installed, otherwise run with npm/npx
       let serveExecutable = "opencode";
       try {
-        await executeCommand("which opencode");
+        await executeCommand("which opencode", 15000);
       } catch {
         // If not installed globally, attempt to install globally or use npx fallback
         try {
           logger.info("[SSHManager] 'opencode' not found. Attempting to install globally via npm...");
-          await executeCommand("npm install -g opencode-ai");
+          await executeCommand("npm install -g opencode-ai", 120000);
         } catch {
           logger.warn("[SSHManager] Global npm install failed or not permitted. Falling back to npx.");
           serveExecutable = "npx opencode-ai";
@@ -743,12 +788,15 @@ class SshManager {
       const remotePort = await this.findFreeRemotePort(executeCommand);
       logger.info(`[SSHManager] Using remote port ${remotePort} for host process`);
 
-      // Kill any process that might still be holding this port
-      await executeCommand(`fuser -k ${remotePort}/tcp 2>/dev/null || true`);
+      // Kill any leftover opencode processes on the port range from previous attempts
+      await executeCommand("lsof -ti:49600-49699 2>/dev/null | xargs kill -9 2>/dev/null; true", 10000);
+      // Kill any process that might still be holding the target port
+      await executeCommand(`lsof -ti:${remotePort} 2>/dev/null | xargs kill -9 2>/dev/null; true`, 10000);
 
-      // 4. Start opencode serve on remote host with custom PATH prepended
-      const startCmd = `export PATH=$HOME/.config/opencode/bin:$PATH && nohup ${serveExecutable} serve --port ${remotePort} > /tmp/opencode.log 2>&1 &`;
-      await executeCommand(startCmd);
+      // 4. Start opencode serve on remote host with custom PATH prepended.
+      // Use setsid to fully detach from the SSH exec channel, preventing hangs.
+      const startCmd = `nohup sh -c 'export PATH=\$HOME/.config/opencode/bin:\$PATH; exec ${serveExecutable} serve --port ${remotePort}' </dev/null >/tmp/opencode.log 2>&1 &`;
+      await executeCommand(startCmd, 10000);
       logger.info(`[SSHManager] OpenCode server process started on remote host (port ${remotePort})`);
 
       // 5. Wait for the server to become ready
@@ -767,6 +815,9 @@ class SshManager {
         );
       }
       logger.info(`[SSHManager] SSH tunnel verified healthy after host bootstrap for user ${userId}`);
+    }
+  } finally {
+      this.setBootstrapInProgress(userId, false);
     }
   }
 
@@ -832,23 +883,17 @@ class SshManager {
           // 1. tg-cli (source: docker/vendor/python-tg-cli/SKILL.md)
           const tgCliLocalSkill = "docker/vendor/python-tg-cli/SKILL.md";
           await mkdirp(`${remoteSkillsDir}/tg-cli`);
-          await new Promise<void>((res, rej) => {
-            sftp.fastPut(tgCliLocalSkill, `${remoteSkillsDir}/tg-cli/SKILL.md`, (e: any) => e ? rej(e) : res());
-          });
+          await this.sftpPutWithTimeout(sftp, tgCliLocalSkill, `${remoteSkillsDir}/tg-cli/SKILL.md`);
 
           // 2. openai-media-transcriber (source: docker/skills/openai-media-transcriber/SKILL.md)
           const transLocalSkill = "docker/skills/openai-media-transcriber/SKILL.md";
           await mkdirp(`${remoteSkillsDir}/openai-media-transcriber`);
-          await new Promise<void>((res, rej) => {
-            sftp.fastPut(transLocalSkill, `${remoteSkillsDir}/openai-media-transcriber/SKILL.md`, (e: any) => e ? rej(e) : res());
-          });
+          await this.sftpPutWithTimeout(sftp, transLocalSkill, `${remoteSkillsDir}/openai-media-transcriber/SKILL.md`);
 
           // 3. gpt-image-api (source: docker/skills/gpt-image-api/SKILL.md)
           const gptLocalSkill = "docker/skills/gpt-image-api/SKILL.md";
           await mkdirp(`${remoteSkillsDir}/gpt-image-api`);
-          await new Promise<void>((res, rej) => {
-            sftp.fastPut(gptLocalSkill, `${remoteSkillsDir}/gpt-image-api/SKILL.md`, (e: any) => e ? rej(e) : res());
-          });
+          await this.sftpPutWithTimeout(sftp, gptLocalSkill, `${remoteSkillsDir}/gpt-image-api/SKILL.md`);
 
           // Define local bin path and remote bin path for tenant docker image context/helper files
           const remoteBinDir = `.config/opencode/bin`;
@@ -867,9 +912,7 @@ class SshManager {
           ];
 
           for (const helper of helpers) {
-            await new Promise<void>((res, rej) => {
-              sftp.fastPut(helper.local, `${remoteBinDir}/${helper.remote}`, (e: any) => e ? rej(e) : res());
-            });
+            await this.sftpPutWithTimeout(sftp, helper.local, `${remoteBinDir}/${helper.remote}`);
             // Make executable
             await new Promise<void>((res) => {
               sftp.chmod(`${remoteBinDir}/${helper.remote}`, 0o755, () => res());
@@ -878,9 +921,7 @@ class SshManager {
 
           // Upload AGENTS.md
           const localAgentsFile = "docker/AGENTS.md";
-          await new Promise<void>((res, rej) => {
-            sftp.fastPut(localAgentsFile, `.config/opencode/AGENTS.md`, (e: any) => e ? rej(e) : res());
-          });
+          await this.sftpPutWithTimeout(sftp, localAgentsFile, `.config/opencode/AGENTS.md`);
 
           logger.info(`[SSHManager] Skills and helper files successfully uploaded to remote server`);
           resolve();

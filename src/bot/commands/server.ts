@@ -33,7 +33,7 @@ export async function handleServer(ctx: Context): Promise<void> {
       serverUrl = `ssh://${d.username}@${d.host}:${d.port ?? 22} (${target})`;
       // Use bot server's external IP with tunnel port (remote might have cloud firewall)
       const botIp = await getExternalUrl().then(u => u ? new URL(u).hostname : d.host).catch(() => d.host);
-      externalUrl = `http://${botIp}:4096`;
+      externalUrl = `http://${d.host}:${conn!.remotePort}`;
     }
   }
 

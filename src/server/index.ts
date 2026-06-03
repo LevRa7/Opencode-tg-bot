@@ -5,7 +5,7 @@ import { handleAuthRequest } from "./auth-handler.js";
 import { handleProxyRequest } from "./proxy.js";
 import { logger } from "../utils/logger.js";
 
-const PORT = 80;
+const PORT = 8080;
 
 // Path to Mini App built files (relative to project root)
 const MINIAPP_DIST = path.resolve(process.cwd(), "..", "opencode-miniapp", "dist");

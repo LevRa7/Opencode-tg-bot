@@ -234,9 +234,12 @@ export function disposeDatabase(): void {
 
 // ====== SUBDOMAINS REPOSITORY ACCESSOR ======
 
+let _lastSubdomainDb: Database.Database | null = null;
+
 export function getSubdomainsRepository(): SubdomainsRepository {
-  if (!_subdomainsRepo) {
+  if (!_subdomainsRepo || _lastSubdomainDb !== dbInstance) {
     _subdomainsRepo = createSubdomainsRepository(dbInstance!);
+    _lastSubdomainDb = dbInstance;
   }
   return _subdomainsRepo;
 }

@@ -53,6 +53,7 @@ class SshManager {
   private remoteHomeDirCache = new Map<number, string>();
   private bootstrapInProgress = new Set<number>();
   private healthMonitorTimers = new Map<number, ReturnType<typeof setInterval>>();
+  private disconnectRequested = new Set<number>();
   private static readonly HEALTH_CHECK_INTERVAL_MS = 30_000;
 
   setBootstrapInProgress(userId: number, inProgress: boolean): void {
@@ -603,6 +604,8 @@ class SshManager {
     deployTarget: "docker" | "host",
     retries: number = 2,
   ): Promise<number> {
+    this.disconnectRequested.delete(userId);
+
     // If already connected, disconnect first
     if (this.isSshActive(userId)) {
       await this.disconnect(userId);
@@ -682,6 +685,12 @@ class SshManager {
 
       client.on("end", () => {
         logger.info(`[SSHManager] SSH connection ended for user ${userId}`);
+        if (this.disconnectRequested.has(userId)) {
+          logger.info(`[SSHManager] Intentional disconnect for user ${userId}, not reconnecting`);
+          this.disconnect(userId).catch(() => {});
+          return;
+        }
+
         this.disconnect(userId).catch(() => {});
         // Auto-reconnect to saved connection if available
         this.loadSavedByDetails(userId, details).then((saved) => {

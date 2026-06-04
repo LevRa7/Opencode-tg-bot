@@ -5,9 +5,12 @@ import { getStoredAgent } from "../agent/manager.js";
 import { getStoredModel } from "../model/manager.js";
 import { formatVariantForButton } from "../variant/manager.js";
 import { logger } from "../utils/logger.js";
-import type { ContextInfo, KeyboardState } from "./types.js";
+import { getSystemInfo } from "../utils/system-info.js";
+import { processManager } from "../process/manager.js";
+import { SessionType, type ContextInfo, type KeyboardState } from "./types.js";
 import { t } from "../i18n/index.js";
-import { getCurrentTelegramConversationScopeKey } from "../telegram/scope.js";
+import { getCurrentTelegramConversationScope, getCurrentTelegramConversationScopeKey } from "../telegram/scope.js";
+import { isTerminalTopic } from "../bot/commands/terminal.js";
 
 interface ScopedKeyboardState {
   state: KeyboardState | null;
@@ -27,8 +30,10 @@ function createEmptyScopedKeyboardState(): ScopedKeyboardState {
 
 class KeyboardManager {
   private scopedStates = new Map<string, ScopedKeyboardState>();
+  private autoUpdateInterval: ReturnType<typeof setInterval> | null = null;
 
   private readonly UPDATE_DEBOUNCE_MS = 2000;
+  private readonly AUTO_UPDATE_MS = 3000;
 
   private getScopeKey(): string {
     return getCurrentTelegramConversationScopeKey();
@@ -50,6 +55,7 @@ class KeyboardManager {
       currentModel,
       contextInfo: null,
       variantName: formatVariantForButton(currentModel.variant || "default"),
+      sessionMode: SessionType.NONE,
     };
   }
 
@@ -130,6 +136,48 @@ class KeyboardManager {
     logger.debug(`[KeyboardManager] Context cleared for scope=${scopeKey}`);
   }
 
+  public updateRunningStatus(isRunning: boolean): void {
+    const scopeKey = this.getScopeKey();
+    const scopedState = this.getScopedState(scopeKey);
+    if (!scopedState.state) {
+      logger.warn("[KeyboardManager] Cannot update running status: not initialized");
+      return;
+    }
+    scopedState.state.isRunning = isRunning;
+    logger.debug(`[KeyboardManager] Running status updated for scope=${scopeKey}: ${isRunning}`);
+  }
+
+  public setSessionMode(mode: SessionType): void {
+    const scopeKey = this.getScopeKey();
+    const scopedState = this.getScopedState(scopeKey);
+    if (!scopedState.state) {
+      logger.warn("[KeyboardManager] Cannot set session mode: not initialized");
+      return;
+    }
+    const oldMode = scopedState.state.sessionMode;
+    if (oldMode === mode) return;
+    scopedState.state.sessionMode = mode;
+    scopedState.lastUpdateTime = 0;
+    logger.debug(
+      `[KeyboardManager] Session mode changed for scope=${scopeKey}: ${oldMode} -> ${mode}`,
+    );
+    if (scopedState.api && scopedState.chatId) {
+      this.sendKeyboardUpdate(scopedState.chatId).catch(() => {});
+    }
+  }
+
+  public refreshSystemInfo(): void {
+    const scopeKey = this.getScopeKey();
+    const scopedState = this.getScopedState(scopeKey);
+    if (!scopedState.state) {
+      logger.warn("[KeyboardManager] Cannot refresh system info: not initialized");
+      return;
+    }
+    const info = getSystemInfo();
+    scopedState.state.cpuInfo = info.cpu;
+    scopedState.state.ramInfo = info.ram;
+  }
+
   public getContextInfo(): ContextInfo | null {
     return this.getScopedState().state?.contextInfo ?? null;
   }
@@ -140,17 +188,28 @@ class KeyboardManager {
       logger.warn("[KeyboardManager] Cannot build keyboard: not initialized");
       return createMainKeyboard("build", { providerID: "", modelID: "" }, undefined);
     }
+    this.refreshSystemInfo();
+    const isRunning = processManager.isRunning();
+    const scope = getCurrentTelegramConversationScope();
+    const isTerminal = scopedState.state.sessionMode === SessionType.TERMINAL
+      || (scopedState.state.sessionMode === SessionType.NONE && isTerminalTopic(scope?.messageThreadId));
     return createMainKeyboard(
       scopedState.state.currentAgent,
       scopedState.state.currentModel,
       scopedState.state.contextInfo ?? undefined,
       scopedState.state.variantName,
+      {
+        isRunning,
+        cpuInfo: scopedState.state.cpuInfo,
+        ramInfo: scopedState.state.ramInfo,
+        isTerminalTopic: isTerminal,
+      },
     );
   }
 
-  public async sendKeyboardUpdate(chatId?: number): Promise<void> {
-    const scopeKey = this.getScopeKey();
-    const scopedState = this.getScopedState(scopeKey);
+  public async sendKeyboardUpdate(chatId?: number, scopeKey?: string): Promise<void> {
+    const resolvedScopeKey = scopeKey ?? this.getScopeKey();
+    const scopedState = this.getScopedState(resolvedScopeKey);
     if (!scopedState.api) {
       logger.warn("[KeyboardManager] API not initialized");
       return;
@@ -172,9 +231,15 @@ class KeyboardManager {
 
     try {
       const keyboard = this.buildKeyboard();
-      await scopedState.api.sendMessage(targetChatId, t("keyboard.updated"), {
+      const scope = getCurrentTelegramConversationScope();
+      const sendOptions: Record<string, unknown> = {
         reply_markup: keyboard,
-      });
+        disable_notification: true,
+      };
+      if (scope?.messageThreadId) {
+        sendOptions.message_thread_id = scope.messageThreadId;
+      }
+      await scopedState.api.sendMessage(targetChatId, ".", sendOptions as any).catch(() => {});
       logger.debug(`[KeyboardManager] Keyboard update sent for scope=${scopeKey}`);
     } catch (err) {
       logger.error("[KeyboardManager] Failed to send keyboard update:", err);
@@ -196,6 +261,26 @@ class KeyboardManager {
 
   public isInitialized(): boolean {
     return this.getScopedState().state !== null;
+  }
+
+  public startAutoUpdate(): void {
+    if (this.autoUpdateInterval) return;
+    this.autoUpdateInterval = setInterval(() => {
+      for (const [scopeKey, scopedState] of this.scopedStates) {
+        if (scopedState.api && scopedState.chatId) {
+          this.sendKeyboardUpdate(scopedState.chatId, scopeKey).catch(() => {});
+        }
+      }
+    }, this.AUTO_UPDATE_MS);
+    logger.debug("[KeyboardManager] Auto-update started");
+  }
+
+  public stopAutoUpdate(): void {
+    if (this.autoUpdateInterval) {
+      clearInterval(this.autoUpdateInterval);
+      this.autoUpdateInterval = null;
+      logger.debug("[KeyboardManager] Auto-update stopped");
+    }
   }
 }
 

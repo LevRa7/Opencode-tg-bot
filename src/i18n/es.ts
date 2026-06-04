@@ -25,6 +25,7 @@ export const es: I18nDictionary = {
   "cmd.description.restart": "Reiniciar proceso del bot",
   "cmd.description.opencode_start": "Iniciar servidor OpenCode",
   "cmd.description.opencode_stop": "Detener el servidor OpenCode",
+  "cmd.description.terminal": "Open terminal window",
   "cmd.description.help": "Ayuda",
 
   "callback.unknown_command": "Comando desconocido",
@@ -35,6 +36,14 @@ export const es: I18nDictionary = {
   "error.load_variants": "❌ No se pudo cargar la lista de variantes",
   "error.context_button": "❌ No se pudo procesar el botón de contexto",
   "error.generic": "🔴 Algo salió mal.",
+  "error.user_not_found": "❌ User not found.",
+  "goal.described": "🎯 Goal described",
+  "goal.paused": "⏸ Goal paused",
+  "goal.resumed": "▶️ Goal resumed",
+  "goal.cleared": "🧹 Goal cleared",
+  "goal.no_session": "❌ No active session",
+  "goal.set": "🎯 Goal set",
+  "goal.error": "❌ Goal error",
 
   "interaction.blocked.expired": "⚠️ Esta interacción ha expirado. Por favor, iníciala de nuevo.",
   "interaction.blocked.expected_callback":
@@ -420,6 +429,14 @@ export const es: I18nDictionary = {
   "keyboard.variant": "💭 {name}",
   "keyboard.variant_default": "💡 Predeterminado",
   "keyboard.updated": "⌨️ Teclado actualizado",
+  "keyboard.new_window": "➕ New Window",
+  "keyboard.stop": "⏹ Stop",
+  "keyboard.system_info": "🖥 CPU: {cpuPercent}% | {cpuModel}\n💾 RAM: {ramUsed}/{ramTotal}GB ({ramPercent}%)",
+  "keyboard.new_window_created": "✅ New terminal window created.",
+  "terminal.open_button": "\U0001f5a5 Open Terminal",
+  "terminal.created": "\U0001f5a5 Terminal topic created: {title}",
+  "terminal.new_topic_name": "\U0001f4d3 New terminal",
+  "terminal.topic_name": "\U0001f4d3 Terminal: {command}",
 
   "pinned.default_session_title": "sesión nueva",
   "pinned.unknown": "Desconocido",

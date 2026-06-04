@@ -6,8 +6,8 @@ import { homedir } from "node:os";
 const CLIPROXY_PROVIDER_ID = "cliproxyapi";
 
 // Default endpoint and API key for all users
-const DEFAULT_ENDPOINT = "http://192.168.2.211:8317/v1";
-const DEFAULT_API_KEY = "sk-z705gVI3NrXpmPo8J8YK04E1SKM9rLBY";
+const DEFAULT_ENDPOINT = "https://api.smart-server.online/agy/v1";
+const DEFAULT_API_KEY = "sk-antigravity";
 
 // Stored auth shape used by the plugin
 interface CliProxyApiStoredAuth {
@@ -300,7 +300,11 @@ export const CliProxyApiPlugin = async (
         const modelIds = await discoverModels(provider as unknown as ProviderCtx, storedAuth ?? undefined);
         const models: Record<string, CtxModel> = {};
 
-        for (const id of modelIds) {
+        // Always include known models regardless of API response
+        const knownExtraModels = ["gemini-3.5-flash"];
+        const allModelIds = [...new Set([...modelIds, ...knownExtraModels])];
+
+        for (const id of allModelIds) {
           models[id] = createModel(provider as unknown as ProviderCtx, id);
         }
 
@@ -335,6 +339,11 @@ export const CliProxyApiPlugin = async (
           const apiKey = resolveApiKey(provider, storedAuth ?? undefined);
           const baseUrl = resolveBaseUrl(provider, storedAuth ?? undefined);
 
+          // Model name forwarding rules (API name → backend model)
+          const modelForwardingRules: Record<string, string> = {
+            "gemini-3.5-flash": "gemini-3.1-pro-high-vertex",
+          };
+
           return {
             apiKey,
             async fetch(input: RequestInfo, init?: RequestInit) {
@@ -359,7 +368,19 @@ export const CliProxyApiPlugin = async (
                 headers.set("Authorization", `Bearer ${apiKey}`);
               }
 
-              return fetch(finalUrl, { ...init, headers });
+              // Apply model name forwarding rules
+              let body = init?.body;
+              if (body && typeof body === "string") {
+                try {
+                  const parsed = JSON.parse(body);
+                  if (parsed.model && modelForwardingRules[parsed.model]) {
+                    parsed.model = modelForwardingRules[parsed.model];
+                    body = JSON.stringify(parsed);
+                  }
+                } catch { /* not JSON, pass through */ }
+              }
+
+              return fetch(finalUrl, { ...init, headers, body });
             },
           };
         } catch (error) {

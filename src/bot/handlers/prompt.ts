@@ -9,7 +9,7 @@ import { getStoredModel, switchToFallbackModel, getFallbackModel, getRuntimeMode
 import { isModelUnavailableError } from "../utils/model-error-patterns.js";
 import { deletePromptRetryContext, setPromptRetryContext } from "./prompt-context.js";
 import { formatVariantForButton } from "../../variant/manager.js";
-import { createMainKeyboard } from "../utils/keyboard.js";
+import { SessionType } from "../../keyboard/types.js";
 import {
   extractMessageThreadIdFromContext,
   extractThreadTargetFromContext,
@@ -31,6 +31,7 @@ import { foregroundSessionState } from "../../scheduled-task/foreground-state.js
 import { threadContextManager } from "../../thread/manager.js";
 import { getDefaultProject } from "../../project/manager.js";
 import { processManager } from "../../process/manager.js";
+import { getSystemInfo } from "../../utils/system-info.js";
 import { sshManager } from "../../utils/ssh-manager.js";
 import { assistantRunState } from "../assistant-run-state.js";
 import { IncomingMediaBatch } from "../incoming-media-batch.js";
@@ -655,16 +656,8 @@ export async function processUserPrompt(
       logger.error("[Bot] Error creating pinned message for new session:", err);
     }
 
-    const currentAgent = getStoredAgent();
-    const currentModel = getStoredModel();
-    const contextInfo = pinnedMessageManager.getContextInfo();
-    const variantName = formatVariantForButton(currentModel.variant || "default");
-    const keyboard = createMainKeyboard(
-      currentAgent,
-      currentModel,
-      contextInfo ?? undefined,
-      variantName,
-    );
+    keyboardManager.setSessionMode(SessionType.AGENT);
+    const keyboard = keyboardManager.getKeyboard();
 
     await ctx.reply(
       t("bot.session_created", { title: session.title }),
@@ -683,6 +676,24 @@ export async function processUserPrompt(
         logger.error("[Bot] Error creating pinned message for existing session:", err);
       }
     }
+
+    keyboardManager.setSessionMode(SessionType.AGENT);
+  }
+
+  // Rename terminal topic after user command
+  try {
+    const mtId = extractMessageThreadIdFromContext(ctx);
+    if (mtId !== undefined && ctx.chat?.id) {
+      let topicText = text;
+      const senderMatch = text.match(/^(.+?):\s*\n/);
+      if (senderMatch && senderMatch[1].length < 50) {
+        topicText = text.slice(senderMatch[0].length);
+      }
+      const truncated = topicText.length > 128 ? topicText.slice(0, 125) + "..." : topicText;
+      await ctx.api.editForumTopic(ctx.chat.id, mtId, { name: truncated });
+    }
+  } catch {
+    // ignore rename failures
   }
 
   void ensureEventSubscription(currentSession.directory);

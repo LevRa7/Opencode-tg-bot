@@ -481,7 +481,7 @@ describe("settings/manager scoped state", () => {
     expect(getCurrentSession()).toBeUndefined();
   });
 
-  it("falls back to globally set session from a new scoped topic", () => {
+  it("does not leak globally set session into a new scoped topic", () => {
     setCurrentProject({ id: "project-global", worktree: "/repo-global" });
     setCurrentSession({ id: "session-global", title: "Global", directory: "/repo-global" });
 
@@ -492,8 +492,8 @@ describe("settings/manager scoped state", () => {
 
     // Project remains scope-isolated (no cross-scope fallback for project)
     expect(result.project).toBeUndefined();
-    // Session falls back to _lastSetSession when topic scope has no session
-    expect(result.session).toEqual({ id: "session-global", title: "Global", directory: "/repo-global" });
+    // Session must not bleed across topic boundaries via _lastSetSession
+    expect(result.session).toBeUndefined();
   });
 
   it("clears only the active scoped state without erasing the user default project", async () => {
@@ -624,7 +624,7 @@ describe("settings/manager scoped state", () => {
     expect(runWithTelegramConversationScope(scopeA, () => getReasoningMode())).toBe(1);
   });
 
-  it("fallbacks session to _lastSetSession when topic scope has no session", () => {
+  it("does not leak session across topic boundaries via _lastSetSession", () => {
     // Simulate: user selects session in main thread (sessions command callback)
     runWithTelegramConversationScope(scopeAMainThread, () => {
       setCurrentProject({ id: "project-a", worktree: "/repo-a" });
@@ -637,9 +637,10 @@ describe("settings/manager scoped state", () => {
       session: getCurrentSession(),
     }));
 
-    // Should have project from current scope and session from _lastSetSession fallback
+    // Project falls back to user default (set from main thread scope)
     expect(result.project).toEqual({ id: "project-a", worktree: "/repo-a" });
-    expect(result.session).toEqual({ id: "session-from-main", title: "Selected from main thread", directory: "/repo-a" });
+    // Session must NOT leak across topic boundaries via _lastSetSession
+    expect(result.session).toBeUndefined();
   });
 
   it("uses exact scope match over _lastSetSession when direct binding exists", () => {

@@ -35,9 +35,13 @@ interface DraftStreamState {
   editApi: EditApi | null;
   disabled: boolean;
   inFlight: boolean;
+  accumulatedText: string;
+  accumulatorMessageId: number | null;
+  hasSentFinal: boolean;
+  flushLock: Promise<void>;
 }
 
-const TELEGRAM_MESSAGE_LIMIT = 4096;
+const TELEGRAM_MESSAGE_LIMIT = 3800;
 const STREAM_APPEND_MIN_CHARS = 16;
 const STREAM_APPEND_MAX_CHARS = 96;
 const STREAM_APPEND_WORD_LOOKAHEAD = 24;
@@ -245,6 +249,10 @@ export class MessageDraftStreamManager {
       editApi: null,
       disabled: false,
       inFlight: false,
+      accumulatedText: "",
+      accumulatorMessageId: null,
+      hasSentFinal: false,
+      flushLock: Promise.resolve(),
     };
     this.states.set(sessionId, created);
     return created;
@@ -363,4 +371,35 @@ export class MessageDraftStreamManager {
       );
     }
   }
+
+  accumulateText(sessionId: string, text: string): void {
+    const state = this.getOrCreateState(sessionId);
+    if (!state) return;
+    state.accumulatedText += text;
+    if (state.accumulatedText.length >= TELEGRAM_MESSAGE_LIMIT) {
+      state.hasSentFinal = true;
+    }
+  }
+
+  finalizeWithBlockquote(sessionId: string): string | null {
+    const state = this.states.get(sessionId);
+    if (!state || !state.accumulatedText) return null;
+    const text = state.accumulatedText;
+    state.accumulatedText = "";
+    return "<blockquote expandable>" + text + "</blockquote>";
+  }
+
+  getAccumulatedText(sessionId: string): string {
+    return this.states.get(sessionId)?.accumulatedText ?? "";
+  }
+
+  clearAccumulator(sessionId: string): void {
+    const state = this.states.get(sessionId);
+    if (state) {
+      state.accumulatedText = "";
+      state.accumulatorMessageId = null;
+      state.hasSentFinal = false;
+    }
+  }
+
 }

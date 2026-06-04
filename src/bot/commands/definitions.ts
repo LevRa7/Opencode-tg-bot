@@ -1,17 +1,14 @@
 import type { I18nKey } from "../../i18n/en.js";
 import { t } from "../../i18n/index.js";
-
 export interface BotCommandDefinition {
   command: string;
   description: string;
 }
-
 interface BotCommandI18nDefinition {
   command: string;
   descriptionKey: I18nKey;
   adminOnly?: boolean;
 }
-
 const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "status", descriptionKey: "cmd.description.status" },
   { command: "new", descriptionKey: "cmd.description.new" },
@@ -41,12 +38,14 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "share", descriptionKey: "cmd.description.share" },
   { command: "connect", descriptionKey: "cmd.description.connect" },
   { command: "server", descriptionKey: "cmd.description.server" },
+  
+  
+  
+  { command: "terminal", descriptionKey: "cmd.description.terminal" },
   { command: "help", descriptionKey: "cmd.description.help" },
 ];
-
 export function getLocalizedBotCommands(options?: { isAdmin?: boolean }): BotCommandDefinition[] {
   const isAdmin = options?.isAdmin ?? true;
-
   return COMMAND_DEFINITIONS.filter((definition) => isAdmin || !definition.adminOnly).map(
     ({ command, descriptionKey }) => ({
       command,
@@ -54,5 +53,4 @@ export function getLocalizedBotCommands(options?: { isAdmin?: boolean }): BotCom
     }),
   );
 }
-
 export const BOT_COMMANDS: BotCommandDefinition[] = getLocalizedBotCommands({ isAdmin: true });

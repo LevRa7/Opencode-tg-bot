@@ -162,3 +162,36 @@ export async function migrateIfNeeded(
   await fs.writeFile(markerFilePath, "");
   logger.info("[Migration] Done, marker created");
 }
+
+export function migrateV2(db: any): void {
+  const logger = {
+    info: (msg: string, ...args: any[]) => console.log("[Migration] " + msg, ...args),
+    warn: (msg: string, ...args: any[]) => console.warn("[Migration] " + msg, ...args),
+  };
+
+  const runV2 = db.transaction(() => {
+    const tables = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type=\x27table\x27 AND name=\x27schema_version\x27"
+    ).get();
+
+    if (!tables) {
+      db.exec("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL DEFAULT 1)");
+      db.prepare("INSERT INTO schema_version (version) VALUES (2)").run();
+      logger.info("V2 schema_version table created");
+    }
+
+    const cols = db.prepare("PRAGMA table_info(conversation_bindings)").all();
+    const hasServerConn = cols.some((c: any) => c.name === "server_connection_id");
+    if (!hasServerConn) {
+      try {
+        db.prepare("ALTER TABLE conversation_bindings ADD COLUMN server_connection_id TEXT").run();
+        logger.info("Added server_connection_id to conversation_bindings");
+      } catch (e) {
+        logger.warn("ALTER TABLE server_connection_id failed:", e);
+      }
+    }
+  });
+
+  runV2();
+  logger.info("V2 schema migration completed");
+}

@@ -125,6 +125,10 @@ export function startHttpServer(): Promise<void> {
         setTimeout(() => {
           serverInstance?.close();
           serverInstance = createServer();
+          serverInstance.on("error", (err2: NodeJS.ErrnoException) => {
+            logger.error("[HTTP] Retry failed", err2);
+            reject(err2);
+          });
           serverInstance.listen(PORT, () => {
             logger.info(`[HTTP] Server started on port ${PORT}`);
             resolve();

@@ -1,6 +1,7 @@
 import { validateInitData, isUserAuthorized } from "./auth.js";
 import { SubdomainManager } from "./subdomain-manager.js";
 import { getSubdomainsRepository } from "../settings/manager.js";
+import { resolveOpencodeRouteForUser } from "./route-resolver.js";
 
 const subdomainManager = new SubdomainManager(() => getSubdomainsRepository());
 
@@ -37,12 +38,15 @@ export async function handleAuthRequest(rawBody: string): Promise<AuthResponse> 
     "host",
   );
 
+  const route = resolveOpencodeRouteForUser(data.user.id);
+
   return {
     status: 200,
     body: JSON.stringify({
       subdomain: `${info.subdomain}.smart-server.online`,
       username: info.username,
       password: info.password || undefined,
+      apiPassword: route?.password || undefined,
       authenticated: true,
     }),
   };

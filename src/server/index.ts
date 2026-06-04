@@ -61,19 +61,17 @@ function createServer(): http.Server {
     const host = req.headers.host || "";
     const hostPart = host.split(":")[0];
     const baseDomain = "smart-server.online";
-    if (hostPart !== "localhost" && hostPart !== "127.0.0.1") {
-      if (hostPart.endsWith(`.${baseDomain}`) || hostPart === baseDomain) {
-        try {
-          await handleProxyRequest(req, res, host);
-          return;
-        } catch (err) {
-          logger.error("[HTTP] Proxy error", err);
-          if (!res.headersSent) {
-            res.writeHead(502, { "Content-Type": "text/plain" });
-            res.end("Proxy error");
-          }
-          return;
+    if (hostPart !== "localhost" && hostPart !== "127.0.0.1" && hostPart.endsWith(`.${baseDomain}`)) {
+      try {
+        await handleProxyRequest(req, res, host);
+        return;
+      } catch (err) {
+        logger.error("[HTTP] Proxy error", err);
+        if (!res.headersSent) {
+          res.writeHead(502, { "Content-Type": "text/plain" });
+          res.end("Proxy error");
         }
+        return;
       }
     }
 

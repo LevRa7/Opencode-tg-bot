@@ -22,6 +22,7 @@ import { attachSessionForScope } from "../../attach/service.js";
 import { showPermissionRequest } from "../handlers/permission.js";
 import { showCurrentQuestion } from "../handlers/question.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
+import { keyboardManager as km } from "../../keyboard/manager.js";
 import type { TelegramConversationScope } from "../../telegram/scope.js";
 
 const TERMINAL_EXEC_TIMEOUT_MS = 30_000;
@@ -62,6 +63,10 @@ async function saveTerminalTopics(): Promise<void> {
 
 export function isTerminalTopic(messageThreadId?: number): boolean {
   return messageThreadId !== undefined && terminalTopicIds.has(messageThreadId);
+}
+
+export function isTerminalRunning(messageThreadId: number): boolean {
+  return terminalProcesses.has(messageThreadId);
 }
 
 export function killTerminalProcess(messageThreadId: number): boolean {
@@ -198,12 +203,14 @@ export function executeTerminalCommand(
 
     child.on("close", (code) => {
       terminalProcesses.delete(messageThreadId);
+      km.sendKeyboardUpdate().catch(() => {});
       resolve({ code });
     });
 
     child.on("error", (err) => {
       onChunk(`\nError: ${err.message}`);
       terminalProcesses.delete(messageThreadId);
+      km.sendKeyboardUpdate().catch(() => {});
       resolve({ code: null });
     });
   });

@@ -20,10 +20,10 @@ export interface ResolvedSubdomain {
 }
 
 export class SubdomainManager {
-  constructor(private repo: SubdomainsRepository) {}
+  constructor(private getRepo: () => SubdomainsRepository) {}
 
   ensureSubdomain(userId: number, username: string | undefined, kind: "host" | "tenant"): SubdomainInfo {
-    const existing = this.repo.getByUserId(userId);
+    const existing = this.getRepo().getByUserId(userId);
     if (existing) {
       return {
         userId: existing.user_id,
@@ -39,7 +39,7 @@ export class SubdomainManager {
     const passwordHash = hashPassword(password);
     const now = new Date().toISOString();
 
-    this.repo.upsert(userId, {
+    this.getRepo().upsert(userId, {
       username: effectiveUsername,
       subdomain: effectiveUsername,
       password_hash: passwordHash,
@@ -69,7 +69,7 @@ export class SubdomainManager {
     const passwordHash = hashPassword(password);
     const now = new Date().toISOString();
 
-    this.repo.upsert(userId, {
+    this.getRepo().upsert(userId, {
       username: effectiveUsername,
       subdomain,
       password_hash: passwordHash,
@@ -90,7 +90,7 @@ export class SubdomainManager {
   }
 
   resolveSubdomain(subdomain: string): ResolvedSubdomain | null {
-    const row = this.repo.getBySubdomain(subdomain);
+    const row = this.getRepo().getBySubdomain(subdomain);
     if (!row) return null;
     return {
       userId: row.user_id,
@@ -103,7 +103,7 @@ export class SubdomainManager {
   }
 
   getSubdomainByUserId(userId: number): ResolvedSubdomain | null {
-    const row = this.repo.getByUserId(userId);
+    const row = this.getRepo().getByUserId(userId);
     if (!row) return null;
     return {
       userId: row.user_id,
@@ -116,10 +116,10 @@ export class SubdomainManager {
   }
 
   regeneratePassword(userId: number): string | null {
-    const row = this.repo.getByUserId(userId);
+    const row = this.getRepo().getByUserId(userId);
     if (!row) return null;
     const newPassword = this.generatePassword();
-    this.repo.upsert(userId, { password_hash: hashPassword(newPassword) });
+    this.getRepo().upsert(userId, { password_hash: hashPassword(newPassword) });
     return newPassword;
   }
 

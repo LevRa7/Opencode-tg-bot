@@ -5,11 +5,10 @@ import { getSubdomainsRepository } from "../settings/manager.js";
 import { resolveOpencodeRouteForUser } from "./route-resolver.js";
 import { logger } from "../utils/logger.js";
 
-const subdomainManager = new SubdomainManager(getSubdomainsRepository());
+const subdomainManager = new SubdomainManager(() => getSubdomainsRepository());
 
 interface ProxyTarget {
   baseUrl: string;
-  authHeader: string;
 }
 
 export function resolveProxyTarget(host: string): ProxyTarget | null {
@@ -34,13 +33,8 @@ export function resolveProxyTarget(host: string): ProxyTarget | null {
   const route = resolveOpencodeRouteForUser(resolved.userId);
   if (!route) return null;
 
-  const credentials = route.password
-    ? Buffer.from(`opencode:${route.password}`).toString("base64")
-    : undefined;
-
   return {
     baseUrl: route.baseUrl,
-    authHeader: credentials ? `Basic ${credentials}` : "",
   };
 }
 
@@ -63,7 +57,6 @@ export async function handleProxyRequest(
       Object.entries(req.headers).filter(([, v]) => v !== undefined) as [string, string | string[]][]
     ),
     host: targetUrl.host,
-    authorization: target.authHeader,
   };
 
   const proxyReq = http.request(

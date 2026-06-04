@@ -61,7 +61,7 @@ function createServer(): http.Server {
     const host = req.headers.host || "";
     const hostPart = host.split(":")[0];
     const baseDomain = "smart-server.online";
-    if (hostPart !== "localhost" && hostPart !== "127.0.0.1" && hostPart.endsWith(`.${baseDomain}`)) {
+    if (hostPart !== "localhost" && hostPart !== "127.0.0.1" && hostPart.endsWith(`.${baseDomain}`) && hostPart !== baseDomain) {
       try {
         await handleProxyRequest(req, res, host);
         return;

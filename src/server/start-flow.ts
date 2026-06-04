@@ -2,7 +2,7 @@ import { Context } from "grammy";
 import { SubdomainManager } from "./subdomain-manager.js";
 import { getSubdomainsRepository } from "../settings/manager.js";
 
-const subdomainManager = new SubdomainManager(getSubdomainsRepository());
+const subdomainManager = new SubdomainManager(() => getSubdomainsRepository());
 
 export async function showWebPanelOnboarding(ctx: Context): Promise<void> {
   const keyboard = {

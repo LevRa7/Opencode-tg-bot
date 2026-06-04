@@ -12,6 +12,7 @@ import { getStoredModel } from "../model/manager.js";
 import { getModelContextLimit } from "../model/context-limit.js";
 import type { FileChange, PinnedMessageState, TokensInfo } from "./types.js";
 import { t } from "../i18n/index.js";
+import { keyboardManager } from "../keyboard/manager.js";
 import {
   DEFAULT_CONTEXT_LIMIT,
   formatContextLine,
@@ -656,10 +657,15 @@ class PinnedMessageManager {
 
     try {
       const text = this.formatMessage();
+      const keyboard = keyboardManager.getKeyboard();
+      const sendOptions = this.getSendMessageThreadOptions(runtime) ?? {};
+      if (keyboard) {
+        (sendOptions as Record<string, unknown>).reply_markup = keyboard;
+      }
       const sentMessage = await runtime.api.sendMessage(
         runtime.chatId,
         text,
-        this.getSendMessageThreadOptions(runtime),
+        sendOptions as any,
       );
 
       runtime.state.messageId = sentMessage.message_id;
@@ -669,6 +675,7 @@ class PinnedMessageManager {
       runtime.lastRenderedMessageText = text;
 
       setPinnedMessageId(sentMessage.message_id);
+      keyboardManager.setKeyboardMessageId(sentMessage.message_id);
 
       await runtime.api.pinChatMessage(runtime.chatId, sentMessage.message_id, {
         disable_notification: true,

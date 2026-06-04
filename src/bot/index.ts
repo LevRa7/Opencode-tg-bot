@@ -27,7 +27,7 @@ import { variantCommand } from "./commands/variant.js";
 import { compactCommand } from "./commands/compact.js";
 import { handleSettingsCallback, settingsCommand } from "./commands/settings.js";
 import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
-import { abortCommand } from "./commands/abort.js";
+import { abortCommand, abortCurrentOperation } from "./commands/abort.js";
 import { handleServer } from "./commands/server.js";
 import { serverWebCommand, handleServerCallback } from "./commands/server-web.js";
 import { handleOnboardingCallback, showWebPanelOnboarding } from "../server/start-flow.js";
@@ -117,6 +117,7 @@ import {
 import { deletePromptRetryContext, getPromptRetryContext } from "./handlers/prompt-context.js";
 import { switchToFallbackModel, getStoredModel, getFallbackModel, isAlreadyOnFallbackModel } from "../model/manager.js";
 import { isModelUnavailableError } from "./utils/model-error-patterns.js";
+import { stripMessageTags } from "./utils/strip-message-tags.js";
 import type { ModelInfo } from "../model/types.js";
 import { IncomingMediaBatch } from "./incoming-media-batch.js";
 import type { ResolvedDeferredItem } from "../media/batch-types.js";
@@ -3934,10 +3935,13 @@ export function createBot(): Bot<Context> {
     logger.debug(`[Bot] Stop button pressed: ${ctx.message?.text}`);
 
     try {
-      // First try killing terminal command in this topic
+      // If in a terminal topic, abort the session and kill any local process
       const mtId = ctx.message?.message_thread_id;
-      if (mtId !== undefined && killTerminalProcess(mtId)) {
-        await ctx.reply("⏹ Terminal command stopped.");
+      if (mtId !== undefined && isTerminalTopic(mtId)) {
+        killTerminalProcess(mtId);
+        await abortCurrentOperation(ctx, { notifyUser: false }).catch(() => {});
+        await keyboardManager.sendKeyboardUpdate().catch(() => {});
+        await ctx.reply("⏹ Stopped.");
         return;
       }
 
@@ -4227,7 +4231,8 @@ export function createBot(): Bot<Context> {
     if (isTerminalTopic(mtId)) {
       // Rename topic to command
       try {
-        const truncated = text.length > 128 ? text.slice(0, 125) + "..." : text;
+        const cleanText = stripMessageTags(text);
+        const truncated = cleanText.length > 128 ? cleanText.slice(0, 125) + "..." : cleanText;
         await ctx.api.editForumTopic(ctx.chat.id, mtId!, { name: truncated });
       } catch { /* ignore */ }
 

@@ -7,6 +7,7 @@ import { interactionManager } from "../../interaction/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { stripMessageTags } from "../utils/strip-message-tags.js";
 
 function getCallbackMessageId(ctx: Context): number | null {
   const message = ctx.callbackQuery?.message;
@@ -124,7 +125,7 @@ export async function handleRenameTextAnswer(ctx: Context): Promise<boolean> {
     return false;
   }
 
-  const newTitle = text.trim();
+  const newTitle = stripMessageTags(text);
   if (!newTitle) {
     await ctx.reply(t("rename.empty_title"));
     return true;

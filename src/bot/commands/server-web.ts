@@ -2,7 +2,7 @@ import { Context } from "grammy";
 import { SubdomainManager } from "../../server/subdomain-manager.js";
 import { getSubdomainsRepository } from "../../settings/manager.js";
 
-const subdomainManager = new SubdomainManager(getSubdomainsRepository());
+const subdomainManager = new SubdomainManager(() => getSubdomainsRepository());
 
 export async function serverWebCommand(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;

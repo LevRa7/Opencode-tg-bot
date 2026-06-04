@@ -10,13 +10,15 @@ import { processManager } from "../process/manager.js";
 import { SessionType, type ContextInfo, type KeyboardState } from "./types.js";
 import { t } from "../i18n/index.js";
 import { getCurrentTelegramConversationScope, getCurrentTelegramConversationScopeKey } from "../telegram/scope.js";
-import { isTerminalTopic } from "../bot/commands/terminal.js";
+import { isTerminalTopic, isTerminalRunning } from "../bot/commands/terminal.js";
+import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
 
 interface ScopedKeyboardState {
   state: KeyboardState | null;
   api: Api | null;
   chatId: number | null;
   lastUpdateTime: number;
+  keyboardMessageId?: number;
 }
 
 function createEmptyScopedKeyboardState(): ScopedKeyboardState {
@@ -158,6 +160,7 @@ class KeyboardManager {
     if (oldMode === mode) return;
     scopedState.state.sessionMode = mode;
     scopedState.lastUpdateTime = 0;
+    scopedState.keyboardMessageId = undefined;
     logger.debug(
       `[KeyboardManager] Session mode changed for scope=${scopeKey}: ${oldMode} -> ${mode}`,
     );
@@ -200,6 +203,7 @@ class KeyboardManager {
       scopedState.state.variantName,
       {
         isRunning,
+        isTerminalRunning: isTerminal ? ((scope?.messageThreadId !== undefined && isTerminalRunning(scope.messageThreadId)) || foregroundSessionState.isBusy()) : false,
         cpuInfo: scopedState.state.cpuInfo,
         ramInfo: scopedState.state.ramInfo,
         isTerminalTopic: isTerminal,
@@ -231,19 +235,24 @@ class KeyboardManager {
 
     try {
       const keyboard = this.buildKeyboard();
-      const scope = getCurrentTelegramConversationScope();
-      const sendOptions: Record<string, unknown> = {
-        reply_markup: keyboard,
-        disable_notification: true,
-      };
-      if (scope?.messageThreadId) {
-        sendOptions.message_thread_id = scope.messageThreadId;
+
+      if (scopedState.keyboardMessageId) {
+        await scopedState.api.editMessageReplyMarkup(targetChatId, scopedState.keyboardMessageId, {
+          reply_markup: keyboard,
+        } as any).catch(() => {
+          scopedState.keyboardMessageId = undefined;
+        });
       }
-      await scopedState.api.sendMessage(targetChatId, ".", sendOptions as any).catch(() => {});
       logger.debug(`[KeyboardManager] Keyboard update sent for scope=${scopeKey}`);
     } catch (err) {
       logger.error("[KeyboardManager] Failed to send keyboard update:", err);
     }
+  }
+
+  public setKeyboardMessageId(messageId: number): void {
+    const scopedState = this.getScopedState();
+    scopedState.keyboardMessageId = messageId;
+    logger.debug(`[KeyboardManager] Keyboard messageId set: ${messageId}`);
   }
 
   public getKeyboard() {

@@ -40,6 +40,7 @@ function formatSystemInfoButton(cpu: CpuInfo, ram: RamInfo): string {
 
 export interface KeyboardOptions {
   isRunning?: boolean;
+  isTerminalRunning?: boolean;
   cpuInfo?: CpuInfo;
   ramInfo?: RamInfo;
   isTerminalTopic?: boolean;
@@ -63,7 +64,7 @@ export function createMainKeyboard(
     // Terminal topic: only terminal buttons
 
     // Row 1: New Window + Stop in one row
-    if (options?.isRunning) {
+    if (options?.isTerminalRunning) {
       keyboard.text(t("keyboard.new_window")).text(t("keyboard.stop")).row();
     } else {
       keyboard.text(t("keyboard.new_window")).row();

@@ -200,7 +200,6 @@ let telegraphKeysRepo = createTelegraphKeysRepository(_defaultDb);
 let fileDiffLogRepo = createFileDiffLogRepository(_defaultDb);
 let goalsRepo = createGoalsRepository(_defaultDb);
 let ctxBindings: ContextBindingsRepository = createContextBindingsRepository(_defaultDb);
-let _subdomainsRepo: SubdomainsRepository | null = null;
 let dbInstance: Database.Database | null = _defaultDb;
 
 // ====== INITIALIZATION ======
@@ -227,7 +226,6 @@ export async function loadSettings(): Promise<void> {
   runtime = createRuntimeRepository(dbInstance);
   sessionAttach = createSessionAttachmentsRepository(dbInstance);
   ctxBindings = createContextBindingsRepository(dbInstance);
-  _subdomainsRepo = null;
   topicRegRepo = createTopicRegistryRepository(dbInstance);
   telegraphKeysRepo = createTelegraphKeysRepository(dbInstance);
   fileDiffLogRepo = createFileDiffLogRepository(dbInstance);
@@ -247,14 +245,8 @@ export function disposeDatabase(): void {
 
 // ====== SUBDOMAINS REPOSITORY ACCESSOR ======
 
-let _lastSubdomainDb: Database.Database | null = null;
-
 export function getSubdomainsRepository(): SubdomainsRepository {
-  if (!_subdomainsRepo || _lastSubdomainDb !== dbInstance) {
-    _subdomainsRepo = createSubdomainsRepository(dbInstance!);
-    _lastSubdomainDb = dbInstance;
-  }
-  return _subdomainsRepo;
+  return createSubdomainsRepository(dbInstance!);
 }
 
 // ====== SCOPE HELPERS ======
@@ -920,7 +912,6 @@ export async function __resetSettingsForTests(): Promise<void> {
   runtime = createRuntimeRepository(dbInstance);
   sessionAttach = createSessionAttachmentsRepository(dbInstance);
   ctxBindings = createContextBindingsRepository(dbInstance);
-  _subdomainsRepo = null;
   topicRegRepo = createTopicRegistryRepository(dbInstance);
   telegraphKeysRepo = createTelegraphKeysRepository(dbInstance);
   fileDiffLogRepo = createFileDiffLogRepository(dbInstance);

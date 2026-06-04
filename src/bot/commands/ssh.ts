@@ -125,7 +125,7 @@ async function doConnect(
     await ctx.editMessageText(t("ssh.success")).catch(() => {});
 
     if (savedConnectionId) {
-      const subdomainManager = new SubdomainManager(getSubdomainsRepository());
+      const subdomainManager = new SubdomainManager(() => getSubdomainsRepository());
       const subdomain = subdomainManager.ensureSshSubdomain(
         userId,
         ctx.from?.username,

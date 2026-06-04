@@ -2,7 +2,7 @@ import { validateInitData, isUserAuthorized } from "./auth.js";
 import { SubdomainManager } from "./subdomain-manager.js";
 import { getSubdomainsRepository } from "../settings/manager.js";
 
-const subdomainManager = new SubdomainManager(getSubdomainsRepository());
+const subdomainManager = new SubdomainManager(() => getSubdomainsRepository());
 
 export interface AuthResponse {
   status: number;
@@ -42,6 +42,7 @@ export async function handleAuthRequest(rawBody: string): Promise<AuthResponse> 
     body: JSON.stringify({
       subdomain: `${info.subdomain}.smart-server.online`,
       username: info.username,
+      password: info.password || undefined,
       authenticated: true,
     }),
   };

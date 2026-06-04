@@ -17,6 +17,7 @@ import {
   type TelegramThreadTarget,
   withMessageThreadId,
 } from "../utils/message-thread.js";
+import { stripMessageTags } from "../utils/strip-message-tags.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { summaryAggregator } from "../../summary/aggregator.js";
@@ -684,10 +685,10 @@ export async function processUserPrompt(
   try {
     const mtId = extractMessageThreadIdFromContext(ctx);
     if (mtId !== undefined && ctx.chat?.id) {
-      let topicText = text;
-      const senderMatch = text.match(/^(.+?):\s*\n/);
+      let topicText = stripMessageTags(text);
+      const senderMatch = topicText.match(/^(.+?):\s*\n/);
       if (senderMatch && senderMatch[1].length < 50) {
-        topicText = text.slice(senderMatch[0].length);
+        topicText = topicText.slice(senderMatch[0].length);
       }
       const truncated = topicText.length > 128 ? topicText.slice(0, 125) + "..." : topicText;
       await ctx.api.editForumTopic(ctx.chat.id, mtId, { name: truncated });

@@ -179,6 +179,8 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
       logger.info("[Bot] Webhook removed, switching to long polling");
     }
 
+    await startHttpServer();
+
     if (!shutdownRequested) {
       await bot.start({
         onStart: async (botInfo) => {
@@ -200,8 +202,6 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
         },
       });
     }
-
-    await startHttpServer();
   } finally {
     process.off("SIGINT", handleSignal);
     process.off("SIGTERM", handleSignal);

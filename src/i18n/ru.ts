@@ -25,6 +25,7 @@ export const ru: I18nDictionary = {
   "cmd.description.restart": "Перезапустить процесс бота",
   "cmd.description.opencode_start": "Запустить OpenCode сервер",
   "cmd.description.opencode_stop": "Остановить OpenCode сервер",
+  "cmd.description.terminal": "Открыть окно терминала",
   "cmd.description.help": "Справка",
 
   "callback.unknown_command": "Неизвестная команда",
@@ -35,6 +36,14 @@ export const ru: I18nDictionary = {
   "error.load_variants": "❌ Ошибка при загрузке списка вариантов",
   "error.context_button": "❌ Ошибка при обработке кнопки контекста",
   "error.generic": "🔴 Произошла ошибка.",
+  "error.user_not_found": "❌ Пользователь не найден.",
+  "goal.described": "🎯 Goal described",
+  "goal.paused": "⏸ Goal paused",
+  "goal.resumed": "▶️ Goal resumed",
+  "goal.cleared": "🧹 Goal cleared",
+  "goal.no_session": "❌ No active session",
+  "goal.set": "🎯 Goal set",
+  "goal.error": "❌ Goal error",
 
   "interaction.blocked.expired": "⚠️ Текущая интеракция устарела. Запустите ее снова.",
   "interaction.blocked.expected_callback":
@@ -407,6 +416,15 @@ export const ru: I18nDictionary = {
   "keyboard.variant": "💭 {name}",
   "keyboard.variant_default": "💡 Default",
   "keyboard.updated": "⌨️ Клавиатура обновлена",
+  "keyboard.new_window": "➕ Новое окно",
+  "keyboard.stop": "⏹ Стоп",
+  "keyboard.system_info": "🖥 ЦП: {cpuPercent}% | {cpuModel}\n💾 ОЗУ: {ramUsed}/{ramTotal}GB ({ramPercent}%)",
+  "keyboard.new_window_created": "✅ Создано новое окно терминала.",
+
+  "terminal.open_button": "🖥 Открыть терминал",
+  "terminal.created": "🖥 Создан топик терминала: {title}",
+  "terminal.new_topic_name": "📓 Новый терминал",
+  "terminal.topic_name": "📓 Терминал: {command}",
 
   "pinned.default_session_title": "новая сессия",
   "pinned.unknown": "Неизвестно",

@@ -23,6 +23,7 @@ export const en = {
   "cmd.description.restart": "Restart bot process",
   "cmd.description.opencode_start": "Start OpenCode server",
   "cmd.description.opencode_stop": "Stop OpenCode server",
+  "cmd.description.terminal": "Open terminal window",
   "cmd.description.help": "Help",
 
   "callback.unknown_command": "Unknown command",
@@ -33,6 +34,14 @@ export const en = {
   "error.load_variants": "❌ Failed to load variants list",
   "error.context_button": "❌ Failed to process context button",
   "error.generic": "🔴 Something went wrong.",
+  "error.user_not_found": "❌ User not found.",
+  "goal.described": "🎯 Goal described",
+  "goal.paused": "⏸ Goal paused",
+  "goal.resumed": "▶️ Goal resumed",
+  "goal.cleared": "🧹 Goal cleared",
+  "goal.no_session": "❌ No active session",
+  "goal.set": "🎯 Goal set",
+  "goal.error": "❌ Goal error",
 
   "interaction.blocked.expired": "⚠️ This interaction has expired. Please start it again.",
   "interaction.blocked.expected_callback":
@@ -406,6 +415,15 @@ export const en = {
   "keyboard.variant": "💭 {name}",
   "keyboard.variant_default": "💡 Default",
   "keyboard.updated": "⌨️ Keyboard updated",
+  "keyboard.new_window": "➕ New Window",
+  "keyboard.stop": "⏹ Stop",
+  "keyboard.system_info": "🖥 CPU: {cpuPercent}% | {cpuModel}\n💾 RAM: {ramUsed}/{ramTotal}GB ({ramPercent}%)",
+  "keyboard.new_window_created": "✅ New terminal window created.",
+
+  "terminal.open_button": "🖥 Open Terminal",
+  "terminal.created": "🖥 Terminal topic created: {title}",
+  "terminal.new_topic_name": "📓 New terminal",
+  "terminal.topic_name": "📓 Terminal: {command}",
 
   "pinned.default_session_title": "new session",
   "pinned.unknown": "Unknown",

@@ -12,6 +12,7 @@ export interface SubagentTopicScope {
   chatId: number;
   messageThreadId: number;
   topicName?: string;
+  lastKnownTitle?: string;
 }
 
 export interface SubagentFallbackScope {
@@ -367,8 +368,14 @@ export class SubagentTopicService {
     entry.lifecycleState = "cleanup_pending";
   }
 
-  markFinalResponseDelivered(sessionId: string, input: MarkFinalResponseDeliveredInput): void {
+  markFinalResponseDelivered(sessionId: string, input: MarkFinalResponseDeliveredInput, telegraphUrl?: string): void {
     this.markTerminalStatus(sessionId, input.terminalStatus);
+    if (telegraphUrl) {
+      const entry = this.registry.get(sessionId);
+      if (entry) {
+        (entry as any).formattedStatus = `✅ ${input.terminalStatus} — [Отчёт](${telegraphUrl})`;
+      }
+    }
     this.confirmFinalDelivery(sessionId, input.autoDeleteMinutes);
   }
 

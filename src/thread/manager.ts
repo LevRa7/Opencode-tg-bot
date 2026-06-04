@@ -308,6 +308,15 @@ class ThreadContextManager {
         return { ...target };
       }
 
+      const existingContextKey = this.findSessionContextKey(currentSession.id);
+      if (existingContextKey && existingContextKey !== this.activeContextKey) {
+        logger.info(
+          `[ThreadContext] Session ${currentSession.id} is bound to a different context ${existingContextKey}, not reusing for new topic ${this.activeContextKey}`,
+        );
+        clearSession();
+        return { ...target };
+      }
+
       this.sessionByContext.set(this.activeContextKey, cloneSession(currentSession));
       this.rememberSessionScope(currentSession.id, scope);
       this.persistBindings();

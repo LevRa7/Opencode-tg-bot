@@ -8,6 +8,7 @@ import { clearAllInteractionState } from "../../interaction/cleanup.js";
 import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { keyboardManager } from "../../keyboard/manager.js";
+import { SessionType } from "../../keyboard/types.js";
 import {
   appendInlineMenuCancelButton,
   ensureActiveInlineMenu,
@@ -514,6 +515,7 @@ export async function handleSessionSelect(ctx: Context): Promise<boolean> {
     // Initialize keyboard manager if not already
     if (ctx.chat) {
       keyboardManager.initialize(ctx.api, ctx.chat.id);
+      keyboardManager.setSessionMode(SessionType.AGENT);
     }
 
     try {

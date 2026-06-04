@@ -7,6 +7,7 @@ import { clearAllInteractionState } from "../../interaction/cleanup.js";
 import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { keyboardManager } from "../../keyboard/manager.js";
+import { SessionType } from "../../keyboard/types.js";
 import { getStoredAgent } from "../../agent/manager.js";
 import { getStoredModel } from "../../model/manager.js";
 import { formatVariantForButton } from "../../variant/manager.js";
@@ -103,16 +104,8 @@ export async function newCommand(ctx: CommandContext<Context>) {
     }
 
     // Get current state for keyboard
-    const currentAgent = getStoredAgent();
-    const currentModel = getStoredModel();
-    const contextInfo = pinnedMessageManager.getContextInfo();
-    const variantName = formatVariantForButton(currentModel.variant || "default");
-    const keyboard = createMainKeyboard(
-      currentAgent,
-      currentModel,
-      contextInfo ?? undefined,
-      variantName,
-    );
+    keyboardManager.setSessionMode(SessionType.AGENT);
+    const keyboard = keyboardManager.getKeyboard();
 
     await ctx.reply(
       t("new.created", { title: session.title }),

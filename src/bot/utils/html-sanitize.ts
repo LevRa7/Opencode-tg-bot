@@ -45,8 +45,14 @@ export function sanitizeHtmlForTelegram(html: string): string {
 
   TAG_REGEX.lastIndex = 0;
   while ((match = TAG_REGEX.exec(html)) !== null) {
-    // Push text before this tag
-    parts.push(html.slice(lastIndex, match.index));
+    // Push text before this tag, escaping literal <, >, &
+    const textBefore = html.slice(lastIndex, match.index);
+    parts.push(
+      textBefore
+        .replace(/&(?!(?:amp|lt|gt|quot|#\d+|#x[0-9a-fA-F]+);)/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+    );
 
     const slash = match[1];
     const tagName = match[2].toLowerCase();
@@ -108,8 +114,15 @@ export function sanitizeHtmlForTelegram(html: string): string {
     lastIndex = match.index + match[0].length;
   }
 
-  // Push remaining text after last tag
-  parts.push(html.slice(lastIndex));
+  // Push remaining text after last tag and escape unescaped <, >, &
+  const remaining = html.slice(lastIndex);
+  // Escape literal <, >, & that are not part of valid HTML tags
+  parts.push(
+    remaining
+      .replace(/&(?!(?:amp|lt|gt|quot|#\d+|#x[0-9a-fA-F]+);)/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+  );
 
   // Phase 2: Append missing closing tags in reverse stack order
   const unclosed = [...openStack].reverse();

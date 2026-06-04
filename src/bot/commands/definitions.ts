@@ -44,6 +44,7 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "share", descriptionKey: "cmd.description.share" },
   { command: "connect", descriptionKey: "cmd.description.connect" },
   { command: "server", descriptionKey: "cmd.description.server" },
+  { command: "terminal", descriptionKey: "cmd.description.terminal" },
   { command: "help", descriptionKey: "cmd.description.help" },
   { command: "connect", descriptionKey: "cmd.description.connect" },
   { command: "share", descriptionKey: "cmd.description.share" },

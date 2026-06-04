@@ -71,6 +71,7 @@ class PinnedMessageManager {
   private scopedRuntimes = new Map<string, ScopedPinnedRuntime>();
 
   private onKeyboardUpdateCallback?: (tokensUsed: number, tokensLimit: number) => void;
+  private onTitleChangeCallback?: (newTitle: string) => void;
 
   private getScopeKey(): string {
     return getCurrentTelegramConversationScopeKey();
@@ -290,6 +291,11 @@ class PinnedMessageManager {
     if (limit > 0) {
       callback(runtime.state.tokensUsed, limit);
     }
+  }
+
+  setOnTitleChange(callback: (newTitle: string) => void): void {
+    this.onTitleChangeCallback = callback;
+    logger.debug(`[PinnedManager] Title change callback registered`);
   }
 
   getContextInfo(): { tokensUsed: number; tokensLimit: number } | null {

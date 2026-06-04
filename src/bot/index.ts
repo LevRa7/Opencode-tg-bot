@@ -17,6 +17,8 @@ import { restartCommand } from "./commands/restart.js";
 import {
   AGENT_MODE_BUTTON_TEXT_PATTERN,
   MODEL_BUTTON_TEXT_PATTERN,
+  STOP_BUTTON_TEXT_PATTERN,
+  NEW_WINDOW_BUTTON_TEXT_PATTERN,
 } from "./message-patterns.js";
 import { sessionsCommand, handleSessionSelect, handleBackgroundSessionOpen, buildBackgroundSessionOpenKeyboard } from "./commands/sessions.js";
 import { newCommand } from "./commands/new.js";
@@ -47,6 +49,9 @@ import {
 } from "./commands/ssh.js";
 import { streamCommand } from "./commands/stream.js";
 import { ttsCommand } from "./commands/tts.js";
+import { terminalCommand } from "./commands/terminal.js";
+import { openTerminalTopic } from "./commands/terminal.js";
+import { isTerminalTopic, executeTerminalCommand, killTerminalProcess, loadTerminalTopics } from "./commands/terminal.js";
 import { worktreeCommand, handleWorktreeCallback } from "./commands/worktree.js";
 import { openCommand, handleOpenCallback, clearOpenPathIndex } from "./commands/open.js";
 import { clearLsPathIndex, handleLsCallback, lsCommand } from "./commands/ls.js";
@@ -71,6 +76,7 @@ import { questionManager } from "../question/manager.js";
 import { interactionManager } from "../interaction/manager.js";
 import { clearAllInteractionState } from "../interaction/cleanup.js";
 import { keyboardManager } from "../keyboard/manager.js";
+import { SessionType } from "../keyboard/types.js";
 import { subscribeToEvents } from "../opencode/events.js";
 import { summaryAggregator } from "../summary/aggregator.js";
 import { formatToolInfo, getAssistantParseMode } from "../summary/formatter.js";
@@ -114,7 +120,7 @@ import { IncomingMediaBatch } from "./incoming-media-batch.js";
 import type { ResolvedDeferredItem } from "../media/batch-types.js";
 import { composeDeferredMediaPrompt } from "../media/prompt-composer.js";
 import { opencodeClient } from "../opencode/client.js";
-import { getCurrentSession } from "../session/manager.js";
+import { getCurrentSession, setCurrentSession, type SessionInfo } from "../session/manager.js";
 import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
 import { assistantRunState } from "./assistant-run-state.js";
 import { handleVoiceMessage } from "./handlers/voice.js";
@@ -155,6 +161,7 @@ import { ResponseStreamer } from "./streaming/response-streamer.js";
 import { ToolCallStreamer } from "./streaming/tool-call-streamer.js";
 import { SessionDeliveryOrchestrator } from "./delivery/session-delivery-orchestrator.js";
 import { threadContextManager } from "../thread/manager.js";
+import { processManager } from "../process/manager.js";
 import {
   withMessageThreadId,
   type TelegramDeliveryTarget,
@@ -3635,6 +3642,9 @@ export function createBot(): Bot<Context> {
   const bot = new Bot(config.telegram.token, botOptions);
   activeBotInstance = bot;
 
+  loadTerminalTopics().catch(() => {});
+  keyboardManager.startAutoUpdate();
+
   // Heartbeat for diagnostics: verify the event loop is not blocked
   let heartbeatCounter = 0;
   setInterval(() => {
@@ -3698,6 +3708,9 @@ export function createBot(): Bot<Context> {
     const scope = extractTelegramConversationScopeFromContext(ctx);
     return runWithTelegramConversationScope(scope, () => {
       threadContextManager.activateFromContext(ctx);
+      if (scope && scope.messageThreadId && isTerminalTopic(scope.messageThreadId)) {
+        keyboardManager.setSessionMode(SessionType.TERMINAL);
+      }
       return next();
     });
   });
@@ -3743,6 +3756,7 @@ export function createBot(): Bot<Context> {
   bot.command("stream", streamCommand);
   bot.command("restart", restartCommand);
   bot.command("tts", ttsCommand);
+  bot.command("terminal", terminalCommand);
   bot.command("opencode_start", opencodeStartCommand);
   bot.command("opencode_stop", opencodeStopCommand);
   bot.command("projects", projectsCommand);
@@ -3909,6 +3923,84 @@ export function createBot(): Bot<Context> {
       logger.error("[Bot] Error showing model menu:", err);
       await ctx.reply(t("error.load_models"));
     }
+  });
+
+  // Handle Reply Keyboard button "Stop"
+  bot.hears(STOP_BUTTON_TEXT_PATTERN, async (ctx) => {
+    logger.debug(`[Bot] Stop button pressed: ${ctx.message?.text}`);
+
+    try {
+      // First try killing terminal command in this topic
+      const mtId = ctx.message?.message_thread_id;
+      if (mtId !== undefined && killTerminalProcess(mtId)) {
+        await ctx.reply("⏹ Terminal command stopped.");
+        return;
+      }
+
+      if (!processManager.isRunning()) {
+        await ctx.reply(t("opencode_stop.not_running"));
+        return;
+      }
+
+      const pid = processManager.getPID();
+      const statusMsg = await ctx.reply(
+        t("opencode_stop.stopping", { pid: pid ?? "-" }),
+      );
+
+      const { success, error } = await processManager.stop(5000);
+
+      if (!success) {
+        await ctx.api.editMessageText(
+          ctx.chat.id,
+          statusMsg.message_id,
+          t("opencode_stop.stop_error", { error: error || t("common.unknown_error") }),
+        );
+        return;
+      }
+
+      await ctx.api.editMessageText(
+        ctx.chat.id,
+        statusMsg.message_id,
+        t("opencode_stop.success"),
+      );
+
+      keyboardManager.updateRunningStatus(false);
+    } catch (err) {
+      logger.error("[Bot] Error on stop button:", err);
+      await ctx.reply(t("opencode_stop.error"));
+    }
+  });
+
+  // Handle Reply Keyboard button "New Window"
+  bot.hears(NEW_WINDOW_BUTTON_TEXT_PATTERN, async (ctx) => {
+    logger.debug(`[Bot] New window button pressed: ${ctx.message?.text}`);
+
+    try {
+      const userId = ctx.from?.id;
+      if (!userId) {
+        await ctx.reply(t("error.user_not_found"));
+        return;
+      }
+
+      const forumChatId = threadContextManager.findForumChatIdForUser(userId);
+      if (!forumChatId) {
+        await ctx.reply(t("background.forum_not_found"));
+        return;
+      }
+
+      await openTerminalTopic(ctx.api, userId, forumChatId);
+
+      await ctx.reply(t("keyboard.new_window_created"));
+    } catch (err) {
+      logger.error("[Bot] Error creating new window:", err);
+      await ctx.reply(t("error.generic"));
+    }
+  });
+
+  // Handle Reply Keyboard system info button – open file manager
+  bot.hears(/^🖥\s/, async (ctx) => {
+    logger.debug(`[Bot] System info button pressed, opening /ls`);
+    await lsCommand(ctx as any);
   });
 
   bot.on("message:text", async (ctx, next) => {
@@ -4123,6 +4215,59 @@ export function createBot(): Bot<Context> {
 
     const handledSkillArgs = await handleSkillTextArguments(ctx, promptDeps);
     if (handledSkillArgs) {
+      return;
+    }
+
+    // Terminal topic: execute as shell command, not LLM
+    const mtId = ctx.message?.message_thread_id;
+    if (isTerminalTopic(mtId)) {
+      // Rename topic to command
+      try {
+        const truncated = text.length > 128 ? text.slice(0, 125) + "..." : text;
+        await ctx.api.editForumTopic(ctx.chat.id, mtId!, { name: truncated });
+      } catch { /* ignore */ }
+
+      const statusMsg = await ctx.reply(`<pre>$ ${text}</pre>`, { parse_mode: "HTML" });
+
+      let accumulated = "";
+      let lastEdit = Date.now();
+      const EDIT_DEBOUNCE_MS = 200;
+      let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const doEdit = async () => {
+        pendingTimer = null;
+        const safe = accumulated.slice(-3800);
+        try {
+          await ctx.api.editMessageText(
+            ctx.chat.id,
+            statusMsg.message_id,
+            `<pre>$ ${text}\n${safe}</pre>`,
+            { parse_mode: "HTML" },
+          );
+        } catch { /* ignore edit failures */ }
+      };
+
+      await executeTerminalCommand(text, mtId!, (chunk: string) => {
+        accumulated += chunk;
+        const now = Date.now();
+        if (now - lastEdit >= EDIT_DEBOUNCE_MS) {
+          lastEdit = now;
+          doEdit();
+        } else if (!pendingTimer) {
+          pendingTimer = setTimeout(() => {
+            lastEdit = Date.now();
+            doEdit();
+          }, EDIT_DEBOUNCE_MS - (now - lastEdit));
+        }
+      });
+
+      // Final flush
+      if (pendingTimer) {
+        clearTimeout(pendingTimer);
+        pendingTimer = null;
+      }
+      await doEdit();
+
       return;
     }
 

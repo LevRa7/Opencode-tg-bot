@@ -6,6 +6,7 @@ import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
 import { downloadTelegramFile, isTextMimeType, isFileSizeAllowed } from "../utils/file-download.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { handleFileAttachment } from "./file-attachment.js";
 import type { FilePartInput } from "@opencode-ai/sdk/v2";
 
 export interface DocumentHandlerDeps extends ProcessPromptDeps {
@@ -22,6 +23,7 @@ export interface DocumentHandlerDeps extends ProcessPromptDeps {
   ) => Promise<boolean>;
   enqueueCorrelatedItem?: (item: ResolvedDeferredItem) => boolean;
   acquireProcessingHold?: () => (() => void) | null;
+  handleFileAttachment?: typeof handleFileAttachment;
 }
 
 export async function handleDocumentMessage(
@@ -233,6 +235,6 @@ export async function handleDocumentMessage(
     }
   }
 
-  logger.warn(`[Document] Unsupported document MIME type: ${mimeType}, filename=${filename}`);
-  await ctx.reply(t("bot.file_type_unsupported"));
+  const fileAttachmentHandler = deps.handleFileAttachment ?? handleFileAttachment;
+  await fileAttachmentHandler(ctx, deps);
 }

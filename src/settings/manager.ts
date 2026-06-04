@@ -9,7 +9,7 @@ import {
 import { config } from "../config.js";
 import { getRuntimePaths } from "../runtime/paths.js";
 import { openDatabase, closeDatabase, SETTINGS_DDL } from "./db.js";
-import { migrateIfNeeded } from "./migrate.js";
+import { migrateIfNeeded, migrateV2 } from "./migrate.js";
 import {
   type UserPreferencesRepository,
   createUserPreferencesRepository,
@@ -38,9 +38,13 @@ import {
   type ContextBindingsRepository,
   createContextBindingsRepository,
 } from "./repositories/context-bindings.js";
+import { createTopicRegistryRepository } from "./repositories/topic-registry.js";
+import { createTelegraphKeysRepository } from "./repositories/telegraph-keys.js";
+import { createFileDiffLogRepository } from "./repositories/file-diff-log.js";
 import Database from "better-sqlite3";
 
 // ====== TYPE EXPORTS (unchanged from original) ======
+import { createGoalsRepository } from "./repositories/goals.js";
 
 export interface ProjectInfo {
   id: string;
@@ -187,6 +191,10 @@ let accessCtrl: AccessControlRepository = createAccessControlRepository(_default
 let scheduling: SchedulingRepository = createSchedulingRepository(_defaultDb);
 let runtime: RuntimeRepository = createRuntimeRepository(_defaultDb);
 let sessionAttach: SessionAttachmentsRepository = createSessionAttachmentsRepository(_defaultDb);
+let topicRegRepo = createTopicRegistryRepository(_defaultDb);
+let telegraphKeysRepo = createTelegraphKeysRepository(_defaultDb);
+let fileDiffLogRepo = createFileDiffLogRepository(_defaultDb);
+let goalsRepo = createGoalsRepository(_defaultDb);
 let ctxBindings: ContextBindingsRepository = createContextBindingsRepository(_defaultDb);
 let dbInstance: Database.Database | null = _defaultDb;
 
@@ -205,6 +213,7 @@ export async function loadSettings(): Promise<void> {
 
   dbInstance = openDatabase(dbPath);
   await migrateIfNeeded(dbInstance, paths.settingsFilePath, markerPath);
+  migrateV2(dbInstance);
 
   userPrefs = createUserPreferencesRepository(dbInstance);
   convBindings = createConversationBindingsRepository(dbInstance);
@@ -213,6 +222,10 @@ export async function loadSettings(): Promise<void> {
   runtime = createRuntimeRepository(dbInstance);
   sessionAttach = createSessionAttachmentsRepository(dbInstance);
   ctxBindings = createContextBindingsRepository(dbInstance);
+  topicRegRepo = createTopicRegistryRepository(dbInstance);
+  telegraphKeysRepo = createTelegraphKeysRepository(dbInstance);
+  fileDiffLogRepo = createFileDiffLogRepository(dbInstance);
+  goalsRepo = createGoalsRepository(dbInstance);
 }
 
 export function disposeDatabase(): void {
@@ -844,6 +857,30 @@ export function setPendingAccessRequests(requests: AccessApprovalRequest[]): Pro
   return Promise.resolve();
 }
 
+// ====== TOPIC REGISTRY ======
+
+export function getTopicRegistryRepo() {
+  return topicRegRepo;
+}
+
+// ====== TELEGRAPH KEYS ======
+
+export function getTelegraphKeysRepo() {
+  return telegraphKeysRepo;
+}
+
+// ====== FILE DIFF LOG ======
+
+export function getFileDiffLogRepo() {
+  return fileDiffLogRepo;
+}
+
+// ====== GOALS ======
+
+export function getGoalsRepo() {
+  return goalsRepo;
+}
+
 // ====== TEST HELPERS ======
 
 let testDbInstance: Database.Database | null = null;
@@ -865,4 +902,8 @@ export async function __resetSettingsForTests(): Promise<void> {
   runtime = createRuntimeRepository(dbInstance);
   sessionAttach = createSessionAttachmentsRepository(dbInstance);
   ctxBindings = createContextBindingsRepository(dbInstance);
+  topicRegRepo = createTopicRegistryRepository(dbInstance);
+  telegraphKeysRepo = createTelegraphKeysRepository(dbInstance);
+  fileDiffLogRepo = createFileDiffLogRepository(dbInstance);
+  goalsRepo = createGoalsRepository(dbInstance);
 }

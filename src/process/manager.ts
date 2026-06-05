@@ -430,9 +430,31 @@ class ProcessManager implements ProcessManagerInterface {
       return startResult;
     }
 
-    const ready = await this.waitForTenantHealth(baseUrl, userId);
+    // Query Docker for the actual host port — the script may have selected a different port
+    const safeTenantId = tenantId.replace(/[^a-zA-Z0-9._-]/g, '-');
+    const containerName = `opencode-serve-${safeTenantId}`;
+    const actualPort = await this.getActualContainerPort(containerName);
+    const effectiveBaseUrl = actualPort && actualPort !== tenantPort
+      ? this.buildTenantBaseUrl(actualPort)
+      : baseUrl;
+
+    if (actualPort && actualPort !== tenantPort) {
+      logger.info(
+        `[ProcessManager] Port divergence detected: Node.js selected ${tenantPort}, Docker uses ${actualPort}. Using ${effectiveBaseUrl}`,
+      );
+      const existingInfo = getTenantRuntimeInfo(userId);
+      if (existingInfo) {
+        await setTenantRuntimeInfo(userId, {
+          ...existingInfo,
+          port: actualPort,
+          baseUrl: effectiveBaseUrl,
+        });
+      }
+    }
+
+    const ready = await this.waitForTenantHealth(effectiveBaseUrl, userId);
     if (!ready) {
-      return { success: false, error: `Tenant runtime did not become ready at ${baseUrl}` };
+      return { success: false, error: `Tenant runtime did not become ready at ${effectiveBaseUrl}` };
     }
 
     return { success: true };
@@ -473,7 +495,29 @@ class ProcessManager implements ProcessManagerInterface {
         return startResult;
       }
 
-      const ready = await this.waitForTenantHealth(runtime.baseUrl, runtime.userId);
+      // Query Docker for the actual host port — the script may have selected a different port
+      const safeTenantId = runtime.tenantId.replace(/[^a-zA-Z0-9._-]/g, '-');
+      const containerName = `opencode-serve-${safeTenantId}`;
+      const actualPort = await this.getActualContainerPort(containerName);
+      const effectiveBaseUrl = actualPort && actualPort !== runtime.port
+        ? this.buildTenantBaseUrl(actualPort)
+        : runtime.baseUrl;
+
+      if (actualPort && actualPort !== runtime.port) {
+        logger.info(
+          `[ProcessManager] Port divergence detected on restart: Node.js selected ${runtime.port}, Docker uses ${actualPort}. Using ${effectiveBaseUrl}`,
+        );
+        const currentRuntime = getTenantRuntimeInfo(runtime.userId);
+        if (currentRuntime) {
+          await setTenantRuntimeInfo(runtime.userId, {
+            ...currentRuntime,
+            port: actualPort,
+            baseUrl: effectiveBaseUrl,
+          });
+        }
+      }
+
+      const ready = await this.waitForTenantHealth(effectiveBaseUrl, runtime.userId);
       if (!ready) {
         const runningRuntime = getTenantRuntimeInfo(runtime.userId);
         if (runningRuntime?.pid) {
@@ -482,7 +526,7 @@ class ProcessManager implements ProcessManagerInterface {
           await clearTenantRuntimeInfo(runtime.userId);
         }
 
-        return { success: false, error: `Tenant runtime did not become ready at ${runtime.baseUrl}` };
+        return { success: false, error: `Tenant runtime did not become ready at ${effectiveBaseUrl}` };
       }
     }
 
@@ -592,12 +636,48 @@ class ProcessManager implements ProcessManagerInterface {
         startTime: new Date().toISOString(),
       });
 
+      // Wait briefly to detect immediate script failures (e.g. missing Docker image)
+      const earlyExit = await new Promise<number | null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), 3000);
+        childProcess.on("exit", (code) => {
+          clearTimeout(timer);
+          resolve(code);
+        });
+      });
+
+      if (earlyExit !== null) {
+        const errorMsg = `Tenant launch script exited unexpectedly with code ${earlyExit} during startup`;
+        logger.error(`[ProcessManager] ${errorMsg}: userId=${runtime.userId}`);
+        await clearTenantRuntimeInfo(runtime.userId);
+        return { success: false, error: errorMsg };
+      }
+
       return { success: true };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       logger.error("[ProcessManager] Failed to start tenant runtime:", err);
       await clearTenantRuntimeInfo(runtime.userId);
       return { success: false, error: errorMessage };
+    }
+  }
+
+  /**
+   * Queries `docker port <containerName> 4096/tcp` to discover the actual host-side port
+   * Docker selected. This can differ from the port Node.js requested when
+   * `run-opencode-serve.sh` calls `select_free_host_port()` and the preferred port is
+   * already occupied by another container.
+   */
+  private async getActualContainerPort(containerName: string): Promise<number | null> {
+    try {
+      const raw = await execAsync(`docker port ${containerName} 4096/tcp`);
+      const text = typeof raw === "string" ? raw
+        : Array.isArray(raw) ? raw[0]
+        : (raw as { stdout?: string }).stdout ?? "";
+      const trimmed = text.trim();
+      const match = trimmed.match(/:(\d+)$/);
+      return match ? parseInt(match[1], 10) : null;
+    } catch {
+      return null;
     }
   }
 

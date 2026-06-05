@@ -34,7 +34,7 @@ export class SubdomainManager {
       };
     }
 
-    const effectiveUsername = username?.replace(/^@/, "") || `tg${userId}`;
+    const effectiveUsername = (username?.replace(/^@/, "") || `tg${userId}`).toLowerCase();
     const password = this.generatePassword();
     const now = new Date().toISOString();
 
@@ -63,7 +63,7 @@ export class SubdomainManager {
     kind: "ssh-host" | "ssh-docker",
     sshConnectionId: string,
   ): SubdomainInfo {
-    const effectiveUsername = username?.replace(/^@/, "") || `tg${userId}`;
+    const effectiveUsername = (username?.replace(/^@/, "") || `tg${userId}`).toLowerCase();
     const subdomain = `${hostname}.${effectiveUsername}`;
     const password = this.generatePassword();
     const now = new Date().toISOString();
@@ -90,7 +90,7 @@ export class SubdomainManager {
   }
 
   resolveSubdomain(subdomain: string): ResolvedSubdomain | null {
-    const row = this.getRepo().getBySubdomain(subdomain);
+    const row = this.getRepo().getBySubdomain(subdomain.toLowerCase());
     if (!row) return null;
     return {
       userId: row.user_id,

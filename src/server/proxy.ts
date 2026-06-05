@@ -21,7 +21,7 @@ export function resolveProxyTarget(host: string): ProxyTarget | null {
   const baseDomain = "smart-server.online";
   let subdomain: string;
   if (hostPart.endsWith(`.${baseDomain}`)) {
-    subdomain = hostPart.slice(0, -(baseDomain.length + 1));
+    subdomain = hostPart.slice(0, -(baseDomain.length + 1)).toLowerCase();
   } else {
     subdomain = hostPart;
   }

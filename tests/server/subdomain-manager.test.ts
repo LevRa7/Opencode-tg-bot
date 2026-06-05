@@ -61,7 +61,12 @@ function mockRepo(rows: SubdomainRow[] = []): SubdomainsRepository {
       }
       return undefined;
     }),
-    getBySubdomain: vi.fn((s: string) => store.get(s)),
+    getBySubdomain: vi.fn((s: string) => {
+      for (const [key, val] of store) {
+        if (key.toLowerCase() === s.toLowerCase()) return val;
+      }
+      return undefined;
+    }),
     upsert: vi.fn((userId: number, fields: any) => {
       store.set(fields.subdomain as string, { user_id: userId, ...fields } as SubdomainRow);
     }),
@@ -101,6 +106,13 @@ describe("SubdomainManager", () => {
       expect(result.username).toBe("tg456");
       expect(result.subdomain).toBe("tg456");
     });
+
+    it("should lowercase subdomain when creating with mixed-case username", () => {
+      const repo = mockRepo();
+      const mgr = new SubdomainManager(() => repo);
+      const result = mgr.ensureSubdomain(456, "JohnDoe", "host");
+      expect(result.subdomain).toBe("johndoe");
+    });
   });
 
   describe("resolveSubdomain", () => {
@@ -133,6 +145,18 @@ describe("SubdomainManager", () => {
       const repo = mockRepo([]);
       const mgr = new SubdomainManager(() => repo);
       expect(mgr.resolveSubdomain("unknown")).toBeNull();
+    });
+
+    it("should resolve subdomain case-insensitively (stored as JohnDoe, queried as johndoe)", () => {
+      const repo = mockRepo([{
+        user_id: 456, username: "JohnDoe", subdomain: "JohnDoe",
+        password_hash: "hash", kind: "tenant", created_at: "2026-01-01",
+        ssh_connection_id: null, hostname: null,
+      }]);
+      const mgr = new SubdomainManager(() => repo);
+      const result = mgr.resolveSubdomain("johndoe");
+      expect(result).toBeDefined();
+      expect(result!.userId).toBe(456);
     });
   });
 

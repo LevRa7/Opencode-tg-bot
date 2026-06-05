@@ -10,7 +10,7 @@ export interface SubdomainsRepository {
 
 export function createSubdomainsRepository(db: Database.Database): SubdomainsRepository {
   const getByUserIdStmt = db.prepare("SELECT * FROM subdomains WHERE user_id = ?");
-  const getBySubdomainStmt = db.prepare("SELECT * FROM subdomains WHERE subdomain = ?");
+  const getBySubdomainStmt = db.prepare("SELECT * FROM subdomains WHERE LOWER(subdomain) = LOWER(?)");
   const deleteStmt = db.prepare("DELETE FROM subdomains WHERE user_id = ?");
 
   return {

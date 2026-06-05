@@ -3,15 +3,50 @@ FROM ${TENANT_IMAGE}
 
 USER root
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends openssh-client python3-pip python3-venv python3-wheel-whl \
-  && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache \
+    python3 py3-pip py3-wheel py3-setuptools py3-virtualenv nodejs npm \
+    openssh-client-default util-linux \
+    nmap \
+    xvfb xdotool scrot \
+    imagemagick \
+    ffmpeg \
+    chromium \
+    gcc g++ make python3-dev cmake \
+    llvm19-dev \
+  && pip3 install --break-system-packages --no-cache-dir whatweb wmctrl samtools bcftools 2>/dev/null || true \
+  && ln -sf /bin/setpriv /usr/bin/setpriv
 
-RUN groupadd -g 1000 opencode || true \
-  && useradd -m -u 1000 -g 1000 -s /bin/sh opencode || true
+# Install skill dependencies: Python packages (non-GPU)
+# Each group is isolated so one failure doesn't block the rest
+RUN pip3 install --break-system-packages --no-cache-dir --upgrade pip wheel 'setuptools<76'; \
+    pip3 install --break-system-packages --no-cache-dir --prefer-binary \
+    openai-whisper 2>/dev/null || echo '[INFO] openai-whisper not installed (no musllinux wheel)'; \
+    rm -rf /root/.cache/pip
+# Attempt to install chromadb, skip if no wheel available
+RUN pip3 install --break-system-packages --no-cache-dir --only-binary=:all: chromadb 2>/dev/null || \
+    echo '[INFO] chromadb not installed (no musllinux wheel)'; \
+    rm -rf /root/.cache/pip
+RUN pip3 install --break-system-packages --no-cache-dir \
+    pyfiglet pygount sherlock-project debugpy pymupdf \
+    python-pptx biopython pysam comfy-cli huggingface-hub \
+    wandb google-api-python-client pillow dspy \
+    "parallel-web-tools[cli]" \
+  && rm -rf /root/.cache/pip
 
-RUN groupadd -g 2000 opencode-proxy || true \
-  && useradd -M -u 2000 -g 2000 -s /usr/sbin/nologin opencode-proxy || true
+# Install skill dependencies: Node.js packages (global)
+RUN npm install -g \
+    better-sqlite3 dotenv express qrcode tsx \
+  && npm cache clean --force 2>/dev/null || true
+
+# Install playwright (browser automation) — skip browser binary download, uses system chromium
+RUN npm install -g playwright \
+  && npm cache clean --force 2>/dev/null || true
+
+RUN addgroup -g 1000 opencode 2>/dev/null; \
+  adduser -D -u 1000 -G opencode -s /bin/sh opencode 2>/dev/null || true
+
+RUN addgroup -g 2000 opencode-proxy 2>/dev/null; \
+  adduser -D -u 2000 -G opencode-proxy -s /sbin/nologin opencode-proxy 2>/dev/null || true
 
 COPY vendor/python-tg-cli/src/tg_cli /opt/tg-cli/src/tg_cli
 RUN cat > /usr/local/bin/tg <<'EOF'
@@ -51,6 +86,13 @@ COPY AGENTS.md /etc/opencode-global/AGENTS.md
 # AGENTS.md merge script
 COPY bin/merge-agents.sh /usr/local/bin/merge-agents
 RUN chmod +x /usr/local/bin/merge-agents
+
+# Skills package (baked into image — all tenants can use it)
+COPY opencode-skills-pkg /usr/local/lib/opencode-skills-pkg
+
+# Skills installer script
+COPY bin/install-opencode-skills.sh /usr/local/bin/install-opencode-skills
+RUN chmod +x /usr/local/bin/install-opencode-skills
 
 # Entrypoint wrapper: merge AGENTS.md then exec opencode
 COPY bin/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

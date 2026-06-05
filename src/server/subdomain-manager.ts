@@ -1,5 +1,6 @@
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import type { SubdomainsRepository } from "../settings/repositories/subdomains.js";
+import { setServerPassword } from "../settings/manager.js";
 
 export interface SubdomainInfo {
   userId: number;
@@ -14,7 +15,6 @@ export interface ResolvedSubdomain {
   userId: number;
   kind: string;
   subdomain: string;
-  passwordHash: string;
   hostname: string | null;
   sshConnectionId: string | null;
 }
@@ -36,16 +36,16 @@ export class SubdomainManager {
 
     const effectiveUsername = username?.replace(/^@/, "") || `tg${userId}`;
     const password = this.generatePassword();
-    const passwordHash = hashPassword(password);
     const now = new Date().toISOString();
 
     this.getRepo().upsert(userId, {
       username: effectiveUsername,
       subdomain: effectiveUsername,
-      password_hash: passwordHash,
       kind,
       created_at: now,
     });
+
+    setServerPassword(userId, password);
 
     return {
       userId,
@@ -66,18 +66,18 @@ export class SubdomainManager {
     const effectiveUsername = username?.replace(/^@/, "") || `tg${userId}`;
     const subdomain = `${hostname}.${effectiveUsername}`;
     const password = this.generatePassword();
-    const passwordHash = hashPassword(password);
     const now = new Date().toISOString();
 
     this.getRepo().upsert(userId, {
       username: effectiveUsername,
       subdomain,
-      password_hash: passwordHash,
       kind,
       ssh_connection_id: sshConnectionId,
       hostname,
       created_at: now,
     });
+
+    setServerPassword(userId, password);
 
     return {
       userId,
@@ -96,7 +96,6 @@ export class SubdomainManager {
       userId: row.user_id,
       kind: row.kind,
       subdomain: row.subdomain,
-      passwordHash: row.password_hash,
       hostname: row.hostname,
       sshConnectionId: row.ssh_connection_id,
     };
@@ -109,7 +108,6 @@ export class SubdomainManager {
       userId: row.user_id,
       kind: row.kind,
       subdomain: row.subdomain,
-      passwordHash: row.password_hash,
       hostname: row.hostname,
       sshConnectionId: row.ssh_connection_id,
     };
@@ -119,15 +117,11 @@ export class SubdomainManager {
     const row = this.getRepo().getByUserId(userId);
     if (!row) return null;
     const newPassword = this.generatePassword();
-    this.getRepo().upsert(userId, { password_hash: hashPassword(newPassword) });
+    setServerPassword(userId, newPassword);
     return newPassword;
   }
 
   private generatePassword(): string {
     return randomBytes(9).toString("base64url").slice(0, 12);
   }
-}
-
-function hashPassword(password: string): string {
-  return createHash("sha256").update(password).digest("hex");
 }

@@ -2,6 +2,8 @@ import { Context } from "grammy";
 import { SubdomainManager } from "../../server/subdomain-manager.js";
 import { getSubdomainsRepository } from "../../settings/manager.js";
 import { resolveOpencodeRouteForUser } from "../../server/route-resolver.js";
+import { processManager } from "../../process/manager.js";
+import { config } from "../../config.js";
 
 const subdomainManager = new SubdomainManager(() => getSubdomainsRepository());
 
@@ -49,19 +51,21 @@ export async function handleServerCallback(ctx: Context): Promise<boolean> {
   if (!userId) return false;
 
   if (data === "server:regen_pw") {
-    const crypto = await import("node:crypto");
-    const newPassword = crypto.randomBytes(12).toString("base64url").slice(0, 16);
-    const { getOrCreateServerPassword, setServerPassword } = await import("../../settings/manager.js");
-    setServerPassword(userId, newPassword);
-    const pw = getOrCreateServerPassword(userId, newPassword);
-    if (pw) {
-      await ctx.answerCallbackQuery({ text: "Пароль обновлён", show_alert: true });
+    const newPassword = subdomainManager.regeneratePassword(userId);
+    if (newPassword) {
+      await ctx.answerCallbackQuery({ text: "Пароль обновлён, перезапускаю сервер...", show_alert: true });
       await ctx.reply(
-        `Новый пароль: <code>${pw}</code>\n\n<i>Может потребоваться перезапуск OpenCode сервера</i>`,
+        `Новый пароль: <code>${newPassword}</code>\n\n<i>Перезапускаю сервер...</i>`,
         { parse_mode: "HTML" },
       );
+      if (userId === config.telegram.adminUserId) {
+        await processManager.stop();
+        await processManager.start();
+      } else {
+        await processManager.restartTenantRuntimes();
+      }
     } else {
-      await ctx.answerCallbackQuery({ text: "Ошибка", show_alert: true });
+      await ctx.answerCallbackQuery({ text: "Ошибка: веб-панель не настроена", show_alert: true });
     }
   }
 

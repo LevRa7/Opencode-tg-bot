@@ -377,6 +377,7 @@ export function getServerPassword(userId?: number): string | undefined {
 
 export function setServerPassword(userId: number, password: string): void {
   userPrefs.upsert(userId, { server_password: password });
+  serverPasswordCache.delete(userId);
 }
 
 export function generateServerPassword(): string {

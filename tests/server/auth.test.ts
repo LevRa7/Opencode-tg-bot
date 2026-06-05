@@ -40,7 +40,7 @@ vi.mock("../../src/settings/manager.js", () => ({
   getApprovedTelegramUserIds: vi.fn(() => []),
   getSubdomainsRepository: vi.fn(() => ({
     getByUserId: vi.fn(() => null),
-    getBySubdomain: vi.fn(() => ({ user_id: 777, username: "test", subdomain: "test", password_hash: "hash", kind: "host", created_at: "2026", ssh_connection_id: null, hostname: null })),
+    getBySubdomain: vi.fn(() => ({ user_id: 777, username: "test", subdomain: "test", kind: "host", created_at: "2026", ssh_connection_id: null, hostname: null })),
     upsert: vi.fn(),
     deleteByUserId: vi.fn(),
   })),

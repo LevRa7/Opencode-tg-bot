@@ -13,7 +13,7 @@ beforeAll(() => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS subdomains (
       user_id INTEGER PRIMARY KEY, username TEXT NOT NULL,
-      subdomain TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+      subdomain TEXT NOT NULL UNIQUE,
       kind TEXT NOT NULL, ssh_connection_id TEXT, hostname TEXT, created_at TEXT NOT NULL
     )
   `);
@@ -25,7 +25,7 @@ afterAll(() => db.close());
 describe("SubdomainsRepository", () => {
   it("should insert and retrieve a subdomain", () => {
     repo.upsert(123, {
-      username: "lev", subdomain: "lev", password_hash: "hash123",
+      username: "lev", subdomain: "lev",
       kind: "host", created_at: "2026-01-01T00:00:00Z",
     });
     const row = repo.getByUserId(123);
@@ -73,7 +73,7 @@ describe("SubdomainManager", () => {
   describe("ensureSubdomain", () => {
     it("should create a new subdomain with generated password", () => {
       const repo = mockRepo();
-      const mgr = new SubdomainManager(repo);
+      const mgr = new SubdomainManager(() => repo);
       const result = mgr.ensureSubdomain(123, "lev", "host");
       expect(result.subdomain).toBe("lev");
       expect(result.username).toBe("lev");
@@ -85,10 +85,10 @@ describe("SubdomainManager", () => {
     it("should return existing subdomain without regenerating", () => {
       const repo = mockRepo([{
         user_id: 123, username: "lev", subdomain: "lev",
-        password_hash: "oldhash", kind: "host", created_at: "2026-01-01",
+        kind: "host", created_at: "2026-01-01",
         ssh_connection_id: null, hostname: null,
       }]);
-      const mgr = new SubdomainManager(repo);
+      const mgr = new SubdomainManager(() => repo);
       const result = mgr.ensureSubdomain(123, "lev", "host");
       expect(result.subdomain).toBe("lev");
       expect(result.password).toBeUndefined(); // existing has no plain password
@@ -96,7 +96,7 @@ describe("SubdomainManager", () => {
 
     it("should use tg{id} as username when no @username", () => {
       const repo = mockRepo();
-      const mgr = new SubdomainManager(repo);
+      const mgr = new SubdomainManager(() => repo);
       const result = mgr.ensureSubdomain(456, undefined, "host");
       expect(result.username).toBe("tg456");
       expect(result.subdomain).toBe("tg456");
@@ -107,10 +107,10 @@ describe("SubdomainManager", () => {
     it("should resolve primary subdomain", () => {
       const repo = mockRepo([{
         user_id: 123, username: "lev", subdomain: "lev",
-        password_hash: "hash", kind: "host", created_at: "2026-01-01",
+        kind: "host", created_at: "2026-01-01",
         ssh_connection_id: null, hostname: null,
       }]);
-      const mgr = new SubdomainManager(repo);
+      const mgr = new SubdomainManager(() => repo);
       const result = mgr.resolveSubdomain("lev");
       expect(result).toBeDefined();
       expect(result!.userId).toBe(123);
@@ -120,10 +120,10 @@ describe("SubdomainManager", () => {
     it("should resolve SSH subdomain with hostname", () => {
       const repo = mockRepo([{
         user_id: 123, username: "lev", subdomain: "vps.lev",
-        password_hash: "hash", kind: "ssh-host", hostname: "vps",
+        kind: "ssh-host", hostname: "vps",
         ssh_connection_id: "conn1", created_at: "2026-01-01",
       }]);
-      const mgr = new SubdomainManager(repo);
+      const mgr = new SubdomainManager(() => repo);
       const result = mgr.resolveSubdomain("vps.lev");
       expect(result).toBeDefined();
       expect(result!.kind).toBe("ssh-host");
@@ -131,7 +131,7 @@ describe("SubdomainManager", () => {
 
     it("should return null for unknown subdomain", () => {
       const repo = mockRepo([]);
-      const mgr = new SubdomainManager(repo);
+      const mgr = new SubdomainManager(() => repo);
       expect(mgr.resolveSubdomain("unknown")).toBeNull();
     });
   });
@@ -140,20 +140,18 @@ describe("SubdomainManager", () => {
     it("should generate new password and update hash", () => {
       const repo = mockRepo([{
         user_id: 123, username: "lev", subdomain: "lev",
-        password_hash: "oldhash", kind: "host", created_at: "2026-01-01",
+        kind: "host", created_at: "2026-01-01",
         ssh_connection_id: null, hostname: null,
       }]);
-      const mgr = new SubdomainManager(repo);
+      const mgr = new SubdomainManager(() => repo);
       const newPw = mgr.regeneratePassword(123);
       expect(newPw).toBeDefined();
       expect(newPw!.length).toBeGreaterThanOrEqual(12);
-      // verify upsert was called
-      expect(repo.upsert).toHaveBeenCalled();
     });
 
     it("should return null for missing user", () => {
       const repo = mockRepo([]);
-      const mgr = new SubdomainManager(repo);
+      const mgr = new SubdomainManager(() => repo);
       expect(mgr.regeneratePassword(999)).toBeNull();
     });
   });
@@ -161,7 +159,7 @@ describe("SubdomainManager", () => {
   describe("ensureSshSubdomain", () => {
     it("should create SSH subdomain with hostname prefix", () => {
       const repo = mockRepo();
-      const mgr = new SubdomainManager(repo);
+      const mgr = new SubdomainManager(() => repo);
       const result = mgr.ensureSshSubdomain(789, "ivan", "myserver", "ssh-host", "conn-abc");
       expect(result.subdomain).toBe("myserver.ivan");
       expect(result.kind).toBe("ssh-host");

@@ -25,12 +25,12 @@ vi.mock("../../src/settings/manager.js", () => ({
     getBySubdomain: vi.fn((s: string) => {
       if (s === "lev") return {
         user_id: 777, username: "lev", subdomain: "lev",
-        password_hash: "hash", kind: "host", created_at: "2026-01-01",
+        kind: "host", created_at: "2026-01-01",
         hostname: null, ssh_connection_id: null,
       };
       if (s === "vps.ivan") return {
         user_id: 999, username: "ivan", subdomain: "vps.ivan",
-        password_hash: "hash", kind: "ssh-host", hostname: "vps",
+        kind: "ssh-host", hostname: "vps",
         ssh_connection_id: "conn-1", created_at: "2026-01-01",
       };
       return null;

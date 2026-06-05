@@ -45,8 +45,7 @@ export async function handleAuthRequest(rawBody: string): Promise<AuthResponse> 
     body: JSON.stringify({
       subdomain: `${info.subdomain}.smart-server.online`,
       username: info.username,
-      password: info.password || undefined,
-      apiPassword: route?.password || undefined,
+      password: route?.password || undefined,
       authenticated: true,
     }),
   };

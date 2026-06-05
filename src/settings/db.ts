@@ -102,7 +102,6 @@ CREATE TABLE IF NOT EXISTS subdomains (
     user_id         INTEGER PRIMARY KEY,
     username        TEXT NOT NULL,
     subdomain       TEXT NOT NULL UNIQUE,
-    password_hash   TEXT NOT NULL,
     kind            TEXT NOT NULL,
     ssh_connection_id TEXT,
     hostname        TEXT,

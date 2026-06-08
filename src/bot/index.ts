@@ -333,6 +333,7 @@ const childTopicPromptSent = new Set<string>();
 const childReasoningBuffer = new Map<string, { messageId: string; text: string }>();
 const childTypingIntervals = new Map<string, ReturnType<typeof setInterval>>();
 const childSessionTitle = new Map<string, string>();
+const childTopicLastSetName = new Map<string, string>();
 
 interface ChildSessionMeta {
   agent: string;
@@ -381,6 +382,7 @@ function clearChildAssistantSession(sessionId: string): void {
   childTopicPromptSent.delete(sessionId);
   childSessionMeta.delete(sessionId);
   childSessionTitle.delete(sessionId);
+  childTopicLastSetName.delete(sessionId);
   childReasoningBuffer.delete(sessionId);
   const typingInterval = childTypingIntervals.get(sessionId);
   if (typingInterval) {
@@ -2206,16 +2208,20 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         const sessionTitle = childSessionTitle.get(sessionId);
         if (sessionTitle) {
           const truncated = sessionTitle.length > 128 ? sessionTitle.slice(0, 125) + "..." : sessionTitle;
-          safeBackgroundTask({
-            taskName: `topic-sync.${sessionId}`,
-            task: async () => {
-              try {
-                await botApi.editForumTopic(target.chatId, target.messageThreadId!, { name: truncated });
-              } catch {
-                // ignore rename failures
-              }
-            },
-          });
+          const lastSetName = childTopicLastSetName.get(sessionId);
+          if (truncated !== lastSetName) {
+            safeBackgroundTask({
+              taskName: `topic-sync.${sessionId}`,
+              task: async () => {
+                try {
+                  await botApi.editForumTopic(target.chatId, target.messageThreadId!, { name: truncated });
+                  childTopicLastSetName.set(sessionId, truncated);
+                } catch {
+                  // ignore rename failures
+                }
+              },
+            });
+          }
         }
       }
 

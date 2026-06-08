@@ -12,6 +12,8 @@ Documentation rule:
 
 ### Fixed
 
+- **Avoid unnecessary forum topic rename on every response:** Added `childTopicLastSetName` map in `src/bot/index.ts` to track the last topic name set via `editForumTopic` in `handleSessionIdle`. Before renaming, the code now compares the current session title with the cached name — if unchanged, the Bot API call is skipped. This prevents redundant topic rename notifications in Telegram despite the session name not actually changing.
+
 - **Permission requests now use delivery target and full routing resolution:** `setOnPermission` in `src/bot/index.ts:2610` was using `routing?.target ?? getSessionRoutingTarget()` and omitting `deliveryTarget`, unlike the question handler. This caused permission requests sent by subagent sessions to bypass the attach manager and delivery target chain, potentially routing to the wrong topic. Fixed by aligning the permission handler with `showCurrentQuestion`: now uses `getSessionRoutingTarget()` directly and passes `deliveryTarget` via `getSessionDeliveryTarget()` to `showPermissionRequest`. All 74 related tests pass.
 
 - **STT default model changed to `medium`:** The default STT model name was `whisper-large-v3-turbo`, which is a Groq-specific name not recognized by most self-hosted Whisper APIs. Changed to `medium` in `src/config.ts:299` to match the model naming convention used by self-hosted Whisper servers (whisper.cpp, faster-whisper, etc.). The batch-transcribe scripts already defaulted to `medium`, so the bot now matches the same expected model namespace. Users with `STT_MODEL` explicitly set are unaffected.

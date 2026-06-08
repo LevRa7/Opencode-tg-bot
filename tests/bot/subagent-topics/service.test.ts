@@ -507,7 +507,7 @@ describe("bot/subagent-topics/service", () => {
     const linkState = service.getLinkState("child-active");
     expect(linkState).toEqual({
       kind: "active",
-      url: "https://t.me/c/-100456/555",
+      url: "https://t.me/c/456/555",
     });
   });
 

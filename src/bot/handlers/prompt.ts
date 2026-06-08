@@ -1,5 +1,6 @@
 import { Bot, Context } from "grammy";
 import type { FilePartInput, TextPartInput } from "@opencode-ai/sdk/v2";
+import { formatReplyTag } from "../utils/format-reply-tag.js";
 import { opencodeClient } from "../../opencode/client.js";
 import { clearSession, getCurrentSession, setCurrentSession } from "../../session/manager.js";
 import { ingestSessionInfoForCache } from "../../session/cache-manager.js";
@@ -17,7 +18,6 @@ import {
   type TelegramThreadTarget,
   withMessageThreadId,
 } from "../utils/message-thread.js";
-import { stripMessageTags } from "../utils/strip-message-tags.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { summaryAggregator } from "../../summary/aggregator.js";
@@ -444,6 +444,12 @@ export async function processUserPrompt(
   const responseMode = options.responseMode ?? "text_only";
   const suppressSendErrorMessage = options.suppressSendErrorMessage === true;
 
+  // Prepend reply/quote tag if the message is a reply
+  const replyTag = formatReplyTag(ctx);
+  if (replyTag) {
+    text = `${replyTag}\n${text}`;
+  }
+
   // In test mode (Vitest), skip the batch window and send immediately
   const isVitest = typeof process !== "undefined" && !!process.env?.VITEST;
 
@@ -679,22 +685,6 @@ export async function processUserPrompt(
     }
 
     keyboardManager.setSessionMode(SessionType.AGENT);
-  }
-
-  // Rename terminal topic after user command
-  try {
-    const mtId = extractMessageThreadIdFromContext(ctx);
-    if (mtId !== undefined && ctx.chat?.id) {
-      let topicText = stripMessageTags(text);
-      const senderMatch = topicText.match(/^(.+?):\s*\n/);
-      if (senderMatch && senderMatch[1].length < 50) {
-        topicText = topicText.slice(senderMatch[0].length);
-      }
-      const truncated = topicText.length > 128 ? topicText.slice(0, 125) + "..." : topicText;
-      await ctx.api.editForumTopic(ctx.chat.id, mtId, { name: truncated });
-    }
-  } catch {
-    // ignore rename failures
   }
 
   void ensureEventSubscription(currentSession.directory);

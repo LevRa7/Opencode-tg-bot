@@ -260,6 +260,8 @@ export const config = {
     maxChars: getOptionalPositiveIntEnvVar("TELEGRAPH_MAX_CHARS", 25000),
     translateEnabled: getOptionalBooleanEnvVar("TELEGRAPH_TRANSLATE_ENABLED", false),
     translateApiUrl: getEnvVar("TELEGRAPH_TRANSLATE_API_URL", false),
+    maxKeysPerUser: getOptionalPositiveIntEnvVar("TELEGRAPH_MAX_KEYS_PER_USER", 5),
+    tokenEncryptionKey: getEnvVar("TELEGRAPH_TOKEN_ENCRYPTION_KEY", false),
   },
   bot: {
     sessionsListLimit: getOptionalPositiveIntEnvVar("SESSIONS_LIST_LIMIT", 10),
@@ -294,7 +296,7 @@ export const config = {
   stt: {
     apiUrl: getEnvVar("STT_API_URL", false),
     apiKey: getEnvVar("STT_API_KEY", false),
-    model: getEnvVar("STT_MODEL", false) || "whisper-large-v3-turbo",
+    model: getEnvVar("STT_MODEL", false) || "medium",
     language: getEnvVar("STT_LANGUAGE", false),
     notePrompt: getEnvVar("STT_NOTE_PROMPT", false),
   },

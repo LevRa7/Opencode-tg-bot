@@ -185,17 +185,33 @@ class KeyboardManager {
     return this.getScopedState().state?.contextInfo ?? null;
   }
 
-  private buildKeyboard() {
-    const scopedState = this.getScopedState();
+  private buildKeyboard(scopeKey?: string) {
+    const scopedState = this.getScopedState(scopeKey);
     if (!scopedState.state) {
       logger.warn("[KeyboardManager] Cannot build keyboard: not initialized");
       return createMainKeyboard("build", { providerID: "", modelID: "" }, undefined);
     }
-    this.refreshSystemInfo();
+    if (scopeKey) {
+      const info = getSystemInfo();
+      scopedState.state.cpuInfo = info.cpu;
+      scopedState.state.ramInfo = info.ram;
+    } else {
+      this.refreshSystemInfo();
+    }
     const isRunning = processManager.isRunning();
-    const scope = getCurrentTelegramConversationScope();
+    let messageThreadId: number | undefined;
+    if (scopeKey) {
+      const parts = scopeKey.split(":");
+      if (parts.length >= 3) {
+        const parsed = parseInt(parts[2], 10);
+        if (!isNaN(parsed)) messageThreadId = parsed;
+      }
+    } else {
+      const scope = getCurrentTelegramConversationScope();
+      messageThreadId = scope?.messageThreadId;
+    }
     const isTerminal = scopedState.state.sessionMode === SessionType.TERMINAL
-      || (scopedState.state.sessionMode === SessionType.NONE && isTerminalTopic(scope?.messageThreadId));
+      || (scopedState.state.sessionMode === SessionType.NONE && isTerminalTopic(messageThreadId));
     return createMainKeyboard(
       scopedState.state.currentAgent,
       scopedState.state.currentModel,
@@ -203,7 +219,7 @@ class KeyboardManager {
       scopedState.state.variantName,
       {
         isRunning,
-        isTerminalRunning: isTerminal ? ((scope?.messageThreadId !== undefined && isTerminalRunning(scope.messageThreadId)) || foregroundSessionState.isBusy()) : false,
+        isTerminalRunning: isTerminal ? ((messageThreadId !== undefined && isTerminalRunning(messageThreadId)) || foregroundSessionState.isBusy()) : false,
         cpuInfo: scopedState.state.cpuInfo,
         ramInfo: scopedState.state.ramInfo,
         isTerminalTopic: isTerminal,
@@ -234,7 +250,7 @@ class KeyboardManager {
     scopedState.lastUpdateTime = now;
 
     try {
-      const keyboard = this.buildKeyboard();
+      const keyboard = this.buildKeyboard(resolvedScopeKey);
 
       if (scopedState.keyboardMessageId) {
         await scopedState.api.editMessageReplyMarkup(targetChatId, scopedState.keyboardMessageId, {

@@ -126,6 +126,16 @@ CREATE TABLE IF NOT EXISTS telegraph_keys (
 );
 CREATE INDEX IF NOT EXISTS idx_telegraph_keys_select ON telegraph_keys(user_id, is_active, flood_wait_until, last_used_at);
 
+CREATE TABLE IF NOT EXISTS telegraph_article_bindings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    path        TEXT UNIQUE NOT NULL,
+    key_id      INTEGER NOT NULL REFERENCES telegraph_keys(id) ON DELETE CASCADE,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tg_article_bind_path ON telegraph_article_bindings(path);
+CREATE INDEX IF NOT EXISTS idx_tg_article_bind_user ON telegraph_article_bindings(user_id);
+
 CREATE TABLE IF NOT EXISTS file_diff_log (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL,

@@ -1,6 +1,6 @@
 import { sanitizeHtmlForTelegram } from "./html-sanitize.js";
 
-const TELEGRAM_MESSAGE_LIMIT = 4096;
+export const TELEGRAM_MESSAGE_LIMIT = 4096;
 const EXPANDABLE_BLOCKQUOTE_OPEN = "<blockquote expandable>";
 const BLOCKQUOTE_CLOSE = "</blockquote>";
 
@@ -72,7 +72,7 @@ function splitExpandableBlockquoteChunks(
   return chunks;
 }
 
-function splitTextIntoChunks(text: string, maxLength: number): string[] {
+export function splitTextIntoChunks(text: string, maxLength: number): string[] {
   const expandableSpoilerPrefix = `\n\n${EXPANDABLE_BLOCKQUOTE_OPEN}`;
   const spoilerStartsAt = text.indexOf(expandableSpoilerPrefix);
 

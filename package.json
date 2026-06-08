@@ -16,7 +16,8 @@
     "README.md",
     "LICENSE",
     ".env.example",
-    "skills/openai-media-transcriber"
+    "skills/openai-media-transcriber",
+    "docker/opencode-skills-pkg"
   ],
   "engines": {
     "node": ">=20"
@@ -63,6 +64,7 @@
     "https-proxy-agent": "^7.0.6",
     "lru-cache": "^11.5.1",
     "mdast-util-to-string": "^4.0.0",
+    "playwright": "^1.60.0",
     "qrcode": "^1.5.4",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
@@ -83,5 +85,9 @@
     "prettier": "^3.8.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
+  },
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
   }
 }

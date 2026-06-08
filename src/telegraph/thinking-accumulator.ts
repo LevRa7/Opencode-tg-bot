@@ -1,7 +1,6 @@
 import { logger } from "../utils/logger.js";
-import type { TelegraphClient } from "./telegraph-client.js";
 import { FloodWaitError } from "./telegraph-client.js";
-import type { TechnicalDetailsPublishRequest, TechnicalDetailsPublisher } from "./types.js";
+import type { TechnicalDetailsPublishRequest, TechnicalDetailsPublisher, TelegraphPageClient } from "./types.js";
 import { translateText } from "../translate/manager.js";
 
 interface ThoughtEntry {
@@ -42,9 +41,9 @@ function buildPageContent(entries: ThoughtEntry[]): string {
 export class ThinkingTelegraphAccumulator implements TechnicalDetailsPublisher {
   private page: ThinkingPage | null = null;
   private pagePath: string | null = null;
-  private readonly client: TelegraphClient;
+  private readonly client: TelegraphPageClient;
 
-  constructor(client: TelegraphClient) {
+  constructor(client: TelegraphPageClient) {
     this.client = client;
   }
 

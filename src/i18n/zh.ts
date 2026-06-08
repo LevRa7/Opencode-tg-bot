@@ -875,4 +875,6 @@ export const zh: I18nDictionary = {
   "connect.empty": "No AI providers configured.",
   "connect.error": "Failed to list providers.",
   "cmd.description.connect": "Connect AI providers",
+  "location.live_started": "实时位置共享已启动。坐标将添加到消息中。",
+  "location.live_stopped": "实时位置共享已停止。",
 };

@@ -2,10 +2,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { getCurrentOpencodeRoute } from "../../opencode/client.js";
+import { getWorkspacesRoot } from "../../runtime/paths.js";
 import { sshManager } from "../../utils/ssh-manager.js";
 import { logger } from "../../utils/logger.js";
 
 const TMP_UPLOAD_DIR = "/tmp/opencode-tg-uploads";
+
+const CONTAINER_UPLOADS_DIR = "/workspace/uploads";
+const HOST_UPLOADS_DIR = "opencode-uploads";
 
 function resolveDownloadPath(): string {
   return process.env.DOWNLOAD_PATH || path.join(os.homedir(), "Downloads");
@@ -27,6 +31,7 @@ function detectMimeFromExtension(filename: string): string | null {
     ".mkv": "video/x-matroska",
     ".webm": "video/webm",
     ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
     ".wav": "audio/wav",
     ".ogg": "audio/ogg",
     ".flac": "audio/flac",
@@ -95,6 +100,8 @@ function detectMimeFromMagic(buffer: Buffer): string | null {
   if (header.slice(0, 4).toString() === "RIFF" && header.slice(8, 12).toString() === "WAVE") return "audio/wav";
   if (header.slice(0, 4).toString() === "RIFF" && header.slice(8, 12).toString() === "AVI") return "video/x-msvideo";
   if (header.slice(4, 12).toString() === "ftypmp4" || header.slice(4, 12).toString() === "ftypisom" || header.slice(4, 12).toString() === "ftypavc1") return "video/mp4";
+  if (header.slice(4, 12).toString() === "ftypM4A ") return "audio/mp4";
+  if (header.slice(4, 12).toString() === "ftypM4V ") return "video/mp4";
   if (header.slice(0, 4).toString() === "\x1a\x45\xdf\xa3") return "video/webm";
   if (header.slice(4, 8).toString() === "moov" || header.slice(4, 8).toString() === "mdat") return "video/quicktime";
   if (header[0] === 0x4d && header[1] === 0x5a) return "application/x-msdownload";
@@ -141,6 +148,7 @@ function formatTypeLabel(mimeType: string): string {
     "video/x-matroska": "MKV",
     "video/webm": "WebM",
     "audio/mpeg": "MP3",
+    "audio/mp4": "M4A",
     "audio/wav": "WAV",
     "audio/ogg": "OGG",
     "audio/flac": "FLAC",
@@ -190,10 +198,6 @@ async function uploadViaSsh(
   filename: string,
 ): Promise<SavedAttachment> {
   const remoteHome = await sshManager.getRemoteHomeDir(userId);
-  const downloadDir = `${resolveDownloadPath()}`;
-  const downloadDirAbsolute = downloadDir.startsWith("/")
-    ? downloadDir
-    : `${remoteHome}/${downloadDir}`;
 
   await fs.mkdir(TMP_UPLOAD_DIR, { recursive: true });
   const localTmpPath = path.join(TMP_UPLOAD_DIR, filename);
@@ -206,27 +210,34 @@ async function uploadViaSsh(
 
   if (conn.deployTarget === "docker") {
     const containerName = `opencode-serve-tg-${userId}`;
-    await sshManager.executeRemoteCommand(userId, `mkdir -p "${downloadDirAbsolute}"`);
+    const containerUploadsDir = CONTAINER_UPLOADS_DIR;
+    const remoteContainerPath = `${containerUploadsDir}/${filename}`;
+
+    const remoteTmp = `/tmp/opencode-tg-upload-${userId}-${Date.now()}`;
     await new Promise<void>((resolve, reject) => {
       conn.client.sftp((err: any, sftp: any) => {
         if (err) return reject(err);
-        sftp.fastPut(localTmpPath, localTmpPath, (e: any) => {
+        sftp.fastPut(localTmpPath, remoteTmp, (e: any) => {
           if (e) return reject(e);
           resolve();
         });
       });
     });
-    const remoteContainerPath = `${downloadDirAbsolute}/${filename}`;
+
     await sshManager.executeRemoteCommand(
       userId,
-      `docker cp "${localTmpPath}" "${containerName}":"${remoteContainerPath}"`,
+      `docker exec "${containerName}" mkdir -p "${containerUploadsDir}"`,
     );
+    await sshManager.executeRemoteCommand(
+      userId,
+      `docker cp "${remoteTmp}" "${containerName}":"${remoteContainerPath}"`,
+    );
+    await sshManager.executeRemoteCommand(userId, `rm -f "${remoteTmp}"`).catch(() => {});
     remotePath = remoteContainerPath;
-
-    await sshManager.executeRemoteCommand(userId, `rm -f "${localTmpPath}"`).catch(() => {});
   } else {
-    await sshManager.executeRemoteCommand(userId, `mkdir -p "${downloadDirAbsolute}"`);
-    remotePath = `${downloadDirAbsolute}/${filename}`;
+    const uploadDir = `${remoteHome}/${HOST_UPLOADS_DIR}`;
+    remotePath = `${uploadDir}/${filename}`;
+    await sshManager.executeRemoteCommand(userId, `mkdir -p "${uploadDir}"`);
     await new Promise<void>((resolve, reject) => {
       conn.client.sftp((err: any, sftp: any) => {
         if (err) return reject(err);
@@ -269,6 +280,28 @@ async function saveLocal(
   };
 }
 
+async function saveToTenantWorkspace(
+  buffer: Buffer,
+  filename: string,
+  tenantId: string,
+): Promise<SavedAttachment> {
+  const workspacesRoot = getWorkspacesRoot();
+  const hostUploadsDir = path.join(workspacesRoot, tenantId, "workspace", "uploads");
+  const hostDestPath = path.join(hostUploadsDir, filename);
+
+  await fs.mkdir(hostUploadsDir, { recursive: true });
+  await fs.writeFile(hostDestPath, buffer);
+
+  return {
+    absolutePath: path.posix.join(CONTAINER_UPLOADS_DIR, filename),
+    filename,
+    sizeBytes: buffer.length,
+    mimeType: "",
+    typeLabel: "",
+    sizeLabel: "",
+  };
+}
+
 export async function saveAttachment(
   buffer: Buffer,
   filename: string,
@@ -281,6 +314,8 @@ export async function saveAttachment(
 
   if (userId && sshManager.isSshActive(userId)) {
     saved = await uploadViaSsh(userId, buffer, filename);
+  } else if (route.kind === "tenant" && route.tenantId) {
+    saved = await saveToTenantWorkspace(buffer, filename, route.tenantId);
   } else {
     saved = await saveLocal(buffer, filename);
   }

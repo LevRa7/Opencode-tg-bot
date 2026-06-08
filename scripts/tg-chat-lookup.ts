@@ -27,15 +27,15 @@ const envArgIdx = ARGS.indexOf("--env");
 const dirArgIdx = ARGS.indexOf("--dir");
 let envDir: string | null = envArgIdx >= 0 ? (ARGS[envArgIdx + 1] ?? null) : null;
 const searchDir: string | null = dirArgIdx >= 0 ? (ARGS[dirArgIdx + 1] ?? null) : null;
+function isFlagValueIndex(idx: number, flagIdx: number): boolean {
+  return flagIdx >= 0 && (idx === flagIdx + 1);
+}
+
 const positionalArgs = ARGS.filter(
   (a, i) =>
     !a.startsWith("--") &&
-    i !== envArgIdx &&
-    i !== envArgIdx - 1 &&
-    i !== envArgIdx + 1 &&
-    i !== dirArgIdx &&
-    i !== dirArgIdx - 1 &&
-    i !== dirArgIdx + 1,
+    !isFlagValueIndex(i, envArgIdx) &&
+    !isFlagValueIndex(i, dirArgIdx),
 );
 
 function resolveAppHome(): string {
@@ -146,15 +146,15 @@ function findMostRecentSessionByDirectory(
   // that is bound to the search directory.
   const rows = db
     .prepare(
-      `SELECT scope_key, session FROM conversation_bindings
+      `SELECT rowid, scope_key, session FROM conversation_bindings
        WHERE session IS NOT NULL
-       ORDER BY scope_key DESC
+       ORDER BY rowid DESC
        LIMIT 200`,
     )
-    .all() as { scope_key: string; session: string }[];
+    .all() as { rowid: number; scope_key: string; session: string }[];
 
   // Collect all sessions bound to the search directory, grouped by scope
-  const candidates: { scope: string; sessionId: string; directory: string; parsed: ReturnType<typeof parseScopeKey>; exact: boolean }[] = [];
+  const candidates: { scope: string; sessionId: string; directory: string; parsed: ReturnType<typeof parseScopeKey>; exact: boolean; rowid: number }[] = [];
 
   for (const row of rows) {
     try {
@@ -185,6 +185,7 @@ function findMostRecentSessionByDirectory(
         directory: normalizedDir,
         parsed,
         exact: normalizedDir === searchDirAbsolute,
+        rowid: row.rowid,
       });
     } catch {
       continue;
@@ -193,17 +194,18 @@ function findMostRecentSessionByDirectory(
 
   if (candidates.length === 0) return null;
 
-  // Sort: exact match first, then with real thread, then deeper directory
+  // Sort: exact match first, then with real thread, then deeper directory,
+  // then most recent (higher rowid = more recently created)
   candidates.sort((a, b) => {
     if (a.exact && !b.exact) return -1;
     if (!a.exact && b.exact) return 1;
-    // Prefer sessions with real messageThreadId (topic threads over main)
     const aHasThread = a.parsed && a.parsed.messageThreadId > 0 ? 1 : 0;
     const bHasThread = b.parsed && b.parsed.messageThreadId > 0 ? 1 : 0;
     if (aHasThread !== bHasThread) return bHasThread - aHasThread;
     if (a.directory.length !== b.directory.length)
       return b.directory.length - a.directory.length;
-    return b.scope.localeCompare(a.scope);
+    // Most recent session first (higher rowid = newer)
+    return b.rowid - a.rowid;
   });
 
   const best = candidates[0]!;
@@ -255,8 +257,11 @@ function main(): void {
       return;
     }
 
-    // Explicit sessionId mode
-    const [sessionId] = positionalArgs;
+    // Explicit sessionId mode (CLI arg, then TG_CURRENT_SESSION_ID env var)
+    let [sessionId] = positionalArgs;
+    if (!sessionId) {
+      sessionId = process.env.TG_CURRENT_SESSION_ID || null;
+    }
     if (!sessionId) {
       console.error(
         JSON.stringify({

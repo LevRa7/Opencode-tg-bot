@@ -1,11 +1,13 @@
 import http from "node:http";
 import https from "node:https";
+import { readFile } from "node:fs/promises";
 import { URL } from "node:url";
 import type { Context } from "grammy";
 import type { FilePartInput } from "@opencode-ai/sdk/v2";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { config } from "../../config.js";
+import { telegramFileUrlBase } from "../../bot/utils/telegram-file-url.js";
 import { prepareAudioPrompt } from "../../media/ingest.js";
 import { extractMessageMetadata, type MessageMetadata } from "../../media/batch-types.js";
 import { isSttConfigured, transcribeAudio, type SttResult } from "../../stt/client.js";
@@ -134,11 +136,16 @@ async function downloadTelegramFile(
       return null;
     }
 
-    const fileUrl = `https://api.telegram.org/file/bot${ctx.api.token}/${file.file_path}`;
+    let buffer: Buffer;
 
-    logger.debug(`[Voice] Downloading file: ${file.file_path} (${file.file_size ?? "?"} bytes)`);
-
-    const buffer = await downloadTelegramFileByUrl(fileUrl);
+    if (file.file_path.startsWith("/")) {
+      logger.debug(`[Voice] Reading local file: ${file.file_path}`);
+      buffer = await readFile(file.file_path);
+    } else {
+      const fileUrl = `${telegramFileUrlBase()}${ctx.api.token}/${file.file_path}`;
+      logger.debug(`[Voice] Downloading from ${fileUrl.replace(ctx.api.token, "***")}`);
+      buffer = await downloadTelegramFileByUrl(fileUrl);
+    }
 
     // Extract filename from file_path (e.g., "voice/file_123.oga" -> "file_123.oga")
     let filename = file.file_path.split("/").pop() || "audio.ogg";

@@ -1,4 +1,5 @@
 import type { Context } from "grammy";
+import { formatLiveLocationTag, formatMovementTag, getLiveLocationTimezone } from "../bot/live-location.js";
 
 export type DeferredItemKind = "text" | "photo" | "document" | "audio" | "video";
 
@@ -17,6 +18,9 @@ export interface ForwardedSourceInfo {
 }
 
 export interface MessageMetadata {
+  liveLocationTag?: string;
+  movementTag?: string;
+  timezoneOffset?: number;
   senderFirstName?: string;
   senderLastName?: string;
   senderUsername?: string;
@@ -86,8 +90,20 @@ export function formatMetadataLine(m: MessageMetadata | undefined, label: string
   const tags: string[] = [];
 
   const quoted = (value: string): string => JSON.stringify(value);
-  const formatTimestampTag = (timestamp: number): string => {
+  const formatTimestampTag = (timestamp: number, offsetSeconds?: number): string => {
     const date = new Date(timestamp * 1000);
+    if (offsetSeconds !== undefined) {
+      // Convert UTC timestamp to local timezone
+      const localTimestamp = timestamp + offsetSeconds;
+      const localDate = new Date(localTimestamp * 1000);
+      const iso = localDate.toISOString().replace("T", " ").slice(0, 19);
+      const sign = offsetSeconds >= 0 ? "+" : "-";
+      const absHours = Math.floor(Math.abs(offsetSeconds) / 3600);
+      const absMins = Math.floor((Math.abs(offsetSeconds) % 3600) / 60);
+      const hh = String(absHours).padStart(2, "0");
+      const mm = String(absMins).padStart(2, "0");
+      return `[datetime=${quoted(`${iso} UTC${sign}${hh}:${mm}`)}]`;
+    }
     const iso = date.toISOString().replace("T", " ").slice(0, 19);
     return `[datetime=${quoted(`${iso} UTC`)}]`;
   };
@@ -98,11 +114,19 @@ export function formatMetadataLine(m: MessageMetadata | undefined, label: string
   }
 
   if (typeof m.timestamp === "number" && Number.isFinite(m.timestamp)) {
-    tags.push(formatTimestampTag(m.timestamp));
+    tags.push(formatTimestampTag(m.timestamp, m.timezoneOffset));
   }
 
   if (m.forwardFromName) {
     tags.push(`[forwarded_at_name=${quoted(m.forwardFromName)}]`);
+  }
+
+  if (m.liveLocationTag) {
+    tags.push(m.liveLocationTag);
+  }
+
+  if (m.movementTag) {
+    tags.push(m.movementTag);
   }
 
   const metaStr = tags.join(" ");
@@ -133,7 +157,15 @@ export function extractMessageMetadata(ctx: Context): MessageMetadata | undefine
     }
   }
 
+  const liveLocationTag = from?.id ? formatLiveLocationTag(from.id) : undefined;
+  const movementTag = from?.id ? formatMovementTag(from.id) : undefined;
+  const tz = from?.id ? getLiveLocationTimezone(from.id) : undefined;
+  const timezoneOffset = tz?.utcOffset;
+
   return {
+    liveLocationTag,
+    movementTag,
+    timezoneOffset,
     senderFirstName: from?.first_name,
     senderLastName: from?.last_name,
     senderUsername: from?.username,

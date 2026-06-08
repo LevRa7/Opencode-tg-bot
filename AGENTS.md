@@ -599,3 +599,88 @@ docker exec -it -e BATCH_SIZE=5 <container> batch-transcribe /path/to/audio/dir
 - [Superpowers TDD Skill](https://github.com/obra/superpowers) - Agentic skills framework for TDD workflow
 - [Clean Code](https://www.amazon.com/Clean-Code-Handbook-Software-Craftsmanship/dp/0132350882) - Robert C. Martin
 - [Clean Architecture](https://www.amazon.com/Clean-Architecture-Craftsmans-Software-Structure/dp/0132350882) - Robert C. Martin
+
+## Telegram File Delivery Mode
+
+When the agent generates files during a task, they must be delivered to the user through the Telegram bot.
+
+### Trigger
+
+This mode activates when the conversation contains user identifying tags
+(e.g., `[name="..."] [datetime="..."]`). The agent loads the `tg-upload` skill
+and uses it for all file output.
+
+**To determine the current chat for delivery, use:**
+```bash
+npx tsx /root/Opencode-tg-bot/scripts/current-chat.ts
+```
+This returns `chatId`, `messageThreadId`, and `sessionId` for the most recent session
+in the current worktree — no need to ask the user for a session ID.
+
+### Delivery methods
+
+| Method | When | Max size |
+|--------|------|----------|
+| `scripts/tg-upload.ts --auto --file <path>` | Standalone file delivery | 50 MB |
+| `scripts/tg-upload.ts --auto --file <path> --response-text "..."` | File + ответ агента в одном сообщении | caption 1024 |
+| `scripts/tg-upload.ts --auto --file <path> --response-file <path>` | File + ответ из файла в caption | caption 1024 |
+| `sendDownloadedFile(ctx, path)` | Inside bot handler with Context | 50 MB |
+| Telegraph article + link in chat | Long reports (>4096 chars) or files >50 MB | 64 KB body |
+| `prepareLocalFileFollowUps(text)` | Auto-detect file paths in assistant replies | 20 MB/file |
+| ZIP archive | Multiple files, combined <50 MB | 50 MB |
+
+### Auto-detect current chat
+
+Before delivering files, resolve the current active chat automatically:
+
+```bash
+npx tsx scripts/current-chat.ts
+# → { "chatId": -1001234567890, "messageThreadId": 123, "sessionId": "abc...", "directory": "/root/project" }
+```
+
+The script queries `settings.db` via `tg-chat-lookup.ts --auto` to find the most recent session
+bound to the current working directory and returns `chat_id`, `message_thread_id`, and `session_id`.
+
+> ⚠️ `--auto` may return a wrong topic when multiple sessions exist across different topics.
+> If the bot provides `TG_CURRENT_SESSION_ID` env var, use it instead of `--auto`.
+> The scripts `current-chat.ts` and `tg-chat-lookup.ts` read this env var automatically.
+
+### Target resolution (fallback)
+
+If auto-detection fails, resolve `(chat_id, message_thread_id)` from a session ID explicitly:
+1. Ask the user: "Send files to which session? Provide session ID (from /sessions)."
+2. Run `npx tsx scripts/current-chat.ts --session-id <id>` to map session_id → (chat_id, message_thread_id).
+3. Files are sent to the correct chat and forum topic.
+
+### Rules
+
+- All generated files, build artifacts, and reports must be delivered via one of the methods above.
+- Never just print "File saved to /path/to/file.ts" — send the actual file.
+- Use Telegraph for long-form technical output; send a short summary + Telegraph link.
+- Include `message_thread_id` so replies land in the correct forum topic.
+- The Bot API token is read automatically from `.env`.
+- **Use bot account, not tg-cli.** Send files via `tg-upload.ts` (Bot API). tg-cli is only for forwarding to user's contacts or Saved Messages, never for replying in the current chat.
+
+## Media Transcription (audio/video/photo)
+
+When the user sends audio, video-note, or photo media to the chat, the file is saved locally and then processed through the `opencode-gemini-media` wrapper using `gemini-3-flash` via the antigravity proxy.
+
+**Tool:** `/usr/local/bin/opencode-gemini-media`
+
+### Usage
+
+```bash
+/usr/local/bin/opencode-gemini-media photo <filePath> [prompt]
+/usr/local/bin/opencode-gemini-media audio <filePath> [prompt]
+/usr/local/bin/opencode-gemini-media video <filePath> [prompt]
+/usr/local/bin/opencode-gemini-media document <filePath> [prompt]
+```
+
+### Rules
+
+- Always use `opencode-gemini-media` for media processing — do not make ad-hoc HTTP requests.
+- For `photo` and `document` — uses OpenAI-compatible endpoint via antigravity proxy.
+- For `video` and `audio` — uses Gemini-native API (`generateContent`) via antigravity proxy for native multimodal support.
+- Default prompts handle transcription (audio), description + transcription (video), visible content + OCR (photo), text extraction (document).
+- The file path is provided by the bot after saving the media locally.
+- Report the transcription/description result back to the user in the chat.

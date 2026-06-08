@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { CommandContext, Context, InlineKeyboard } from "grammy";
 import { sshManager, type SshDetails, type SshAuth, type SavedSshConnection } from "../../utils/ssh-manager.js";
 import { interactionManager } from "../../interaction/manager.js";
@@ -351,5 +352,33 @@ export async function handleSshTextArguments(ctx: Context): Promise<boolean> {
 }
 
 export function getSkillsToUpload(): string[] {
-  return ["tg-cli", "embedding-strategies", "openai-media-transcriber", "gpt-image-api"];
+  const baseSkills = ["tg-cli", "openai-media-transcriber", "gpt-image-api"];
+  try {
+    const pkgSkillsDir = "docker/opencode-skills-pkg/skills";
+    if (fs.existsSync(pkgSkillsDir)) {
+      const categories = fs.readdirSync(pkgSkillsDir, { withFileTypes: true });
+      for (const cat of categories) {
+        if (!cat.isDirectory()) continue;
+        const catPath = pkgSkillsDir + "/" + cat.name;
+        const entries = fs.readdirSync(catPath, { withFileTypes: true });
+        for (const entry of entries) {
+          let skillName: string | null = null;
+          if (entry.isDirectory()) {
+            const skillMd = catPath + "/" + entry.name + "/opencode.md";
+            if (fs.existsSync(skillMd)) {
+              skillName = entry.name;
+            }
+          } else if (entry.isFile() && entry.name.endsWith(".md")) {
+            skillName = entry.name.slice(0, -3);
+          }
+          if (skillName && !baseSkills.includes(skillName)) {
+            baseSkills.push(skillName);
+          }
+        }
+      }
+    }
+  } catch {
+    // Fallback
+  }
+  return baseSkills;
 }

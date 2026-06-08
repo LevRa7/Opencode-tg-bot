@@ -193,6 +193,8 @@ function ensureProviderDefaults(provider: ProviderCtx): void {
  */
 function createModel(provider: ProviderCtx, id: string): CtxModel {
   const baseUrl = resolveBaseUrl(provider);
+  const isGemini = /gemini/i.test(id);
+  const supportsImages = /images/i.test(id) || /image$/i.test(id);
   return {
     id,
     providerID: provider.id,
@@ -204,10 +206,10 @@ function createModel(provider: ProviderCtx, id: string): CtxModel {
     name: titleizeModelId(id),
     capabilities: {
       temperature: true,
-      reasoning: false,
-      attachment: false,
-      toolcall: true,
-      input: { text: true, audio: false, image: false, video: false, pdf: false },
+      reasoning: isGemini,
+      attachment: supportsImages,
+      toolcall: !isGemini,
+      input: { text: true, audio: false, image: supportsImages, video: false, pdf: false },
       output: { text: true, audio: false, image: false, video: false, pdf: false },
     },
     cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },

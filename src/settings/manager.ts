@@ -44,6 +44,7 @@ import {
 } from "./repositories/subdomains.js";
 import { createTopicRegistryRepository } from "./repositories/topic-registry.js";
 import { createTelegraphKeysRepository } from "./repositories/telegraph-keys.js";
+import { createArticleBindingsRepository } from "./repositories/article-bindings.js";
 import { createFileDiffLogRepository } from "./repositories/file-diff-log.js";
 import Database from "better-sqlite3";
 
@@ -197,6 +198,7 @@ let runtime: RuntimeRepository = createRuntimeRepository(_defaultDb);
 let sessionAttach: SessionAttachmentsRepository = createSessionAttachmentsRepository(_defaultDb);
 let topicRegRepo = createTopicRegistryRepository(_defaultDb);
 let telegraphKeysRepo = createTelegraphKeysRepository(_defaultDb);
+let articleBindingsRepo = createArticleBindingsRepository(_defaultDb);
 let fileDiffLogRepo = createFileDiffLogRepository(_defaultDb);
 let goalsRepo = createGoalsRepository(_defaultDb);
 let ctxBindings: ContextBindingsRepository = createContextBindingsRepository(_defaultDb);
@@ -228,6 +230,7 @@ export async function loadSettings(): Promise<void> {
   ctxBindings = createContextBindingsRepository(dbInstance);
   topicRegRepo = createTopicRegistryRepository(dbInstance);
   telegraphKeysRepo = createTelegraphKeysRepository(dbInstance);
+  articleBindingsRepo = createArticleBindingsRepository(dbInstance);
   fileDiffLogRepo = createFileDiffLogRepository(dbInstance);
   goalsRepo = createGoalsRepository(dbInstance);
 }
@@ -880,6 +883,10 @@ export function getTelegraphKeysRepo() {
   return telegraphKeysRepo;
 }
 
+export function getArticleBindingsRepo() {
+  return articleBindingsRepo;
+}
+
 // ====== FILE DIFF LOG ======
 
 export function getFileDiffLogRepo() {
@@ -915,6 +922,7 @@ export async function __resetSettingsForTests(): Promise<void> {
   ctxBindings = createContextBindingsRepository(dbInstance);
   topicRegRepo = createTopicRegistryRepository(dbInstance);
   telegraphKeysRepo = createTelegraphKeysRepository(dbInstance);
+  articleBindingsRepo = createArticleBindingsRepository(dbInstance);
   fileDiffLogRepo = createFileDiffLogRepository(dbInstance);
   goalsRepo = createGoalsRepository(dbInstance);
 }

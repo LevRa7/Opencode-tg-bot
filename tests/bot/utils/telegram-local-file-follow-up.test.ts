@@ -84,20 +84,20 @@ describe("bot/utils/telegram-local-file-follow-up", () => {
     );
   });
 
-  it("keeps only existing files up to 20 MB and deduplicates repeated links", async () => {
+  it("keeps only existing files up to 2048 MB and deduplicates repeated links", async () => {
     // Что тестируем:
     // - функцию prepareLocalFileFollowUps
-    // - свойства: файл должен существовать, быть обычным файлом, быть <= 20 МБ,
+    // - свойства: файл должен существовать, быть обычным файлом, быть <= 2048 МБ,
     //   повторяющиеся ссылки не дублируются.
     // Положительный результат:
     // - возвращается только один допустимый файл с корректным типом и caption.
     mockedFs.stat.mockImplementation(async (filePath: string) => {
       if (filePath === "/tmp/ok.png") {
-        return { isFile: () => true, size: 20 * 1024 * 1024 };
+        return { isFile: () => true, size: 2048 * 1024 * 1024 };
       }
 
       if (filePath === "/tmp/too-large.mp4") {
-        return { isFile: () => true, size: 20 * 1024 * 1024 + 1 };
+        return { isFile: () => true, size: 2048 * 1024 * 1024 + 1 };
       }
 
       if (filePath === "/tmp/folder") {
@@ -122,7 +122,7 @@ describe("bot/utils/telegram-local-file-follow-up", () => {
         path: "/tmp/ok.png",
         resolvedPath: "/tmp/ok.png",
         kind: "photo",
-        size: 20 * 1024 * 1024,
+        size: 2048 * 1024 * 1024,
         caption: "<code>/tmp/ok.png</code>",
       },
     ]);

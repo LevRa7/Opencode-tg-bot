@@ -13,6 +13,12 @@ export type MediaStorageOwner =
       userId: number;
       runtimeKind: "tenant";
       tenantId: string;
+      /**
+       * SSH active → file needs to be uploaded to remote machine
+       * after writing locally; runtimeVisiblePath should point to
+       * the remote-accessible path.
+       */
+      sshUploadToRemote: boolean;
     };
 
 export interface StoredMediaFile {

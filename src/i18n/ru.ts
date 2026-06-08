@@ -931,4 +931,6 @@ export const ru: I18nDictionary = {
   "connect.empty": "Нет настроенных AI провайдеров.",
   "connect.error": "Не удалось получить список провайдеров.",
   "cmd.description.connect": "Подключить AI провайдеров",
+  "location.live_started": "Трансляция геопозиции начата. Координаты будут добавляться к сообщениям.",
+  "location.live_stopped": "Трансляция геопозиции остановлена.",
 };

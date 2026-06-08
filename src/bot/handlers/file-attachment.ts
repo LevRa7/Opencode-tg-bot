@@ -1,10 +1,12 @@
 import type { Context } from "grammy";
-import { downloadTelegramFile } from "../utils/file-download.js";
+import { downloadTelegramFile, formatFileSize } from "../utils/file-download.js";
 import { saveAttachment, buildAttachmentsTag, resolveMimeType } from "../utils/download-path-upload.js";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
 import { extractMessageMetadata, type ResolvedDeferredItem } from "../../media/batch-types.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+
+const MAX_FILE_SIZE_BYTES = 2048 * 1024 * 1024;
 
 export interface FileAttachmentHandlerDeps extends ProcessPromptDeps {
   downloadFile?: typeof downloadTelegramFile;
@@ -28,6 +30,15 @@ export async function handleFileAttachment(
   const caption = ctx.message.caption || "";
   const mimeType = doc.mime_type || "";
   const filename = doc.file_name || "file";
+
+  if (doc.file_size && doc.file_size > MAX_FILE_SIZE_BYTES) {
+    logger.warn(
+      `[FileAttachment] File too large: ${filename} (${formatFileSize(doc.file_size)} > ${formatFileSize(MAX_FILE_SIZE_BYTES)})`,
+    );
+    const maxSizeMb = (MAX_FILE_SIZE_BYTES / (1024 * 1024)).toFixed(0);
+    await ctx.reply(t("bot.file_too_large", { maxSizeMb }));
+    return;
+  }
 
   await ctx.reply(t("bot.file_downloading"));
 

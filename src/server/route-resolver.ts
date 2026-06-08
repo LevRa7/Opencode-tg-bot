@@ -16,7 +16,7 @@ export function resolveOpencodeRouteForUser(userId: number): OpencodeRoute | nul
       const deployTarget = conn?.deployTarget ?? "host";
       return {
         baseUrl: `http://127.0.0.1:${localPort}`,
-        password: conn?.opencodePassword,
+        password: getOrCreateServerPassword(userId),
         kind: deployTarget === "docker" ? "ssh-docker" : "ssh-host",
       };
     }

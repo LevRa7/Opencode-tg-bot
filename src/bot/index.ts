@@ -91,6 +91,11 @@ import { TelegraphPublishQueue } from "../telegraph/publish-queue.js";
 import { ThinkingTelegraphAccumulator } from "../telegraph/thinking-accumulator.js";
 import { SubagentTelegraphLogger } from "../telegraph/subagent-logger.js";
 import { NoopDetailsPublisher } from "../telegraph/noop-details-publisher.js";
+import { MultiKeyClient } from "../telegraph/multi-key-client.js";
+import { TelegraphKeyPool } from "../telegraph/key-pool.js";
+import { getTelegraphKeysRepo, getArticleBindingsRepo } from "../settings/manager.js";
+import { ensureUserKeys } from "../telegraph/auto-register.js";
+import { decryptToken } from "../telegraph/token-encryption.js";
 import {
   createPlainRenderedParts,
   prepareAssistantFinalStreamingPayload,
@@ -130,6 +135,7 @@ import { handleVoiceMessage } from "./handlers/voice.js";
 import { handleDocumentMessage } from "./handlers/document.js";
 import { createMediaGroupAttachmentMiddleware } from "./handlers/media-group.js";
 import { handleVideoMessage } from "./handlers/video.js";
+import { handleLocationMessage, handleEditedLocation } from "./handlers/location.js";
 import { handlePhotoMessage } from "./handlers/photo.js";
 import { reconcileBusyState } from "./utils/busy-reconciliation.js";
 import { shouldSuppressUserAbortSessionError } from "./utils/abort-error-suppression.js";
@@ -192,6 +198,8 @@ import {
   formatReasoningBlock,
   formatToolCallAsSpoiler,
   markdownToHtml,
+  splitTextIntoChunks,
+  TELEGRAM_MESSAGE_LIMIT,
 } from "./utils/reasoning-format.js";
 import {
   buildTelegramConversationScopeKey,
@@ -771,13 +779,23 @@ async function syncSubagentDeliveryContextForSession(options: {
 
   const isForum = parentPromptRouting?.isForumChat ?? isForumParentSession(options.parentSessionId);
   const botHasTopicsInPrivate = activeBotInstance?.botInfo?.has_topics_enabled === true;
-  const effectiveIsForum = isForum || botHasTopicsInPrivate;
+  let effectiveIsForum = isForum || botHasTopicsInPrivate;
+  let subagentChatId = parentTarget.chatId;
+
+  if (!isForum && botHasTopicsInPrivate) {
+    const forumChatId = threadContextManager.findForumChatIdForUser(parentScope.userId);
+    if (forumChatId) {
+      subagentChatId = forumChatId;
+    } else {
+      effectiveIsForum = false;
+    }
+  }
 
   const topicScope = await subagentTopicService.syncSubagent({
     childSessionId: options.childSessionId,
     topicName: options.topicName,
     parent: {
-      chatId: parentTarget.chatId,
+      chatId: subagentChatId,
       isForum: effectiveIsForum,
     },
   });
@@ -1432,9 +1450,52 @@ const messageDraftStreamManager = new MessageDraftStreamManager(
 configureThinkingBlockDraftIdAllocator(sharedMessageDraftIdAllocator);
 export { messageDraftStreamManager };
 
-const telegraphClient = config.telegraph?.enabled
-  ? new TelegraphClient(config.telegraph)
-  : null;
+const telegraphClient: MultiKeyClient | null = (() => {
+  if (!config.telegraph?.enabled) return null;
+
+  const keysRepo = getTelegraphKeysRepo();
+  const bindingsRepo = getArticleBindingsRepo();
+  const userId = config.telegram.adminUserId;
+  const encryptionKeySource = config.telegraph.tokenEncryptionKey
+    ? Buffer.from(config.telegraph.tokenEncryptionKey, "hex")
+    : Buffer.from(String(config.telegram.adminUserId).padStart(64, "0").slice(0, 32));
+
+  void ensureUserKeys(keysRepo, userId, config.telegraph, encryptionKeySource, config.telegraph.maxKeysPerUser);
+
+  const pool = new TelegraphKeyPool();
+  const keys = keysRepo.getAllByUser(userId);
+  for (const key of keys) {
+    try {
+      const token = decryptToken(key.token_encrypted, encryptionKeySource);
+      const client = new TelegraphClient({
+        enabled: true,
+        accessToken: token,
+        authorName: config.telegraph.authorName,
+        timeoutMs: config.telegraph.timeoutMs,
+        maxChars: config.telegraph.maxChars,
+        translateEnabled: config.telegraph.translateEnabled,
+        translateApiUrl: config.telegraph.translateApiUrl,
+        maxKeysPerUser: config.telegraph.maxKeysPerUser,
+        tokenEncryptionKey: config.telegraph.tokenEncryptionKey,
+      });
+      pool.addKey(client, key.id);
+    } catch (error) {
+      logger.warn("[Bot] Failed to decrypt Telegraph key, skipping", { keyId: key.id, error });
+    }
+  }
+
+  if (pool.size === 0) {
+    if (config.telegraph.accessToken) {
+      const fallbackClient = new TelegraphClient(config.telegraph);
+      pool.addKey(fallbackClient, 0);
+    } else {
+      logger.warn("[Bot] No Telegraph keys available");
+      return null;
+    }
+  }
+
+  return new MultiKeyClient(pool, bindingsRepo, config.telegraph, userId);
+})();
 const technicalDetailsPublisher = telegraphClient
   ? new TelegraphPublishQueue(telegraphClient)
   : new NoopDetailsPublisher();
@@ -2140,6 +2201,24 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         }
       }
 
+      // Sync forum topic name with session title after response completes
+      if (!managedChildSessionIds.has(sessionId) && target?.messageThreadId) {
+        const sessionTitle = childSessionTitle.get(sessionId);
+        if (sessionTitle) {
+          const truncated = sessionTitle.length > 128 ? sessionTitle.slice(0, 125) + "..." : sessionTitle;
+          safeBackgroundTask({
+            taskName: `topic-sync.${sessionId}`,
+            task: async () => {
+              try {
+                await botApi.editForumTopic(target.chatId, target.messageThreadId!, { name: truncated });
+              } catch {
+                // ignore rename failures
+              }
+            },
+          });
+        }
+      }
+
       const idleScopeKey = getSessionRoutingScopeKey(sessionId);
       await deferredBatch.flushExpiredWindowsForScope(idleScopeKey);
     } catch (err) {
@@ -2536,8 +2615,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
     syncSessionRoutingContext(request.sessionID);
     const botApi = getSessionRoutingApi(request.sessionID);
-    const routing = getSessionRoutingContext(request.sessionID);
-    const target = routing?.target ?? getSessionRoutingTarget(request.sessionID);
+    const target = getSessionRoutingTarget(request.sessionID);
     if (!botApi || !target) {
       logger.error("Bot or chat ID not available for showing permission request");
       return;
@@ -2551,12 +2629,15 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     logger.info(
       `[Bot] Received permission request from agent: type=${request.permission}, requestID=${request.id}`,
     );
+    const deliveryTarget = getSessionDeliveryTarget(request.sessionID);
     await runWithSessionRoutingScope(request.sessionID, () =>
       showPermissionRequest(
         botApi,
         target.chatId,
         request,
         target.messageThreadId,
+        undefined,
+        deliveryTarget,
       ),
     );
   });
@@ -3235,12 +3316,15 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               if (!botApi || !target) return;
 
               const formatted = formatReasoningBlock(reasoningText);
-              await deliverChildTopicMessage(childTopicDeliveryDependencies, {
-                sessionId: bufKey,
-                kind: "diagnostic",
-                text: formatted,
-                format: "html",
-              });
+              const chunks = splitTextIntoChunks(formatted, TELEGRAM_MESSAGE_LIMIT);
+              for (const chunk of chunks) {
+                await deliverChildTopicMessage(childTopicDeliveryDependencies, {
+                  sessionId: bufKey,
+                  kind: "diagnostic",
+                  text: chunk,
+                  format: "html",
+                });
+              }
             },
           });
         }
@@ -4179,6 +4263,29 @@ export function createBot(): Bot<Context> {
         }),
     };
     await handleVideoMessage(ctx, deps);
+  });
+
+  bot.on("message:location", async (ctx) => {
+    logger.debug(`[Bot] Received location message, chatId=${ctx.chat.id}`);
+    const locScopeKey = buildTelegramConversationScopeKey(
+      extractTelegramConversationScopeFromContext(ctx),
+    );
+    const locDeps = {
+      bot,
+      ensureEventSubscription,
+      deferredBatch,
+      acquireProcessingHold: () => deferredBatch.acquireProcessingHold(locScopeKey),
+      enqueueCorrelatedItem: (item: ResolvedDeferredItem) =>
+        deferredBatch.enqueueDeferredItem({
+          scopeKey: locScopeKey,
+          deferredItem: item,
+        }),
+    };
+    await handleLocationMessage(ctx, locDeps);
+  });
+
+  bot.on("edited_message", async (ctx) => {
+    await handleEditedLocation(ctx);
   });
 
   bot.on("message:text", async (ctx) => {

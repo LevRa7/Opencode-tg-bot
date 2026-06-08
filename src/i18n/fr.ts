@@ -950,4 +950,6 @@ export const fr: I18nDictionary = {
   "connect.empty": "No AI providers configured.",
   "connect.error": "Failed to list providers.",
   "cmd.description.connect": "Connect AI providers",
+  "location.live_started": "Partage de position en direct démarré. Les coordonnées seront ajoutées aux messages.",
+  "location.live_stopped": "Partage de position en direct arrêté.",
 };

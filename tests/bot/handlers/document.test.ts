@@ -333,7 +333,7 @@ describe("bot/handlers/document", () => {
   });
 
   describe("unsupported file types", () => {
-    it("replies with unsupported type message for unsupported MIME types", async () => {
+    it("routes unsupported MIME types to file attachment handler", async () => {
       const { ctx, replyMock } = createDocumentContext({
         document: {
           file_id: "zip-file-id",
@@ -347,9 +347,8 @@ describe("bot/handlers/document", () => {
 
       await handleDocumentMessage(ctx, deps);
 
-      expect(replyMock).toHaveBeenCalledWith("⚠️ This file type is not supported. Send an image, PDF, or text/code file.");
-      expect(downloadMock).not.toHaveBeenCalled();
-      expect(processPromptMock).not.toHaveBeenCalled();
+      expect(replyMock).toHaveBeenCalledWith(t("bot.file_downloading"));
+      expect(downloadMock).toHaveBeenCalled();
     });
 
     it("processes image documents through shared media preparation", async () => {

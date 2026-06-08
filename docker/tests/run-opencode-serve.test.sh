@@ -209,12 +209,33 @@ if grep -Fq '"mcp"' "${STATE_DIR}/config/opencode.json"; then
   echo "tenant config should not inherit host mcp settings" >&2
   exit 1
 fi
+# Verify base skills
 test -f "${STATE_DIR}/skills/tg-cli/SKILL.md"
-test -f "${STATE_DIR}/skills/embedding-strategies/SKILL.md"
 test -f "${STATE_DIR}/skills/openai-media-transcriber/SKILL.md"
 test -f "${STATE_DIR}/skills/gpt-image-api/SKILL.md"
 test -f "${STATE_DIR}/skills/gpt-image-api/scripts/opencode-gpt-image"
 grep -Fq "/usr/local/bin/opencode-gpt-image" "${STATE_DIR}/skills/gpt-image-api/SKILL.md"
+
+# Verify package skills are installed
+test -f "${STATE_DIR}/skills/concept-diagrams/opencode.md"
+test -f "${STATE_DIR}/skills/docker-management/opencode.md"
+test -f "${STATE_DIR}/skills/web-pentest/opencode.md"
+test -f "${STATE_DIR}/skills/tg-upload/opencode.md"
+test -f "${STATE_DIR}/skills/tg-upload/tg-upload.ts"
+test -f "${STATE_DIR}/skills/screen-manager/opencode.md"
+test -f "${STATE_DIR}/skills/visual-browser/opencode.md"
+test -f "${STATE_DIR}/skills/screenshot/opencode.md"
+test -f "${STATE_DIR}/skills/one-three-one-rule/opencode.md"
+test -f "${STATE_DIR}/skills/chroma/opencode.md"
+test -f "${STATE_DIR}/skills/whisper/opencode.md"
+test -f "${STATE_DIR}/skills/docker-management/opencode.md"
+
+# Verify at least 20 skill directories exist
+SKILL_COUNT=$(find "${STATE_DIR}/skills" -mindepth 1 -maxdepth 1 -type d | wc -l)
+if [ "$SKILL_COUNT" -lt 20 ]; then
+  echo "Expected at least 20 skills, found $SKILL_COUNT" >&2
+  exit 1
+fi
 if grep -Fq '192.168.2.166:8124' "${STATE_DIR}/config/opencode.json"; then
   echo "tenant config should not expose gemini media endpoint" >&2
   exit 1

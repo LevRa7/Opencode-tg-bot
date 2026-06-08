@@ -51,17 +51,17 @@ describe("bot/utils/file-download", () => {
   });
 
   describe("downloadTelegramFile", () => {
-    it("rejects files larger than 20MB for generic downloads", async () => {
+    it("rejects files larger than 2048MB for generic downloads", async () => {
       const getFile = vi.fn().mockResolvedValue({
         file_path: "videos/oversized.mp4",
-        file_size: 21 * 1024 * 1024,
+        file_size: 2500 * 1024 * 1024,
       });
       const api = {
         getFile,
       } as never;
 
       await expect(downloadTelegramFile(api, "oversized-file-id")).rejects.toThrow(
-        "File too large: 21.00MB (max 20MB)",
+        "File too large: 2500.00MB (max 2048MB)",
       );
       expect(getFile).toHaveBeenCalledWith("oversized-file-id");
     });

@@ -1,6 +1,6 @@
 import { logger } from "../utils/logger.js";
-import type { TelegraphClient } from "./telegraph-client.js";
 import { FloodWaitError } from "./telegraph-client.js";
+import type { TelegraphPageClient } from "./types.js";
 
 interface LogEntry {
   timestamp: number;
@@ -32,11 +32,11 @@ const FLUSH_INTERVAL_MS = 5000;
 export class SubagentTelegraphLogger {
   private readonly pages = new Map<string, SubagentPage>();
   private readonly pending = new Map<string, LogEntry[]>();
-  private readonly client: TelegraphClient;
+  private readonly client: TelegraphPageClient;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private cooldownUntil = 0;
 
-  constructor(client: TelegraphClient) {
+  constructor(client: TelegraphPageClient) {
     this.client = client;
     this.startFlushTimer();
   }

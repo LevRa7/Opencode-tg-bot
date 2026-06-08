@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { SubdomainsRepository } from "../settings/repositories/subdomains.js";
-import { setServerPassword } from "../settings/manager.js";
+import { getServerPassword, setServerPassword } from "../settings/manager.js";
 
 export interface SubdomainInfo {
   userId: number;
@@ -35,7 +35,8 @@ export class SubdomainManager {
     }
 
     const effectiveUsername = (username?.replace(/^@/, "") || `tg${userId}`).toLowerCase();
-    const password = this.generatePassword();
+    const existingPassword = getServerPassword(userId);
+    const password = existingPassword ?? this.generatePassword();
     const now = new Date().toISOString();
 
     this.getRepo().upsert(userId, {
@@ -45,7 +46,9 @@ export class SubdomainManager {
       created_at: now,
     });
 
-    setServerPassword(userId, password);
+    if (!existingPassword) {
+      setServerPassword(userId, password);
+    }
 
     return {
       userId,
@@ -65,7 +68,8 @@ export class SubdomainManager {
   ): SubdomainInfo {
     const effectiveUsername = (username?.replace(/^@/, "") || `tg${userId}`).toLowerCase();
     const subdomain = `${hostname}.${effectiveUsername}`;
-    const password = this.generatePassword();
+    const existingPassword = getServerPassword(userId);
+    const password = existingPassword ?? this.generatePassword();
     const now = new Date().toISOString();
 
     this.getRepo().upsert(userId, {
@@ -77,7 +81,9 @@ export class SubdomainManager {
       created_at: now,
     });
 
-    setServerPassword(userId, password);
+    if (!existingPassword) {
+      setServerPassword(userId, password);
+    }
 
     return {
       userId,

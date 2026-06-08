@@ -394,9 +394,10 @@ export class SubagentTopicService {
       return null;
     }
 
+    const rawId = String(entry.scope.chatId).replace(/^-100/, "");
     return {
       kind: "active",
-      url: `https://t.me/c/${entry.scope.chatId}/${entry.scope.messageThreadId}`,
+      url: `https://t.me/c/${rawId}/${entry.scope.messageThreadId}`,
     };
   }
 

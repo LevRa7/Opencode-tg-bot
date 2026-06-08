@@ -63,7 +63,6 @@ export async function handleProxyRequest(
       Object.entries(req.headers).filter(([, v]) => v !== undefined) as [string, string | string[]][]
     ),
     host: targetUrl.host,
-    authorization: target.authHeader,
   };
 
   const proxyReq = http.request(

@@ -1,9 +1,12 @@
 import type { Model } from "@opencode-ai/sdk/v2";
 import type { Context } from "grammy";
+import path from "node:path";
 import { toDataUri } from "../bot/utils/file-download.js";
 import { getCurrentOpencodeRoute } from "../opencode/client.js";
+import { config } from "../config.js";
 import { isSttConfigured, transcribeAudio, type SttResult } from "../stt/client.js";
 import { logger } from "../utils/logger.js";
+import { sshManager } from "../utils/ssh-manager.js";
 import { getModelCapabilities, supportsAttachment, supportsInput } from "../model/capabilities.js";
 import { getStoredModel } from "../model/manager.js";
 import { saveIncomingMediaFile } from "./storage.js";
@@ -12,6 +15,7 @@ import type {
   MediaStorageOwner,
   MediaTranscriberKind,
   PreparedMediaPrompt,
+  StoredMediaFile,
   StoredMediaType,
 } from "./types.js";
 
@@ -93,6 +97,7 @@ export function resolveMediaStorageOwner(ctx: Context): MediaStorageOwner {
       userId,
       runtimeKind: "tenant",
       tenantId: route.tenantId ?? `tg-${userId}`,
+      sshUploadToRemote: sshManager.isSshActive(userId),
     };
   }
 
@@ -100,6 +105,71 @@ export function resolveMediaStorageOwner(ctx: Context): MediaStorageOwner {
     userId,
     runtimeKind: "host",
   };
+}
+
+async function uploadStoredMediaToRemoteIfNeeded(
+  owner: MediaStorageOwner,
+  sourceFile: StoredMediaFile,
+): Promise<StoredMediaFile> {
+  if (owner.runtimeKind !== "tenant" || !owner.sshUploadToRemote) {
+    return sourceFile;
+  }
+
+  const userId = owner.userId;
+  const conn = sshManager.getActiveConnection(userId);
+  if (!conn) {
+    logger.warn("[Media] SSH connection lost, skipping remote media upload");
+    return sourceFile;
+  }
+
+  try {
+    if (conn.deployTarget === "docker") {
+      const containerName = `opencode-serve-tg-${userId}`;
+      const containerDir = path.posix.dirname(sourceFile.runtimeVisiblePath);
+      const remoteTmp = `/tmp/opencode-tg-media-${userId}-${Date.now()}`;
+
+      await new Promise<void>((resolve, reject) => {
+        conn.client.sftp((err: any, sftp: any) => {
+          if (err) return reject(err);
+          sftp.fastPut(sourceFile.hostAbsolutePath, remoteTmp, (e: any) => {
+            if (e) return reject(e);
+            resolve();
+          });
+        });
+      });
+
+      await sshManager.executeRemoteCommand(
+        userId,
+        `docker exec "${containerName}" mkdir -p "${containerDir}"`,
+      );
+      await sshManager.executeRemoteCommand(
+        userId,
+        `docker cp "${remoteTmp}" "${containerName}":"${sourceFile.runtimeVisiblePath}"`,
+      );
+      await sshManager.executeRemoteCommand(userId, `rm -f "${remoteTmp}"`).catch(() => {});
+    } else {
+      const remoteHome = await sshManager.getRemoteHomeDir(userId);
+      const remoteDir = `${remoteHome}/opencode-media`;
+      const remotePath = `${remoteDir}/${sourceFile.fileName}`;
+
+      await sshManager.executeRemoteCommand(userId, `mkdir -p "${remoteDir}"`);
+      await new Promise<void>((resolve, reject) => {
+        conn.client.sftp((err: any, sftp: any) => {
+          if (err) return reject(err);
+          sftp.fastPut(sourceFile.hostAbsolutePath, remotePath, (e: any) => {
+            if (e) return reject(e);
+            resolve();
+          });
+        });
+      });
+
+      return { ...sourceFile, runtimeVisiblePath: remotePath };
+    }
+  } catch (error) {
+    logger.error("[Media] Failed to upload stored media to remote", error);
+  }
+
+  return sourceFile;
 }
 
 export function buildStoredMediaPrompt(params: {
@@ -153,8 +223,9 @@ export async function prepareAttachmentMediaPrompt(
   const transcribeMedia = params.transcribeStoredMedia ?? transcribeStoredMedia;
   const transcriberKind = resolveTranscriberKind(params.mediaType);
 
-  const sourceFile = await saveFile({
-    owner: resolveMediaStorageOwner(params.ctx),
+  const owner = resolveMediaStorageOwner(params.ctx);
+  let sourceFile = await saveFile({
+    owner,
     telegramFileId: params.telegramFileId,
     originalFileName: params.originalFileName,
     fallbackFileName: params.fallbackFileName,
@@ -162,6 +233,7 @@ export async function prepareAttachmentMediaPrompt(
     mediaType: params.mediaType,
     buffer: params.buffer,
   });
+  sourceFile = await uploadStoredMediaToRemoteIfNeeded(owner, sourceFile);
 
   if (params.mediaType === "text_document") {
     const extractedText = params.textContent ?? params.buffer.toString("utf-8");
@@ -263,8 +335,9 @@ export async function prepareAudioPrompt(
   const transcribeWithStt = params.transcribeAudio ?? transcribeAudio;
   const transcribeMedia = params.transcribeStoredMedia ?? transcribeStoredMedia;
 
-  const sourceFile = await saveFile({
-    owner: resolveMediaStorageOwner(params.ctx),
+  const owner = resolveMediaStorageOwner(params.ctx);
+  let sourceFile = await saveFile({
+    owner,
     telegramFileId: params.telegramFileId,
     originalFileName: params.originalFileName,
     fallbackFileName: params.fallbackFileName,
@@ -272,6 +345,7 @@ export async function prepareAudioPrompt(
     mediaType: "audio",
     buffer: params.buffer,
   });
+  sourceFile = await uploadStoredMediaToRemoteIfNeeded(owner, sourceFile);
 
   if (sttConfigured()) {
     try {
@@ -280,7 +354,7 @@ export async function prepareAudioPrompt(
 
       if (recognizedText.length === 0) {
         logger.warn(
-          "[MediaIngest] Remote audio STT returned empty text, falling back to stored-media transcription",
+          `[MediaIngest] Remote audio STT returned empty text (model=${config.stt.model}, language=${config.stt.language || "auto"}, size=${params.buffer.length}B, url=${config.stt.apiUrl}), falling back to stored-media transcription`,
         );
       } else {
         return {

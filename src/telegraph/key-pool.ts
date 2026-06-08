@@ -71,6 +71,11 @@ export class TelegraphKeyPool {
     return this.consecutiveFailures >= 15;
   }
 
+  getClient(keyId: number): TelegraphClient | null {
+    const entry = this.keys.find(k => k.keyId === keyId);
+    return entry?.client ?? null;
+  }
+
   get size(): number { return this.keys.length; }
 
   reset(): void {

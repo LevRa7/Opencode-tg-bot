@@ -310,12 +310,30 @@ if (!config.provider.local) {
 fs.writeFileSync(dst, JSON.stringify(config, null, 2) + "\n", "utf8");
  ' "$HOST_OPENCODE_JSON" "$TENANT_OPENCODE_JSON" "$CLIPROXYAPI_BASE_URL" "$TENANT_CLIPROXYAPI_KEY_REF"
 
-cp "$SCRIPT_DIR/skills/tg-cli/SKILL.md" "$STATE_SKILLS_DIR/tg-cli/SKILL.md"
-cp "$SCRIPT_DIR/skills/embedding-strategies/SKILL.md" \
-  "$STATE_SKILLS_DIR/embedding-strategies/SKILL.md"
-cp "$SCRIPT_DIR/skills/openai-media-transcriber/SKILL.md" \
-  "$STATE_SKILLS_DIR/openai-media-transcriber/SKILL.md"
-cp -R "$SCRIPT_DIR/skills/gpt-image-api/." "$STATE_SKILLS_DIR/gpt-image-api/"
+# Install base skills (tg-cli, openai-media-transcriber, gpt-image-api, tg-upload, yandex-rasp)
+if [ -f "$SCRIPT_DIR/vendor/python-tg-cli/SKILL.md" ]; then
+  cp "$SCRIPT_DIR/vendor/python-tg-cli/SKILL.md" "$STATE_SKILLS_DIR/tg-cli/SKILL.md"
+fi
+if [ -f "$SCRIPT_DIR/skills/openai-media-transcriber/SKILL.md" ]; then
+  cp "$SCRIPT_DIR/skills/openai-media-transcriber/SKILL.md" \
+    "$STATE_SKILLS_DIR/openai-media-transcriber/SKILL.md"
+fi
+if [ -d "$SCRIPT_DIR/skills/gpt-image-api" ]; then
+  cp -R "$SCRIPT_DIR/skills/gpt-image-api/." "$STATE_SKILLS_DIR/gpt-image-api/"
+fi
+if [ -d "$SCRIPT_DIR/skills/tg-upload" ]; then
+  cp -R "$SCRIPT_DIR/skills/tg-upload/." "$STATE_SKILLS_DIR/tg-upload/"
+fi
+if [ -f "$SCRIPT_DIR/skills/yandex-rasp/SKILL.md" ]; then
+  cp "$SCRIPT_DIR/skills/yandex-rasp/SKILL.md" "$STATE_SKILLS_DIR/yandex-rasp/SKILL.md"
+fi
+
+# Install all skills from the baked-in package (opencode-skills-pkg)
+if [ -d "$SCRIPT_DIR/opencode-skills-pkg" ]; then
+  bash "$SCRIPT_DIR/bin/install-opencode-skills.sh" \
+    --source "$SCRIPT_DIR/opencode-skills-pkg" \
+    --target "$STATE_SKILLS_DIR"
+fi
 
 cat > "$STATE_DIR/MAP.md" <<'EOF'
 # Tenant State Map
@@ -333,6 +351,36 @@ Directory map:
 - `/state/cache` - persistent cache data for this tenant.
 - `/state/xdg-state` - persistent state files for tools that use XDG state.
 - `/state/skills` - tenant-visible skills and skill-related files kept outside the project tree.
+
+Skills installed in `/state/skills`:
+
+- `tg-cli` — Telegram CLI operations (chat list, message search, media export)
+- `openai-media-transcriber` — Media transcription via container proxy
+- `gpt-image-api` — Image generation via container proxy
+- `concept-diagrams` — Flat minimal SVG diagrams as HTML
+- `blender-mcp` — Control Blender via socket
+- `docker-management` — Docker container, image, volume management
+- `pinggy-tunnel` — Zero-install localhost tunnels over SSH
+- `watchers` — Poll RSS, JSON APIs, GitHub with watermark dedup
+- `inference-sh-cli` — Run 150+ AI apps via inference.sh CLI
+- `web-pentest` — Authorized web app penetration testing
+- `sherlock` — OSINT username search across 400+ social networks
+- `osint-investigation` — Public-records OSINT (SEC, USAspending, OFAC)
+- `parallel-cli` — Web search, extraction, deep research via Parallel.ai
+- `bioinformatics` — Gateway to 400+ bio skills (genomics, variant calling)
+- `antigravity-cli` — Operate Antigravity CLI (agy)
+- `chroma` — Open-source embedding DB
+- `whisper` — OpenAI Whisper speech recognition
+- `torchtitan` — Distributed LLM pretraining
+- `clip` — OpenAI CLIP zero-shot image classification
+- `screen-manager` — Xvfb virtual display, xdotool/wmctrl
+- `visual-browser` — Chromium via CDP + Playwright
+- `screenshot` — Screenshots via CDP, Playwright, scrot
+- `one-three-one-rule` — Decision framework: 1 problem → 3 options → 1 recommendation
+- `tg-upload` — Send files/text/Telegraph articles to Telegram chats
+- `yandex-rasp` — Yandex Rasp API: train/suburban schedules, MiniApp ticket links
+
+Full catalog at `/usr/local/lib/opencode-skills-pkg/registry/catalog.json` (inside container).
 
 Model guidance:
 

@@ -21,7 +21,7 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 
 const TELEGRAM_VIDEO_MAX_DURATION_SEC = 61;
-const TELEGRAM_VIDEO_FAST_PATH_MAX_BYTES = 20 * 1024 * 1024;
+const TELEGRAM_VIDEO_FAST_PATH_MAX_BYTES = 2048 * 1024 * 1024;
 
 interface VideoMessageInfo {
   fileId: string;

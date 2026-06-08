@@ -1,12 +1,20 @@
 // @ts-expect-error — node-fetch v2 ships no TS types and we avoid adding @types/node-fetch
 import nodeFetch from "node-fetch";
+import { readFile } from "node:fs/promises";
 import type { Api } from "grammy";
 import { Agent as HttpsAgent } from "https";
 import { config } from "../../config.js";
 import { logger } from "../../utils/logger.js";
 
-const TELEGRAM_FILE_URL_BASE = "https://api.telegram.org/file/bot";
-const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20MB Telegram limit
+const DEFAULT_API_ROOT = "https://api.telegram.org";
+
+function telegramFileUrlBase(): string {
+  const apiRoot = config.telegram.apiRoot
+    ? config.telegram.apiRoot.replace(/\/+$/, "")
+    : DEFAULT_API_ROOT;
+  return `${apiRoot}/file/bot`;
+}
+const MAX_FILE_SIZE_BYTES = 2048 * 1024 * 1024; // 2GB Telegram local API limit
 const MAX_VIDEO_COMPRESSION_DOWNLOAD_BYTES = 64 * 1024 * 1024; // 64MB hard ceiling for oversize video preprocessing
 
 export interface DownloadedFile {
@@ -47,27 +55,35 @@ async function downloadTelegramFileInternal(
     throw new Error(`File too large: ${sizeMb}MB (max ${maxSizeMb}MB)`);
   }
 
-  const fileUrl = `${TELEGRAM_FILE_URL_BASE}${config.telegram.token}/${file.file_path}`;
-  logger.debug(`[FileDownload] Downloading from ${fileUrl.replace(config.telegram.token, "***")}`);
+  let buffer: Buffer;
 
-  const fetchOptions: RequestInit & { agent?: unknown } = {};
+  // Local Bot API returns absolute file paths — read directly from disk
+  if (file.file_path.startsWith("/")) {
+    logger.debug(`[FileDownload] Reading local file: ${file.file_path}`);
+    buffer = await readFile(file.file_path);
+  } else {
+    const fileUrl = `${telegramFileUrlBase()}${config.telegram.token}/${file.file_path}`;
+    logger.debug(`[FileDownload] Downloading from ${fileUrl.replace(config.telegram.token, "***")}`);
 
-  // Use proxy if configured
-  if (config.telegram.proxyUrl) {
-    const { HttpsProxyAgent } = await import("https-proxy-agent");
-    fetchOptions.agent = new HttpsProxyAgent(config.telegram.proxyUrl);
-  } else if (config.telegram.forceIpv4) {
-    fetchOptions.agent = new HttpsAgent({ family: 4, keepAlive: true });
+    const fetchOptions: RequestInit & { agent?: unknown } = {};
+
+    // Use proxy if configured
+    if (config.telegram.proxyUrl) {
+      const { HttpsProxyAgent } = await import("https-proxy-agent");
+      fetchOptions.agent = new HttpsProxyAgent(config.telegram.proxyUrl);
+    } else if (config.telegram.forceIpv4) {
+      fetchOptions.agent = new HttpsAgent({ family: 4, keepAlive: true });
+    }
+
+    const response = await fetchImpl(fileUrl, fetchOptions);
+
+    if (!response.ok) {
+      throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    buffer = Buffer.from(arrayBuffer);
   }
-
-  const response = await fetchImpl(fileUrl, fetchOptions);
-
-  if (!response.ok) {
-    throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
 
   logger.debug(`[FileDownload] Downloaded ${buffer.length} bytes`);
 

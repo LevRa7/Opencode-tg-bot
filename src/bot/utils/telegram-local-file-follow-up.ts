@@ -3,7 +3,7 @@ import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { escapeHtml } from "./reasoning-format.js";
 
-const MAX_FOLLOW_UP_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+const MAX_FOLLOW_UP_FILE_SIZE_BYTES = 2048 * 1024 * 1024;
 const MAX_FOLLOW_UP_CAPTION_LENGTH = 900;
 
 const PHOTO_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif"]);
@@ -13,7 +13,7 @@ const LOCAL_FILE_REFERENCE_PATTERN = /(?:file:\/\/\/[^\s'"`<>]+|sandbox:\/[^\s'"
 
 // Что делает этот модуль:
 // - находит в ответе ассистента абсолютные локальные пути,
-// - фильтрует только реальные файлы размером до 20 МБ,
+// - фильтрует только реальные файлы размером до 2048 МБ,
 // - заранее определяет правильный Telegram media type и caption.
 // Почему выбрано это решение:
 // - вся подготовка follow-up вложений сосредоточена в одном utility,

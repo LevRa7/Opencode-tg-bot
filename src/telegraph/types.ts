@@ -6,6 +6,8 @@ export interface TelegraphConfig {
   maxChars: number;
   translateEnabled: boolean;
   translateApiUrl?: string;
+  maxKeysPerUser: number;
+  tokenEncryptionKey?: string;
 }
 
 export interface TechnicalDetailsPublishRequest {
@@ -18,4 +20,14 @@ export interface TechnicalDetailsPublisher {
   publish(request: TechnicalDetailsPublishRequest): Promise<string | null>;
   flush(): Promise<void>;
   reset(): void;
+}
+
+export interface CreatePageResult {
+  url: string;
+  path: string;
+}
+
+export interface TelegraphPageClient {
+  createPage(title: string, body: string): Promise<CreatePageResult | null>;
+  editPage(path: string, title: string, body: string): Promise<boolean>;
 }

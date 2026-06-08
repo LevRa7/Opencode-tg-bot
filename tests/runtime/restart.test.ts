@@ -63,4 +63,33 @@ describe("runtime/restart", () => {
       }),
     ).toThrow("Cannot restart process without an entry script.");
   });
+
+  it("exits directly with code 0 without spawning a wrapper when INVOCATION_ID is set", () => {
+    const spawnProcess = vi.fn();
+    const exitProcess = vi.fn(() => {
+      throw new Error("EXIT");
+    }) as unknown as (code: number) => never;
+
+    const originalInvocationId = process.env.INVOCATION_ID;
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.INVOCATION_ID = "test-invocation-id";
+    // Temporarily delete NODE_ENV to simulate non-test environment
+    delete process.env.NODE_ENV;
+
+    try {
+      expect(() =>
+        restartCurrentProcess({
+          argv: ["/usr/bin/node", "index.js"],
+          spawnProcess,
+          exitProcess,
+        }),
+      ).toThrow("EXIT");
+
+      expect(spawnProcess).not.toHaveBeenCalled();
+      expect(exitProcess).toHaveBeenCalledWith(0);
+    } finally {
+      process.env.INVOCATION_ID = originalInvocationId;
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+  });
 });

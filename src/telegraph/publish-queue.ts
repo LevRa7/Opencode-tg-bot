@@ -1,5 +1,5 @@
 import { logger } from "../utils/logger.js";
-import { FloodWaitError, TelegraphClient } from "./telegraph-client.js";
+import { FloodWaitError } from "./telegraph-client.js";
 import type { TechnicalDetailsPublishRequest, TechnicalDetailsPublisher } from "./types.js";
 
 export interface PublishQueueConfig {
@@ -32,7 +32,7 @@ const DEFAULT_CONFIG: PublishQueueConfig = {
 export class TelegraphPublishQueue implements TechnicalDetailsPublisher {
   private readonly queue: QueueItem[] = [];
   private readonly config: PublishQueueConfig;
-  private readonly client: TelegraphClient;
+  private readonly client: TechnicalDetailsPublisher;
 
   private processing = false;
   private lastRequestAt = 0;
@@ -40,7 +40,7 @@ export class TelegraphPublishQueue implements TechnicalDetailsPublisher {
   private cooldownUntil = 0;
   private disposed = false;
 
-  constructor(client: TelegraphClient, config?: Partial<PublishQueueConfig>) {
+  constructor(client: TechnicalDetailsPublisher, config?: Partial<PublishQueueConfig>) {
     this.client = client;
     this.config = { ...DEFAULT_CONFIG, ...config };
   }

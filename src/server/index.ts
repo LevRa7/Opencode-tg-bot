@@ -58,24 +58,7 @@ function createServer(): http.Server {
       return;
     }
 
-    const host = req.headers.host || "";
-    const hostPart = host.split(":")[0];
-    const baseDomain = "smart-server.online";
-    if (hostPart !== "localhost" && hostPart !== "127.0.0.1" && hostPart.endsWith(`.${baseDomain}`) && hostPart !== baseDomain) {
-      try {
-        await handleProxyRequest(req, res, host);
-        return;
-      } catch (err) {
-        logger.error("[HTTP] Proxy error", err);
-        if (!res.headersSent) {
-          res.writeHead(502, { "Content-Type": "text/plain" });
-          res.end("Proxy error");
-        }
-        return;
-      }
-    }
-
-    // POST /api/auth
+    // POST /api/auth — handle BEFORE proxy so MiniApp works
     if (req.method === "POST" && req.url === "/api/auth") {
       const chunks: Buffer[] = [];
       req.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -98,11 +81,29 @@ function createServer(): http.Server {
       return;
     }
 
-    // GET — serve static files
+    // GET — serve MiniApp SPA first (before proxy)
     if (req.method === "GET") {
       const url = req.url || "/";
       serveStaticFile(res, url);
       return;
+    }
+
+    // Proxy subdomain requests to OpenCode API
+    const host = req.headers.host || "";
+    const hostPart = host.split(":")[0];
+    const baseDomain = "smart-server.online";
+    if (hostPart !== "localhost" && hostPart !== "127.0.0.1" && hostPart.endsWith(`.${baseDomain}`) && hostPart !== baseDomain) {
+      try {
+        await handleProxyRequest(req, res, host);
+        return;
+      } catch (err) {
+        logger.error("[HTTP] Proxy error", err);
+        if (!res.headersSent) {
+          res.writeHead(502, { "Content-Type": "text/plain" });
+          res.end("Proxy error");
+        }
+        return;
+      }
     }
 
     res.writeHead(405);

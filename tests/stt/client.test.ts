@@ -163,7 +163,7 @@ describe("transcribeAudio", () => {
     );
   });
 
-  it("throws when response has no text field", async () => {
+  it("falls back to raw response body when JSON has no text field", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ duration: 3.5 }), {
         status: 200,
@@ -172,8 +172,22 @@ describe("transcribeAudio", () => {
     );
 
     const audioBuffer = Buffer.from("fake-audio-data");
-    await expect(transcribeAudio(audioBuffer, "voice.oga")).rejects.toThrow(
-      "STT API response does not contain a text field",
+    const result = await transcribeAudio(audioBuffer, "voice.oga");
+
+    expect(result).toEqual({ text: '{"duration":3.5}' });
+  });
+
+  it("falls back to raw response body when response is not JSON", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("Hello world", {
+        status: 200,
+        headers: { "Content-Type": "text/plain" },
+      }),
     );
+
+    const audioBuffer = Buffer.from("fake-audio-data");
+    const result = await transcribeAudio(audioBuffer, "voice.oga");
+
+    expect(result).toEqual({ text: "Hello world" });
   });
 });

@@ -55,6 +55,12 @@ fi
 
 merge-agents
 
+# Install skills from the baked-in package at /usr/local/lib/opencode-skills-pkg
+# into /state/skills (mounted from host). Existing skills are preserved.
+if command -v install-opencode-skills >/dev/null 2>&1; then
+  install-opencode-skills --source /usr/local/lib/opencode-skills-pkg --target /state/skills
+fi
+
 . /usr/local/bin/ensure-tenant-python-env.sh
 ensure_tenant_python_env
 

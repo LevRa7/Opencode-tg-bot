@@ -29,6 +29,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { config as dotenvConfig } from "dotenv";
 import QRCode from "qrcode";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -79,6 +80,9 @@ interface CliArgs {
   telegraphFiles: boolean;
   title?: string;
   body?: string;
+  responseFile?: string;
+  responseText?: string;
+  replyTo?: number;
   positionalFiles: string[];
 }
 
@@ -144,6 +148,15 @@ function parseArgs(): CliArgs {
       case "--body":
         result.body = args[++i];
         break;
+      case "--response-file":
+        result.responseFile = args[++i];
+        break;
+      case "--response-text":
+        result.responseText = args[++i];
+        break;
+      case "--reply-to":
+        result.replyTo = Number(args[++i]);
+        break;
       default:
         if (!args[i].startsWith("--")) {
           result.positionalFiles.push(args[i]);
@@ -169,6 +182,28 @@ function lookupTargetBySession(sessionId: string): Target {
 }
 
 function lookupTargetAuto(): Target {
+  // Check /tmp/tg-current-chat.json cache first (written by current-chat.ts)
+  const cacheFile = "/tmp/tg-current-chat.json";
+  try {
+    if (fs.existsSync(cacheFile)) {
+      const stat = fs.statSync(cacheFile);
+      const isFresh = Date.now() - stat.mtimeMs < 60 * 60 * 1000; // 1 hour TTL
+      if (isFresh) {
+        const cached = JSON.parse(fs.readFileSync(cacheFile, "utf-8")) as {
+          chatId: number;
+          messageThreadId: number | null;
+          sessionId: string;
+        };
+        if (cached.chatId && cached.sessionId) {
+          // Resolve cached sessionId to get token
+          try {
+            const target = execLookup(cached.sessionId);
+            return target;
+          } catch { /* cache miss, fall through to --auto */ }
+        }
+      }
+    }
+  } catch { /* ignore cache errors */ }
   return execLookup("--auto");
 }
 
@@ -207,6 +242,12 @@ function execLookup(arg: string): Target {
   }
   if (!parsed)
     throw new Error(`tg-chat-lookup produced no valid JSON: ${output.slice(0, 200)}`);
+
+  // Prefer .env token over settings.db token (settings.db may be stale)
+  const envToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (envToken && envToken !== parsed.token) {
+    parsed.token = envToken;
+  }
 
   if (!parsed.token) {
     throw new Error("TELEGRAM_BOT_TOKEN not found in .env");
@@ -253,6 +294,11 @@ function codeLang(filePath: string): string {
   return map[ext] ?? "";
 }
 
+function apiUrlBase(target: Target): string {
+  const envRoot = process.env.TELEGRAM_API_ROOT?.replace(/\/+$/, "") ?? "";
+  return envRoot || "https://api.telegram.org";
+}
+
 function chatTarget(target: Target): Record<string, string> {
   const params: Record<string, string> = {
     chat_id: String(target.chatId),
@@ -263,11 +309,38 @@ function chatTarget(target: Target): Record<string, string> {
   return params;
 }
 
-async function sendMessage(
+function formBase(target: Target, cli: CliArgs): Record<string, string> {
+  const params: Record<string, string> = {
+    chat_id: String(target.chatId),
+  };
+  if (target.messageThreadId && target.messageThreadId > 0) {
+    params.message_thread_id = String(target.messageThreadId);
+  }
+  if (cli.replyTo && cli.replyTo > 0) {
+    params.reply_to_message_id = String(cli.replyTo);
+  }
+  return params;
+}
+
+function appendFormFields(form: FormData, fields: Record<string, string>): void {
+  for (const [key, value] of Object.entries(fields)) {
+    form.append(key, value);
+  }
+}
+
+function sendMessage(
   target: Target,
   text: string,
-  opts?: { disableLinkPreview?: boolean },
-): Promise<void> {
+  opts?: { disableLinkPreview?: boolean; replyTo?: number },
+): Promise<{ message_id: number }> {
+  return sendMessageRaw(target, text, opts);
+}
+
+async function sendMessageRaw(
+  target: Target,
+  text: string,
+  opts?: { disableLinkPreview?: boolean; replyTo?: number },
+): Promise<{ message_id: number }> {
   const params: Record<string, string> = {
     ...chatTarget(target),
     text,
@@ -276,21 +349,26 @@ async function sendMessage(
   if (opts?.disableLinkPreview !== false) {
     params.link_preview_options = JSON.stringify({ is_disabled: true });
   }
+  if (opts?.replyTo && opts.replyTo > 0) {
+    params.reply_to_message_id = String(opts.replyTo);
+  }
 
   const response = await fetch(
-    `https://api.telegram.org/bot${target.token}/sendMessage`,
+    `${apiUrlBase(target)}/bot${target.token}/sendMessage`,
     { method: "POST", body: new URLSearchParams(params) },
   );
 
-  const json = (await response.json()) as { ok: boolean; description?: string };
+  const json = (await response.json()) as { ok: boolean; description?: string; result?: { message_id: number } };
   if (!json.ok) throw new Error(`sendMessage failed: ${json.description ?? "unknown"}`);
+  return json.result ?? { message_id: 0 };
 }
 
 async function sendDocument(
   target: Target,
   filePath: string,
   caption?: string,
-): Promise<void> {
+  replyTo?: number,
+): Promise<{ message_id: number }> {
   const fileName = path.basename(filePath);
   const stat = fs.statSync(filePath);
 
@@ -301,9 +379,12 @@ async function sendDocument(
   }
 
   const formData = new FormData();
-  formData.append("chat_id", String(target.chatId));
+  appendFormFields(formData, { chat_id: String(target.chatId) });
   if (target.messageThreadId && target.messageThreadId > 0) {
     formData.append("message_thread_id", String(target.messageThreadId));
+  }
+  if (replyTo && replyTo > 0) {
+    formData.append("reply_to_message_id", String(replyTo));
   }
   formData.append("document", new Blob([fs.readFileSync(filePath)]), fileName);
   const finalCaption =
@@ -313,24 +394,29 @@ async function sendDocument(
   formData.append("parse_mode", "HTML");
 
   const response = await fetch(
-    `https://api.telegram.org/bot${target.token}/sendDocument`,
+    `${apiUrlBase(target)}/bot${target.token}/sendDocument`,
     { method: "POST", body: formData },
   );
 
-  const json = (await response.json()) as { ok: boolean; description?: string };
+  const json = (await response.json()) as { ok: boolean; description?: string; result?: { message_id: number } };
   if (!json.ok) throw new Error(`sendDocument failed: ${json.description ?? "unknown"}`);
+  return json.result ?? { message_id: 0 };
 }
 
 async function sendPhoto(
   target: Target,
   filePath: string,
   caption?: string,
-): Promise<void> {
+  replyTo?: number,
+): Promise<{ message_id: number }> {
   const fileName = path.basename(filePath);
   const formData = new FormData();
-  formData.append("chat_id", String(target.chatId));
+  appendFormFields(formData, { chat_id: String(target.chatId) });
   if (target.messageThreadId && target.messageThreadId > 0) {
     formData.append("message_thread_id", String(target.messageThreadId));
+  }
+  if (replyTo && replyTo > 0) {
+    formData.append("reply_to_message_id", String(replyTo));
   }
   formData.append("photo", new Blob([fs.readFileSync(filePath)]), fileName);
   if (caption) {
@@ -339,24 +425,29 @@ async function sendPhoto(
   formData.append("parse_mode", "HTML");
 
   const response = await fetch(
-    `https://api.telegram.org/bot${target.token}/sendPhoto`,
+    `${apiUrlBase(target)}/bot${target.token}/sendPhoto`,
     { method: "POST", body: formData },
   );
 
-  const json = (await response.json()) as { ok: boolean; description?: string };
+  const json = (await response.json()) as { ok: boolean; description?: string; result?: { message_id: number } };
   if (!json.ok) throw new Error(`sendPhoto failed: ${json.description ?? "unknown"}`);
+  return json.result ?? { message_id: 0 };
 }
 
 async function sendVideo(
   target: Target,
   filePath: string,
   caption?: string,
-): Promise<void> {
+  replyTo?: number,
+): Promise<{ message_id: number }> {
   const fileName = path.basename(filePath);
   const formData = new FormData();
-  formData.append("chat_id", String(target.chatId));
+  appendFormFields(formData, { chat_id: String(target.chatId) });
   if (target.messageThreadId && target.messageThreadId > 0) {
     formData.append("message_thread_id", String(target.messageThreadId));
+  }
+  if (replyTo && replyTo > 0) {
+    formData.append("reply_to_message_id", String(replyTo));
   }
   formData.append("video", new Blob([fs.readFileSync(filePath)]), fileName);
   if (caption) {
@@ -365,24 +456,29 @@ async function sendVideo(
   formData.append("parse_mode", "HTML");
 
   const response = await fetch(
-    `https://api.telegram.org/bot${target.token}/sendVideo`,
+    `${apiUrlBase(target)}/bot${target.token}/sendVideo`,
     { method: "POST", body: formData },
   );
 
-  const json = (await response.json()) as { ok: boolean; description?: string };
+  const json = (await response.json()) as { ok: boolean; description?: string; result?: { message_id: number } };
   if (!json.ok) throw new Error(`sendVideo failed: ${json.description ?? "unknown"}`);
+  return json.result ?? { message_id: 0 };
 }
 
 async function sendAudio(
   target: Target,
   filePath: string,
   caption?: string,
-): Promise<void> {
+  replyTo?: number,
+): Promise<{ message_id: number }> {
   const fileName = path.basename(filePath);
   const formData = new FormData();
-  formData.append("chat_id", String(target.chatId));
+  appendFormFields(formData, { chat_id: String(target.chatId) });
   if (target.messageThreadId && target.messageThreadId > 0) {
     formData.append("message_thread_id", String(target.messageThreadId));
+  }
+  if (replyTo && replyTo > 0) {
+    formData.append("reply_to_message_id", String(replyTo));
   }
   formData.append("audio", new Blob([fs.readFileSync(filePath)]), fileName);
   if (caption) {
@@ -391,32 +487,34 @@ async function sendAudio(
   formData.append("parse_mode", "HTML");
 
   const response = await fetch(
-    `https://api.telegram.org/bot${target.token}/sendAudio`,
+    `${apiUrlBase(target)}/bot${target.token}/sendAudio`,
     { method: "POST", body: formData },
   );
 
-  const json = (await response.json()) as { ok: boolean; description?: string };
+  const json = (await response.json()) as { ok: boolean; description?: string; result?: { message_id: number } };
   if (!json.ok) throw new Error(`sendAudio failed: ${json.description ?? "unknown"}`);
+  return json.result ?? { message_id: 0 };
 }
 
 async function uploadFile(
   target: Target,
   filePath: string,
   caption?: string,
+  replyTo?: number,
 ): Promise<void> {
   const type = detectMediaType(filePath);
   switch (type) {
     case "photo":
-      await sendPhoto(target, filePath, caption);
+      await sendPhoto(target, filePath, caption, replyTo);
       break;
     case "video":
-      await sendVideo(target, filePath, caption);
+      await sendVideo(target, filePath, caption, replyTo);
       break;
     case "audio":
-      await sendAudio(target, filePath, caption);
+      await sendAudio(target, filePath, caption, replyTo);
       break;
     default:
-      await sendDocument(target, filePath, caption);
+      await sendDocument(target, filePath, caption, replyTo);
   }
 }
 
@@ -658,6 +756,51 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, "").trim();
+}
+
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max - 3) + "...";
+}
+
+async function buildFileCaption(
+  target: Target,
+  filePath: string,
+  responseText: string,
+  userCaption?: string,
+): Promise<string> {
+  const fileName = path.basename(filePath);
+  const size = (fs.statSync(filePath).size / 1024).toFixed(1);
+  const fileInfo = `<code>${escapeHtml(fileName)}</code> (${size} KB)`;
+
+  // Short response: send as caption together with file
+  if (responseText.length <= 700) {
+    const combined = userCaption
+      ? `${fileInfo}\n\n${responseText}\n\n${userCaption}`
+      : `${fileInfo}\n\n${responseText}`;
+    return combined.slice(0, MAX_CAPTION_LENGTH);
+  }
+
+  // Long response: publish to Telegraph, link in caption
+  const telegraphTitle = `📄 ${fileName}`;
+  const telegraphBody = userCaption
+    ? `# ${fileName}\n\n${stripHtml(responseText)}\n\n---\n${stripHtml(userCaption)}`
+    : `# ${fileName}\n\n${stripHtml(responseText)}`;
+
+  try {
+    const url = await publishTelegraph(telegraphTitle, telegraphBody, "markdown");
+    return `${fileInfo}\n\n<a href="${url}">📖 Читать полный ответ на Telegraph</a>`;
+  } catch {
+    // Telegraph failed: truncate and send as plain caption
+    const fallback = truncate(stripHtml(responseText), 600);
+    return userCaption
+      ? `${fileInfo}\n\n${fallback}\n\n${userCaption}`
+      : `${fileInfo}\n\n${fallback}`;
+  }
+}
+
 function assertFile(p: string): void {
   if (!fs.existsSync(p)) throw new Error(`File not found: ${p}`);
   if (!fs.statSync(p).isFile()) throw new Error(`Not a file: ${p}`);
@@ -668,9 +811,15 @@ function assertFile(p: string): void {
 async function main(): Promise<void> {
   const args = parseArgs();
 
+  // Load .env so process.env.TELEGRAM_BOT_TOKEN is available
+  const envPath = path.resolve(__dirname, "..", ".env");
+  if (fs.existsSync(envPath)) {
+    dotenvConfig({ path: envPath, override: true });
+  }
+
   let target: Target;
   if (args.auto && !args.sessionId) {
-    // Auto-detect session from current directory
+    // Auto-detect: check /tmp/tg-current-chat.json cache first, then settings.db
     try {
       target = lookupTargetAuto();
     } catch (err: unknown) {
@@ -720,7 +869,7 @@ async function main(): Promise<void> {
       }
       const qrPath = await generateQrCode(data);
       const preview = data.length > 60 ? data.slice(0, 57) + "..." : data;
-      await sendPhoto(target, qrPath, `<code>${escapeHtml(preview)}</code>`);
+      await sendPhoto(target, qrPath, `<code>${escapeHtml(preview)}</code>`, args.replyTo);
       fs.unlinkSync(qrPath);
       fs.rmdirSync(path.dirname(qrPath));
       console.log(`QR code sent to chat ${target.chatId}`);
@@ -729,7 +878,7 @@ async function main(): Promise<void> {
 
     // Text message
     if (args.text) {
-      await sendMessage(target, args.text);
+      await sendMessage(target, args.text, { replyTo: args.replyTo });
       console.log(`Message sent to chat ${target.chatId}`);
       process.exit(0);
     }
@@ -739,22 +888,26 @@ async function main(): Promise<void> {
     if (filePath) {
       assertFile(filePath);
 
-      // For text files with --telegraph-also: upload to Telegraph AND send file
-      if (args.telegraphAlso && isTextFile(filePath)) {
-        const telegraphUrl = await publishFileAsTelegraph(target, filePath, args.server || undefined);
-        const caption = telegraphUrl
-          ? buildTelegraphCaption(path.basename(filePath), telegraphUrl, filePath)
-          : args.caption;
-        await uploadFile(target, filePath, caption);
-        console.log(
-          `File "${path.basename(filePath)}" sent to chat ${target.chatId}` +
-            (telegraphUrl ? ` + Telegraph: ${telegraphUrl}` : ""),
-        );
-        process.exit(0);
+      // Read response text from --response-file or --response-text
+      let responseText = args.responseText || "";
+      if (args.responseFile) {
+        responseText = fs.readFileSync(args.responseFile, "utf-8").trim();
       }
 
-      // Default: just upload the file
-      await uploadFile(target, filePath, args.caption);
+      // Build caption: file info + response text (or Telegraph link)
+      let caption: string | undefined;
+      if (responseText) {
+        caption = await buildFileCaption(target, filePath, responseText, args.caption);
+      } else if (args.telegraphAlso && isTextFile(filePath)) {
+        const telegraphUrl = await publishFileAsTelegraph(target, filePath, args.server || undefined);
+        caption = telegraphUrl
+          ? buildTelegraphCaption(path.basename(filePath), telegraphUrl, filePath)
+          : args.caption;
+      } else {
+        caption = args.caption;
+      }
+
+      await uploadFile(target, filePath, caption, args.replyTo);
       console.log(`File "${path.basename(filePath)}" sent to chat ${target.chatId}`);
       process.exit(0);
     }

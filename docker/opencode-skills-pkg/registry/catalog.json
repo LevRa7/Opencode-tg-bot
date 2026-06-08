@@ -1,0 +1,802 @@
+{
+  "version": "1.0.0",
+  "target": "opencode",
+  "generated_at": "2026-06-04",
+  "categories": {
+    "apple": {
+      "description": "macOS skills — Apple Notes, Reminders, FindMy, iMessage, Computer Use",
+      "skills": {}
+    },
+    "autonomous": {
+      "description": "Delegation to external coding agents (OpenCode, Codex, Claude Code, Hermes)",
+      "skills": {
+        "opencode": {
+          "description": "Delegate coding to OpenCode CLI",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "codex": {
+          "description": "Delegate coding to OpenAI Codex CLI",
+          "dependencies": [
+            "codex"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "claude-code": {
+          "description": "Delegate coding to Claude Code CLI",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "hermes-agent": {
+          "description": "Configure/extend/contribute to Hermes Agent",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "kanban-codex-lane": {
+          "description": "Run Codex CLI as isolated Kanban lane",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "antigravity-cli": {
+          "description": "Operate Antigravity CLI (agy): plugins, auth, sandbox",
+          "dependencies": [
+            "agy binary"
+          ],
+          "env_vars": [],
+          "setup": "Install: curl -fsSL https://get.antigravity.sh | sh"
+        }
+      }
+    },
+    "creative": {
+      "description": "Visual design, diagrams, animation, music, pixel art, ASCII art",
+      "skills": {
+        "architecture-diagram": {
+          "description": "Dark-themed SVG architecture diagrams as HTML",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "ascii-art": {
+          "description": "pyfiglet, cowsay, boxes, image-to-ascii",
+          "dependencies": [
+            "pyfiglet"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "excalidraw": {
+          "description": "Hand-drawn Excalidraw JSON diagrams (arch, flow, sequence)",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "claude-design": {
+          "description": "One-off HTML artifacts (landing, deck, prototype)",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "comfyui": {
+          "description": "Image/video/audio gen via ComfyUI — install, launch, manage nodes",
+          "dependencies": [
+            "comfy-cli"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "humanizer": {
+          "description": "Strip AI-isms from text, add real voice",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "pixel-art": {
+          "description": "Pixel art with era palettes (NES, Game Boy, PICO-8)",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "popular-web-designs": {
+          "description": "54 real design systems (Stripe, Linear, Vercel) as HTML/CSS",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "songwriting-and-ai-music": {
+          "description": "Songwriting craft + Suno AI music prompts",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "manim-video": {
+          "description": "Manim CE animations (3Blue1Brown style)",
+          "dependencies": [
+            "manim"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "p5js": {
+          "description": "p5.js sketches: gen art, shaders, interactive, 3D",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "design-md": {
+          "description": "Author/validate/export Google DESIGN.md token spec files",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "pretext": {
+          "description": "DOM-free text layout — ASCII art, kinetic typography, generative art",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "sketch": {
+          "description": "Quick HTML mockups: 2-3 variants to compare",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "creative-ideation": {
+          "description": "Generate project ideas via creative constraints",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "baoyu-infographic": {
+          "description": "Infographics: 21 layouts x 21 styles",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "baoyu-comic": {
+          "description": "Knowledge comics: educational, biography, tutorial",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "baoyu-article-illustrator": {
+          "description": "Article illustrations: type x style x palette",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "blender-mcp": {
+          "description": "Control Blender via socket: create 3D objects, materials, animations",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": "Requires Blender 4.3+ desktop + blender-mcp addon"
+        },
+        "concept-diagrams": {
+          "description": "Flat minimal SVG diagrams (physics, chem, engineering, infra) as HTML",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": "Zero external deps — self-contained HTML output"
+        }
+      }
+    },
+    "data-science": {
+      "description": "Jupyter notebooks, interactive Python",
+      "skills": {}
+    },
+    "devops": {
+      "description": "Kanban orchestration, webhook subscriptions",
+      "skills": {
+        "kanban-orchestrator": {
+          "description": "Orchestrate Kanban workers: decomposition, routing, lifecycle",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "kanban-worker": {
+          "description": "Execute Kanban tasks: isolation, heartbeat, completion",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "webhook-subscriptions": {
+          "description": "Event-driven agent runs via webhooks",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "inference-sh-cli": {
+          "description": "Run 150+ AI apps via inference.sh CLI: image, video, LLM, search, 3D",
+          "dependencies": [
+            "infsh"
+          ],
+          "env_vars": [
+            "INFSH_API_KEY"
+          ],
+          "setup": "curl -fsSL https://cli.inference.sh | sh"
+        },
+        "docker-management": {
+          "description": "Manage containers, images, volumes, networks, Compose stacks",
+          "dependencies": [
+            "docker"
+          ],
+          "env_vars": [],
+          "setup": "Docker Engine must be installed and running"
+        },
+        "pinggy-tunnel": {
+          "description": "Zero-install localhost tunnels over SSH via Pinggy",
+          "dependencies": [],
+          "env_vars": [
+            "PINGGY_TOKEN (optional Pro)"
+          ],
+          "setup": "Uses stock ssh client — free tier no signup"
+        },
+        "watchers": {
+          "description": "Poll RSS, JSON APIs, GitHub with watermark dedup",
+          "dependencies": [],
+          "env_vars": [
+            "GITHUB_TOKEN (optional)"
+          ],
+          "setup": "Python stdlib only"
+        }
+      }
+    },
+    "email": {
+      "description": "Terminal email via Himalaya (IMAP/SMTP)",
+      "skills": {}
+    },
+    "gaming": {
+      "description": "Minecraft servers, Pokemon emulator",
+      "skills": {}
+    },
+    "github": {
+      "description": "PR workflow, issues, code review, repo management, auth, codebase inspection",
+      "skills": {
+        "github-pr-workflow": {
+          "description": "Full PR lifecycle: branch → commit → open → CI → merge",
+          "dependencies": [
+            "gh"
+          ],
+          "env_vars": [
+            "GITHUB_TOKEN"
+          ],
+          "setup": ""
+        },
+        "github-repo-management": {
+          "description": "Clone/create/fork repos; manage remotes, releases",
+          "dependencies": [
+            "gh"
+          ],
+          "env_vars": [
+            "GITHUB_TOKEN"
+          ],
+          "setup": ""
+        },
+        "github-code-review": {
+          "description": "Review PRs: diffs, inline comments via gh or REST",
+          "dependencies": [
+            "gh"
+          ],
+          "env_vars": [
+            "GITHUB_TOKEN"
+          ],
+          "setup": ""
+        },
+        "github-auth": {
+          "description": "GitHub auth setup: HTTPS tokens, SSH keys, gh CLI login",
+          "dependencies": [
+            "gh"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "github-issues": {
+          "description": "Create/triage/label/assign GitHub issues via gh or REST",
+          "dependencies": [
+            "gh"
+          ],
+          "env_vars": [
+            "GITHUB_TOKEN"
+          ],
+          "setup": ""
+        },
+        "codebase-inspection": {
+          "description": "Analyze codebases: LOC, languages, ratios via pygount",
+          "dependencies": [
+            "pygount"
+          ],
+          "env_vars": [],
+          "setup": ""
+        }
+      }
+    },
+    "mcp": {
+      "description": "Native MCP client — connect any stdio/HTTP MCP server",
+      "skills": {}
+    },
+    "media": {
+      "description": "YouTube transcripts, GIF search, music gen, audio spectrograms",
+      "skills": {}
+    },
+    "mlops": {
+      "description": "LLM inference (vLLM, llama.cpp), training, evaluation, HF Hub, DSPy",
+      "skills": {
+        "llama-cpp": {
+          "description": "Local GGUF inference + HF Hub model discovery",
+          "dependencies": [
+            "llama-cpp-python"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "vllm": {
+          "description": "High-throughput LLM serving, OpenAI-compatible API",
+          "dependencies": [
+            "vllm"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "huggingface-hub": {
+          "description": "HF CLI: search/download/upload models and datasets",
+          "dependencies": [
+            "huggingface-hub"
+          ],
+          "env_vars": [
+            "HF_TOKEN"
+          ],
+          "setup": ""
+        },
+        "dspy": {
+          "description": "Declarative LM programs, auto-optimize prompts, RAG",
+          "dependencies": [
+            "dspy"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "lm-evaluation-harness": {
+          "description": "Benchmark LLMs (MMLU, GSM8K, etc.)",
+          "dependencies": [
+            "lm-eval"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "weights-and-biases": {
+          "description": "Log ML experiments, sweeps, model registry",
+          "dependencies": [
+            "wandb"
+          ],
+          "env_vars": [
+            "WANDB_API_KEY"
+          ],
+          "setup": ""
+        },
+        "obliteratus": {
+          "description": "Abliterate LLM refusals (diff-in-means)",
+          "dependencies": [
+            "torch"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "audiocraft": {
+          "description": "MusicGen: text-to-music, AudioGen: text-to-sound",
+          "dependencies": [
+            "audiocraft"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "segment-anything": {
+          "description": "SAM: zero-shot image segmentation (points, boxes, masks)",
+          "dependencies": [
+            "segment-anything"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "whisper": {
+          "description": "OpenAI Whisper: speech recognition, 99 languages, 6 model sizes",
+          "dependencies": [
+            "openai-whisper",
+            "ffmpeg"
+          ],
+          "env_vars": [],
+          "setup": "pip install openai-whisper; apt install ffmpeg; GPU recommended"
+        },
+        "torchtitan": {
+          "description": "Distributed LLM pretraining: 4D parallelism (FSDP2, TP, PP, CP)",
+          "dependencies": [
+            "torchtitan",
+            "torch>=2.6.0"
+          ],
+          "env_vars": [
+            "HF_TOKEN"
+          ],
+          "setup": "pip install torchtitan torch>=2.6.0 torchao>=0.5.0; for 8-512+ GPUs"
+        },
+        "clip": {
+          "description": "OpenAI CLIP: zero-shot image classification, image-text matching",
+          "dependencies": [
+            "transformers",
+            "torch",
+            "pillow"
+          ],
+          "env_vars": [],
+          "setup": "pip install git+https://github.com/openai/CLIP.git"
+        },
+        "chroma": {
+          "description": "Open-source embedding DB: vector + full-text search, metadata filtering",
+          "dependencies": [
+            "chromadb",
+            "sentence-transformers"
+          ],
+          "env_vars": [
+            "OPENAI_API_KEY (optional)"
+          ],
+          "setup": "pip install chromadb sentence-transformers"
+        }
+      }
+    },
+    "note-taking": {
+      "description": "Obsidian vault integration",
+      "skills": {}
+    },
+    "productivity": {
+      "description": "Airtable, Google Workspace, Linear, Maps, Notion, OCR/PDF, PowerPoint, Teams",
+      "skills": {
+        "airtable": {
+          "description": "Airtable REST API: CRUD, filters, upserts via curl",
+          "dependencies": [
+            "curl"
+          ],
+          "env_vars": [
+            "AIRTABLE_API_KEY",
+            "AIRTABLE_BASE_ID"
+          ],
+          "setup": ""
+        },
+        "google-workspace": {
+          "description": "Gmail, Calendar, Drive, Docs, Sheets via gws CLI or Python",
+          "dependencies": [
+            "google-api-python-client"
+          ],
+          "env_vars": [
+            "GOOGLE_CREDENTIALS"
+          ],
+          "setup": ""
+        },
+        "linear": {
+          "description": "Linear: issues, projects, teams via GraphQL + curl",
+          "dependencies": [],
+          "env_vars": [
+            "LINEAR_API_KEY"
+          ],
+          "setup": ""
+        },
+        "maps": {
+          "description": "Geocode, POIs, routes, timezones via OpenStreetMap/OSRM",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "notion": {
+          "description": "Notion API: pages, databases, markdown",
+          "dependencies": [],
+          "env_vars": [
+            "NOTION_API_KEY"
+          ],
+          "setup": ""
+        },
+        "ocr-and-documents": {
+          "description": "Extract text from PDFs/scans (pymupdf, marker-pdf)",
+          "dependencies": [
+            "pymupdf",
+            "marker-pdf"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "powerpoint": {
+          "description": "Create/read/edit .pptx decks, slides, notes",
+          "dependencies": [
+            "python-pptx"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "nano-pdf": {
+          "description": "Edit PDF text/typos/titles via NL prompts",
+          "dependencies": [
+            "nano-pdf"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "teams-meeting-pipeline": {
+          "description": "Teams meeting summary pipeline with Graph subscriptions",
+          "dependencies": [],
+          "env_vars": [
+            "TEAMS_CLIENT_ID",
+            "TEAMS_CLIENT_SECRET"
+          ],
+          "setup": ""
+        }
+      }
+    },
+    "research": {
+      "description": "arXiv, RSS monitoring, Polymarket, paper writing",
+      "skills": {
+        "arxiv": {
+          "description": "Search arXiv papers by keyword, author, category, or ID",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "blogwatcher": {
+          "description": "Monitor blogs and RSS/Atom feeds",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "llm-wiki": {
+          "description": "Build/query interlinked markdown knowledge base",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "polymarket": {
+          "description": "Query Polymarket: markets, prices, orderbooks, history",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "research-paper-writing": {
+          "description": "Write ML papers for NeurIPS/ICML/ICLR",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "parallel-cli": {
+          "description": "Web search, extraction, deep research, enrichment via Parallel.ai",
+          "dependencies": [
+            "parallel-web-tools[cli]"
+          ],
+          "env_vars": [
+            "PARALLEL_API_KEY"
+          ],
+          "setup": "Parallel.ai paid service with free tier"
+        },
+        "osint-investigation": {
+          "description": "Public-records OSINT: SEC EDGAR, USAspending, OFAC, OpenCorporates, ICIJ",
+          "dependencies": [],
+          "env_vars": [
+            "OPENCORPORATES_API_TOKEN (optional)"
+          ],
+          "setup": "Python stdlib only — zero install"
+        },
+        "bioinformatics": {
+          "description": "Gateway to 400+ bio skills: genomics, variant calling, single-cell, etc.",
+          "dependencies": [
+            "samtools",
+            "bcftools",
+            "biopython"
+          ],
+          "env_vars": [],
+          "setup": "apt install samtools bcftools ncbi-blast+ minimap2 bedtools; pip install biopython pysam"
+        }
+      }
+    },
+    "smart-home": {
+      "description": "Philips Hue lights/scenes via OpenHue",
+      "skills": {}
+    },
+    "social-media": {
+      "description": "X/Twitter posting and search",
+      "skills": {}
+    },
+    "software-dev": {
+      "description": "TDD, debugging, review, planning, spikes, subagents",
+      "skills": {
+        "test-driven-development": {
+          "description": "RED-GREEN-REFACTOR: tests before code, minimal implementation, refactor",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": "No deps — testing framework per project"
+        },
+        "systematic-debugging": {
+          "description": "4-phase root cause analysis: understand before fixing",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "writing-plans": {
+          "description": "Write implementation plans as bite-sized tasks with paths and code",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "subagent-driven-development": {
+          "description": "Execute plans via parallel subagents with 2-stage review gate",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "spike": {
+          "description": "Throwaway experiments to validate ideas before building",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "requesting-code-review": {
+          "description": "Pre-commit security scan + quality gates + auto-fix",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        },
+        "node-inspect-debugger": {
+          "description": "Debug Node.js via --inspect + Chrome DevTools Protocol",
+          "dependencies": [
+            "node >=18"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "python-debugpy": {
+          "description": "Debug Python via pdb REPL + debugpy remote DAP",
+          "dependencies": [
+            "debugpy"
+          ],
+          "env_vars": [],
+          "setup": ""
+        },
+        "plan": {
+          "description": "Planning-only mode: write markdown plan to .hermes/plans/, no execution",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": ""
+        }
+      }
+    },
+    "red-teaming": {
+      "description": "LLM jailbreak testing (authorized)",
+      "skills": {}
+    },
+    "domain": {
+      "description": "Passive domain recon (stdlib, no API keys)",
+      "skills": {}
+    },
+    "security": {
+      "description": "",
+      "skills": {
+        "web-pentest": {
+          "description": "Authorized web app pentest: recon, vuln analysis, exploitation, reporting",
+          "dependencies": [
+            "nmap",
+            "whatweb"
+          ],
+          "env_vars": [],
+          "setup": "Hard guardrails: authorization gate, scope allowlist, no production without paper"
+        },
+        "sherlock": {
+          "description": "OSINT username search across 400+ social networks",
+          "dependencies": [
+            "sherlock-project"
+          ],
+          "env_vars": [],
+          "setup": "pipx install sherlock-project"
+        }
+      }
+    },
+    "communication": {
+      "description": "",
+      "skills": {
+        "one-three-one-rule": {
+          "description": "Decision framework: 1 problem → 3 options → 1 recommendation",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": "Zero dependencies — pure methodology"
+        }
+      }
+    },
+    "hermes-specific": {
+      "description": "",
+      "skills": {
+        "hermes-agent-config": {
+          "description": "Configure, extend, or contribute to Hermes Agent — full reference",
+          "dependencies": [],
+          "env_vars": [
+            "Any of 20+ model provider API keys"
+          ],
+          "setup": "Hermes Python project; see docs at /usr/local/lib/hermes-agent/"
+        },
+        "hermes-s6-container-supervision": {
+          "description": "Modify s6-overlay supervision tree in Hermes Docker image",
+          "dependencies": [
+            "docker",
+            "s6-overlay"
+          ],
+          "env_vars": [],
+          "setup": "Docker-based; for modifying Hermes container image"
+        },
+        "hermes-agent-skill-authoring": {
+          "description": "Author SKILL.md files for Hermes: frontmatter, validator, structure",
+          "dependencies": [],
+          "env_vars": [],
+          "setup": "Pure documentation/methodology skill"
+        }
+      }
+    },
+    "visual": {
+      "description": "",
+      "skills": {
+        "screen-manager": {
+          "description": "Xvfb virtual display, xdotool/wmctrl window control",
+          "dependencies": [
+            "xvfb",
+            "xdotool",
+            "wmctrl"
+          ],
+          "env_vars": [],
+          "setup": "apt install xvfb xdotool wmctrl scrot imagemagick"
+        },
+        "visual-browser": {
+          "description": "Chromium via CDP + Playwright: navigate, click, type, screenshot",
+          "dependencies": [
+            "chromium",
+            "npm:playwright"
+          ],
+          "env_vars": [
+            "DISPLAY=:99"
+          ],
+          "setup": "apt install chromium; npm install -g playwright; npx playwright install chromium"
+        },
+        "screenshot": {
+          "description": "Screenshots via CDP, Playwright, scrot, ImageMagick",
+          "dependencies": [
+            "scrot",
+            "imagemagick"
+          ],
+          "env_vars": [
+            "DISPLAY=:99"
+          ],
+          "setup": "apt install scrot imagemagick"
+        }
+      }
+    },
+    "utility": {
+      "description": "Telegram integration, file delivery, helper scripts",
+      "skills": {
+        "tg-upload": {
+          "description": "Send files/text/Telegraph articles to Telegram chats",
+          "dependencies": [
+            "npm:better-sqlite3",
+            "npm:dotenv",
+            "npm:express",
+            "npm:qrcode",
+            "npm:tsx"
+          ],
+          "env_vars": [
+            "TELEGRAM_BOT_TOKEN"
+          ],
+          "setup": "npm install better-sqlite3 dotenv express qrcode tsx"
+        },
+        "tg-chat-lookup": {
+          "description": "Resolve chat_id + thread_id from session ID via SQLite",
+          "dependencies": [
+            "npm:better-sqlite3"
+          ],
+          "env_vars": [
+            "TELEGRAM_BOT_TOKEN"
+          ],
+          "setup": ""
+        }
+      }
+    }
+  }
+}

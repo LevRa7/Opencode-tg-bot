@@ -11,6 +11,7 @@ import {
   isTextMimeType,
   toDataUri,
 } from "../utils/file-download.js";
+import { buildAttachmentsTag, saveAttachment, type SavedAttachment } from "../utils/download-path-upload.js";
 import { processUserPrompt, type ProcessPromptDeps } from "./prompt.js";
 
 const DEFAULT_MEDIA_GROUP_DEBOUNCE_MS = 1_000;
@@ -49,6 +50,13 @@ type ValidMediaGroupItem =
       kind: "text";
       ctx: Context;
       fileId: string;
+      filename: string;
+    }
+  | {
+      kind: "attachment";
+      ctx: Context;
+      fileId: string;
+      mime: string;
       filename: string;
     };
 
@@ -300,7 +308,13 @@ export class MediaGroupAttachmentHandler {
         continue;
       }
 
-      return { reason: `unsupported_document_mime:${mimeType || "unknown"}` };
+      validItems.push({
+        kind: "attachment",
+        ctx: item.ctx,
+        fileId: document.file_id,
+        mime: mimeType,
+        filename,
+      });
     }
 
     if (needsImageSupport || needsPdfSupport) {
@@ -326,6 +340,7 @@ export class MediaGroupAttachmentHandler {
     const downloadFile = this.deps.downloadFile ?? downloadTelegramFile;
     const textSections: string[] = [];
     const fileParts: FilePartInput[] = [];
+    const savedAttachments: SavedAttachment[] = [];
 
     for (const item of validItems) {
       const downloadedFile = await downloadFile(item.ctx.api, item.fileId);
@@ -338,12 +353,22 @@ export class MediaGroupAttachmentHandler {
         continue;
       }
 
+      if (item.kind === "attachment") {
+        const saved = await saveAttachment(downloadedFile.buffer, item.filename, item.mime);
+        savedAttachments.push(saved);
+        continue;
+      }
+
       fileParts.push({
         type: "file",
         mime: item.mime,
         filename: item.filename,
         url: toDataUri(downloadedFile.buffer, item.mime),
       });
+    }
+
+    if (savedAttachments.length > 0) {
+      textSections.push(buildAttachmentsTag(savedAttachments));
     }
 
     const captions = originalItems

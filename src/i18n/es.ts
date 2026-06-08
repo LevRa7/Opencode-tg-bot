@@ -946,4 +946,6 @@ export const es: I18nDictionary = {
   "connect.empty": "No AI providers configured.",
   "connect.error": "Failed to list providers.",
   "cmd.description.connect": "Connect AI providers",
+  "location.live_started": "Transmisión de ubicación en vivo iniciada. Las coordenadas se agregarán a los mensajes.",
+  "location.live_stopped": "Transmisión de ubicación en vivo detenida.",
 };

@@ -948,4 +948,6 @@ export const de: I18nDictionary = {
   "connect.empty": "No AI providers configured.",
   "connect.error": "Failed to list providers.",
   "cmd.description.connect": "Connect AI providers",
+  "location.live_started": "Live-Standortfreigabe gestartet. Koordinaten werden Nachrichten hinzugefügt.",
+  "location.live_stopped": "Live-Standortfreigabe beendet.",
 };

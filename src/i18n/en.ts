@@ -928,6 +928,8 @@ export const en = {
   "connect.empty": "No AI providers configured.",
   "connect.error": "Failed to list providers.",
   "cmd.description.connect": "Connect AI providers",
+  "location.live_started": "Live location tracking started. Your coordinates will be added to messages.",
+  "location.live_stopped": "Live location tracking stopped.",
 } as const;
 
 export type I18nKey = keyof typeof en;

@@ -13,12 +13,16 @@ describe("bot/commands/ssh", () => {
     expect(invalidResult).toBeNull();
   });
 
-  it("returns only 4 base skills from local docker directory", () => {
+  it("returns base skills plus package skills from local docker directory", () => {
     const skills = getSkillsToUpload();
-    expect(skills.length).toBe(4);
+    expect(skills.length).toBeGreaterThanOrEqual(3);
     expect(skills).toContain("tg-cli");
     expect(skills).toContain("openai-media-transcriber");
-    expect(skills).toContain("embedding-strategies");
     expect(skills).toContain("gpt-image-api");
+    expect(skills).toContain("docker-management");
+    expect(skills).toContain("web-pentest");
+    expect(skills).toContain("tg-upload");
+    expect(skills).toContain("screen-manager");
+    expect(skills).toContain("whisper");
   });
 });

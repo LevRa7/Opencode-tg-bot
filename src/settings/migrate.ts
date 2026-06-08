@@ -190,6 +190,24 @@ export function migrateV2(db: any): void {
         logger.warn("ALTER TABLE server_connection_id failed:", e);
       }
     }
+
+    const hasBindings = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='telegraph_article_bindings'"
+    ).get();
+    if (!hasBindings) {
+      db.exec(
+        `CREATE TABLE IF NOT EXISTS telegraph_article_bindings (
+           id          INTEGER PRIMARY KEY AUTOINCREMENT,
+           user_id     INTEGER NOT NULL,
+           path        TEXT UNIQUE NOT NULL,
+           key_id      INTEGER NOT NULL REFERENCES telegraph_keys(id) ON DELETE CASCADE,
+           created_at  INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_tg_article_bind_path ON telegraph_article_bindings(path);
+         CREATE INDEX IF NOT EXISTS idx_tg_article_bind_user ON telegraph_article_bindings(user_id);`
+      );
+      logger.info("Created telegraph_article_bindings table");
+    }
   });
 
   runV2();

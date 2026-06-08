@@ -64,15 +64,31 @@ export async function transcribeAudio(audioBuffer: Buffer, filename: string): Pr
       );
     }
 
-    const data = (await response.json()) as { text?: string };
+    const rawBody = await response.text().catch(() => "");
 
-    if (typeof data.text !== "string") {
-      throw new Error("STT API response does not contain a text field");
+    let recognizedText = "";
+
+    try {
+      const data = JSON.parse(rawBody) as Record<string, unknown>;
+
+      if (typeof data.text === "string") {
+        recognizedText = data.text;
+      } else {
+        throw new Error("STT API response does not contain a text field");
+      }
+    } catch {
+      recognizedText = (rawBody || "").trim();
     }
 
-    logger.debug(`[STT] Transcription result: ${data.text.length} chars`);
+    if (recognizedText.length === 0) {
+      logger.warn(
+        `[STT] Transcription returned empty text, model=${config.stt.model}, language=${config.stt.language || "auto"}`,
+      );
+    } else {
+      logger.debug(`[STT] Transcription result: ${recognizedText.length} chars`);
+    }
 
-    return { text: data.text };
+    return { text: recognizedText };
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new Error(`STT request timed out after ${STT_REQUEST_TIMEOUT_MS}ms`);

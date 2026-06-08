@@ -47,6 +47,13 @@ export function restartCurrentProcess(options: RestartCurrentProcessOptions = {}
     throw new Error("Cannot restart process without an entry script.");
   }
 
+  // Under systemd (detected via INVOCATION_ID), we just exit with 0
+  // and let systemd handle restarting the process cleanly.
+  if (process.env.INVOCATION_ID && process.env.NODE_ENV !== "test") {
+    console.info("[Restart] Running under systemd. Exiting with code 0 to let systemd restart the service.");
+    return exitProcess(0);
+  }
+
   const resumedArgs = [...execArgv, ...argv.slice(1)];
   const wrapperProcess = spawnProcess(
     execPath,

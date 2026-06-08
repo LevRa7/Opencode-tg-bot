@@ -28,8 +28,8 @@ const TENANT_PORT_MIN = 49600;
 const TENANT_PORT_MAX = 49999;
 const HOST_HEALTH_TIMEOUT_MS = 10_000;
 const HOST_HEALTH_POLL_MS = 500;
-const TENANT_HEALTH_TIMEOUT_MS = 10_000;
-const TENANT_HEALTH_POLL_MS = 500;
+const TENANT_HEALTH_TIMEOUT_MS = 300_000;
+const TENANT_HEALTH_POLL_MS = 2000;
 const TENANT_LAUNCH_SCRIPT_PATH = fileURLToPath(
   new URL("../../docker/run-opencode-serve.sh", import.meta.url),
 );

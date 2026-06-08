@@ -277,6 +277,7 @@ class SshManager {
   }
 
   async disconnect(userId: number): Promise<void> {
+    this.disconnectRequested.add(userId);
     const conn = this.activeConnections.get(userId);
     if (!conn) return;
 
@@ -1140,21 +1141,56 @@ class SshManager {
           const remoteSkillsDir = `.config/opencode/skills`;
           await mkdirp(remoteSkillsDir);
 
-          // Upload Native Skills: tg-cli, openai-media-transcriber, gpt-image-api
-          // 1. tg-cli (source: docker/vendor/python-tg-cli/SKILL.md)
-          const tgCliLocalSkill = "docker/vendor/python-tg-cli/SKILL.md";
-          await mkdirp(`${remoteSkillsDir}/tg-cli`);
-          await this.sftpPutWithTimeout(sftp, tgCliLocalSkill, `${remoteSkillsDir}/tg-cli/SKILL.md`);
+          // Upload base skills (tg-cli, openai-media-transcriber, gpt-image-api)
+          const baseSkills: { local: string; name: string }[] = [
+            { local: "docker/vendor/python-tg-cli/SKILL.md", name: "tg-cli" },
+            { local: "docker/skills/openai-media-transcriber/SKILL.md", name: "openai-media-transcriber" },
+            { local: "docker/skills/gpt-image-api/SKILL.md", name: "gpt-image-api" },
+          ];
+          for (const skill of baseSkills) {
+            try {
+              await fs.access(skill.local);
+              await mkdirp(`${remoteSkillsDir}/${skill.name}`);
+              await this.sftpPutWithTimeout(sftp, skill.local, `${remoteSkillsDir}/${skill.name}/SKILL.md`);
+            } catch {
+              // skip missing skill sources
+            }
+          }
 
-          // 2. openai-media-transcriber (source: docker/skills/openai-media-transcriber/SKILL.md)
-          const transLocalSkill = "docker/skills/openai-media-transcriber/SKILL.md";
-          await mkdirp(`${remoteSkillsDir}/openai-media-transcriber`);
-          await this.sftpPutWithTimeout(sftp, transLocalSkill, `${remoteSkillsDir}/openai-media-transcriber/SKILL.md`);
-
-          // 3. gpt-image-api (source: docker/skills/gpt-image-api/SKILL.md)
-          const gptLocalSkill = "docker/skills/gpt-image-api/SKILL.md";
-          await mkdirp(`${remoteSkillsDir}/gpt-image-api`);
-          await this.sftpPutWithTimeout(sftp, gptLocalSkill, `${remoteSkillsDir}/gpt-image-api/SKILL.md`);
+          // Upload skills from the package directory (docker/opencode-skills-pkg/skills/)
+          const pkgSkillsRoot = "docker/opencode-skills-pkg/skills";
+          try {
+            const categories = await fs.readdir(pkgSkillsRoot);
+            for (const category of categories) {
+              const catPath = `${pkgSkillsRoot}/${category}`;
+              const catStat = await fs.stat(catPath);
+              if (!catStat.isDirectory()) continue;
+              const entries = await fs.readdir(catPath);
+              for (const entry of entries) {
+                const skillPath = `${catPath}/${entry}`;
+                const skillStat = await fs.stat(skillPath);
+                if (!skillStat.isDirectory()) continue;
+                const skillMd = `${skillPath}/opencode.md`;
+                try {
+                  await fs.access(skillMd);
+                  await mkdirp(`${remoteSkillsDir}/${entry}`);
+                  // Upload all files in the skill directory
+                  const skillFiles = await fs.readdir(skillPath);
+                  for (const file of skillFiles) {
+                    const localFile = `${skillPath}/${file}`;
+                    const fStat = await fs.stat(localFile);
+                    if (fStat.isFile()) {
+                      await this.sftpPutWithTimeout(sftp, localFile, `${remoteSkillsDir}/${entry}/${file}`);
+                    }
+                  }
+                } catch {
+                  // skip entries without opencode.md
+                }
+              }
+            }
+          } catch {
+            // package directory may not exist
+          }
 
           // Define local bin path and remote bin path for tenant docker image context/helper files
           const remoteBinDir = `.config/opencode/bin`;

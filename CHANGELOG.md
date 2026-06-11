@@ -10,6 +10,32 @@ Documentation rule:
 
 ## [Unreleased]
 
+### Added
+
+- **Routing subsystem test infrastructure:** Exported 23 private routing functions via `src/bot/index.ts:__routingTest` for unit test access, including getter/setter for `activeBotInstance`. Added `tryAutoCreateSessionTopic()` for auto-creating forum topics for web-created sessions with no Telegram prompt routing. New test directory `tests/bot/routing/` with mock factories (`fake-bot.ts`, `test-utils.ts`), unit tests for `syncSessionRoutingContext`, `isSessionCurrent`, `getSessionRoutingApi`, `getSessionRoutingTarget`, `resolveAttachedSessionTarget`, `cloneRoutingContextForChildSession`, `seedChildRoutingFromSubagent`, `buildThinkingRoutingIdentity` (47 tests) and `AttachManager` (15 tests), plus integration tests for auto-topic creation and bidirectional session rebinding (7 tests). All 69 tests pass. Testing specification at `docs/superpowers/specs/2026-06-11-routing-testing-spec.md` covers 12 invariants, 7 vulnerabilities, and 3 test levels.
+
+- **Message journal for TG ↔ OpenCode message tracking:** New SQLite table `message_journal` tracks each Telegram message against its OpenCode counterpart (`tg_chat_id`, `tg_topic_id`, `tg_message_id` → `oc_server`, `oc_project`, `oc_session_id`, `oc_message_id`). Assistant response messages are automatically recorded when delivered to Telegram via `finalizeAssistantResponse`. New repository `src/settings/repositories/message-journal.ts` with full CRUD (insert, find by TG/OC IDs, delete by session/topic). 11 tests.
+
+- **`/fork` command:** Creates a new forum topic with a forked copy of the current session via `opencodeClient.session.fork()`. The forked session is attached to the new topic via `attachSessionForScope`. New file `src/bot/commands/fork.ts`, registered in `definitions.ts` and wired in `bot/index.ts`.
+
+- **Share URL persistence (`/share` fix):** New SQLite table `session_shares` caches share URLs per session. Repeated `/share` calls return the cached URL without re-requesting from the server. `/unshare` clears the cache. Modified `src/bot/commands/share.ts`. New repository `src/settings/repositories/session-shares.ts`. 4 tests.
+
+- **Message reaction monitoring:** New SQLite table `message_reactions` stores user reactions (`tg_chat_id`, `tg_topic_id`, `tg_message_id`, `user_id`, `emoji`). `bot.on("message_reaction")` handler in `src/bot/index.ts` logs all reactions. New repository `src/settings/repositories/message-reactions.ts`. 2 tests.
+
+- **SSE sync for OpenCode → TG deletion:** `SummaryAggregator` now handles `message.removed` and `session.deleted` SSE events via new callbacks (`setOnMessageRemoved`, `setOnSessionDeleted`). When a message is removed in OpenCode, the corresponding TG message is deleted via Bot API and the journal entry is removed. When a session is deleted, all associated TG messages are deleted; if a topic contains only that session's messages, the entire forum topic is deleted. Wired in `src/bot/index.ts` and `src/summary/aggregator.ts`.
+
+- **Edited message fork/revert flow:** When a user edits a message tracked in the journal, the bot presents an inline keyboard with "Fork in new topic" and "Revert to this message" options. Fork creates a new session at the edited message point via `session.fork({ messageID })`. Revert calls `session.revert({ messageID })`. Callback handlers `handleMessageJournalFork` and `handleMessageJournalRevert` in `src/bot/index.ts`.
+
+- **Forum topic deletion → session cleanup:** `bot.on("message:forum_topic_edited")` handler detects topic deletions, queries the journal for associated sessions, and calls `opencodeClient.session.delete()` for each. Journal entries are removed after deletion.
+
+- **New i18n keys:** Added `cmd.description.fork`, `fork.success`, `fork.no_session`, `fork.error`, `share.already_shared`, `edit.fork_or_revert`, `edit.fork_button`, `edit.revert_button`, `edit.no_session`, `edit.not_found` to all 6 locales (en, ru, de, es, fr, zh).
+
+### Changed
+
+- **`finalizeAssistantResponse` return type:** Changed from `Promise<boolean>` to `Promise<{ streamed: boolean; telegramMessageIds: number[] }>` to expose delivered TG message IDs for journal recording. Affected `src/bot/utils/finalize-assistant-response.ts` and call site in `src/bot/index.ts`.
+
+- **`AttachSessionReason` extended:** Added `"fork"` to the union type in `src/attach/service.ts` to support fork-triggered session attachment.
+
 ### Fixed
 
 - **Avoid unnecessary forum topic rename on every response:** Added `childTopicLastSetName` map in `src/bot/index.ts` to track the last topic name set via `editForumTopic` in `handleSessionIdle`. Before renaming, the code now compares the current session title with the cached name — if unchanged, the Bot API call is skipped. This prevents redundant topic rename notifications in Telegram despite the session name not actually changing.

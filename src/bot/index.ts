@@ -1,4 +1,4 @@
-import { Bot, Context, InputFile, NextFunction } from "grammy";
+import { Bot, Context, InlineKeyboard, InputFile, NextFunction } from "grammy";
 import type { Api, RawApi } from "grammy";
 import { promises as fs } from "fs";
 import * as path from "path";
@@ -33,6 +33,10 @@ import { serverWebCommand, handleServerCallback } from "./commands/server-web.js
 import { handleOnboardingCallback, showWebPanelOnboarding } from "../server/start-flow.js";
 import { connectCommand, handleProviderAuth, handleProviderInput, isProviderApiKeyPrompt, isAnyProviderPrompt, startProviderAuth } from "./commands/connect.js";
 import { shareCommand, unshareCommand } from "./commands/share.js";
+import { forkCommand } from "./commands/fork.js";
+import { revertCommand } from "./commands/revert.js";
+import { deleteMessageCommand } from "./commands/delete-message.js";
+import { memoryCommand } from "./commands/memory.js";
 import { detachCommand } from "./commands/detach.js";
 import { opencodeStartCommand } from "./commands/opencode-start.js";
 import { opencodeStopCommand } from "./commands/opencode-stop.js";
@@ -68,7 +72,7 @@ import {
   showCurrentQuestion,
   handleQuestionTextAnswer,
 } from "./handlers/question.js";
-import { handlePermissionCallback, showPermissionRequest } from "./handlers/permission.js";
+import { handlePermissionCallback, showPermissionRequest, registerPermissionSendFn, unregisterPermissionSendFn } from "./handlers/permission.js";
 import { handleAgentSelect, cycleAgentMode } from "./handlers/agent.js";
 import { handleModelSelect, showModelSelectionMenu } from "./handlers/model.js";
 import { handleVariantSelect } from "./handlers/variant.js";
@@ -93,7 +97,8 @@ import { SubagentTelegraphLogger } from "../telegraph/subagent-logger.js";
 import { NoopDetailsPublisher } from "../telegraph/noop-details-publisher.js";
 import { MultiKeyClient } from "../telegraph/multi-key-client.js";
 import { TelegraphKeyPool } from "../telegraph/key-pool.js";
-import { getTelegraphKeysRepo, getArticleBindingsRepo } from "../settings/manager.js";
+import { FileDiffLogger } from "../telegraph/diff-logger.js";
+import { getTelegraphKeysRepo, getArticleBindingsRepo, getMessageJournalRepo, getMessageReactionsRepo, getMessageBookmarksRepo } from "../settings/manager.js";
 import { ensureUserKeys } from "../telegraph/auto-register.js";
 import { decryptToken } from "../telegraph/token-encryption.js";
 import {
@@ -188,6 +193,8 @@ import {
   getTelegraphTranslateEnabled,
   getSubagentTopicsEnabled,
   getTenantRuntimeInfo,
+  getFileDiffLogRepo,
+  getFileArchiveRepo,
   getThinkingClearMode,
   getUserLocale,
   isMessageStreamingEnabled,
@@ -208,6 +215,7 @@ import {
   type TelegramConversationScope,
 } from "../telegram/scope.js";
 import { attachManager } from "../attach/manager.js";
+import { attachSessionForScope } from "../attach/service.js";
 import { externalInputSuppression } from "../external-input/suppression.js";
 import {
   extractExternalUserInputText,
@@ -369,6 +377,7 @@ const childAssistantMessagesBySessionId = new Map<
   string,
   Map<string, ChildAssistantMessageState>
 >();
+const childSessionLastMessage = new Map<string, string>();
 
 function isManagedChildSession(sessionId: string): boolean {
   return managedChildSessionIds.has(sessionId);
@@ -376,6 +385,7 @@ function isManagedChildSession(sessionId: string): boolean {
 
 function clearChildAssistantSession(sessionId: string): void {
   childAssistantMessagesBySessionId.delete(sessionId);
+  childSessionLastMessage.delete(sessionId);
   pendingChildRoutingSetupBySessionId.delete(sessionId);
   childSessionsAwaitingIdleCleanup.delete(sessionId);
   childTopicDeletionBlockedSessions.delete(sessionId);
@@ -570,8 +580,75 @@ function syncSessionRoutingContext(sessionId: string): SessionRoutingContext | n
     sourceMessageId: promptRouting.sourceMessageId,
   };
 
+  logger.info(
+    `[Routing] syncSessionRoutingContext: session=${sessionId.slice(0, 8)} ` +
+    `target.chatId=${routing.target.chatId} target.threadId=${routing.target.messageThreadId ?? "none"} ` +
+    `deliveryTarget.threadId=${routing.deliveryTarget?.messageThreadId ?? "none"} ` +
+    `source=${routing.targetSource} isForum=${promptRouting.isForumChat}`,
+  );
+
   setSessionRoutingContext(sessionId, routing);
   return routing;
+}
+
+async function tryAutoCreateSessionTopic(
+  sessionId: string,
+  userId: number,
+  session: { id: string; title: string; directory: string },
+): Promise<boolean> {
+  const existing = routingBySessionId.get(sessionId);
+  if (existing) {
+    return true;
+  }
+
+  const forumChatId = threadContextManager.findForumChatIdForUser(userId);
+  if (!forumChatId) {
+    return false;
+  }
+
+  if (!activeBotInstance) {
+    return false;
+  }
+
+  try {
+    const topicName = session.title.trim() || "Session";
+    const createResult = await activeBotInstance.api.createForumTopic(forumChatId, topicName);
+
+    const messageThreadId =
+      (createResult as { message_thread_id?: number }).message_thread_id ??
+      (createResult as { messageThreadId?: number }).messageThreadId ??
+      0;
+
+    if (!messageThreadId) {
+      return false;
+    }
+
+    const scope: TelegramConversationScope = {
+      userId,
+      chatId: forumChatId,
+      messageThreadId,
+    };
+
+    attachManager.attach(scope, session);
+
+    setSessionRoutingContext(sessionId, {
+      bot: activeBotInstance,
+      target: { chatId: forumChatId, messageThreadId },
+      deliveryTarget: { chatId: forumChatId, messageThreadId },
+      scope,
+      targetSource: "attached",
+    });
+
+    logger.info(
+      `[Routing] auto-created forum topic for web session: session=${sessionId.slice(0, 8)} ` +
+      `chatId=${forumChatId} threadId=${messageThreadId}`,
+    );
+
+    return true;
+  } catch (err) {
+    logger.warn(`[Routing] failed to auto-create topic for web session ${sessionId.slice(0, 8)}`, err);
+    return false;
+  }
 }
 
 function getSessionRoutingContext(sessionId: string): SessionRoutingContext | null {
@@ -584,6 +661,10 @@ function getSessionRoutingContext(sessionId: string): SessionRoutingContext | nu
 }
 
 function clearSessionRoutingContext(sessionId: string): void {
+  const scopeKey = getSessionRoutingScopeKey(sessionId);
+  if (scopeKey) {
+    unregisterPermissionSendFn(scopeKey);
+  }
   routingBySessionId.delete(sessionId);
   clearPromptRouting(sessionId);
 }
@@ -1368,13 +1449,21 @@ const responseStreamer = new ResponseStreamer({
       throw new Error("Bot context missing for streamed send");
     }
 
+    const effectiveThreadId = deliveryTarget?.messageThreadId ?? target.messageThreadId;
+    logger.info(
+      `[Routing] responseStreamer.sendText: session=${sessionId.slice(0, 8)} ` +
+      `chatId=${target.chatId} threadId=${effectiveThreadId ?? "none"} ` +
+      `deliveryTarget.threadId=${deliveryTarget?.messageThreadId ?? "none"} ` +
+      `target.threadId=${target.messageThreadId ?? "none"}`,
+    );
+
     const messageId = await sendStreamedBotText({
       api: botApi,
       chatId: target.chatId,
       text,
       options,
       format,
-      messageThreadId: deliveryTarget?.messageThreadId ?? target.messageThreadId,
+      messageThreadId: effectiveThreadId,
       deliveryTarget,
       useHtmlFallback: true,
     });
@@ -1452,6 +1541,8 @@ const messageDraftStreamManager = new MessageDraftStreamManager(
 configureThinkingBlockDraftIdAllocator(sharedMessageDraftIdAllocator);
 export { messageDraftStreamManager };
 
+let telegraphKeyPool: TelegraphKeyPool | null = null;
+
 const telegraphClient: MultiKeyClient | null = (() => {
   if (!config.telegraph?.enabled) return null;
 
@@ -1496,6 +1587,7 @@ const telegraphClient: MultiKeyClient | null = (() => {
     }
   }
 
+  telegraphKeyPool = pool;
   return new MultiKeyClient(pool, bindingsRepo, config.telegraph, userId);
 })();
 const technicalDetailsPublisher = telegraphClient
@@ -1506,6 +1598,9 @@ const thinkingDetailsPublisher = telegraphClient
   : new NoopDetailsPublisher();
 const subagentTelegraphLogger = telegraphClient
   ? new SubagentTelegraphLogger(telegraphClient)
+  : null;
+const fileDiffLogger = telegraphKeyPool
+  ? new FileDiffLogger(telegraphKeyPool, getFileArchiveRepo())
   : null;
 
 const toolCallStreamer = new ToolCallStreamer({
@@ -1668,6 +1763,13 @@ export function createSendRenderedPart({
       ...(part.entities?.length ? { entities: part.entities } : {}),
     };
 
+    const effectiveThreadId = deliveryTarget?.messageThreadId ?? messageThreadId;
+    logger.info(
+      `[Routing] createSendRenderedPart: session=${sessionId.slice(0, 8)} ` +
+      `chatId=${chatId} effectiveThreadId=${effectiveThreadId ?? "none"} ` +
+      `deliveryTarget.threadId=${deliveryTarget?.messageThreadId ?? "none"} messageThreadId=${messageThreadId ?? "none"}`,
+    );
+
     await sendBotText({
       api: botApi,
       chatId,
@@ -1675,7 +1777,7 @@ export function createSendRenderedPart({
       rawFallbackText: part.fallbackText,
       options: sendOptions as Parameters<typeof sendBotText>[0]["options"],
       format: finalParseMode,
-      messageThreadId: deliveryTarget?.messageThreadId ?? messageThreadId,
+      messageThreadId: effectiveThreadId,
       deliveryTarget,
       useHtmlFallback: true,
     });
@@ -1996,7 +2098,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             eventTimeMs: completionEventTimeMs,
             logicalMessageId: completionLogicalMessageId,
             deliver: async () => {
-              await finalizeAssistantResponse({
+              const { telegramMessageIds } = await finalizeAssistantResponse({
                 sessionId,
                 messageId: `${messageId}:assistant`,
                 messageText: finalText,
@@ -2046,6 +2148,24 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                   deliveryTarget: getSessionDeliveryTarget(sessionId),
                 }),
               });
+
+              // Record message journal entries for delivered assistant messages
+              if (telegramMessageIds.length > 0) {
+                const journalRepo = getMessageJournalRepo();
+                const project = getCurrentProject()?.worktree ?? "";
+                for (const tgMsgId of telegramMessageIds) {
+                  journalRepo.insert({
+                    tg_chat_id: chatId,
+                    tg_topic_id: target.messageThreadId ?? null,
+                    tg_message_id: tgMsgId,
+                    oc_server: "",
+                    oc_project: project,
+                    oc_session_id: sessionId,
+                    oc_message_id: messageId,
+                  });
+                }
+              }
+
               assistantRunState.markFinalResponsePublished(sessionId, {
                 logicalMessageId: completionLogicalMessageId,
               });
@@ -2454,7 +2574,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       const enrichedSubagents = subagents.map((subagent) => {
         if (!subagent.sessionId) return subagent;
 
-        // Use Telegraph page URL if available
+        const childLastMsg = childSessionLastMessage.get(subagent.sessionId);
+        if (childLastMsg) {
+          return { ...subagent, lastMessage: childLastMsg };
+        }
+
         if (subagentTelegraphLogger) {
           const telegraphUrl = subagentTelegraphLogger.getPageUrl(subagent.sessionId);
           if (telegraphUrl) {
@@ -2466,7 +2590,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           }
         }
 
-        // Fallback to Telegram topic link
         const linkState = subagentTopicService.getLinkState(subagent.sessionId);
         if (!linkState) return subagent;
         if (linkState.kind === "stopped") {
@@ -2619,32 +2742,39 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       await pendingRoutingSetup.catch(() => false);
     }
 
-    syncSessionRoutingContext(request.sessionID);
-    const botApi = getSessionRoutingApi(request.sessionID);
-    const target = getSessionRoutingTarget(request.sessionID);
+    const parentSessionId = summaryAggregator.getParentSessionId(request.sessionID);
+    const effectiveSessionId = parentSessionId ?? request.sessionID;
+
+    syncSessionRoutingContext(effectiveSessionId);
+    const botApi = getSessionRoutingApi(effectiveSessionId);
+    const target = getSessionRoutingTarget(effectiveSessionId);
     if (!botApi || !target) {
       logger.error("Bot or chat ID not available for showing permission request");
       return;
     }
 
     await Promise.all([
-      toolMessageBatcher.flushSession(request.sessionID, "permission_asked"),
-      toolCallStreamer.flushSession(request.sessionID, "permission_asked"),
+      toolMessageBatcher.flushSession(effectiveSessionId, "permission_asked"),
+      toolCallStreamer.flushSession(effectiveSessionId, "permission_asked"),
     ]);
 
     logger.info(
-      `[Bot] Received permission request from agent: type=${request.permission}, requestID=${request.id}`,
+      `[Bot] Received permission request: type=${request.permission}, requestID=${request.id}${parentSessionId ? `, parentSession=${parentSessionId}` : ""}`,
     );
-    const deliveryTarget = getSessionDeliveryTarget(request.sessionID);
-    await runWithSessionRoutingScope(request.sessionID, () =>
-      showPermissionRequest(
-        botApi,
-        target.chatId,
-        request,
-        target.messageThreadId,
-        undefined,
-        deliveryTarget,
-      ),
+
+    const effectiveScopeKey = getSessionRoutingScopeKey(effectiveSessionId);
+
+    const sendFn = async (queuedRequest: typeof request) => {
+      const dTarget = getSessionDeliveryTarget(effectiveSessionId);
+      await runWithSessionRoutingScope(effectiveSessionId, () =>
+        showPermissionRequest(botApi, target.chatId, queuedRequest, target.messageThreadId, effectiveScopeKey, dTarget),
+      );
+    };
+    registerPermissionSendFn(effectiveScopeKey, sendFn);
+
+    const deliveryTarget = getSessionDeliveryTarget(effectiveSessionId);
+    await runWithSessionRoutingScope(effectiveSessionId, () =>
+      showPermissionRequest(botApi, target.chatId, request, target.messageThreadId, effectiveScopeKey, deliveryTarget),
     );
   });
 
@@ -3220,6 +3350,15 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       return;
     }
     await runWithTelegramConversationScope(scope, async () => {
+      if (fileDiffLogger) {
+        const userId = config.telegram.adminUserId;
+        for (const diff of diffs) {
+          const diffText = `@@ -0,0 +1,${diff.additions + diff.deletions} @@\n` +
+            Array(diff.deletions).fill(0).map(() => "-").join("\n") + "\n" +
+            Array(diff.additions).fill(0).map(() => "+").join("\n");
+          void fileDiffLogger.logDiff(userId, sessionId, diff.file, diffText);
+        }
+      }
       if (!pinnedMessageManager.isInitialized()) {
         return;
       }
@@ -3285,6 +3424,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         isManagedChildSession(part.sessionID)
       ) {
         setChildAssistantTextPart(part.sessionID, part.messageID, part.id, part.text);
+        childSessionLastMessage.set(part.sessionID, part.text);
       }
 
       if (
@@ -3298,6 +3438,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         const sessionId = part.sessionID;
         const msgId = part.messageID;
         childReasoningBuffer.set(sessionId, { messageId: msgId, text: part.text });
+        childSessionLastMessage.set(sessionId, part.text);
       }
 
       if (
@@ -3735,6 +3876,58 @@ export function createBot(): Bot<Context> {
   const bot = new Bot(config.telegram.token, botOptions);
   activeBotInstance = bot;
 
+  summaryAggregator.setOnMessageRemoved(async (sessionId, messageId) => {
+    const repo = getMessageJournalRepo();
+    const rows = repo.findByOcMessage(sessionId, messageId);
+    for (const row of rows) {
+      try {
+        await bot.api.deleteMessage(row.tg_chat_id, row.tg_message_id);
+        repo.deleteByTgMessage(row.tg_message_id, row.tg_chat_id, row.tg_topic_id);
+      } catch (err) {
+        logger.warn(`[MessageJournal] Failed to delete TG message:`, err);
+      }
+    }
+  });
+
+  summaryAggregator.setOnSessionDeleted(async (sessionId) => {
+    const repo = getMessageJournalRepo();
+    const rows = repo.findByOcSession(sessionId);
+    const topicGroups = new Map<
+      string,
+      { chatId: number; topicId: number | null; messageIds: number[] }
+    >();
+    for (const row of rows) {
+      const key = `${row.tg_chat_id}:${row.tg_topic_id}`;
+      if (!topicGroups.has(key)) {
+        topicGroups.set(key, {
+          chatId: row.tg_chat_id,
+          topicId: row.tg_topic_id,
+          messageIds: [],
+        });
+      }
+      topicGroups.get(key)!.messageIds.push(row.tg_message_id);
+    }
+    for (const [, group] of topicGroups) {
+      const allTopicMsgs = repo.findByTgTopic(group.chatId, group.topicId);
+      const onlyThisSession = allTopicMsgs.every((r) => r.oc_session_id === sessionId);
+      if (onlyThisSession && group.topicId != null) {
+        try {
+          await bot.api.deleteForumTopic(group.chatId, group.topicId);
+        } catch (err) {
+          logger.warn(`[MessageJournal] Failed to delete forum topic:`, err);
+          for (const msgId of group.messageIds) {
+            await bot.api.deleteMessage(group.chatId, msgId).catch(() => {});
+          }
+        }
+      } else {
+        for (const msgId of group.messageIds) {
+          await bot.api.deleteMessage(group.chatId, msgId).catch(() => {});
+        }
+      }
+    }
+    repo.deleteByOcSession(sessionId);
+  });
+
   loadTerminalTopics().catch(() => {});
   keyboardManager.startAutoUpdate();
 
@@ -3864,6 +4057,10 @@ export function createBot(): Bot<Context> {
 
   bot.command("share", shareCommand);
   bot.command("unshare", unshareCommand);
+  bot.command("fork", forkCommand);
+  bot.command("revert", revertCommand);
+  bot.command("del", deleteMessageCommand);
+  bot.command("memory", memoryCommand);
   bot.command("server", serverWebCommand);
   bot.command("connect", connectCommand);
   bot.command("task", taskCommand);
@@ -3878,6 +4075,85 @@ export function createBot(): Bot<Context> {
   bot.command("ssh", sshCommand);
 
   bot.on("message:text", unknownCommandMiddleware);
+
+  async function handleMessageJournalFork(
+    ctx: Context,
+    sessionId: string,
+    messageId: string,
+  ): Promise<void> {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        await ctx.answerCallbackQuery({ text: t("edit.no_session") });
+        return;
+      }
+
+      const { data, error } = await opencodeClient.session.fork({
+        sessionID: sessionId,
+        messageID: messageId,
+        directory: session.directory,
+      });
+
+      if (error || !data) {
+        logger.error("[MjFork] Fork failed:", error);
+        await ctx.answerCallbackQuery({ text: t("fork.error") });
+        return;
+      }
+
+      const forked = data as { id: string; title: string };
+      const chatId = ctx.chat!.id;
+      const newTopic = await ctx.api.createForumTopic(chatId, forked.title);
+
+      const activeScope = threadContextManager.getActiveScope();
+      if (activeScope) {
+        await attachSessionForScope({
+          scope: { ...activeScope, messageThreadId: newTopic.message_thread_id },
+          session: {
+            id: forked.id,
+            title: forked.title,
+            directory: session.directory,
+          },
+          reason: "fork",
+        });
+      }
+
+      await ctx.answerCallbackQuery();
+    } catch (err) {
+      logger.error("[MjFork] Error:", err);
+      await ctx.answerCallbackQuery({ text: t("fork.error") });
+    }
+  }
+
+  async function handleMessageJournalRevert(
+    ctx: Context,
+    sessionId: string,
+    messageId: string,
+  ): Promise<void> {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        await ctx.answerCallbackQuery({ text: t("edit.no_session") });
+        return;
+      }
+
+      const { error } = await opencodeClient.session.revert({
+        sessionID: sessionId,
+        messageID: messageId,
+        directory: session.directory,
+      });
+
+      if (error) {
+        logger.error("[MjRevert] Revert failed:", error);
+        await ctx.answerCallbackQuery({ text: t("fork.error") });
+        return;
+      }
+
+      await ctx.answerCallbackQuery();
+    } catch (err) {
+      logger.error("[MjRevert] Error:", err);
+      await ctx.answerCallbackQuery({ text: t("fork.error") });
+    }
+  }
 
   bot.on("callback_query:data", async (ctx) => {
     logger.debug(`[Bot] Received callback_query:data: ${ctx.callbackQuery?.data}`);
@@ -3921,6 +4197,19 @@ export function createBot(): Bot<Context> {
       const handledServerCb = await handleServerCallback(ctx);
       const handledOnboarding = await handleOnboardingCallback(ctx);
       const callbackData = ctx.callbackQuery?.data ?? "";
+
+      let handledMjFork = false;
+      let handledMjRevert = false;
+      if (callbackData.startsWith("mj_fork_")) {
+        const [, , sessionId, messageId] = callbackData.split("_");
+        handleMessageJournalFork(ctx, sessionId, messageId);
+        handledMjFork = true;
+      }
+      if (callbackData.startsWith("mj_revert_")) {
+        const [, , sessionId, messageId] = callbackData.split("_");
+        handleMessageJournalRevert(ctx, sessionId, messageId);
+        handledMjRevert = true;
+      }
       let handledConnect = false;
       if (callbackData === "connect:cancel") {
         clearActiveInlineMenu("connect_cancel");
@@ -3973,7 +4262,9 @@ export function createBot(): Bot<Context> {
         !handledMcps &&
         !handledServerCb &&
         !handledOnboarding &&
-        !handledConnect
+        !handledConnect &&
+        !handledMjFork &&
+        !handledMjRevert
       ) {
         logger.debug("Unknown callback query:", ctx.callbackQuery?.data);
         await ctx.answerCallbackQuery({ text: t("callback.unknown_command") });
@@ -4292,6 +4583,28 @@ export function createBot(): Bot<Context> {
 
   bot.on("edited_message", async (ctx) => {
     await handleEditedLocation(ctx);
+
+    if (!ctx.editedMessage?.message_id || !ctx.editedMessage.text) return;
+
+    const chatId = ctx.chat!.id;
+    const topicId = ctx.editedMessage.message_thread_id ?? null;
+    const msgId = ctx.editedMessage.message_id;
+
+    const row = getMessageJournalRepo().findByTgMessage(msgId, chatId, topicId);
+    if (!row) return;
+
+    const session = getCurrentSession();
+    if (!session) {
+      await ctx.reply(t("edit.no_session"));
+      return;
+    }
+
+    const keyboard = new InlineKeyboard()
+      .text(t("edit.fork_button"), `mj_fork_${row.oc_session_id}_${row.oc_message_id}`)
+      .row()
+      .text(t("edit.revert_button"), `mj_revert_${row.oc_session_id}_${row.oc_message_id}`);
+
+    await ctx.reply(t("edit.fork_or_revert"), { reply_markup: keyboard });
   });
 
   bot.on("message:text", async (ctx) => {
@@ -4398,6 +4711,141 @@ export function createBot(): Bot<Context> {
     logger.debug("[Bot] message:text handler completed (prompt sent in background)");
   });
 
+  // Message reaction monitoring
+  bot.on("message_reaction", async (ctx) => {
+    const reaction = ctx.messageReaction;
+    if (!reaction) return;
+
+    const chatId = reaction.chat.id;
+    const messageId = reaction.message_id;
+    const userId = reaction.user?.id ?? ctx.from?.id ?? 0;
+
+    // Extract message_thread_id: the Bot API may send it in the raw update
+    // even though MessageReactionUpdated types don't include it yet.
+    const rawUpdate = ctx.update as { message_reaction?: { message_thread_id?: number } };
+    const rawThreadId = rawUpdate.message_reaction?.message_thread_id;
+    // Fallback: look up the reacted message in the journal to find its topic
+    const journalRow = rawThreadId === undefined
+      ? getMessageJournalRepo().findByTgChatAndMessage(chatId, messageId)
+      : null;
+    const topicId = (rawThreadId ?? journalRow?.tg_topic_id ?? null);
+
+    // Normalize emoji: strip variation selector FE0F for comparison
+    const norm = (e: string) => e.replace(/\uFE0F/g, "");
+
+    // Handle old_reaction (removed reactions) → remove bookmarks
+    for (const r of reaction.old_reaction ?? []) {
+      const emoji = "emoji" in r ? r.emoji : "unknown";
+      const normalized = norm(emoji);
+
+      if (normalized === "❤" || normalized === "✍") {
+        getMessageBookmarksRepo().delete({
+          tg_chat_id: chatId,
+          tg_topic_id: topicId ?? null,
+          tg_message_id: messageId,
+          user_id: userId,
+        });
+        logger.debug(`[Bookmark] Removed ${emoji} bookmark for user ${userId}`);
+      }
+    }
+
+    for (const r of reaction.new_reaction ?? []) {
+      const emoji = "emoji" in r ? r.emoji : "unknown";
+      const normalized = norm(emoji);
+
+      getMessageReactionsRepo().insert({
+        tg_chat_id: chatId,
+        tg_topic_id: topicId ?? null,
+        tg_message_id: messageId,
+        user_id: userId,
+        emoji,
+      });
+
+      logger.debug(`[Reaction] User ${userId} reacted ${emoji} (norm=${normalized}) on msg ${messageId}`);
+
+      // Bookmark reactions: ❤️ or ❤ (U+2764 with/without FE0F)
+      if (normalized === "❤" || normalized === "✍") {
+        getMessageBookmarksRepo().upsert({
+          tg_chat_id: chatId,
+          tg_topic_id: topicId ?? null,
+          tg_message_id: messageId,
+          user_id: userId,
+          emoji,
+        });
+        logger.info(`[Bookmark] User ${userId} bookmarked msg ${messageId} with ${emoji}`);
+      }
+
+      // 💔 → abort (admin only)
+      if (normalized === "💔" && userId === config.telegram.adminUserId) {
+        try {
+          // Resolve messageThreadId for session matching
+          const mtId = topicId != null ? topicId : undefined;
+
+          // Find an attached session for this user in this chat and topic
+          const states = attachManager.getAllStates();
+          const matchingState = states.find(
+            (s) =>
+              s.scope.userId === userId &&
+              s.scope.chatId === chatId &&
+              (mtId === undefined || s.scope.messageThreadId === mtId),
+          );
+          let session = matchingState?.session
+            ?? runWithTelegramConversationScope(
+                { userId, chatId, messageThreadId: mtId },
+                () => getCurrentSession(),
+              );
+
+          // Fallback: look up the session from the message journal
+          if (!session) {
+            const row = journalRow ?? getMessageJournalRepo().findByTgChatAndMessage(chatId, messageId);
+            if (row?.oc_session_id && row.oc_project) {
+              session = { id: row.oc_session_id, title: "", directory: row.oc_project };
+            }
+          }
+
+          if (session) {
+            await opencodeClient.session.abort({
+              sessionID: session.id,
+              directory: session.directory,
+            }).catch(() => {});
+            logger.info(`[Reaction] Admin ${userId} aborted session ${session.id} via 💔`);
+          } else {
+            logger.warn(`[Reaction] No session found to abort for 💔 on msg ${messageId}`);
+          }
+        } catch (err) {
+          logger.warn(`[Reaction] Abort via 💔 failed:`, err);
+        }
+      }
+
+    }
+  });
+
+  // Forum topic deletion → delete associated OpenCode sessions
+  bot.on("message:forum_topic_edited", async (ctx) => {
+    const topicId = ctx.message?.message_thread_id;
+    if (!topicId) return;
+
+    logger.info(`[TopicDeleted] Forum topic deleted: chatId=${ctx.chat!.id}, topicId=${topicId}`);
+
+    const repo = getMessageJournalRepo();
+    const rows = repo.findByTgTopic(ctx.chat!.id, topicId);
+    const sessionIds = [...new Set(rows.map((r) => r.oc_session_id))];
+
+    for (const sessionId of sessionIds) {
+      try {
+        const sessionRow = rows.find((r) => r.oc_session_id === sessionId);
+        const directory = sessionRow?.oc_project ?? "";
+        if (directory) {
+          await opencodeClient.session.delete({ sessionID: sessionId, directory });
+        }
+        repo.deleteByOcSession(sessionId);
+        logger.info(`[TopicDeleted] Deleted session: ${sessionId}`);
+      } catch (err) {
+        logger.error(`[TopicDeleted] Failed to delete session ${sessionId}:`, err);
+      }
+    }
+  });
+
   bot.catch((err) => {
     logger.error("[Bot] Unhandled error in bot:", err);
     if (err instanceof Error && err.stack) {
@@ -4413,3 +4861,37 @@ export function createBot(): Bot<Context> {
   });
   return bot;
 }
+
+// Exported for testing only — exposes private routing functions for unit tests.
+export const __routingTest = {
+  setSessionRoutingContext,
+  syncSessionRoutingContext,
+  getSessionRoutingContext,
+  clearSessionRoutingContext,
+  getSessionRoutingTarget,
+  getSessionDeliveryTarget,
+  getSessionRoutingApi,
+  getSessionRoutingScope,
+  getSessionRoutingScopeKey,
+  resolveAttachedSessionTarget,
+  hasLiveSessionTarget,
+  isSessionCurrent,
+  isSessionRoutingLiveAttached,
+  cloneRoutingContextForChildSession,
+  seedChildRoutingFromSubagent,
+  buildThinkingRoutingIdentity,
+  runWithSessionRoutingScope,
+  routeTargetToScope,
+  isForumScope,
+  isForumParentSession,
+  getBusyScopeForSession,
+  syncSubagentDeliverySerialized,
+  syncSubagentDeliveryContextForSession,
+  tryAutoCreateSessionTopic,
+  get activeBotInstance(): Bot<Context> | null {
+    return activeBotInstance;
+  },
+  set activeBotInstance(v: Bot<Context> | null) {
+    activeBotInstance = v;
+  },
+};

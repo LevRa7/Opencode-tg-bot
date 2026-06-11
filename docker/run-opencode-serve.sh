@@ -474,12 +474,14 @@ echo "Telegram data dir: ${TG_CLI_DIR}"
 echo "Docker image: ${IMAGE}"
 echo "OpenCode config dir: ${CONFIG_DIR}"
 
-TTY_FLAGS=()
+TTY_FLAGS=(-d --restart=unless-stopped)
+POST_RUN_CMD="wait"
 if [[ -t 0 && -t 1 ]]; then
-  TTY_FLAGS=(-it)
+  TTY_FLAGS=(-it --rm)
+  POST_RUN_CMD=""
 fi
 
-docker run --rm "${TTY_FLAGS[@]}" \
+docker run "${TTY_FLAGS[@]}" \
   -p "0.0.0.0:${HOST_PORT}:${CONTAINER_PORT}" \
   --add-host host.docker.internal:host-gateway \
   -e HOME=/workspace \
@@ -513,3 +515,7 @@ docker run --rm "${TTY_FLAGS[@]}" \
   --name "$CONTAINER_NAME" \
   "$IMAGE" \
   serve --hostname 0.0.0.0 --port 4096
+
+if [[ -n "$POST_RUN_CMD" ]]; then
+  docker wait "$CONTAINER_NAME" >/dev/null 2>&1
+fi

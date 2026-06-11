@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { SubdomainManager } from "./subdomain-manager.js";
 import { getSubdomainsRepository } from "../settings/manager.js";
 import { resolveOpencodeRouteForUser } from "./route-resolver.js";
+import { config } from "../config.js";
 import { logger } from "../utils/logger.js";
 
 const subdomainManager = new SubdomainManager(() => getSubdomainsRepository());
@@ -26,7 +27,20 @@ export function resolveProxyTarget(host: string): ProxyTarget | null {
     subdomain = hostPart;
   }
 
-  if (!subdomain || subdomain === "www" || subdomain === baseDomain) return null;
+  // Root domain: use admin route as fallback
+  if (!subdomain || subdomain === "www" || subdomain === baseDomain) {
+    const adminRoute = resolveOpencodeRouteForUser(config.telegram.adminUserId);
+    if (adminRoute) {
+      const credentials = adminRoute.password
+        ? Buffer.from(`opencode:${adminRoute.password}`).toString("base64")
+        : undefined;
+      return {
+        baseUrl: adminRoute.baseUrl,
+        authHeader: credentials ? `Basic ${credentials}` : "",
+      };
+    }
+    return null;
+  }
 
   const resolved = subdomainManager.resolveSubdomain(subdomain);
   if (!resolved) return null;
@@ -64,6 +78,10 @@ export async function handleProxyRequest(
     ),
     host: targetUrl.host,
   };
+
+  if (target.authHeader) {
+    proxyHeaders["authorization"] = target.authHeader;
+  }
 
   const proxyReq = http.request(
     targetUrl,

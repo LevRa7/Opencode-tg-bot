@@ -178,18 +178,26 @@ export function buildStoredMediaPrompt(params: {
   caption: string;
   processingError?: string;
 }): string {
+  const hasResult = params.extractedText.trim().length > 0;
+  const hasError = Boolean(params.processingError?.trim());
+  const failed = hasError && !hasResult;
+
   const sections = [
     "Telegram media was already processed locally.",
-    "Use the saved file path only when you need to reference the uploaded file in this session; otherwise use the processed result below as the source of truth.",
+    "The media file is included in this prompt as an attachment — you can examine it directly.",
+    "Do NOT run opencode-gemini-media, ffmpeg, or any other external tool on this file.",
     `Saved file path:\n${params.runtimeVisiblePath}`,
   ];
 
-  if (params.processingError?.trim()) {
-    sections.push(`Media processing failed:\n${params.processingError.trim()}`);
-  }
-
-  if (params.extractedText.trim().length > 0) {
+  if (failed) {
+    sections.push(`Automatic transcription failed:\n${params.processingError!.trim()}`);
+    sections.push(
+      "Proceed with the task anyway — describe what you see in the attachment or ask the user to clarify.",
+    );
+  } else if (hasResult) {
     sections.push(`Processed media result:\n${params.extractedText}`);
+  } else {
+    sections.push("Processed media result:\n(rely on the attached file — no text transcription was performed)");
   }
 
   if (params.caption.trim().length > 0) {
@@ -200,7 +208,7 @@ export function buildStoredMediaPrompt(params: {
 }
 
 function formatMediaProcessingError(_error: unknown): string {
-  return "Media processing failed after the file was saved.";
+  return "Automatic speech/image transcription failed. The media could not be processed.";
 }
 
 function buildStoredMediaPathPrompt(params: {

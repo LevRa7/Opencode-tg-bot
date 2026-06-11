@@ -19,6 +19,20 @@ import {
   type TelegramDeliveryTarget,
 } from "../utils/message-thread.js";
 
+// Permission send functions keyed by scopeKey for processing queued requests
+const permissionSendFns = new Map<string, (request: PermissionRequest) => Promise<void>>();
+
+export function registerPermissionSendFn(
+  scopeKey: string,
+  sendFn: (request: PermissionRequest) => Promise<void>,
+): void {
+  permissionSendFns.set(scopeKey, sendFn);
+}
+
+export function unregisterPermissionSendFn(scopeKey: string): void {
+  permissionSendFns.delete(scopeKey);
+}
+
 // Permission type display names
 const PERMISSION_NAME_KEYS: Record<string, I18nKey> = {
   bash: "permission.name.bash",
@@ -234,8 +248,23 @@ async function handlePermissionReply(
 
   permissionManager.removeByMessageId(callbackMessageId, scopeKey);
 
+  const repliedRequest = permissionManager.getRequest(callbackMessageId, scopeKey);
+  if (reply === "always" && repliedRequest) {
+    const dismissed = permissionManager.dismissSimilarPending(reply, repliedRequest, scopeKey);
+    if (dismissed > 0) {
+      logger.info(
+        `[PermissionHandler] Dismissed ${dismissed} similar queued permission(s) for reply=${reply}`,
+      );
+    }
+  }
+
   if (!permissionManager.isActive(scopeKey)) {
     clearPermissionInteractionForScope("permission_replied", scopeKey);
+    if (permissionManager.hasPending(scopeKey)) {
+      const currentScopeKey = resolveContextScopeKey(ctx);
+      const sendFn = currentScopeKey ? permissionSendFns.get(currentScopeKey) : undefined;
+      permissionManager.processNextPending(scopeKey, sendFn);
+    }
     return;
   }
 
@@ -258,6 +287,14 @@ export async function showPermissionRequest(
   logger.info(
     `[PermissionHandler] Sending permission request: permission=${request.permission}, requestID=${request.id}, chatId=${chatId}, threadId=${messageThreadId ?? "none"}, patterns=${request.patterns.length}`,
   );
+
+  if (permissionManager.isActive(scopeKey) || permissionManager.hasPending(scopeKey)) {
+    permissionManager.enqueuePending(request, scopeKey);
+    logger.info(
+      `[PermissionHandler] Queued permission request (active exists): id=${request.id}, type=${request.permission}`,
+    );
+    return;
+  }
 
   const text = formatPermissionText(request);
   const keyboard = buildPermissionKeyboard();

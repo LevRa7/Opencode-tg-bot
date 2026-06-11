@@ -4,10 +4,16 @@ export interface FileDiffLogRow {
   id: number;
   user_id: number;
   file_path: string;
+  session_id: string | null;
   telegraph_url: string | null;
   telegraph_path: string | null;
   telegraph_key_id: number | null;
   diff_content: string;
+  description: string | null;
+  old_line_start: number | null;
+  old_line_end: number | null;
+  new_line_start: number | null;
+  new_line_end: number | null;
   diff_size_bytes: number;
   continued_to_id: number | null;
   created_at: number;
@@ -25,29 +31,37 @@ export function createFileDiffLogRepository(db: Database.Database) {
     insert(params: {
       user_id: number;
       file_path: string;
+      session_id?: string;
       telegraph_url?: string;
       telegraph_path?: string;
       telegraph_key_id?: number;
       diff_content: string;
+      description?: string;
+      old_line_start?: number;
+      old_line_end?: number;
+      new_line_start?: number;
+      new_line_end?: number;
     }): number {
       const diffBytes = Buffer.byteLength(params.diff_content, "utf-8");
-      const truncated = diffBytes > 102400
-        ? params.diff_content.slice(0, 102400 - 20) + "\n[truncated]"
-        : params.diff_content;
-      const finalBytes = Math.min(diffBytes, 102400);
 
       const stmt = db.prepare(
-        `INSERT INTO file_diff_log (user_id, file_path, telegraph_url, telegraph_path, telegraph_key_id, diff_content, diff_size_bytes, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO file_diff_log (user_id, file_path, session_id, telegraph_url, telegraph_path, telegraph_key_id, diff_content, description, old_line_start, old_line_end, new_line_start, new_line_end, diff_size_bytes, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       const result = stmt.run(
         params.user_id,
         params.file_path,
+        params.session_id ?? null,
         params.telegraph_url ?? null,
         params.telegraph_path ?? null,
         params.telegraph_key_id ?? null,
-        truncated,
-        finalBytes,
+        params.diff_content,
+        params.description ?? null,
+        params.old_line_start ?? null,
+        params.old_line_end ?? null,
+        params.new_line_start ?? null,
+        params.new_line_end ?? null,
+        diffBytes,
         Date.now(),
       );
       return Number(result.lastInsertRowid);

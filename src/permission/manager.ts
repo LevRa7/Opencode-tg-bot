@@ -1,6 +1,6 @@
 import { logger } from "../utils/logger.js";
 import { resolveTelegramConversationScopeKey } from "../telegram/scope.js";
-import { PermissionRequest } from "./types.js";
+import { PermissionRequest, PermissionReply } from "./types.js";
 
 export interface PermissionRuntimeContext {
   directory: string | null;
@@ -44,11 +44,13 @@ function clonePermissionRuntimeContext(
 
 interface InternalPermissionState {
   requestsByMessageId: Map<number, StoredPermissionRequest>;
+  pendingQueue: PermissionRequest[];
 }
 
 function createPermissionState(): InternalPermissionState {
   return {
     requestsByMessageId: new Map(),
+    pendingQueue: [],
   };
 }
 
@@ -237,11 +239,61 @@ class PermissionManager {
     return this.getScopeState(scopeKey).requestsByMessageId.size > 0;
   }
 
+  enqueuePending(request: PermissionRequest, scopeKey?: string): void {
+    const state = this.getScopeState(scopeKey);
+    state.pendingQueue.push(request);
+    logger.debug(
+      `[PermissionManager] Enqueued pending permission: scope=${resolveTelegramConversationScopeKey(scopeKey)}, id=${request.id}, type=${request.permission}, queueSize=${state.pendingQueue.length}`,
+    );
+  }
+
+  dequeuePending(scopeKey?: string): PermissionRequest | null {
+    return this.getScopeState(scopeKey).pendingQueue.shift() ?? null;
+  }
+
+  hasPending(scopeKey?: string): boolean {
+    return this.getScopeState(scopeKey).pendingQueue.length > 0;
+  }
+
+  dismissSimilarPending(
+    reply: PermissionReply,
+    repliedRequest: PermissionRequest,
+    scopeKey?: string,
+  ): number {
+    const state = this.getScopeState(scopeKey);
+    if (reply !== "always") return 0;
+    const before = state.pendingQueue.length;
+    state.pendingQueue = state.pendingQueue.filter((queued) => {
+      const sameType = queued.permission === repliedRequest.permission;
+      const overlaps = queued.patterns.some((p) =>
+        repliedRequest.patterns.some(
+          (rp) => p === rp || p.startsWith(rp.replace(/\/?\*$/, "")),
+        ),
+      );
+      return !(sameType && overlaps);
+    });
+    return before - state.pendingQueue.length;
+  }
+
+  processNextPending(
+    scopeKey?: string,
+    sendFn?: (request: PermissionRequest) => Promise<void>,
+  ): void {
+    if (!sendFn || !this.hasPending(scopeKey)) return;
+    const next = this.dequeuePending(scopeKey);
+    if (!next) return;
+    setImmediate(() => {
+      sendFn(next).catch((err) => {
+        logger.error("[PermissionManager] Failed to send next pending permission:", err);
+      });
+    });
+  }
+
   clear(scopeKey?: string): void {
     const resolvedScopeKey = resolveTelegramConversationScopeKey(scopeKey);
     const state = this.getScopeState(resolvedScopeKey);
     logger.debug(
-      `[PermissionManager] Clearing permission state: scope=${resolvedScopeKey}, pending=${state.requestsByMessageId.size}`,
+      `[PermissionManager] Clearing permission state: scope=${resolvedScopeKey}, pending=${state.requestsByMessageId.size}, queued=${state.pendingQueue.length}`,
     );
 
     this.states.set(resolvedScopeKey, createPermissionState());

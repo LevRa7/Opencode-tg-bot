@@ -790,7 +790,7 @@ class SshManager {
 
       // If the image is not present on the remote server, try to transfer it from the host
       if (!hasRemoteImage) {
-        logger.info(`[SSHManager] Образ opencode-tenant:latest не найден на удаленном сервере. Проверяем наличие локального образа...`);
+        logger.info(`[SSHManager] Image opencode-tenant:latest not found on remote server. Checking for local image...`);
         let hasLocalImage = false;
         try {
           await execAsync("docker image inspect opencode-tenant:latest");
@@ -803,13 +803,13 @@ class SshManager {
           const localTarPath = path.join("/tmp", `opencode-tenant-${userId}.tar`);
           const remoteTarPath = `.config/opencode/opencode-tenant.tar`;
 
-          logger.info(`[SSHManager] Сохраняем локальный образ opencode-tenant:latest в ${localTarPath}...`);
+          logger.info(`[SSHManager] Saving local image opencode-tenant:latest to ${localTarPath}...`);
           await execAsync(`docker save -o ${localTarPath} opencode-tenant:latest`);
 
-          logger.info(`[SSHManager] Создаем удаленную директорию для образа...`);
+          logger.info(`[SSHManager] Creating remote directory for image...`);
           await executeCommand("mkdir -p .config/opencode");
 
-          logger.info(`[SSHManager] Загружаем образ на удаленный сервер: ${remoteTarPath}...`);
+          logger.info(`[SSHManager] Uploading image to remote server: ${remoteTarPath}...`);
           await new Promise<void>((resolve, reject) => {
             conn.client.sftp((err: Error | undefined, sftp: any) => {
               if (err) return reject(err);
@@ -824,10 +824,10 @@ class SshManager {
             });
           });
 
-          logger.info(`[SSHManager] Импортируем образ на удаленном сервере...`);
+          logger.info(`[SSHManager] Importing image on remote server...`);
           await executeCommand(`docker load -i ${remoteTarPath}`);
 
-          logger.info(`[SSHManager] Очищаем временные файлы...`);
+          logger.info(`[SSHManager] Cleaning up temporary files...`);
           await executeCommand(`rm -f ${remoteTarPath}`);
           try {
             await fs.unlink(localTarPath);
@@ -1014,6 +1014,22 @@ class SshManager {
 
       // 4. Start opencode serve on remote host with custom PATH prepended and password.
       const opencodePw = conn.opencodePassword || crypto.randomBytes(16).toString("hex");
+      if (!conn.opencodePassword) {
+        conn.opencodePassword = opencodePw;
+        // Persist the generated password so client routing picks it up
+        try {
+          const hostSaved = await this.loadSavedByDetails(userId, conn.details);
+          if (hostSaved) {
+            hostSaved.opencodePassword = opencodePw;
+            const hostConns = await this.loadConnectionsList(userId);
+            const hostIdx = hostConns.findIndex((c) => c.id === hostSaved.id);
+            if (hostIdx >= 0) {
+              hostConns[hostIdx].opencodePassword = opencodePw;
+              await this.persistConnectionsList(userId, hostConns);
+            }
+          }
+        } catch {}
+      }
       const startCmd = `export PATH=$HOME/.config/opencode/bin:$PATH && OPENCODE_SERVER_PASSWORD=${opencodePw} nohup ${serveExecutable} serve --hostname 0.0.0.0 --port ${remotePort} >/tmp/opencode.log 2>&1 & disown`;
       try {
         await executeCommand(startCmd, 5000);

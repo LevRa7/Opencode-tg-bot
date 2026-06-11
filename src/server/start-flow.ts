@@ -1,18 +1,19 @@
 import { Context } from "grammy";
 import { SubdomainManager } from "./subdomain-manager.js";
 import { getSubdomainsRepository } from "../settings/manager.js";
+import { t } from "../i18n/index.js";
 
 const subdomainManager = new SubdomainManager(() => getSubdomainsRepository());
 
 export async function showWebPanelOnboarding(ctx: Context): Promise<void> {
   const keyboard = {
     inline_keyboard: [[
-      { text: "🔧 Настроить веб-панель", callback_data: "onboarding:setup_web" },
-      { text: "⏭️ Пропустить", callback_data: "onboarding:skip_web" },
+      { text: t("onboarding.setup_web_panel"), callback_data: "onboarding:setup_web" },
+      { text: t("onboarding.skip"), callback_data: "onboarding:skip_web" },
     ]],
   };
 
-  await ctx.reply("Настроить доступ к веб-панели OpenCode?", { reply_markup: keyboard });
+  await ctx.reply(t("onboarding.prompt"), { reply_markup: keyboard });
 }
 
 export async function handleOnboardingCallback(ctx: Context): Promise<boolean> {
@@ -27,18 +28,18 @@ export async function handleOnboardingCallback(ctx: Context): Promise<boolean> {
     const fullDomain = `${info.subdomain}.smart-server.online`;
 
     const msg = [
-      `Твоя веб-панель OpenCode:`,
+      t("onboarding.your_web_panel"),
       ``,
-      `• Адрес: ${fullDomain}`,
-      `• Логин: ${info.username}`,
-      `• Пароль: <code>${info.password}</code>`,
+      `• ${t("server_web.label_url")} ${fullDomain}`,
+      `• ${t("server_web.label_login")} ${info.username}`,
+      `• ${t("server_web.label_password")} <code>${info.password}</code>`,
       ``,
-      `Сохрани пароль. Сменить можно через /server.`,
+      t("onboarding.save_password_hint"),
     ].join("\n");
 
     await ctx.editMessageText(msg, { parse_mode: "HTML" });
   } else if (data === "onboarding:skip_web") {
-    await ctx.editMessageText("Ок, настроить можно позже через /server.");
+    await ctx.editMessageText(t("onboarding.skipped"));
   }
 
   return true;

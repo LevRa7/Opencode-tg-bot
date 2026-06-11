@@ -183,6 +183,21 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
 
     if (!shutdownRequested) {
       await bot.start({
+        allowed_updates: [
+          "message",
+          "edited_message",
+          "channel_post",
+          "edited_channel_post",
+          "callback_query",
+          "inline_query",
+          "chosen_inline_result",
+          "my_chat_member",
+          "chat_member",
+          "chat_join_request",
+          "poll",
+          "poll_answer",
+          "message_reaction",
+        ],
         onStart: async (botInfo) => {
           logger.info(`Bot @${botInfo.username} started!`);
 

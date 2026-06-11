@@ -5,6 +5,12 @@ import type { SubagentInfo } from "./aggregator.js";
 import type { ToolInfo } from "./aggregator.js";
 import { escapeHtml } from "../bot/utils/reasoning-format.js";
 
+function truncateToLines(text: string, maxLines: number): string {
+  const lines = text.split("\n");
+  if (lines.length <= maxLines) return text;
+  return lines.slice(0, maxLines).join("\n") + "...";
+}
+
 function formatToolStep(subagent: SubagentInfo): string {
   if (!subagent.currentTool) {
     return "";
@@ -89,15 +95,18 @@ async function formatSubagentCard(subagent: SubagentInfo): Promise<string> {
     formatSubagentActivity(subagent),
   ];
 
-  const topicLine = subagent.stoppedLine
-    ? `• ${escapeHtml(subagent.stoppedLine)}`
-    : subagent.topicLinkLabel && subagent.topicLinkUrl
-      ? `• <a href="${escapeHtml(subagent.topicLinkUrl)}">${escapeHtml(subagent.topicLinkLabel)}</a>`
-      : "";
+  const lastMsg = subagent.lastMessage?.trim();
+  const lastMessageLine = lastMsg
+    ? `💬 ${escapeHtml(truncateToLines(lastMsg, 2))}`
+    : subagent.stoppedLine
+      ? `• ${escapeHtml(subagent.stoppedLine)}`
+      : subagent.topicLinkLabel && subagent.topicLinkUrl
+        ? `• <a href="${escapeHtml(subagent.topicLinkUrl)}">${escapeHtml(subagent.topicLinkLabel)}</a>`
+        : "";
 
-  if (topicLine) {
+  if (lastMessageLine) {
     lines.push("");
-    lines.push(topicLine);
+    lines.push(lastMessageLine);
   }
 
   return lines.join("\n");

@@ -253,6 +253,11 @@ vi.mock("../../src/keyboard/manager.js", () => ({
     getKeyboard: vi.fn(() => undefined),
     updateContext: vi.fn(),
     clearContext: vi.fn(),
+    setSessionMode: vi.fn(),
+    startAutoUpdate: vi.fn(),
+    updateModel: vi.fn(),
+    sendKeyboardUpdate: vi.fn(),
+    updateRunningStatus: vi.fn(),
   },
 }));
 
@@ -297,6 +302,8 @@ vi.mock("../../src/summary/aggregator.js", () => ({
     setOnSessionRetry: vi.fn(),
     setOnSessionDiff: vi.fn(),
     setOnFileChange: vi.fn(),
+    setOnMessageRemoved: vi.fn(),
+    setOnSessionDeleted: vi.fn(),
     processEvent: vi.fn(),
     setSession: vi.fn(),
   },

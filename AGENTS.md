@@ -71,6 +71,16 @@ OpenCode Server
 
 ## AI agent behavior rules
 
+### MANDATORY: File Delivery
+
+**After ANY file write (source code, text, markdown, config, log — any format), you MUST deliver the file to the user via Telegram.** This is not optional. The sequence is:
+
+1. `write` or `edit` tool → file saved to disk
+2. `npx tsx scripts/current-chat.ts` → get (chatId, messageThreadId)
+3. `npx tsx scripts/tg-upload.ts --auto --file <path> --chat-id <chatId> --thread-id <messageThreadId>` → send file
+
+Never skip step 3. Never just print "file saved to /path/to/file". If multiple files are written in sequence, batch them into one upload call or send each. Violating this rule is a critical failure.
+
 ### Communication
 
 - **Response language:** Reply in the same language the user uses in their questions.
@@ -267,6 +277,14 @@ Full docs: https://opencode.ai/docs/sdk
 - `unit-testing-test-generate` + `test-automator` — when a dedicated worker should write or expand tests under TDD guidance.
 - `context-driven-development` — when a change needs bounded-context modeling and ubiquitous language alignment before coding.
 - `agent-orchestration-multi-agent-optimize` — when coordinating parallel review agents.
+
+### Debugging and maintenance skills
+
+- `systematic-debugging` — **обязателен при ЛЮБОМ баге.** Четыре фазы: root cause → pattern → hypothesis → implementation. Запрещает фиксы без понимания причины. Правило трёх: 3+ неудачных фикса = архитектурная проблема. Подробнее в [docs/AI_MEMO.md §9.1](./docs/AI_MEMO.md#91-systematic-debugging).
+- `visual-browser` — отладка UI (MiniApp, веб-панель). Puppeteer/CDP для проверки рендеринга SPA, поиска битых JS-запросов, просмотра ошибок в браузере. Подробнее в [docs/AI_MEMO.md §9.2](./docs/AI_MEMO.md#92-visual-browser-puppeteercdp).
+- `tg-upload` — отправка файлов пользователю через Telegram. Обязателен после каждого `write`/`edit`. Подробнее в [docs/AI_MEMO.md §9.3](./docs/AI_MEMO.md#93-tg-upload-доставка-файлов).
+
+См. также [docs/AI_MEMO.md §10](./docs/AI_MEMO.md#10-известные-технические-pitfalls) — известные технические pitfalls (SQLite WAL, Docker lifecycle, NGINX routing).
 
 ### Recommended agent roles for substantial changes
 
@@ -654,7 +672,7 @@ If auto-detection fails, resolve `(chat_id, message_thread_id)` from a session I
 
 ### Rules
 
-- All generated files, build artifacts, and reports must be delivered via one of the methods above.
+- **ALL generated files MUST be delivered.** After any `write` or `edit` call that modifies disk, run `tg-upload.ts` for the affected file(s). No exceptions. No "file saved to" messages.
 - Never just print "File saved to /path/to/file.ts" — send the actual file.
 - Use Telegraph for long-form technical output; send a short summary + Telegraph link.
 - Include `message_thread_id` so replies land in the correct forum topic.

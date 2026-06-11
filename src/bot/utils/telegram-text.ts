@@ -178,13 +178,14 @@ export async function sendBotText({
   deliveryTarget,
   useHtmlFallback,
 }: SendBotTextParams): Promise<number | null> {
-  logger.debug(
-    `[TelegramText] sendBotText: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, format=${format}, textLength=${text.length}`,
+  const effectiveThreadId = deliveryTarget?.messageThreadId ?? messageThreadId;
+  logger.info(
+    `[TelegramText] sendBotText: chatId=${chatId}, threadId=${effectiveThreadId ?? "none"} (from deliveryTarget=${deliveryTarget?.messageThreadId ?? "none"}, messageThreadId=${messageThreadId ?? "none"}), format=${format}, textLength=${text.length}`,
   );
 
   if (!text.trim()) {
     logger.debug(
-      `[TelegramText] sendBotText skipped empty text: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, format=${format}`,
+      `[TelegramText] sendBotText skipped empty text: chatId=${chatId}, threadId=${effectiveThreadId ?? "none"}, format=${format}`,
     );
     return null;
   }
@@ -203,7 +204,7 @@ export async function sendBotText({
     });
   } catch (error) {
     logger.error(
-      `[TelegramText] sendBotText failed: chatId=${chatId}, threadId=${messageThreadId ?? "none"}, format=${format}, textLength=${text.length}`,
+      `[TelegramText] sendBotText failed: chatId=${chatId}, threadId=${effectiveThreadId ?? "none"}, format=${format}, textLength=${text.length}`,
       error,
     );
     throw error;

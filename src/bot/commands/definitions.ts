@@ -36,8 +36,12 @@ const COMMAND_DEFINITIONS: BotCommandI18nDefinition[] = [
   { command: "opencode_start", descriptionKey: "cmd.description.opencode_start" },
   { command: "opencode_stop", descriptionKey: "cmd.description.opencode_stop" },
   { command: "share", descriptionKey: "cmd.description.share" },
+  { command: "fork", descriptionKey: "cmd.description.fork" },
+  { command: "revert", descriptionKey: "cmd.description.revert" },
+  { command: "del", descriptionKey: "cmd.description.del" },
   { command: "connect", descriptionKey: "cmd.description.connect" },
   { command: "server", descriptionKey: "cmd.description.server" },
+  { command: "memory", descriptionKey: "cmd.description.memory" },
   
   
   

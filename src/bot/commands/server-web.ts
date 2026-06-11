@@ -4,6 +4,7 @@ import { getSubdomainsRepository } from "../../settings/manager.js";
 import { resolveOpencodeRouteForUser } from "../../server/route-resolver.js";
 import { processManager } from "../../process/manager.js";
 import { config } from "../../config.js";
+import { t } from "../../i18n/index.js";
 
 const subdomainManager = new SubdomainManager(() => getSubdomainsRepository());
 
@@ -14,7 +15,7 @@ export async function serverWebCommand(ctx: Context): Promise<void> {
   const info = subdomainManager.getSubdomainByUserId(userId);
 
   if (!info) {
-    await ctx.reply("Веб-панель не настроена. Используй /start для настройки.", { parse_mode: "HTML" });
+    await ctx.reply(t("server_web.not_configured"), { parse_mode: "HTML" });
     return;
   }
 
@@ -22,21 +23,21 @@ export async function serverWebCommand(ctx: Context): Promise<void> {
   const route = resolveOpencodeRouteForUser(userId);
 
   const lines = [
-    `<b>Веб-панель OpenCode</b>`,
+    `<b>${t("server_web.title")}</b>`,
     ``,
-    `Адрес: <code>https://${fullDomain}</code>`,
-    `Логин: <code>opencode</code>`,
-    `Пароль: <code>${route?.password || "—"}</code>`,
-    `Тип: ${info.kind}`,
+    `${t("server_web.label_url")} <code>https://${fullDomain}</code>`,
+    `${t("server_web.label_login")} <code>opencode</code>`,
+    `${t("server_web.label_password")} <code>${route?.password || "—"}</code>`,
+    `${t("server_web.label_type")} ${info.kind}`,
   ];
   if (info.hostname) {
-    lines.push(`Хост: ${info.hostname}`);
+    lines.push(`${t("server_web.label_host")} ${info.hostname}`);
   }
 
   const keyboard = {
     inline_keyboard: [[
-      { text: "Открыть", url: `https://${fullDomain}` },
-      { text: "Сменить пароль", callback_data: "server:regen_pw" },
+      { text: t("server_web.button.open"), url: `https://${fullDomain}` },
+      { text: t("server_web.button.change_password"), callback_data: "server:regen_pw" },
     ]],
   };
 
@@ -53,9 +54,9 @@ export async function handleServerCallback(ctx: Context): Promise<boolean> {
   if (data === "server:regen_pw") {
     const newPassword = subdomainManager.regeneratePassword(userId);
     if (newPassword) {
-      await ctx.answerCallbackQuery({ text: "Пароль обновлён, перезапускаю сервер...", show_alert: true });
+      await ctx.answerCallbackQuery({ text: t("server_web.password_updated"), show_alert: true });
       await ctx.reply(
-        `Новый пароль: <code>${newPassword}</code>\n\n<i>Перезапускаю сервер...</i>`,
+        t("server_web.new_password_message", { password: newPassword }),
         { parse_mode: "HTML" },
       );
       if (userId === config.telegram.adminUserId) {
@@ -65,7 +66,7 @@ export async function handleServerCallback(ctx: Context): Promise<boolean> {
         await processManager.restartTenantRuntimes();
       }
     } else {
-      await ctx.answerCallbackQuery({ text: "Ошибка: веб-панель не настроена", show_alert: true });
+      await ctx.answerCallbackQuery({ text: t("server_web.error_not_configured"), show_alert: true });
     }
   }
 

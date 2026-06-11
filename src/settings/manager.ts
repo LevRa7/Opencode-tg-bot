@@ -46,10 +46,28 @@ import { createTopicRegistryRepository } from "./repositories/topic-registry.js"
 import { createTelegraphKeysRepository } from "./repositories/telegraph-keys.js";
 import { createArticleBindingsRepository } from "./repositories/article-bindings.js";
 import { createFileDiffLogRepository } from "./repositories/file-diff-log.js";
+import { createFileArchiveRepository } from "./repositories/file-archive.js";
+import { createSkillArticleCacheRepository } from "./repositories/skill-article-cache.js";
 import Database from "better-sqlite3";
 
 // ====== TYPE EXPORTS (unchanged from original) ======
 import { createGoalsRepository } from "./repositories/goals.js";
+import {
+  createMessageJournalRepository,
+  type MessageJournalRow,
+} from "./repositories/message-journal.js";
+import {
+  createSessionSharesRepository,
+  type SessionShareRow,
+} from "./repositories/session-shares.js";
+import {
+  createMessageReactionsRepository,
+  type MessageReactionRow,
+} from "./repositories/message-reactions.js";
+import {
+  createMessageBookmarksRepository,
+  type MessageBookmarkRow,
+} from "./repositories/message-bookmarks.js";
 
 export interface ProjectInfo {
   id: string;
@@ -200,8 +218,14 @@ let topicRegRepo = createTopicRegistryRepository(_defaultDb);
 let telegraphKeysRepo = createTelegraphKeysRepository(_defaultDb);
 let articleBindingsRepo = createArticleBindingsRepository(_defaultDb);
 let fileDiffLogRepo = createFileDiffLogRepository(_defaultDb);
+let fileArchiveRepo = createFileArchiveRepository(_defaultDb);
+let skillArticleCacheRepo = createSkillArticleCacheRepository(_defaultDb);
 let goalsRepo = createGoalsRepository(_defaultDb);
 let ctxBindings: ContextBindingsRepository = createContextBindingsRepository(_defaultDb);
+let messageJournalRepo = createMessageJournalRepository(_defaultDb);
+let sessionSharesRepo = createSessionSharesRepository(_defaultDb);
+let messageReactionsRepo = createMessageReactionsRepository(_defaultDb);
+let messageBookmarksRepo = createMessageBookmarksRepository(_defaultDb);
 let dbInstance: Database.Database | null = _defaultDb;
 
 // ====== INITIALIZATION ======
@@ -233,6 +257,12 @@ export async function loadSettings(): Promise<void> {
   articleBindingsRepo = createArticleBindingsRepository(dbInstance);
   fileDiffLogRepo = createFileDiffLogRepository(dbInstance);
   goalsRepo = createGoalsRepository(dbInstance);
+  fileArchiveRepo = createFileArchiveRepository(dbInstance);
+  skillArticleCacheRepo = createSkillArticleCacheRepository(dbInstance);
+  messageJournalRepo = createMessageJournalRepository(dbInstance);
+  sessionSharesRepo = createSessionSharesRepository(dbInstance);
+  messageReactionsRepo = createMessageReactionsRepository(dbInstance);
+  messageBookmarksRepo = createMessageBookmarksRepository(dbInstance);
 }
 
 export function disposeDatabase(): void {
@@ -893,10 +923,46 @@ export function getFileDiffLogRepo() {
   return fileDiffLogRepo;
 }
 
+// ====== FILE ARCHIVE ======
+
+export function getFileArchiveRepo() {
+  return fileArchiveRepo;
+}
+
+// ====== SKILL ARTICLE CACHE ======
+
+export function getSkillArticleCacheRepo() {
+  return skillArticleCacheRepo;
+}
+
 // ====== GOALS ======
 
 export function getGoalsRepo() {
   return goalsRepo;
+}
+
+// ====== MESSAGE JOURNAL ======
+
+export function getMessageJournalRepo() {
+  return messageJournalRepo;
+}
+
+// ====== SESSION SHARES ======
+
+export function getSessionSharesRepo() {
+  return sessionSharesRepo;
+}
+
+// ====== MESSAGE REACTIONS ======
+
+export function getMessageReactionsRepo() {
+  return messageReactionsRepo;
+}
+
+// ====== MESSAGE BOOKMARKS ======
+
+export function getMessageBookmarksRepo() {
+  return messageBookmarksRepo;
 }
 
 // ====== TEST HELPERS ======
@@ -925,4 +991,10 @@ export async function __resetSettingsForTests(): Promise<void> {
   articleBindingsRepo = createArticleBindingsRepository(dbInstance);
   fileDiffLogRepo = createFileDiffLogRepository(dbInstance);
   goalsRepo = createGoalsRepository(dbInstance);
+  messageJournalRepo = createMessageJournalRepository(dbInstance);
+  sessionSharesRepo = createSessionSharesRepository(dbInstance);
+  messageReactionsRepo = createMessageReactionsRepository(dbInstance);
+  fileArchiveRepo = createFileArchiveRepository(dbInstance);
+  skillArticleCacheRepo = createSkillArticleCacheRepository(dbInstance);
+  messageBookmarksRepo = createMessageBookmarksRepository(dbInstance);
 }

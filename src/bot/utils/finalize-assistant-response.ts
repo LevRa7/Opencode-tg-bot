@@ -38,7 +38,7 @@ export async function finalizeAssistantResponse({
   renderFinalParts,
   getReplyKeyboard,
   sendRenderedPart,
-}: FinalizeAssistantResponseOptions): Promise<boolean> {
+}: FinalizeAssistantResponseOptions): Promise<{ streamed: boolean; telegramMessageIds: number[] }> {
   logger.debug(
     `[FinalizeResponse] Final assistant raw text received: session=${sessionId}, message=${messageId}`,
     messageText,
@@ -74,7 +74,7 @@ export async function finalizeAssistantResponse({
     logger.debug(
       `[FinalizeResponse] Finalized streamed assistant message in place: session=${sessionId}, message=${messageId}, telegramMessages=${result.telegramMessageIds.length}`,
     );
-    return true;
+    return { streamed: true, telegramMessageIds: result.telegramMessageIds };
   }
 
   const parts = renderFinalParts(messageText);
@@ -83,5 +83,5 @@ export async function finalizeAssistantResponse({
     await sendRenderedPart(part, silentReplyOptions);
   }
 
-  return false;
+  return { streamed: false, telegramMessageIds: [] };
 }

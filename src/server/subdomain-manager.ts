@@ -25,12 +25,20 @@ export class SubdomainManager {
   ensureSubdomain(userId: number, username: string | undefined, kind: "host" | "tenant"): SubdomainInfo {
     const existing = this.getRepo().getByUserId(userId);
     if (existing) {
+      // If kind changed (e.g., SSH disconnected), reset SSH-specific fields
+      if (existing.kind !== kind) {
+        this.getRepo().upsert(userId, {
+          kind,
+          ssh_connection_id: null,
+          hostname: null,
+        });
+      }
       return {
         userId: existing.user_id,
         username: existing.username,
         subdomain: existing.subdomain,
-        kind: existing.kind,
-        hostname: existing.hostname,
+        kind: existing.kind !== kind ? kind : existing.kind,
+        hostname: existing.kind !== kind ? null : existing.hostname,
       };
     }
 

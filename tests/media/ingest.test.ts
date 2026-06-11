@@ -182,7 +182,7 @@ describe("media/ingest", () => {
     expect(prepared.recognizedText).toBe("");
     expect(prepared.promptText).toContain("Saved file path:\n/state/media/123/audio.ogg");
     expect(prepared.promptText).toContain(
-      "Media processing failed:\nMedia processing failed after the file was saved.",
+      "Automatic transcription failed:\nAutomatic speech/image transcription failed.",
     );
     expect(prepared.promptText).not.toContain("/secret");
   });
@@ -375,7 +375,7 @@ describe("media/ingest", () => {
     expect(prepared.mode).toBe("text");
     expect(prepared.promptText).toContain("Saved file path:\n/state/media/123/2026/04/30/photo.jpg");
     expect(prepared.promptText).toContain(
-      "Media processing failed:\nMedia processing failed after the file was saved.",
+      "Automatic transcription failed:\nAutomatic speech/image transcription failed.",
     );
     expect(prepared.promptText).not.toContain("transcriber failed");
   });

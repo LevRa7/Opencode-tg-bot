@@ -206,6 +206,8 @@ export function buildTreeHeader(
     header += `\n${t("open.no_subfolders")}`;
   } else if (totalCount === 1) {
     header += `\n${t("open.subfolder_count", { count: String(totalCount) })}`;
+  } else if (totalCount >= 2 && totalCount <= 4) {
+    header += `\n${t("open.subfolder_few", { count: String(totalCount) })}`;
   } else {
     header += `\n${t("open.subfolders_count", { count: String(totalCount) })}`;
   }

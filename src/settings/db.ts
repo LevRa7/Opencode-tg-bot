@@ -140,11 +140,17 @@ CREATE TABLE IF NOT EXISTS file_diff_log (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL,
     file_path TEXT NOT NULL,
+    session_id TEXT,
     telegraph_url TEXT,
     telegraph_path TEXT,
     telegraph_key_id INTEGER REFERENCES telegraph_keys(id) ON DELETE SET NULL,
     diff_content TEXT NOT NULL,
-    diff_size_bytes INTEGER NOT NULL CHECK(diff_size_bytes > 0 AND diff_size_bytes <= 102400),
+    description TEXT,
+    old_line_start INTEGER,
+    old_line_end INTEGER,
+    new_line_start INTEGER,
+    new_line_end INTEGER,
+    diff_size_bytes INTEGER NOT NULL DEFAULT 0,
     continued_to_id INTEGER REFERENCES file_diff_log(id) ON DELETE SET NULL,
     created_at INTEGER NOT NULL
 );
@@ -179,6 +185,89 @@ CREATE TABLE IF NOT EXISTS goals (
     state TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS message_journal (
+    tg_chat_id      INTEGER NOT NULL,
+    tg_topic_id     INTEGER,
+    tg_message_id   INTEGER NOT NULL,
+    oc_server       TEXT NOT NULL DEFAULT '',
+    oc_project      TEXT NOT NULL DEFAULT '',
+    oc_session_id   TEXT NOT NULL,
+    oc_message_id   TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (tg_chat_id, tg_message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mj_oc_session ON message_journal(oc_session_id);
+CREATE INDEX IF NOT EXISTS idx_mj_oc_message ON message_journal(oc_message_id);
+
+CREATE TABLE IF NOT EXISTS session_shares (
+    oc_server       TEXT NOT NULL DEFAULT '',
+    oc_session_id   TEXT NOT NULL,
+    share_url       TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (oc_server, oc_session_id)
+);
+
+CREATE TABLE IF NOT EXISTS message_reactions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tg_chat_id      INTEGER NOT NULL,
+    tg_topic_id     INTEGER,
+    tg_message_id   INTEGER NOT NULL,
+    user_id         INTEGER NOT NULL,
+    emoji           TEXT NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mr_message ON message_reactions(tg_chat_id, tg_topic_id, tg_message_id);
+
+CREATE TABLE IF NOT EXISTS file_archive (
+    file_path TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    content_hash TEXT,
+    line_count INTEGER NOT NULL DEFAULT 0,
+    telegraph_url TEXT,
+    telegraph_path TEXT,
+    key_id INTEGER REFERENCES telegraph_keys(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS skill_article_cache (
+    skill_name TEXT PRIMARY KEY,
+    skill_hash TEXT NOT NULL,
+    telegraph_url TEXT NOT NULL,
+    telegraph_path TEXT NOT NULL,
+    key_id INTEGER REFERENCES telegraph_keys(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS doc_catalog_pages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_type TEXT NOT NULL CHECK(page_type IN ('catalog','skill','doc','project_md')),
+    title TEXT NOT NULL,
+    telegraph_url TEXT,
+    telegraph_path TEXT,
+    key_id INTEGER REFERENCES telegraph_keys(id) ON DELETE SET NULL,
+    content_hash TEXT,
+    source_path TEXT,
+    parent_id INTEGER REFERENCES doc_catalog_pages(id),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS message_bookmarks (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tg_chat_id      INTEGER NOT NULL,
+    tg_topic_id     INTEGER,
+    tg_message_id   INTEGER NOT NULL,
+    user_id         INTEGER NOT NULL,
+    emoji           TEXT NOT NULL DEFAULT '❤️',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(tg_chat_id, tg_topic_id, tg_message_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mb_message ON message_bookmarks(tg_chat_id, tg_topic_id, tg_message_id);
+CREATE INDEX IF NOT EXISTS idx_mb_user ON message_bookmarks(tg_chat_id, user_id);
+
 
 
 `;

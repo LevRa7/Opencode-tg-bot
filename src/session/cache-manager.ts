@@ -606,6 +606,15 @@ export async function ingestSessionInfoForCache(session: {
   await upsertSessionDirectory(directory, updated);
 }
 
+export async function clearSessionDirectoryCacheForScope(): Promise<void> {
+  const scopeKey = getActiveCacheScopeKey();
+  cacheDataByScope.delete(scopeKey);
+  cacheLoadedByScope.delete(scopeKey);
+  syncInFlightByScope.delete(scopeKey);
+  lastSyncAttemptAtByScope.delete(scopeKey);
+  persistQueueByScope.delete(scopeKey);
+}
+
 export function __resetSessionDirectoryCacheForTests(): void {
   cacheDataByScope.clear();
   cacheLoadedByScope.clear();

@@ -14,7 +14,7 @@ import { threadContextManager } from "../thread/manager.js";
 import { logger } from "../utils/logger.js";
 import { attachManager } from "./manager.js";
 
-export type AttachSessionReason = "new_session" | "selected_session" | "prompt" | "startup_restore";
+export type AttachSessionReason = "new_session" | "selected_session" | "prompt" | "startup_restore" | "fork";
 
 export interface AttachUiRestorer {
   restoreQuestion: () => Promise<void>;

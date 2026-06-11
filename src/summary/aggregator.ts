@@ -129,6 +129,7 @@ export interface SubagentInfo {
   topicLinkLabel?: string;
   topicLinkUrl?: string;
   stoppedLine?: string;
+  lastMessage?: string;
 }
 
 type SubagentCallback = (
@@ -159,6 +160,10 @@ type FileChangeCallback = (sessionId: string, change: FileChange) => void;
 type ClearedCallback = () => void;
 
 type SessionDirectoryResolver = (sessionId: string) => string | null;
+
+type MessageRemovedCallback = (sessionId: string, messageId: string) => void;
+
+type SessionDeletedCallback = (sessionId: string) => void;
 
 interface PreparedToolFileContext {
   fileData: CodeFileData | null;
@@ -205,6 +210,8 @@ class SummaryAggregator {
   private onSessionDiffCallback: SessionDiffCallback | null = null;
   private onFileChangeCallback: FileChangeCallback | null = null;
   private onClearedCallback: ClearedCallback | null = null;
+  private onMessageRemovedCallback: MessageRemovedCallback | null = null;
+  private onSessionDeletedCallback: SessionDeletedCallback | null = null;
   private resolveSessionDirectory: SessionDirectoryResolver = () => null;
   private processedToolStates: Set<string> = new Set();
   private lastRunningToolOutputHashes: Map<string, string> = new Map();
@@ -306,6 +313,14 @@ class SummaryAggregator {
 
   setOnCleared(callback: ClearedCallback): void {
     this.onClearedCallback = callback;
+  }
+
+  setOnMessageRemoved(callback: MessageRemovedCallback): void {
+    this.onMessageRemovedCallback = callback;
+  }
+
+  setOnSessionDeleted(callback: SessionDeletedCallback): void {
+    this.onSessionDeletedCallback = callback;
   }
 
   setTypingIndicatorEnabled(enabled: boolean): void {
@@ -436,6 +451,21 @@ class SummaryAggregator {
       case "permission.replied":
         logger.info(`[Aggregator] Permission replied: requestID=${event.properties.requestID}`);
         break;
+      case "message.removed":
+        if (this.onMessageRemovedCallback) {
+          const removedProps = event.properties as { sessionID: string; messageID: string };
+          this.onMessageRemovedCallback(removedProps.sessionID, removedProps.messageID);
+        }
+        break;
+      case "session.deleted":
+        if (this.onSessionDeletedCallback) {
+          const deletedProps = event.properties as { info?: { id: string }; id?: string };
+          const sid = deletedProps.info?.id ?? deletedProps.id ?? "";
+          if (sid) {
+            this.onSessionDeletedCallback(sid);
+          }
+        }
+        break;
       default:
         logger.debug(`[Aggregator] Unhandled event type: ${event.type}`);
         break;
@@ -562,6 +592,10 @@ class SummaryAggregator {
         logger.error("[Aggregator] Error in clear callback:", err);
       }
     }
+  }
+
+  getParentSessionId(sessionId: string): string | null {
+    return this.trackedSessionParents.get(sessionId) ?? null;
   }
 
   private isTrackedChildSession(sessionId: string): boolean {

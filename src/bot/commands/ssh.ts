@@ -6,8 +6,10 @@ import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils
 import { logger } from "../../utils/logger.js";
 import { stopEventListening } from "../../opencode/events.js";
 import { t } from "../../i18n/index.js";
+import { clearSessionDirectoryCacheForScope } from "../../session/cache-manager.js";
 import { SubdomainManager } from "../../server/subdomain-manager.js";
 import { getSubdomainsRepository } from "../../settings/manager.js";
+import { config } from "../../config.js";
 
 const PREFIX = "ssh:";
 const ACTION_CONNECT = "ssh:conn:";
@@ -125,6 +127,10 @@ async function doConnect(
     ]);
     await ctx.editMessageText(t("ssh.success")).catch(() => {});
 
+    // Clear cached session directories from the previous connection to prevent
+    // mixing with projects from the new SSH server.
+    await clearSessionDirectoryCacheForScope();
+
     if (savedConnectionId) {
       const subdomainManager = new SubdomainManager(() => getSubdomainsRepository());
       const subdomain = subdomainManager.ensureSshSubdomain(
@@ -137,9 +143,7 @@ async function doConnect(
 
       const fullDomain = `${subdomain.subdomain}.smart-server.online`;
       await ctx.reply(
-        `SSH веб-панель: https://${fullDomain}\n` +
-        `Логин: ${subdomain.username}\n` +
-        `Пароль: <code>${subdomain.password}</code>`,
+        t("ssh.web_panel_info", { domain: fullDomain, username: subdomain.username, password: subdomain.password }),
         { parse_mode: "HTML" }
       );
     }
@@ -181,6 +185,16 @@ export async function handleSshCallback(ctx: Context): Promise<boolean> {
     await sshManager.disconnect(userId);
     await sshManager.setActiveConnectionId(userId, null);
     stopEventListening();
+
+    // Clear cached session directories from the SSH connection to prevent
+    // them from mixing with local projects in /projects and /sessions.
+    await clearSessionDirectoryCacheForScope();
+
+    // Reset subdomain back to local kind so the MiniApp switches to host/tenant
+    const isAdmin = userId === config.telegram.adminUserId;
+    const subdomainManager = new SubdomainManager(() => getSubdomainsRepository());
+    subdomainManager.ensureSubdomain(userId, ctx.from?.username, isAdmin ? "host" : "tenant");
+
     await ctx.answerCallbackQuery({ text: t("ssh.cancelled") });
     await renderConnectionsMenu(ctx, userId, true);
     return true;

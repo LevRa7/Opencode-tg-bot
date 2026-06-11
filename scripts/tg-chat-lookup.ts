@@ -216,6 +216,55 @@ function findMostRecentSessionByDirectory(
   };
 }
 
+// ---- active session tracker ----
+
+const ACTIVE_SESSIONS_FILE = "/tmp/tg-active-sessions.json";
+const ACTIVE_TTL_MS = 5 * 60 * 1000; // 5 min
+
+interface ActiveSessionEntry {
+  sessionId: string;
+  chatId: number;
+  messageThreadId: number | null;
+  timestamp: number;
+}
+
+function readActiveSessions(): Record<string, ActiveSessionEntry> {
+  try {
+    if (!fs.existsSync(ACTIVE_SESSIONS_FILE)) return {};
+    return JSON.parse(fs.readFileSync(ACTIVE_SESSIONS_FILE, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function tryActiveSession(
+  db: Database.Database,
+  directory: string,
+): { chatId: number; messageThreadId?: number; sessionId: string; directory: string } | null {
+  const store = readActiveSessions();
+  const normalizedDir = path.resolve(directory);
+  const entry = store[normalizedDir];
+  if (!entry) return null;
+
+  const age = Date.now() - entry.timestamp;
+  if (age > ACTIVE_TTL_MS) return null;
+
+  // Verify session still exists in DB
+  const target =
+    lookupConversationBindings(db, entry.sessionId) ??
+    lookupThreadContextBindings(db, entry.sessionId) ??
+    lookupAttachedSessions(db, entry.sessionId);
+
+  if (!target) return null;
+
+  return {
+    chatId: target.chatId,
+    messageThreadId: target.messageThreadId,
+    sessionId: entry.sessionId,
+    directory: normalizedDir,
+  };
+}
+
 // ---- main ----
 
 function main(): void {
@@ -235,6 +284,25 @@ function main(): void {
     // --auto mode: find most recent session for current directory
     if (AUTO) {
       const targetDir = searchDir ? path.resolve(searchDir) : process.cwd();
+
+      // Check active session tracker first: the bot records which session
+      // was most recently used via setCurrentSession(). This resolves the
+      // correct topic when multiple sessions share the same directory.
+      const activeSession = tryActiveSession(db, targetDir);
+      if (activeSession) {
+        const token = process.env.TELEGRAM_BOT_TOKEN ?? "";
+        console.log(
+          JSON.stringify({
+            chatId: activeSession.chatId,
+            messageThreadId: activeSession.messageThreadId ?? null,
+            token,
+            sessionId: activeSession.sessionId,
+            directory: activeSession.directory,
+          }),
+        );
+        return;
+      }
+
       const autoResult = findMostRecentSessionByDirectory(db, targetDir);
 
       if (!autoResult) {

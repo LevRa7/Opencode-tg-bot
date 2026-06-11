@@ -275,7 +275,7 @@ describe("formatTechnicalProgressWithDetails", () => {
     expect(publisher.publish).not.toHaveBeenCalled();
   });
 
-  it("keeps the same unlinked one-line message when publishing fails", async () => {
+  it("shows command output in blockquote when publishing fails", async () => {
     const publisher = publisherReturning(null);
     const input = toolInfo({
       tool: "bash",
@@ -285,7 +285,12 @@ describe("formatTechnicalProgressWithDetails", () => {
 
     const result = await formatTechnicalProgressWithDetails(input, publisher);
 
-    expect(result).toEqual(formatTechnicalProgressSync(input));
+    expect(result.format).toBe("html");
+    expect(result.text).toContain("💻 Ran command — npm test (10 passed)");
+    expect(result.text).toContain("<blockquote expandable>");
+    expect(result.text).toContain("</blockquote>");
+    expect(result.text).toContain("$ npm test");
+    expect(result.text).toContain("10 passed");
   });
 
   it("keeps todo details out of linked anchor text", async () => {
@@ -346,7 +351,7 @@ describe("formatTechnicalProgressWithDetails", () => {
     });
   });
 
-  it("keeps completed reasoning as a plain one-liner when publisher returns no URL", async () => {
+  it("shows reasoning in blockquote when publishing fails", async () => {
     const publisher = publisherReturning(null);
     const input = toolInfo({
       tool: "reasoning",
@@ -356,7 +361,11 @@ describe("formatTechnicalProgressWithDetails", () => {
 
     const result = await formatTechnicalProgressWithDetails(input, publisher);
 
-    expect(result).toEqual(formatTechnicalProgressSync(input));
+    expect(result.format).toBe("html");
+    expect(result.text).toContain("💭 Thinking");
+    expect(result.text).toContain("<blockquote expandable>");
+    expect(result.text).toContain("</blockquote>");
+    expect(result.text).toContain("Step 1");
   });
 
   it("does not publish completed reasoning without useful content", async () => {
@@ -371,5 +380,132 @@ describe("formatTechnicalProgressWithDetails", () => {
 
     expect(result).toEqual(formatTechnicalProgressSync(input));
     expect(publisher.publish).not.toHaveBeenCalled();
+  });
+
+  it("shows todo list items as plain text below header when publishing fails", async () => {
+    const publisher = publisherReturning(null);
+    const input = toolInfo({
+      tool: "todowrite",
+      metadata: {
+        todos: [
+          { id: "1", content: "Explore project context", status: "completed" },
+          { id: "2", content: "Ask user to review spec", status: "in_progress" },
+          { id: "3", content: "Implement feature", status: "pending" },
+        ],
+      },
+    });
+
+    const result = await formatTechnicalProgressWithDetails(input, publisher);
+
+    expect(result.format).toBe("html");
+    expect(result.text).toContain("📝 Updated task list — 3 tasks");
+    expect(result.text).not.toContain("<blockquote");
+    expect(result.text).toContain("✅ Explore project context");
+    expect(result.text).toContain("⏳ Ask user to review spec");
+    expect(result.text).toContain("⬜ Implement feature");
+  });
+
+  it("escapes HTML entities in fallback todo body", async () => {
+    const publisher = publisherReturning(null);
+    const input = toolInfo({
+      tool: "todowrite",
+      metadata: {
+        todos: [
+          { id: "1", content: "Fix <script> tag", status: "in_progress" },
+        ],
+      },
+    });
+
+    const result = await formatTechnicalProgressWithDetails(input, publisher);
+
+    expect(result.format).toBe("html");
+    expect(result.text).not.toContain("<script>");
+    expect(result.text).toContain("&lt;script&gt;");
+  });
+
+  it("escapes HTML entities in fallback blockquote body", async () => {
+    const publisher = publisherReturning(null);
+    const input = toolInfo({
+      tool: "bash",
+      input: { command: "echo '<html>test</html>'" },
+      metadata: { output: "<html>output</html>" },
+    });
+
+    const result = await formatTechnicalProgressWithDetails(input, publisher);
+
+    expect(result.format).toBe("html");
+    expect(result.text).toContain("<blockquote expandable>");
+    expect(result.text).not.toContain("<html>");
+    expect(result.text).toContain("&lt;html&gt;");
+  });
+
+  it("shows edit file details in blockquote when publishing fails", async () => {
+    const publisher = publisherReturning(null);
+    const input = toolInfo({
+      tool: "edit",
+      input: { filePath: "D:/repo/src/index.ts" },
+      metadata: { filediff: { file: "src/index.ts", additions: 2, deletions: 1 } },
+    });
+
+    const result = await formatTechnicalProgressWithDetails(input, publisher);
+
+    expect(result.format).toBe("html");
+    expect(result.text).toContain("✍️ Edited file — index.ts (+2 −1)");
+    expect(result.text).toContain("<blockquote expandable>");
+    expect(result.text).toContain("</blockquote>");
+    expect(result.text).toContain("src/index.ts");
+  });
+
+  it("shows only linked header without body when publishing succeeds", async () => {
+    const publisher = publisherReturning("https://telegra.ph/todo-list");
+    const input = toolInfo({
+      tool: "todowrite",
+      metadata: {
+        todos: [
+          { id: "1", content: "Explore project context", status: "completed" },
+          { id: "2", content: "Ask user to review spec", status: "in_progress" },
+          { id: "3", content: "Implement feature", status: "pending" },
+        ],
+      },
+    });
+
+    const result = await formatTechnicalProgressWithDetails(input, publisher);
+
+    expect(result.format).toBe("html");
+    expect(result.text).toContain('<a href="https://telegra.ph/todo-list">');
+    expect(result.text).toContain("📝 Updated task list");
+    expect(result.text).not.toContain("Explore project context");
+    expect(result.text).not.toContain("Ask user to review spec");
+    expect(result.text).not.toContain("Implement feature");
+    expect(result.text).not.toContain("<blockquote");
+  });
+
+  it("shows only linked header without body when publishing succeeds for bash", async () => {
+    const publisher = publisherReturning("https://telegra.ph/bash-output");
+    const input = toolInfo({
+      tool: "bash",
+      input: { command: "npm test" },
+      metadata: { output: "10 passed" },
+    });
+
+    const result = await formatTechnicalProgressWithDetails(input, publisher);
+
+    expect(result.format).toBe("html");
+    expect(result.text).toContain('<a href="https://telegra.ph/bash-output">');
+    expect(result.text).not.toContain("<blockquote");
+  });
+
+  it("returns format html async with correct Telegraph URL for successful publish", async () => {
+    const publisher = publisherReturning("https://telegra.ph/some-page");
+    const input = toolInfo({
+      tool: "bash",
+      input: { command: "npm test" },
+      metadata: { output: "10 passed" },
+    });
+
+    const result = await formatTechnicalProgressWithDetails(input, publisher);
+
+    expect(result.format).toBe("html");
+    expect(result.text).toBe('<a href="https://telegra.ph/some-page">💻 Ran command — npm test (10 passed)</a>');
   });
 });

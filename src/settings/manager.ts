@@ -7,6 +7,7 @@ import {
   type TelegramConversationScope,
 } from "../telegram/scope.js";
 import { config } from "../config.js";
+import { recordActiveSession } from "../active-session/tracker.js";
 import { getRuntimePaths } from "../runtime/paths.js";
 import { openDatabase, closeDatabase, SETTINGS_DDL } from "./db.js";
 import { migrateIfNeeded, migrateV2 } from "./migrate.js";
@@ -389,6 +390,16 @@ export function setCurrentSession(sessionInfo: SessionInfo): void {
   const scopeKey = getActiveConversationScopeKey();
   if (scopeKey) {
     convBindings.upsert(scopeKey, { session: JSON.stringify(sessionInfo) });
+  }
+
+  const scope = getCurrentTelegramConversationScope();
+  if (scope) {
+    recordActiveSession(
+      sessionInfo.directory,
+      sessionInfo.id,
+      scope.chatId,
+      scope.messageThreadId ?? null,
+    );
   }
 }
 

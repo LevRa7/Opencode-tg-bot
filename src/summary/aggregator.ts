@@ -1626,7 +1626,9 @@ class SummaryAggregator {
     const combinedText = this.getCombinedMessageText(messageID);
     const combinedReasoning = this.getCombinedReasoningText(messageID);
 
-    this.startTypingIndicator();
+    if (this.messages.has(messageID)) {
+      this.startTypingIndicator();
+    }
     this.emitPartialText(sessionID, messageID, combinedText, combinedReasoning, state.toolCalls);
   }
 
@@ -1656,7 +1658,9 @@ class SummaryAggregator {
     const combinedText = this.getCombinedMessageText(messageID);
     const combinedReasoning = this.getCombinedReasoningText(messageID);
 
-    this.startTypingIndicator();
+    if (this.messages.has(messageID)) {
+      this.startTypingIndicator();
+    }
     this.emitPartialText(sessionID, messageID, combinedText, combinedReasoning, state.toolCalls);
   }
 

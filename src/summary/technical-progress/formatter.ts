@@ -97,10 +97,17 @@ export async function formatTechnicalProgressWithDetails(
   const url = await publisher.publish(publishRequest);
 
   if (!url) {
+    const escapedBase = escapeTelegramHtml(base.text);
+    const escapedBody = escapeTelegramHtml(details.body);
+
     if (toolInfo.tool === "todowrite") {
-      return { text: `${base.text}:\n${details.body}` };
+      return { text: `${escapedBase}:\n${escapedBody}`, format: "html" };
     }
-    return base;
+
+    return {
+      text: `${escapedBase}\n<blockquote expandable>${escapedBody}</blockquote>`,
+      format: "html",
+    };
   }
 
   return {

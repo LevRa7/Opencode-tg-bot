@@ -123,7 +123,7 @@ export async function abortCurrentOperation(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
     markUserAbortRequested(currentSession.id);
-    summaryAggregator.stopTypingIndicator();
+    summaryAggregator.clearSession(currentSession.id);
 
     try {
       const { data: abortResult, error: abortError } = await opencodeClient.session.abort(

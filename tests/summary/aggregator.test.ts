@@ -2543,4 +2543,224 @@ describe("summary/aggregator", () => {
       expect(active[0].status).toBe("pending");
     });
   });
+
+  describe("typing indicator lifecycle", () => {
+    function createFakeBot(sendChatAction = vi.fn().mockResolvedValue(true)) {
+      return { api: { sendChatAction } } as never;
+    }
+
+    function setupTypingSession(
+      sessionId: string,
+      chatId = 123,
+      messageThreadId?: number,
+      sendChatAction = vi.fn().mockResolvedValue(true),
+    ) {
+      summaryAggregator.setBotAndChatId(createFakeBot(sendChatAction), chatId, messageThreadId);
+      summaryAggregator.setSession(sessionId);
+      return sendChatAction;
+    }
+
+    function emitAssistantMessage(
+      sessionId: string,
+      messageId: string,
+      time?: { created: number; completed?: number },
+    ) {
+      summaryAggregator.processEvent({
+        type: "message.updated",
+        properties: {
+          info: {
+            id: messageId,
+            sessionID: sessionId,
+            role: "assistant",
+            time: time ?? { created: Date.now() },
+          },
+        },
+      } as unknown as Event);
+    }
+
+    function emitMessagePartDelta(
+      sessionId: string,
+      messageId: string,
+      partId: string,
+      delta: string,
+      partType = "text",
+    ) {
+      summaryAggregator.processEvent({
+        type: "message.part.delta",
+        properties: {
+          part: {
+            id: partId,
+            sessionID: sessionId,
+            messageID: messageId,
+            type: partType,
+          },
+          delta,
+        },
+      } as unknown as Event);
+    }
+
+    function emitSessionIdle(sessionId: string) {
+      summaryAggregator.processEvent({
+        type: "session.idle",
+        properties: { sessionID: sessionId },
+      } as unknown as Event);
+    }
+
+    it("stops typing after the last assistant message completes", () => {
+      vi.useFakeTimers();
+      try {
+        const sendChatAction = setupTypingSession("session-1");
+
+        emitAssistantMessage("session-1", "msg-1");
+
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+
+        emitAssistantMessage("session-1", "msg-1", {
+          created: Date.now() - 1000,
+          completed: Date.now(),
+        });
+
+        vi.advanceTimersByTime(4000);
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("stops typing after the last assistant message completes (via session.idle)", () => {
+      vi.useFakeTimers();
+      try {
+        const sendChatAction = setupTypingSession("session-1");
+
+        emitAssistantMessage("session-1", "msg-1");
+
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+
+        emitSessionIdle("session-1");
+
+        vi.advanceTimersByTime(4000);
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does NOT restart typing from late message.part.delta after message completion", () => {
+      vi.useFakeTimers();
+      try {
+        const sendChatAction = setupTypingSession("session-1");
+
+        emitAssistantMessage("session-1", "msg-1");
+
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+
+        emitAssistantMessage("session-1", "msg-1", {
+          created: Date.now() - 1000,
+          completed: Date.now(),
+        });
+
+        emitMessagePartDelta("session-1", "msg-1", "part-1", "late text");
+
+        vi.advanceTimersByTime(4000);
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does NOT restart typing from late reasoning message.part.delta after message completion", () => {
+      vi.useFakeTimers();
+      try {
+        const sendChatAction = setupTypingSession("session-1");
+
+        emitAssistantMessage("session-1", "msg-1");
+
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+
+        emitAssistantMessage("session-1", "msg-1", {
+          created: Date.now() - 1000,
+          completed: Date.now(),
+        });
+
+        emitMessagePartDelta("session-1", "msg-1", "reasoning-part-1", "late thinking", "reasoning");
+
+        vi.advanceTimersByTime(4000);
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does NOT restart typing from late message.part.delta after session.idle", () => {
+      vi.useFakeTimers();
+      try {
+        const sendChatAction = setupTypingSession("session-1");
+
+        emitAssistantMessage("session-1", "msg-1");
+
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+
+        emitSessionIdle("session-1");
+
+        emitMessagePartDelta("session-1", "msg-1", "part-1", "late text after idle");
+
+        vi.advanceTimersByTime(4000);
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps typing stopped after multiple exit paths (completion then idle)", () => {
+      vi.useFakeTimers();
+      try {
+        const sendChatAction = setupTypingSession("session-1");
+
+        emitAssistantMessage("session-1", "msg-1");
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+
+        emitAssistantMessage("session-1", "msg-1", {
+          created: Date.now() - 1000,
+          completed: Date.now(),
+        });
+
+        emitSessionIdle("session-1");
+
+        emitMessagePartDelta("session-1", "msg-1", "part-1", "stale delta");
+
+        vi.advanceTimersByTime(4000);
+        vi.advanceTimersByTime(4000);
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("continues typing for other sessions when one session completes", () => {
+      vi.useFakeTimers();
+      try {
+        const sendChatAction = setupTypingSession("session-1");
+
+        emitAssistantMessage("session-1", "msg-1a");
+        summaryAggregator.setSession("session-2");
+        emitAssistantMessage("session-2", "msg-2a");
+
+        expect(sendChatAction).toHaveBeenCalledTimes(1);
+
+        emitAssistantMessage("session-2", "msg-2a", {
+          created: Date.now() - 1000,
+          completed: Date.now(),
+        });
+
+        emitSessionIdle("session-2");
+
+        emitMessagePartDelta("session-2", "msg-2a", "p-1", "late delta for completed session");
+
+        vi.advanceTimersByTime(4000);
+        expect(sendChatAction).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

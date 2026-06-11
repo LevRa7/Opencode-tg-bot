@@ -2584,7 +2584,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           if (telegraphUrl) {
             return {
               ...subagent,
-              topicLinkLabel: t("subagent.topic_link"),
               topicLinkUrl: telegraphUrl,
             };
           }
@@ -2597,7 +2596,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         }
         return {
           ...subagent,
-          topicLinkLabel: t("subagent.topic_link"),
           topicLinkUrl: linkState.url,
         };
       });

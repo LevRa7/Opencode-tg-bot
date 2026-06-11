@@ -497,6 +497,69 @@ describe("thread/manager", () => {
     expect(mocked.setCurrentSessionMock).not.toHaveBeenCalled();
   });
 
+  it("bindSessionToScope persists binding for any scope (not just active context)", () => {
+    mocked.currentProject = { id: "project-pre", worktree: "/repo" };
+    mocked.currentSession = {
+      id: "session-pre",
+      title: "Pre-existing",
+      directory: "/repo",
+    };
+
+    threadContextManager.activateFromContext(createMessageContext(-100100, 10));
+
+    const newScope = { userId: 1001, chatId: -100100, messageThreadId: 42 };
+    threadContextManager.bindSessionToScope(
+      { id: "session-forked", title: "Forked", directory: "/repo" },
+      newScope,
+    );
+
+    expect(threadContextManager.getSessionTarget("session-forked")).toEqual({
+      chatId: -100100,
+      messageThreadId: 42,
+    });
+    expect(threadContextManager.getSessionDirectory("session-forked")).toBe("/repo");
+
+    expect(mocked.setThreadContextBindingsMock).toHaveBeenCalled();
+    const bindings: ThreadBindingMock[] =
+      mocked.setThreadContextBindingsMock.mock.calls[
+        mocked.setThreadContextBindingsMock.mock.calls.length - 1
+      ]?.[0] ?? [];
+    const forkedBinding = bindings.find(
+      (b) => b.contextKey === "1001:-100100:42",
+    );
+    expect(forkedBinding?.session).toEqual({
+      id: "session-forked",
+      title: "Forked",
+      directory: "/repo",
+    });
+  });
+
+  it("bindSessionToScope restores via activateFromContext navigated to the bound topic", () => {
+    const newScope = { userId: 1001, chatId: -100100, messageThreadId: 55 };
+    threadContextManager.bindSessionToScope(
+      { id: "session-future", title: "Future Topic", directory: "/repo" },
+      newScope,
+    );
+
+    mocked.currentProject = undefined;
+    mocked.currentSession = null;
+
+    mocked.setCurrentSessionMock.mockReset();
+    mocked.setCurrentProjectMock.mockReset();
+
+    threadContextManager.activateFromContext(createMessageContext(-100100, 55));
+
+    expect(mocked.setCurrentSessionMock).toHaveBeenCalledWith({
+      id: "session-future",
+      title: "Future Topic",
+      directory: "/repo",
+    });
+    expect(threadContextManager.getSessionTarget("session-future")).toEqual({
+      chatId: -100100,
+      messageThreadId: 55,
+    });
+  });
+
   it("new topic without binding should not inherit session from another topic", () => {
     mocked.threadContextBindings = [
       {

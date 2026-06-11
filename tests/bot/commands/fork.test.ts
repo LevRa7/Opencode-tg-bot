@@ -84,8 +84,21 @@ describe("bot/commands/fork", () => {
         messageID: undefined,
       }),
     );
-    expect(mocked.createForumTopic).toHaveBeenCalledWith(777, "Test (fork)");
-    expect(mocked.attachSessionForScope).toHaveBeenCalled();
+    expect(mocked.createForumTopic).toHaveBeenCalledWith(777, "[Fork] Test (fork)");
+    expect(mocked.attachSessionForScope).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: expect.objectContaining({
+          chatId: 777,
+          messageThreadId: 42,
+        }),
+        session: expect.objectContaining({
+          id: "s2",
+          title: "Test (fork)",
+          directory: "/root/proj",
+        }),
+        reason: "fork",
+      }),
+    );
     expect(ctx.reply).toHaveBeenCalledWith(
       t("fork.success", { title: "Test (fork)" }),
       expect.anything(),

@@ -364,6 +364,21 @@ class ThreadContextManager {
     this.persistBindings();
   }
 
+  bindSessionToScope(session: SessionInfo, scope: TelegramConversationScope): void {
+    this.ensureHydrated();
+
+    const contextKey = buildContextKey(scope);
+
+    const previousSession = this.sessionByContext.get(contextKey);
+    if (previousSession && previousSession.id !== session.id) {
+      this.scopeBySessionId.delete(previousSession.id);
+    }
+
+    this.sessionByContext.set(contextKey, cloneSession(session));
+    this.scopeBySessionId.set(session.id, { ...scope });
+    this.persistBindings();
+  }
+
   bindAgentToActiveContext(agent: string): void {
     this.ensureHydrated();
 

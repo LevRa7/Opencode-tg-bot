@@ -37,7 +37,8 @@ export async function forkCommand(ctx: Context): Promise<void> {
     );
 
     const chatId = ctx.chat!.id;
-    const newTopic = await ctx.api.createForumTopic(chatId, forkedSession.title);
+    const topicName = `[Fork] ${forkedSession.title}`;
+    const newTopic = await ctx.api.createForumTopic(chatId, topicName);
 
     const activeScope = threadContextManager.getActiveScope();
     if (activeScope) {

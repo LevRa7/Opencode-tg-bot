@@ -4102,7 +4102,8 @@ export function createBot(): Bot<Context> {
 
       const forked = data as { id: string; title: string };
       const chatId = ctx.chat!.id;
-      const newTopic = await ctx.api.createForumTopic(chatId, forked.title);
+      const topicName = `[Fork] ${forked.title}`;
+      const newTopic = await ctx.api.createForumTopic(chatId, topicName);
 
       const activeScope = threadContextManager.getActiveScope();
       if (activeScope) {

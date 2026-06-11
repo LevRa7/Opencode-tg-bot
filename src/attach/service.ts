@@ -39,6 +39,8 @@ export async function attachSessionForScope(options: {
 
   if (threadContextManager.isActiveScope(options.scope)) {
     threadContextManager.bindSessionToActiveContext(options.session);
+  } else {
+    threadContextManager.bindSessionToScope(options.session, options.scope);
   }
 
   logger.info(

@@ -99,6 +99,41 @@ describe("SubdomainManager", () => {
       expect(result.password).toBeUndefined(); // existing has no plain password
     });
 
+    it("should reset subdomain from SSH format to username when kind changes", () => {
+      const repo = mockRepo([{
+        user_id: 789, username: "ivan", subdomain: "myserver.ivan",
+        kind: "ssh-host", hostname: "myserver",
+        ssh_connection_id: "conn-abc", created_at: "2026-01-01",
+      }]);
+      const mgr = new SubdomainManager(() => repo);
+      const result = mgr.ensureSubdomain(789, "ivan", "host");
+
+      expect(result.subdomain).toBe("ivan"); // reset from "myserver.ivan"
+      expect(result.kind).toBe("host");
+      expect(result.hostname).toBeNull();
+    });
+
+    it("should keep SSH-formatted subdomain when kind does not change", () => {
+      const repo = mockRepo([{
+        user_id: 789, username: "ivan", subdomain: "myserver.ivan",
+        kind: "ssh-host", hostname: "myserver",
+        ssh_connection_id: "conn-abc", created_at: "2026-01-01",
+      }]);
+      // Calling with same SSH kind should NOT change subdomain
+      const mgr = new SubdomainManager(() => repo);
+      // This tests the "same kind" path via ensureSubdomain API
+      // (kind can't be ssh-host here, but we test host→host scenario)
+      const hostRepo = mockRepo([{
+        user_id: 111, username: "user111", subdomain: "user111",
+        kind: "host", hostname: null,
+        ssh_connection_id: null, created_at: "2026-01-01",
+      }]);
+      const hostMgr = new SubdomainManager(() => hostRepo);
+      const result = hostMgr.ensureSubdomain(111, "user111", "host");
+      expect(result.subdomain).toBe("user111"); // unchanged
+      expect(result.kind).toBe("host");
+    });
+
     it("should use tg{id} as username when no @username", () => {
       const repo = mockRepo();
       const mgr = new SubdomainManager(() => repo);

@@ -4,11 +4,56 @@ import path from "node:path";
 import net from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { handleAuthRequest } from "./auth-handler.js";
-import { handleProxyRequest } from "./proxy.js";
+import { handleProxyRequest, resolveProxyTarget } from "./proxy.js";
+import { rewriteApiUrl, rewriteWsPath } from "./api-url-rewrite.js";
 import { logger } from "../utils/logger.js";
+import { randomBytes } from "node:crypto";
 
 const PORT = 8080;
 const OPENCHAMBER_SERVER = "http://127.0.0.1:8081";
+
+// In-memory token store for MiniApp URL tokens (OpenChamber-compatible).
+// Keyed by token string, value contains user credentials and expiry.
+const urlTokenStore = new Map<string, { userId: number; username: string; password: string; expiresAt: number }>();
+
+function generateUrlToken(): string {
+  return "oc_url_" + randomBytes(24).toString("base64url");
+}
+
+function handleUrlToken(req: IncomingMessage, res: ServerResponse): void {
+  const host = req.headers.host || "";
+
+  // For the admin subdomain, let the request pass through to OpenChamber
+  const hostPart = host.split(":")[0];
+  const baseDomain = "smart-server.online";
+  const subdomain = hostPart.endsWith(`.${baseDomain}`)
+    ? hostPart.slice(0, -(baseDomain.length + 1)).toLowerCase()
+    : "";
+
+  if (subdomain === "levra7") {
+    // Proxy to OpenChamber which handles its own /auth/url-token
+    proxyToUrl(req, res, OPENCHAMBER_SERVER, host);
+    return;
+  }
+
+  const target = resolveProxyTarget(host);
+  if (!target) {
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Unknown subdomain" }));
+    return;
+  }
+
+  const token = generateUrlToken();
+  const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24h
+
+  // The proxy adds Basic auth to all requests.  The MiniApp only needs a
+  // non-empty token to satisfy its own auth flow; actual auth is handled
+  // by the proxy layer.
+  urlTokenStore.set(token, { userId: 0, username: "opencode", password: "", expiresAt });
+
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ token, expiresAt }));
+}
 
 // Path to Mini App built files (OpenChamber dist)
 const MINIAPP_DIST = "/var/www/opencode-miniapp";
@@ -159,6 +204,12 @@ function createServer(): http.Server {
       return;
     }
 
+    // POST /auth/url-token — OpenChamber-compatible URL token (needed by MiniApp)
+    if (req.method === "POST" && req.url === "/auth/url-token") {
+      handleUrlToken(req, res);
+      return;
+    }
+
     const host = req.headers.host || "";
     const hostPart = host.split(":")[0];
     const baseDomain = "smart-server.online";
@@ -168,7 +219,7 @@ function createServer(): http.Server {
       hostPart.endsWith(`.${baseDomain}`) &&
       hostPart !== baseDomain;
 
-    // Subdomain: proxy to OpenChamber (admin) or serve OpenChamber SPA + route API
+    // Subdomain: proxy to OpenChamber (admin) or serve MiniApp SPA + route API
     if (isSubdomain) {
       // Extract subdomain from host
       const subdomain = hostPart.endsWith(`.${baseDomain}`)
@@ -179,7 +230,98 @@ function createServer(): http.Server {
         proxyToUrl(req, res, OPENCHAMBER_SERVER, host);
         return;
       }
-      // Tenant subdomains: proxy directly to tenant's opencode serve (OpenCode built-in UI)
+      // Tenant subdomains: serve MiniApp SPA for page load + static assets.
+      // The MiniApp (OpenChamber) uses /api/ prefix for all API calls,
+      // e.g. /api/session, /api/global/health.  Strip the prefix before
+      // proxying to the OpenCode backend.
+
+      // OpenChamber-specific endpoints the MiniApp expects as JSON.
+      // These do not exist in the OpenCode backend; serve minimal defaults.
+      if (req.method === "GET") {
+        if (req.url === "/health" || req.url === "/health/") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ status: "ok", runtime: "web", compatibility: { capabilities: [] } }));
+          return;
+        }
+        if (req.url === "/auth/session" || req.url === "/auth/session/") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ authenticated: true, disabled: false }));
+          return;
+        }
+        if (req.url === "/auth/passkey/status" || req.url === "/auth/passkey/status/") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ enabled: false, hasPasskeys: false, passkeyCount: 0, rpID: null }));
+          return;
+        }
+        // /api/config/settings — OpenChamber-only settings (theme, projects)
+        if (req.url === "/api/config/settings" || req.url === "/api/config/settings/") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ themeId: "jetbrains-dark", themeVariant: "dark", useSystemTheme: false, projects: [] }));
+          return;
+        }
+        // /api/config/themes — OpenChamber-only theme definitions
+        if (req.url === "/api/config/themes" || req.url === "/api/config/themes/") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ themes: [] }));
+          return;
+        }
+        // /api/fs/home — OpenChamber-only filesystem home
+        if (req.url === "/api/fs/home" || req.url === "/api/fs/home/") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ home: "/root" }));
+          return;
+        }
+        // /api/session-folders — OpenChamber-only session folder list
+        if (req.url === "/api/session-folders" || req.url === "/api/session-folders/") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ version: 1, foldersMap: {} }));
+          return;
+        }
+      }
+
+      // PUT /api/config/settings — MiniApp saves settings; accept and ack
+      if ((req.method === "PUT" || req.method === "PATCH") && (req.url === "/api/config/settings" || req.url === "/api/config/settings/")) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      const url = req.url || "/";
+
+      // Rewrite /api/* paths for the OpenCode backend
+      if (url.startsWith("/api/") || url.startsWith("/api?")) {
+        req.url = rewriteApiUrl(url);
+        try {
+          await handleProxyRequest(req, res, host);
+        } catch (err) {
+          logger.error("[HTTP] Proxy error", err);
+          if (!res.headersSent) {
+            res.writeHead(502, { "Content-Type": "text/plain" });
+            res.end("Proxy error");
+          }
+        }
+        return;
+      }
+
+      if (req.method === "GET") {
+        if (url === "/" || url === "/index.html") {
+          serveIndexHtml(res);
+          return;
+        }
+        if (serveStaticFile(res, url)) return;
+        // Everything else: proxy to backend (covers non-prefixed API paths)
+        try {
+          await handleProxyRequest(req, res, host);
+        } catch (err) {
+          logger.error("[HTTP] Proxy error", err);
+          if (!res.headersSent) {
+            res.writeHead(502, { "Content-Type": "text/plain" });
+            res.end("Proxy error");
+          }
+        }
+        return;
+      }
+      // Non-GET: proxy API calls (POST, PUT, DELETE, etc.)
       try {
         await handleProxyRequest(req, res, host);
         return;
@@ -236,10 +378,13 @@ export function startHttpServer(): Promise<void> {
     }
     serverInstance = createServer();
 
-    // WebSocket upgrade handler — proxy WS to OpenChamber
+    // WebSocket upgrade handler — proxy WS to the correct backend.
+    // The MiniApp (OpenChamber) sends WS requests to /api/global/event/ws.
+    // Strip /api/ prefix and /ws suffix before forwarding to the OpenCode
+    // backend, and include Basic auth from the resolved proxy target.
     serverInstance.on("upgrade", (req: IncomingMessage, socket: net.Socket, head: Buffer) => {
-      const host = req.headers.host || "";
-      const hostPart = host.split(":")[0];
+      const hostHeader = req.headers.host || "";
+      const hostPart = hostHeader.split(":")[0];
       const baseDomain = "smart-server.online";
       const isSubdomain =
         hostPart !== "localhost" &&
@@ -252,7 +397,27 @@ export function startHttpServer(): Promise<void> {
         return;
       }
 
-      const targetUrl = new URL(req.url || "/", OPENCHAMBER_SERVER);
+      const subdomain = hostPart.endsWith(`.${baseDomain}`)
+        ? hostPart.slice(0, -(baseDomain.length + 1)).toLowerCase()
+        : "";
+
+      let wsTarget: string;
+      let authHeader = "";
+
+      if (subdomain === "levra7") {
+        wsTarget = OPENCHAMBER_SERVER;
+      } else {
+        const target = resolveProxyTarget(hostHeader);
+        if (!target) {
+          socket.destroy();
+          return;
+        }
+        wsTarget = target.baseUrl;
+        authHeader = target.authHeader;
+        req.url = rewriteWsPath(req.url || "/");
+      }
+
+      const targetUrl = new URL(req.url || "/", wsTarget);
       const targetHost = targetUrl.hostname;
       const targetPort = parseInt(targetUrl.port, 10) || 80;
 
@@ -260,7 +425,10 @@ export function startHttpServer(): Promise<void> {
       for (const [k, v] of Object.entries(req.headers)) {
         if (v !== undefined && k !== "host") headers[k] = v;
       }
-      headers["host"] = host;
+      headers["host"] = hostHeader;
+      if (authHeader) {
+        headers["authorization"] = authHeader;
+      }
 
       const proxySocket = net.connect(targetPort, targetHost, () => {
         proxySocket.write(

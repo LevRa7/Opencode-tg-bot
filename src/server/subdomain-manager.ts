@@ -26,19 +26,30 @@ export class SubdomainManager {
     const existing = this.getRepo().getByUserId(userId);
     if (existing) {
       // If kind changed (e.g., SSH disconnected), reset SSH-specific fields
+      // including the subdomain (SSH subdomains are "host.name" format,
+      // non-SSH are just the username).
       if (existing.kind !== kind) {
+        const baseSubdomain = existing.username;
         this.getRepo().upsert(userId, {
           kind,
+          subdomain: baseSubdomain,
           ssh_connection_id: null,
           hostname: null,
         });
+        return {
+          userId: existing.user_id,
+          username: existing.username,
+          subdomain: baseSubdomain,
+          kind,
+          hostname: null,
+        };
       }
       return {
         userId: existing.user_id,
         username: existing.username,
         subdomain: existing.subdomain,
-        kind: existing.kind !== kind ? kind : existing.kind,
-        hostname: existing.kind !== kind ? null : existing.hostname,
+        kind,
+        hostname: existing.hostname,
       };
     }
 

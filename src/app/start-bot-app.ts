@@ -182,40 +182,60 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
     await startHttpServer();
 
     if (!shutdownRequested) {
-      await bot.start({
-        allowed_updates: [
-          "message",
-          "edited_message",
-          "channel_post",
-          "edited_channel_post",
-          "callback_query",
-          "inline_query",
-          "chosen_inline_result",
-          "my_chat_member",
-          "chat_member",
-          "chat_join_request",
-          "poll",
-          "poll_answer",
-          "message_reaction",
-        ],
-        onStart: async (botInfo) => {
-          logger.info(`Bot @${botInfo.username} started!`);
+      // Retry on 409 Conflict (stale long-polling connection from previous instance)
+      let startAttempt = 0;
+      const maxStartRetries = 10;
+      while (true) {
+        try {
+          await bot.start({
+            allowed_updates: [
+              "message",
+              "edited_message",
+              "channel_post",
+              "edited_channel_post",
+              "callback_query",
+              "inline_query",
+              "chosen_inline_result",
+              "my_chat_member",
+              "chat_member",
+              "chat_join_request",
+              "poll",
+              "poll_answer",
+              "message_reaction",
+            ],
+            onStart: async (botInfo) => {
+              logger.info(`Bot @${botInfo.username} started!`);
 
-          const lastRestart = getLastRestartRequest();
-          if (lastRestart?.chatId && lastRestart?.messageId) {
-            try {
-              await bot!.api.editMessageText(
-                lastRestart.chatId,
-                lastRestart.messageId,
-                t("restart.completed", undefined, lastRestart.locale as Locale | undefined),
-              );
-            } catch (error) {
-              logger.warn("[App] Failed to edit restart message:", error);
+              const lastRestart = getLastRestartRequest();
+              if (lastRestart?.chatId && lastRestart?.messageId) {
+                try {
+                  await bot!.api.editMessageText(
+                    lastRestart.chatId,
+                    lastRestart.messageId,
+                    t("restart.completed", undefined, lastRestart.locale as Locale | undefined),
+                  );
+                } catch (error) {
+                  logger.warn("[App] Failed to edit restart message:", error);
+                }
+                await setLastRestartRequest({ updateId: lastRestart.updateId, requestedAt: lastRestart.requestedAt });
+              }
+            },
+          });
+          break;
+        } catch (error) {
+          const msg = (error as Error)?.message ?? String(error);
+          if (msg.includes("409") || msg.includes("terminated by other getUpdates")) {
+            startAttempt++;
+            if (startAttempt >= maxStartRetries) {
+              throw error;
             }
-            await setLastRestartRequest({ updateId: lastRestart.updateId, requestedAt: lastRestart.requestedAt });
+            console.error(`[App] getUpdates 409 conflict, retrying in 5s (${startAttempt}/${maxStartRetries})`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          } else {
+            throw error;
           }
-        },
-      });
+        }
+      }
     }
   } finally {
     process.off("SIGINT", handleSignal);

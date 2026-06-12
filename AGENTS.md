@@ -618,6 +618,19 @@ docker exec -it -e BATCH_SIZE=5 <container> batch-transcribe /path/to/audio/dir
 - [Clean Code](https://www.amazon.com/Clean-Code-Handbook-Software-Craftsmanship/dp/0132350882) - Robert C. Martin
 - [Clean Architecture](https://www.amazon.com/Clean-Architecture-Craftsmans-Software-Structure/dp/0132350882) - Robert C. Martin
 
+## Contact Lookup
+
+**When the user asks for a person's contact, use tg-cli first** — search Telegram chats and messages via `tg search` and `tg info` before consulting any other source. Telegram is the primary contact directory.
+
+Example workflow:
+```bash
+tg search "Name" --yaml -n 20   # Search messages mentioning the person
+tg info "ChatName" --yaml       # Get chat/user details (username, phone, ID)
+tg chats | grep -i "name"       # Find matching chats
+```
+
+Do not guess contacts. Always query Telegram first.
+
 ## Telegram File Delivery Mode
 
 When the agent generates files during a task, they must be delivered to the user through the Telegram bot.

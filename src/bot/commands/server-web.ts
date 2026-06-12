@@ -12,6 +12,8 @@ export async function serverWebCommand(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   if (!userId) return;
 
+  const route = resolveOpencodeRouteForUser(userId);
+
   const info = subdomainManager.getSubdomainByUserId(userId);
 
   if (!info) {
@@ -19,8 +21,26 @@ export async function serverWebCommand(ctx: Context): Promise<void> {
     return;
   }
 
-  const fullDomain = `${info.subdomain}.smart-server.online`;
-  const route = resolveOpencodeRouteForUser(userId);
+  // Auto-heal: if SSH is not active but the subdomain still has the SSH
+  // "host.name" format, reset it to the base username-based subdomain.
+  const isSshKind = route?.kind === "ssh-host" || route?.kind === "ssh-docker";
+  const hasSshFormatSubdomain =
+    !isSshKind && info.subdomain !== info.subdomain.replace(/^[^.]+\./, "");
+
+  let displaySubdomain = info.subdomain;
+  let displayKind = route?.kind ?? info.kind;
+
+  if (hasSshFormatSubdomain) {
+    const fixed = subdomainManager.ensureSubdomain(
+      userId,
+      ctx.from?.username,
+      route?.kind === "tenant" ? "tenant" : "host",
+    );
+    displaySubdomain = fixed.subdomain;
+    displayKind = fixed.kind;
+  }
+
+  const fullDomain = `${displaySubdomain}.smart-server.online`;
 
   const lines = [
     `<b>${t("server_web.title")}</b>`,
@@ -28,9 +48,9 @@ export async function serverWebCommand(ctx: Context): Promise<void> {
     `${t("server_web.label_url")} <code>https://${fullDomain}</code>`,
     `${t("server_web.label_login")} <code>opencode</code>`,
     `${t("server_web.label_password")} <code>${route?.password || "—"}</code>`,
-    `${t("server_web.label_type")} ${info.kind}`,
+    `${t("server_web.label_type")} ${displayKind}`,
   ];
-  if (info.hostname) {
+  if (isSshKind && info.hostname) {
     lines.push(`${t("server_web.label_host")} ${info.hostname}`);
   }
 

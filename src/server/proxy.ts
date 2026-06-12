@@ -42,7 +42,19 @@ export function resolveProxyTarget(host: string): ProxyTarget | null {
     return null;
   }
 
-  const resolved = subdomainManager.resolveSubdomain(subdomain);
+  let resolved = subdomainManager.resolveSubdomain(subdomain);
+
+  // Fallback: SSH subdomains are "{hostname}.{username}" format.
+  // If the full subdomain is not in the DB (e.g. after bot restart
+  // the SSH recovery failed), extract the username suffix and look
+  // up by username instead.
+  if (!resolved) {
+    const dotIdx = subdomain.indexOf(".");
+    if (dotIdx > 0) {
+      const username = subdomain.slice(dotIdx + 1);
+      resolved = subdomainManager.resolveSubdomain(username);
+    }
+  }
   if (!resolved) return null;
 
   const route = resolveOpencodeRouteForUser(resolved.userId);

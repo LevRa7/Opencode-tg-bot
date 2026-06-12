@@ -68,7 +68,7 @@ describe("resolveOpencodeRouteForUser", () => {
     expect(route!.password).toBe("ssh-pass");
   });
 
-  it("should mark SSH docker as ssh-docker kind", () => {
+  it("should use conn.opencodePassword as SSH route password", () => {
     mockSsh.isSshActive.mockReturnValue(true);
     mockSsh.getLocalPort.mockReturnValue(49601);
     mockSsh.getActiveConnection.mockReturnValue({
@@ -78,11 +78,31 @@ describe("resolveOpencodeRouteForUser", () => {
 
     const route = resolveOpencodeRouteForUser(1000);
     expect(route!.kind).toBe("ssh-docker");
+    expect(route!.password).toBe("docker-pass");
   });
 
-  it("should return null for unknown user with no tenant", () => {
+  it("should fall back to getOrCreateServerPassword when opencodePassword is undefined", () => {
+    mockSsh.isSshActive.mockReturnValue(true);
+    mockSsh.getLocalPort.mockReturnValue(49602);
+    mockSsh.getActiveConnection.mockReturnValue({
+      opencodePassword: undefined,
+      deployTarget: "host",
+    });
+
+    const route = resolveOpencodeRouteForUser(1001);
+    expect(route!.kind).toBe("ssh-host");
+    // Falls back to auto-generated password
+    expect(route!.password).toBe("auto-pass-1001");
+  });
+
+  it("should fall back to host route for unknown user with no tenant (MiniApp support)", () => {
     const route = resolveOpencodeRouteForUser(888);
-    expect(route).toBeNull();
+    // Non-admin users without a tenant runtime get the host API URL
+    // with admin password so the MiniApp can connect.
+    expect(route).toBeDefined();
+    expect(route!.baseUrl).toBe("http://localhost:4096");
+    expect(route!.kind).toBe("tenant");
+    expect(route!.password).toBe("admin-pass");
   });
 
   it("should resolve tenant user when tenantRuntime exists", async () => {

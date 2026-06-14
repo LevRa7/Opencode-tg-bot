@@ -186,6 +186,32 @@ export async function openTerminalTopic(
       // Stream PTY output back to the Telegram topic
       let outputBuf = "";
       let outputMsgId: number | null = null;
+      let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const doScreenshot = async () => {
+        if (!outputBuf) return;
+        try {
+          const { chromium } = await import("playwright");
+          const browser = await chromium.launch({ headless: true });
+          try {
+            const page = await browser.newPage();
+            await page.setViewportSize({ width: 800, height: 600 });
+            const safe = outputBuf.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            await page.setContent(
+              `<html><body style="margin:0;background:#1a1a2e;color:#e0e0e0;font:14px monospace;padding:12px;white-space:pre-wrap;word-break:break-all">${safe}</body></html>`
+            );
+            const buf = await page.screenshot({ type: "png", fullPage: true });
+            await api.sendPhoto(forumChatId, new InputFile(buf, "terminal.png"), {
+              message_thread_id: messageThreadId,
+            });
+          } finally {
+            await browser.close();
+          }
+        } catch (err) {
+          logger.warn("[Terminal] Screenshot failed:", err);
+        }
+      };
+
       ptySession.onData((data: string) => {
         outputBuf += data;
         terminalOutputs.set(messageThreadId, outputBuf);
@@ -197,6 +223,9 @@ export async function openTerminalTopic(
             .then((msg) => { outputMsgId = msg.message_id; })
             .catch(() => {});
         }
+        // Debounce screenshot — take after 500ms of no new output
+        if (screenshotTimer) clearTimeout(screenshotTimer);
+        screenshotTimer = setTimeout(doScreenshot, 500);
       });
 
       ptySession.onExit((code, signal) => {

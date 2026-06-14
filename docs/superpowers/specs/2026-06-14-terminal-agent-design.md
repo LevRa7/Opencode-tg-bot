@@ -1,135 +1,169 @@
-# Terminal Agent — PTY Terminal with Screenshots and Media Watcher
+# Terminal Agent — Simplified PTY Terminal (telminal approach)
 
 **Date:** 2026-06-14  
-**Status:** Approved  
+**Status:** Approved (v2 — simplified)  
 **Author:** AI agent + Лев
 
 ## Problem
 
-Current `/terminal` implementation uses `child_process.spawn()` with `shell: true`. This provides no interactivity (no Ctrl+C, no Tab completion, no arrow keys, no colors). For VM users, commands are wrapped in `ssh ... "cd /workspace && <cmd>"` — a single-shot execution, not a real terminal.
-
-Additionally, there are no screenshots and no auto-upload of generated files.
+Previous design had overengineered Unix socket + JSON protocol. telminal (github.com/fristhon/telminal) shows a simpler approach: the terminal agent is spawned via a pipe, stdin/stdout carry text directly. No JSON, no socket server.
 
 ## Goal
 
-Replace `/terminal` with a full coderBOT-like experience:
-1. **PTY terminal** — true interactive shell via `node-pty`
-2. **Screenshots** — `/screen` command renders terminal state via Puppeteer
-3. **Media watcher** — auto-send files generated in a watched directory
-
-All running on the user's selected deployment target (VM via Unix socket + SSH tunnel, Docker tenant, local host).
+Simple terminal in Telegram for VM users:
+1. **PTY terminal** — interactive shell via `node-pty` spawned through SSH pipe
+2. **Text-only output** — no Puppeteer on VM, text forwarded via SSH stdout
+3. **Optional screenshots** — rendered on host via Puppeteer + xterm.js (Phase 2)
+4. **Media watcher** — file auto-upload via chokidar (Phase 3)
 
 ## Architecture
 
 ```
-User → Telegram → Bot (host)
-                    ├─ LocalPtyBridge    → node-pty (local host)
-                    ├─ DockerPtyBridge   → Docker exec + node-pty
-                    └─ VmPtyBridge       → ssh -L + Unix socket → VM agent
-                         ↓
-                    VM: terminal-agent.js
-                         ├─ PTY pool (node-pty spawn)
-                         ├─ Screenshot (Puppeteer render)
-                         └─ Media watcher (chokidar → /workspace/media)
+User → Telegram Bot (host)
+         ↓
+    VMPtyBridge (SSH pipe)
+         ↓
+    ssh opencode@<bridgeIp> node /opt/terminal-agent.js <sessionId> <cols> <rows>
+         ↓  (stdin pipe → forward user text)
+    terminal-agent.js on VM
+         ↓  (node-pty spawn bash)
+         ↓  (stdout pipe → PTY output)
+    VMPtyBridge reads output → sends to Telegram
 ```
 
 ## Components
 
 ### 1. Terminal Agent (`src/vm/terminal-agent.ts`)
 
-A standalone Node.js process on the VM. Compiled to JS and placed at `/opt/terminal-agent.js` during golden image build / cloud-init.
+A tiny Node.js script on the VM deployed to `/opt/terminal-agent.js`.
 
-**Interface:** Unix socket at `/tmp/opencode-terminal.sock`
+**Input:** `node /opt/terminal-agent.js <sessionId> <cols> <rows> [cwd]`
 
-**Features:**
-- PTY session management (spawn, write, resize, kill)
-- Screenshot capture via Puppeteer (headless Chromium)
-- Directory watcher via chokidar
+**Behavior:**
+```javascript
+const pty = require('node-pty');
+const [sessionId, cols, rows, cwd] = process.argv.slice(2);
 
-**JSON Protocol:**
+const term = pty.spawn('bash', ['--login'], {
+  name: 'xterm-256color',
+  cols: parseInt(cols) || 80,
+  rows: parseInt(rows) || 24,
+  cwd: cwd || '/workspace',
+  env: { ...process.env, TERM: 'xterm-256color' },
+});
 
-| Direction | Type | Fields |
-|-----------|------|--------|
-| Bot → Agent | `spawn` | `id`, `cmd`, `cwd?`, `cols`, `rows` |
-| Agent → Bot | `spawned` | `id`, `pid` |
-| Bot → Agent | `write` | `id`, `data` |
-| Agent → Bot | `data` | `id`, `data` |
-| Bot → Agent | `resize` | `id`, `cols`, `rows` |
-| Bot → Agent | `kill` | `id` |
-| Agent → Bot | `exit` | `id`, `code` |
-| Bot → Agent | `screenshot` | `id` |
-| Agent → Bot | `screenshot` | `id`, `image` (base64 PNG) |
-| Bot → Agent | `watch` | `path` |
-| Agent → Bot | `file` | `path`, `size`, `mime` |
+// Forward PTY output to stdout (goes to bot via SSH pipe)
+term.onData((data: string) => process.stdout.write(data));
 
-Each message is a single JSON line terminated by `\n`.
+// Forward stdin to PTY (user text from bot)
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (data: string) => {
+  // ^C → SIGINT
+  if (data === '\x03') { term.kill('SIGINT'); return; }
+  // ^D → EOF
+  if (data === '\x04') { process.stdin.pause(); return; }
+  term.write(data);
+});
+process.stdin.resume();
 
-### 2. PTY Bridge (`src/bot/commands/terminal.ts`)
+// On exit, write exit marker and quit
+term.onExit(({ exitCode, signal }) => {
+  process.stdout.write(`\n[Exited with code ${exitCode}]\n`);
+  process.exit(exitCode ?? 0);
+});
+```
 
-Abstraction over different deployment targets.
+**Dependencies:** `node-pty` (npm, pre-installed on VM)
 
-**LocalPtyBridge:** Uses `node-pty` directly on the host.
+### 2. PTY Bridge (`src/bot/commands/terminal-bridge.ts`)
 
-**VmPtyBridge:** Creates SSH tunnel (`ssh -L <localPort>:/tmp/opencode-terminal.sock -N opencode@<bridgeIp>`) then connects to the forwarded local port via TCP. Communicates via the JSON protocol.
+**VMPtyBridge** — manages SSH child processes that tunnel terminal I/O.
 
-**DockerPtyBridge:** Uses `docker exec` to run `node-pty` inside the tenant container.
+```typescript
+class VMPtyBridge {
+  constructor(bridgeIp: string);
+  spawnSession(sessionId: string, opts?: { cols?: number; rows?: number; cwd?: string }): PtySessionHandle;
+  killAll(): void;
+}
 
-### 3. Session Manager
+interface PtySessionHandle {
+  id: string;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(signal?: string): void;
+  onData: (callback: (data: string) => void) => void;
+  onExit: (callback: (code: number | null) => void) => void;
+}
+```
 
-One terminal session = one PTY instance. Tracks:
-- `messageThreadId` → PTY session mapping
-- Active sessions (for `/screen`, `/close`, Ctrl+C)
-- Media watch subscriptions
+`spawnSession`:
+1. Spawns: `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null opencode@<bridgeIp> node /opt/terminal-agent.js <sessionId> <cols> <rows> [cwd]`
+2. Returns handle with write/resize/kill
+3. Reads stdout and emits via `onData` callback
+4. On `close` → emits `onExit`
 
-### 4. Bot Commands
+`write(data)` → writes to ssh child's stdin
+`resize(cols, rows)` → sends SIGWINCH via `kill -SIGWINCH <pid>` on VM
+`kill(signal)` → kills ssh child process (terminates PTY)
 
-| Command | Behavior |
-|---------|----------|
-| `/terminal` | Creates terminal topic + starts PTY session on target machine |
-| `/screen` | Requests screenshot from agent, sends to chat |
-| `/close` | Kills PTY, closes topic |
-| Text in terminal topic | Writes to PTY (`\n` appended unless Ctrl+D) |
-| `/ctrl <char>` | Sends control character to PTY |
-| `/keys <text>` | Sends raw text without Enter |
+### 3. Integration with terminal.ts
 
-### 5. Media Watcher
+New exports in `src/bot/commands/terminal.ts`:
 
-Agent watches `/workspace/media/` (configurable). On new file:
-1. Agent sends `file` message with path, size, mime
-2. Bot downloads file from VM via SCP
-3. Bot sends file to Telegram chat
-4. File moved to `/workspace/media/sent/`
+```typescript
+export async function ensureVMPtyBridge(userId: number, bridgeIp: string): Promise<VMPtyBridge>;
+export function getPtySession(messageThreadId: number): PtySessionHandle | undefined;
+export function setPtySession(messageThreadId: number, session: PtySessionHandle): void;
+export async function killPtySession(messageThreadId: number): Promise<void>;
+export async function disconnectVMBridge(userId: number): Promise<void>;
+```
+
+### 4. Integration with index.ts
+
+In the terminal text handler, when `getPtySession(mtId)` returns a session:
+- Write text directly to PTY (append `\n` unless `^C`/`^D` prefix)
+- Output is collected asynchronously and edited into the status message
+
+### 5. `/terminal` command flow
+
+1. User sends `/terminal` or clicks Terminal button
+2. `openTerminalTopic` creates forum topic + OpenCode session
+3. For VM users: `ensureVMPtyBridge` → `bridge.spawnSession()` → PTY running
+4. Session handle stored via `setPtySession(messageThreadId, handle)`
+5. Welcome message sent with system info
+6. Any text in the topic → forwarded to PTY
 
 ## Dependencies (on VM)
 
 - `node-pty` — PTY pseudo-terminal (npm)
-- `puppeteer` — screenshot rendering (npm, uses existing chromium)
-- `chokidar` — file system watcher (npm)
-- Chromium — already installed via golden image (`playwright install-deps chromium`)
+- Node.js 20+ — already present
 
-## Files Changed
+## Files
 
 | File | Change |
 |------|--------|
-| `src/vm/terminal-agent.ts` | **NEW** — Terminal agent source |
-| `src/bot/commands/terminal.ts` | Rewrite — PttyBridge, session manager, protocol |
-| `src/vm/cloud-init.ts` | Add npm install + agent deployment |
-| `build-golden.sh` | Add npm install + agent deployment |
-| `tests/bot/commands/terminal.test.ts` | Rewrite tests for PTY protocol |
-| `tests/vm/terminal-agent.test.ts` | **NEW** — Agent unit tests |
+| `src/vm/terminal-agent.ts` | NEW — Terminal agent (pipe-based, no socket) |
+| `src/bot/commands/terminal-bridge.ts` | NEW — VMPtyBridge (SSH pipe manager) |
+| `src/bot/commands/terminal.ts` | ADD — exports for bridge manager, session map |
+| `src/bot/index.ts` | ADD — PTY path in terminal handler |
+| `src/vm/cloud-init.ts` | ADD — node-pty install + agent deployment |
+| `build-golden.sh` | ADD — same as cloud-init |
+| `tests/vm/terminal-agent.test.ts` | NEW |
+| `tests/bot/commands/terminal-bridge.test.ts` | NEW |
+| `tests/bot/commands/terminal-pty.test.ts` | NEW |
+| `tests/bot/index-terminal-pty.test.ts` | NEW |
 
 ## Rollout Plan
 
 1. **Phase 1:** Terminal agent + PTY bridge + basic terminal (spawn, write, data, kill)
-2. **Phase 2:** Screenshots (`/screen`)
-3. **Phase 3:** Media watcher
-4. **Phase 4:** Docker bridge, polish
+2. **Phase 2:** Screenshots (`/screen`) via Puppeteer on host
+3. **Phase 3:** Media watcher (chokidar)
 
 ## Risks & Mitigations
 
 | Risk | Mitigation |
 |------|------------|
-| node-pty compilation fails on VM | Pre-compile binary in golden image |
-| SSH tunnel drops | Auto-reconnect with exponential backoff |
-| Puppeteer memory leak | Restart agent periodically (systemd timer) |
-| Unix socket permission denied | chmod 0660, owned by opencode user |
+| node-pty compilation on VM | Pre-install in golden image |
+| SSH connection drops | Auto-reconnect on next message |
+| Orphaned PTY on SSH disconnect | SSH child process kill → PTY tree killed by OS |
+| Large output → Telegram limit | Truncate to last 3800 chars, send `...truncated` marker |

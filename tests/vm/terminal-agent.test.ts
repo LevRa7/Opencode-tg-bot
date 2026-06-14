@@ -1,32 +1,29 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as net from "net";
-
-/*
- * RED-phase test file for terminal-agent.
+/**
+ * RED-phase test file for terminal-agent (SSH pipe architecture).
  *
- * The module `src/vm/terminal-agent.ts` does NOT exist yet.
- * These tests define the expected behavior of `createServer`, PTY session
- * management, screenshot, media watcher, and JSON-line protocol parsing.
+ * The module `src/vm/terminal-agent.ts` exists as a stub that throws
+ * "Not implemented" for every exported function. These tests import the
+ * real module (no module mock) and define the expected behavior.
  *
- * The `vi.mock("../../../src/vm/terminal-agent.js")` block stubs imports
- * so tests can execute.  Remove that block when the real implementation
- * exists — the tests will then exercise the real module.
+ * All tests will FAIL because the stubs throw — that is the expected
+ * TDD RED state. Implement the functions to make these tests pass.
+ *
+ * Architecture: stateless module (one session at a time).
+ *   createSession → spawns bash via node-pty, returns TerminalAgentSession
+ *   getSession    → returns current session or null
+ *   destroySession → kills PTY, clears state
  */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── hoisted mocks ──────────────────────────────────────────────────────────
 
 const mocked = vi.hoisted(() => ({
-  ptyProcess: null as ReturnType<typeof helperMakePty> | null,
   ptySpawnMock: vi.fn(),
   existsSyncMock: vi.fn(),
-  unlinkSyncMock: vi.fn(),
-  watchMock: vi.fn(),
-  createServerMock: vi.fn(),
-  /** Captured real unlinkSync for socket-file cleanup */
-  realUnlinkSync: null as ((path: string) => void) | null,
 }));
 
-// ── module mocks (dependencies) ────────────────────────────────────────────
+// ── dependency mocks ───────────────────────────────────────────────────────
 
 vi.mock("node-pty", () => ({
   spawn: mocked.ptySpawnMock,
@@ -34,796 +31,324 @@ vi.mock("node-pty", () => ({
 
 vi.mock("fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fs")>();
-  mocked.realUnlinkSync = actual.unlinkSync;
   return {
     ...actual,
     existsSync: mocked.existsSyncMock,
-    unlinkSync: mocked.unlinkSyncMock,
-    watch: mocked.watchMock,
   };
 });
 
-vi.mock("../../../src/utils/logger.js", () => ({
-  logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
+vi.mock("../../src/utils/logger.js", () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
 }));
 
-// ── module mock (module under test) ───────────────────────────────────────
+// ── import from real module (no vi.mock for the module under test) ─────────
 
-vi.mock("../../../src/vm/terminal-agent.js", () => ({
-  createServer: mocked.createServerMock,
-}));
+import {
+  createSession,
+  getSession,
+  destroySession,
+  type TerminalAgentSession,
+} from "../../src/vm/terminal-agent.js";
 
-import { createServer } from "../../../src/vm/terminal-agent.js";
+// ── mock PTY factory ───────────────────────────────────────────────────────
 
-// ── helper: PTY double ─────────────────────────────────────────────────────
+function makeMockPty(overrides?: { pid?: number }) {
+  const dataCallbacks: Array<(data: string) => void> = [];
+  const exitCallbacks: Array<(code: number | null, signal?: string) => void> = [];
 
-const kPtyProto = {
-  pid: 0,
-  cmd: "",
-  dataHandler: null as ((data: string) => void) | null,
-  exitHandler: null as ((exit: { exitCode: number; signal?: number }) => void) | null,
-  _writeToPty(data: string) {
-    this.dataHandler?.(data);
-  },
-  _exitPty(exitCode: number, signal?: number) {
-    this.exitHandler?.({ exitCode, signal });
-  },
-  onData: vi.fn(function (this: any, cb: (data: string) => void) {
-    this.dataHandler = cb;
-  }),
-  onExit: vi.fn(function (
-    this: any,
-    cb: (exit: { exitCode: number; signal?: number }) => void,
-  ) {
-    this.exitHandler = cb;
-  }),
-  write: vi.fn(),
-  resize: vi.fn(),
-  kill: vi.fn(),
-};
+  const pty = {
+    pid: overrides?.pid ?? Math.floor(Math.random() * 9000) + 1000,
+    onData: vi.fn((cb: (data: string) => void) => {
+      dataCallbacks.push(cb);
+    }),
+    onExit: vi.fn((cb: (code: number | null, signal?: string) => void) => {
+      exitCallbacks.push(cb);
+    }),
+    write: vi.fn(),
+    resize: vi.fn(),
+    kill: vi.fn(),
+    /** Trigger all registered onData callbacks — for test use only */
+    _emitData(data: string) {
+      for (const cb of dataCallbacks) cb(data);
+    },
+    /** Trigger all registered onExit callbacks — for test use only */
+    _emitExit(code: number | null, signal?: string) {
+      for (const cb of exitCallbacks) cb(code, signal);
+    },
+  };
 
-function helperMakePty(pid: number, cmd: string) {
-  const pty = Object.create(kPtyProto);
-  pty.pid = pid;
-  pty.cmd = cmd;
-  pty.onData = vi.fn(function (this: any, cb: any) {
-    this.dataHandler = cb;
-  });
-  pty.onExit = vi.fn(function (this: any, cb: any) {
-    this.exitHandler = cb;
-  });
-  pty.write = vi.fn();
-  pty.resize = vi.fn();
-  pty.kill = vi.fn();
   return pty;
 }
 
-// ── message builders ───────────────────────────────────────────────────────
+// ── helpers ────────────────────────────────────────────────────────────────
 
-function buildSpawnMsg(
-  id: string,
-  cmd: string,
-  cwd?: string,
-  cols = 80,
-  rows = 24,
-) {
-  return JSON.stringify({ type: "spawn", id, cmd, cwd, cols, rows }) + "\n";
+function setupPty(pid?: number) {
+  const pty = makeMockPty({ pid });
+  mocked.ptySpawnMock.mockReturnValue(pty);
+  return pty;
 }
 
-function buildWriteMsg(id: string, data: string) {
-  return JSON.stringify({ type: "write", id, data }) + "\n";
-}
+// ── setup / teardown ───────────────────────────────────────────────────────
 
-function buildResizeMsg(id: string, cols: number, rows: number) {
-  return JSON.stringify({ type: "resize", id, cols, rows }) + "\n";
-}
-
-function buildKillMsg(id: string) {
-  return JSON.stringify({ type: "kill", id }) + "\n";
-}
-
-function buildScreenshotMsg(id: string) {
-  return JSON.stringify({ type: "screenshot", id }) + "\n";
-}
-
-function buildWatchMsg(path: string) {
-  return JSON.stringify({ type: "watch", path }) + "\n";
-}
-
-// ── socket helpers ─────────────────────────────────────────────────────────
-
-function connectAndRead(
-  path: string,
-): Promise<{ socket: net.Socket; lines: string[] }> {
-  return new Promise((resolve, reject) => {
-    const socket = net.createConnection(path);
-    const lines: string[] = [];
-    let buf = "";
-
-    socket.on("data", (chunk: Buffer) => {
-      buf += chunk.toString("utf-8");
-      const parts = buf.split("\n");
-      buf = parts.pop()!;
-      for (const line of parts) {
-        if (line) lines.push(line);
-      }
-    });
-
-    socket.on("connect", () => resolve({ socket, lines }));
-    socket.on("error", reject);
-  });
-}
-
-async function waitForLines(
-  lines: string[],
-  count: number,
-  timeoutMs = 3000,
-): Promise<string[]> {
-  const deadline = Date.now() + timeoutMs;
-  while (lines.length < count) {
-    if (Date.now() > deadline) {
-      throw new Error(
-        `Timeout waiting for ${count} lines, got ${lines.length}: ${JSON.stringify(lines)}`,
-      );
-    }
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  return lines.slice(0, count);
-}
-
-/** Remove the socket file from disk (uses real fs, not the mock). */
-function removeSocketFile(path: string) {
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocked.existsSyncMock.mockReturnValue(true);
+  // Ensure clean state between tests — destroy any leftover session
   try {
-    mocked.realUnlinkSync!(path);
+    destroySession();
   } catch {
-    /* already gone */
+    // Stub throws — that's fine in RED phase
   }
-}
+});
 
-// ── wired agent fixture ────────────────────────────────────────────────────
-//
-// Creates a real unix-socket server that handles the JSON-line protocol
-// using mocked node-pty.  Returns an agent-like object with start / stop /
-// getSession.
-
-async function createWiredAgent(socketPath: string) {
-  const activePtyBySession = new Map<string, ReturnType<typeof helperMakePty>>();
-
-  const server = net.createServer((socket) => {
-    let buf = "";
-
-    socket.on("data", (chunk: Buffer) => {
-      buf += chunk.toString("utf-8");
-
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const nl = buf.indexOf("\n");
-        if (nl === -1) break;
-        const raw = buf.slice(0, nl);
-        buf = buf.slice(nl + 1);
-        if (!raw) continue;
-
-        let msg: any;
-        try {
-          msg = JSON.parse(raw);
-        } catch {
-          continue;
-        }
-
-        switch (msg.type) {
-          case "spawn": {
-            try {
-              const pty = mocked.ptySpawnMock(msg.cmd, [], {
-                name: "xterm-256color",
-                cols: msg.cols ?? 80,
-                rows: msg.rows ?? 24,
-                cwd: msg.cwd ?? process.cwd(),
-              });
-              activePtyBySession.set(msg.id, pty);
-
-              pty.onData((data: string) => {
-                socket.write(
-                  JSON.stringify({ type: "data", id: msg.id, data }) + "\n",
-                );
-              });
-
-              pty.onExit((exit: { exitCode: number; signal?: number }) => {
-                const code =
-                  exit.exitCode !== undefined && exit.exitCode !== null
-                    ? exit.exitCode
-                    : null;
-                socket.write(
-                  JSON.stringify({ type: "exit", id: msg.id, code }) + "\n",
-                );
-                activePtyBySession.delete(msg.id);
-              });
-
-              socket.write(
-                JSON.stringify({
-                  type: "spawned",
-                  id: msg.id,
-                  pid: pty.pid,
-                }) + "\n",
-              );
-            } catch (_err) {
-              socket.write(
-                JSON.stringify({ type: "exit", id: msg.id, code: 1 }) + "\n",
-              );
-            }
-            break;
-          }
-
-          case "write": {
-            const pty = activePtyBySession.get(msg.id);
-            if (pty) pty.write(msg.data);
-            break;
-          }
-
-          case "resize": {
-            const pty = activePtyBySession.get(msg.id);
-            if (pty) pty.resize(msg.cols, msg.rows);
-            break;
-          }
-
-          case "kill": {
-            const pty = activePtyBySession.get(msg.id);
-            if (pty) pty.kill();
-            break;
-          }
-
-          case "screenshot": {
-            const pty = activePtyBySession.get(msg.id);
-            if (pty) {
-              socket.write(
-                JSON.stringify({
-                  type: "screenshot",
-                  id: msg.id,
-                  image: "iVBORw0KGgo...stub",
-                }) + "\n",
-              );
-            }
-            break;
-          }
-
-          case "watch": {
-            mocked.watchMock(msg.path);
-            break;
-          }
-        }
-      }
-    });
-  });
-
-  return new Promise<any>((resolve, reject) => {
-    server.listen(socketPath, () => {
-      resolve({
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn().mockImplementation(() => {
-          return new Promise<void>((res) => {
-            server.close(() => {
-              // Call both: mocked version for test assertions, real for disk cleanup
-              mocked.unlinkSyncMock(socketPath);
-              removeSocketFile(socketPath);
-              res();
-            });
-          });
-        }),
-        getSession: vi.fn((id: string) => activePtyBySession.get(id)),
-      });
-    });
-    server.on("error", reject);
-  });
-}
-
-// ── constants ──────────────────────────────────────────────────────────────
-
-const SOCKET_PATH = "/tmp/opencode-terminal.sock";
-
-// ── tests ──────────────────────────────────────────────────────────────────
-
-describe("terminal-agent", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocked.existsSyncMock.mockReturnValue(false);
-    mocked.unlinkSyncMock.mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    removeSocketFile(SOCKET_PATH);
-  });
-
-  function installWiredFixture() {
-    mocked.createServerMock.mockImplementation((opts: any) =>
-      createWiredAgent(opts.socketPath),
-    );
+afterEach(() => {
+  try {
+    destroySession();
+  } catch {
+    // Stub throws — that's fine in RED phase
   }
+});
 
-  // ── 1. createServer / start / stop lifecycle ──────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════
 
-  describe("createServer / start / stop lifecycle", () => {
-    it("should create server listening on configured socket path", async () => {
-      installWiredFixture();
+describe("terminal-agent (SSH pipe)", () => {
+  // ── 1. createSession ─────────────────────────────────────────────────
 
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
+  describe("createSession", () => {
+    it("should create PTY with bash and given dimensions", () => {
+      const pty = setupPty(5001);
 
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-      expect(socket).toBeDefined();
-      expect(lines).toBeDefined();
+      const session = createSession({ sessionId: "sess-1", cols: 120, rows: 40 });
 
-      socket.destroy();
-      await agent.stop();
-    });
-
-    it("should reject when socket path is already in use", async () => {
-      installWiredFixture();
-
-      const agent1 = await createServer({ socketPath: SOCKET_PATH });
-      await agent1.start();
-
-      await expect(
-        createServer({ socketPath: SOCKET_PATH }),
-      ).rejects.toThrow();
-
-      await agent1.stop();
-    });
-
-    it("should stop server and close all sessions", async () => {
-      mocked.ptySpawnMock.mockReturnValue(helperMakePty(1001, "bash"));
-
-      installWiredFixture();
-
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
-
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-      socket.write(buildSpawnMsg("sess-1", "bash"));
-
-      const msgs = await waitForLines(lines, 1);
-      expect(JSON.parse(msgs[0])).toMatchObject({
-        type: "spawned",
-        id: "sess-1",
-        pid: 1001,
+      expect(mocked.ptySpawnMock).toHaveBeenCalledWith("bash", [], {
+        name: "xterm-256color",
+        cols: 120,
+        rows: 40,
+        cwd: process.cwd(),
       });
-
-      socket.destroy();
-      await agent.stop();
+      expect(session.id).toBe("sess-1");
+      expect(session.pty).toBe(pty);
     });
 
-    it("should remove socket file on stop", async () => {
-      mocked.existsSyncMock.mockReturnValue(true);
+    it("should default cols=80 rows=24 when not provided", () => {
+      setupPty(5002);
 
-      installWiredFixture();
-
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
-      await agent.stop();
-
-      expect(mocked.unlinkSyncMock).toHaveBeenCalledWith(SOCKET_PATH);
-    });
-  });
-
-  // ── 2. PTY spawn ───────────────────────────────────────────────────────
-
-  describe("PTY spawn", () => {
-    it("should create PTY process with given command and dimensions", async () => {
-      mocked.ptySpawnMock.mockReturnValue(helperMakePty(2001, "bash"));
-
-      installWiredFixture();
-
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
-
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-      socket.write(buildSpawnMsg("sess-1", "bash", "/workspace"));
-
-      const msgs = await waitForLines(lines, 1);
-      expect(JSON.parse(msgs[0])).toMatchObject({
-        type: "spawned",
-        id: "sess-1",
-        pid: 2001,
-      });
+      createSession({ sessionId: "sess-2" });
 
       expect(mocked.ptySpawnMock).toHaveBeenCalledWith("bash", [], {
         name: "xterm-256color",
         cols: 80,
         rows: 24,
-        cwd: "/workspace",
+        cwd: process.cwd(),
       });
-
-      socket.destroy();
-      await agent.stop();
     });
 
-    it("should send spawned response with session id and pid", async () => {
-      mocked.ptySpawnMock.mockReturnValue(helperMakePty(3001, "zsh"));
+    it("should use cwd when provided", () => {
+      setupPty(5003);
 
-      installWiredFixture();
+      createSession({ sessionId: "sess-3", cwd: "/workspace/project" });
 
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
-
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-      socket.write(buildSpawnMsg("my-session", "zsh"));
-
-      const msgs = await waitForLines(lines, 1);
-      const resp = JSON.parse(msgs[0]);
-      expect(resp.type).toBe("spawned");
-      expect(resp.id).toBe("my-session");
-      expect(typeof resp.pid).toBe("number");
-
-      socket.destroy();
-      await agent.stop();
-    });
-
-    it("should reject spawn when command execution fails", async () => {
-      mocked.ptySpawnMock.mockImplementation(() => {
-        throw new Error("command not found");
+      expect(mocked.ptySpawnMock).toHaveBeenCalledWith("bash", [], {
+        name: "xterm-256color",
+        cols: 80,
+        rows: 24,
+        cwd: "/workspace/project",
       });
-
-      installWiredFixture();
-
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
-
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-      socket.write(buildSpawnMsg("sess-fail", "nonexistent"));
-
-      const msgs = await waitForLines(lines, 1);
-      const resp = JSON.parse(msgs[0]);
-      expect(["exit", "error"]).toContain(resp.type);
-
-      socket.destroy();
-      await agent.stop();
     });
-  });
 
-  // ── 3. PTY write / data flow ───────────────────────────────────────────
+    it("should forward PTY onData to registered callback", () => {
+      const pty = setupPty(5004);
+      const session = createSession({ sessionId: "sess-4" });
 
-  describe("PTY write / data flow", () => {
-    it("should write data to PTY process stdin", async () => {
-      const pty = helperMakePty(4001, "bash");
-      mocked.ptySpawnMock.mockReturnValue(pty);
+      const onData = vi.fn();
+      session.onData(onData);
 
-      installWiredFixture();
+      // Workaround: since the session.pty is the mock, we can call
+      // _emitData directly. In a real implementation, the module
+      // would wire node-pty onData → session callbacks.
+      pty._emitData("hello from pty");
 
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
+      expect(onData).toHaveBeenCalledWith("hello from pty");
+    });
 
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-      socket.write(buildSpawnMsg("sess-1", "bash"));
-      await waitForLines(lines, 1);
+    it("should handle data writes to PTY stdin", () => {
+      const pty = setupPty(5005);
+      const session = createSession({ sessionId: "sess-5" });
 
-      socket.write(buildWriteMsg("sess-1", "ls -la\n"));
-      await new Promise((r) => setTimeout(r, 50));
+      session.write("ls -la\n");
 
       expect(pty.write).toHaveBeenCalledWith("ls -la\n");
-
-      socket.destroy();
-      await agent.stop();
-    });
-
-    it("should emit data messages when PTY produces output", async () => {
-      const pty = helperMakePty(5001, "bash");
-      mocked.ptySpawnMock.mockReturnValue(pty);
-
-      installWiredFixture();
-
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
-
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-      socket.write(buildSpawnMsg("sess-1", "bash"));
-      await waitForLines(lines, 1);
-
-      pty._writeToPty("hello world");
-      await new Promise((r) => setTimeout(r, 50));
-
-      const msgs = await waitForLines(lines, 2);
-      const dataMsg = JSON.parse(msgs[1]);
-      expect(dataMsg).toMatchObject({
-        type: "data",
-        id: "sess-1",
-        data: "hello world",
-      });
-
-      socket.destroy();
-      await agent.stop();
-    });
-
-    it("should handle multiple sessions independently", async () => {
-      const pty1 = helperMakePty(6001, "bash");
-      const pty2 = helperMakePty(6002, "bash");
-
-      mocked.ptySpawnMock
-        .mockReturnValueOnce(pty1)
-        .mockReturnValueOnce(pty2);
-
-      installWiredFixture();
-
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
-
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-
-      socket.write(buildSpawnMsg("sess-a", "bash"));
-      socket.write(buildSpawnMsg("sess-b", "bash"));
-      await waitForLines(lines, 2);
-
-      socket.write(buildWriteMsg("sess-a", "echo A\n"));
-      socket.write(buildWriteMsg("sess-b", "echo B\n"));
-      await new Promise((r) => setTimeout(r, 50));
-
-      expect(pty1.write).toHaveBeenCalledWith("echo A\n");
-      expect(pty2.write).toHaveBeenCalledWith("echo B\n");
-
-      pty1._writeToPty("output A");
-      await new Promise((r) => setTimeout(r, 50));
-
-      const allMsgs = lines.map((l) => JSON.parse(l));
-      const dataForA = allMsgs.filter(
-        (m: any) => m.type === "data" && m.id === "sess-a",
-      );
-      expect(dataForA.length).toBeGreaterThanOrEqual(1);
-
-      socket.destroy();
-      await agent.stop();
     });
   });
 
-  // ── 4. PTY resize ──────────────────────────────────────────────────────
+  // ── 2. getSession ────────────────────────────────────────────────────
 
-  describe("PTY resize", () => {
-    it("should resize PTY to new dimensions", async () => {
-      const pty = helperMakePty(7001, "bash");
-      mocked.ptySpawnMock.mockReturnValue(pty);
-
-      installWiredFixture();
-
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
-
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-      socket.write(buildSpawnMsg("sess-1", "bash"));
-      await waitForLines(lines, 1);
-
-      socket.write(buildResizeMsg("sess-1", 120, 40));
-      await new Promise((r) => setTimeout(r, 50));
-
-      expect(pty.resize).toHaveBeenCalledWith(120, 40);
-
-      socket.destroy();
-      await agent.stop();
+  describe("getSession", () => {
+    it("should return null when no session created", () => {
+      // In RED phase this will throw "Not implemented" from the stub.
+      // Once implemented, it should return null after cleanup.
+      const sess = getSession();
+      expect(sess).toBeNull();
     });
 
-    it("should ignore resize for unknown session", async () => {
-      installWiredFixture();
+    it("should return session after createSession", () => {
+      setupPty(6001);
+      const session = createSession({ sessionId: "sess-6" });
 
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
+      const retrieved = getSession();
+      expect(retrieved).toBe(session);
+    });
 
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
+    it("should return null after destroySession", () => {
+      setupPty(6002);
+      createSession({ sessionId: "sess-7" });
 
-      socket.write(buildResizeMsg("nonexistent", 120, 40));
-      await new Promise((r) => setTimeout(r, 100));
+      destroySession();
 
-      const spawnedMsgs = lines.filter(
-        (l) => JSON.parse(l).type === "spawned",
-      );
-      expect(spawnedMsgs).toHaveLength(0);
-
-      socket.destroy();
-      await agent.stop();
+      const retrieved = getSession();
+      expect(retrieved).toBeNull();
     });
   });
 
-  // ── 5. PTY exit ────────────────────────────────────────────────────────
+  // ── 3. destroySession ────────────────────────────────────────────────
 
-  describe("PTY exit", () => {
-    it("should send exit message with code on process exit", async () => {
-      const pty = helperMakePty(8001, "bash");
-      mocked.ptySpawnMock.mockReturnValue(pty);
+  describe("destroySession", () => {
+    it("should kill PTY process", () => {
+      const pty = setupPty(7001);
+      createSession({ sessionId: "sess-8" });
 
-      installWiredFixture();
+      destroySession();
 
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
-
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-      socket.write(buildSpawnMsg("sess-1", "bash"));
-      await waitForLines(lines, 1);
-
-      pty._exitPty(0);
-      await new Promise((r) => setTimeout(r, 50));
-
-      const allMsgs = lines.map((l) => JSON.parse(l));
-      const exitMsg = allMsgs.find((m: any) => m.type === "exit");
-      expect(exitMsg).toBeDefined();
-      expect(exitMsg.id).toBe("sess-1");
-      expect(exitMsg.code).toBe(0);
-
-      socket.destroy();
-      await agent.stop();
+      expect(pty.kill).toHaveBeenCalled();
     });
 
-    it("should send exit with null code on signal kill", async () => {
-      const pty = helperMakePty(9001, "bash");
-      mocked.ptySpawnMock.mockReturnValue(pty);
+    it("should clear session reference", () => {
+      setupPty(7002);
+      createSession({ sessionId: "sess-9" });
 
-      installWiredFixture();
+      destroySession();
 
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
-
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-      socket.write(buildSpawnMsg("sess-1", "bash"));
-      await waitForLines(lines, 1);
-
-      pty._exitPty(undefined as any, 9);
-      await new Promise((r) => setTimeout(r, 50));
-
-      const allMsgs = lines.map((l) => JSON.parse(l));
-      const exitMsg = allMsgs.find((m: any) => m.type === "exit");
-      expect(exitMsg).toBeDefined();
-      expect(exitMsg.id).toBe("sess-1");
-      expect(exitMsg.code).toBeNull();
-
-      socket.destroy();
-      await agent.stop();
+      expect(getSession()).toBeNull();
     });
 
-    it("should cleanup session resources after exit", async () => {
-      const pty = helperMakePty(10001, "bash");
-      mocked.ptySpawnMock.mockReturnValue(pty);
-
-      installWiredFixture();
-
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
-
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-      socket.write(buildSpawnMsg("sess-1", "bash"));
-      await waitForLines(lines, 1);
-
-      pty._exitPty(0);
-      await new Promise((r) => setTimeout(r, 50));
-
-      const session = agent.getSession("sess-1");
-      expect(session).toBeUndefined();
-
-      socket.destroy();
-      await agent.stop();
+    it("should be safe to call when no session (no-op)", () => {
+      // No session exists — destroySession should not throw
+      expect(() => destroySession()).not.toThrow();
     });
   });
 
-  // ── 6. Screenshot ──────────────────────────────────────────────────────
+  // ── 4. Session.onData ────────────────────────────────────────────────
 
-  describe("screenshot", () => {
-    it("should return screenshot as base64 PNG", async () => {
-      const pty = helperMakePty(11001, "bash");
-      mocked.ptySpawnMock.mockReturnValue(pty);
+  describe("Session.onData", () => {
+    it("should register data callback and receive PTY output", () => {
+      const pty = setupPty(8001);
+      const session = createSession({ sessionId: "sess-10" });
 
-      installWiredFixture();
+      const received: string[] = [];
+      session.onData((data) => received.push(data));
 
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
+      pty._emitData("line 1\n");
+      pty._emitData("line 2\n");
 
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
-      socket.write(buildSpawnMsg("sess-1", "bash"));
-      await waitForLines(lines, 1);
-
-      socket.write(buildScreenshotMsg("sess-1"));
-      await new Promise((r) => setTimeout(r, 100));
-
-      const allMsgs = lines.map((l) => JSON.parse(l));
-      const screenMsg = allMsgs.find((m: any) => m.type === "screenshot");
-      expect(screenMsg).toBeDefined();
-      expect(screenMsg.id).toBe("sess-1");
-      expect(typeof screenMsg.image).toBe("string");
-      expect(screenMsg.image.length).toBeGreaterThan(0);
-
-      socket.destroy();
-      await agent.stop();
+      expect(received).toEqual(["line 1\n", "line 2\n"]);
     });
 
-    it("should handle screenshot failure gracefully", async () => {
-      installWiredFixture();
+    it("should support multiple callbacks", () => {
+      const pty = setupPty(8002);
+      const session = createSession({ sessionId: "sess-11" });
 
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
+      const cb1 = vi.fn();
+      const cb2 = vi.fn();
+      session.onData(cb1);
+      session.onData(cb2);
 
-      const { socket } = await connectAndRead(SOCKET_PATH);
+      pty._emitData("output");
 
-      socket.write(buildScreenshotMsg("nonexistent"));
-      await new Promise((r) => setTimeout(r, 100));
-
-      // Server should still accept connections after the failed request
-      const conn = net.createConnection(SOCKET_PATH);
-      await new Promise<void>((resolve) => conn.on("connect", resolve));
-      conn.destroy();
-
-      socket.destroy();
-      await agent.stop();
+      expect(cb1).toHaveBeenCalledWith("output");
+      expect(cb2).toHaveBeenCalledWith("output");
     });
   });
 
-  // ── 7. Media watcher ───────────────────────────────────────────────────
+  // ── 5. Session.onExit ────────────────────────────────────────────────
 
-  describe("media watcher", () => {
-    it("should watch directory and emit file events on new files", async () => {
-      mocked.watchMock.mockReturnValue({ on: vi.fn(), close: vi.fn() });
+  describe("Session.onExit", () => {
+    it("should register exit callback and receive exit code", () => {
+      const pty = setupPty(9001);
+      const session = createSession({ sessionId: "sess-12" });
 
-      installWiredFixture();
+      const onExit = vi.fn();
+      session.onExit(onExit);
 
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
+      pty._emitExit(0);
 
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
+      expect(onExit).toHaveBeenCalledWith(0, undefined);
+    });
 
-      socket.write(buildWatchMsg("/workspace/media"));
-      await new Promise((r) => setTimeout(r, 50));
+    it("should receive null exit code on signal", () => {
+      const pty = setupPty(9002);
+      const session = createSession({ sessionId: "sess-13" });
 
-      expect(mocked.watchMock).toHaveBeenCalledWith("/workspace/media");
+      const onExit = vi.fn();
+      session.onExit(onExit);
 
-      socket.destroy();
-      await agent.stop();
+      pty._emitExit(null, "SIGKILL");
+
+      expect(onExit).toHaveBeenCalledWith(null, "SIGKILL");
     });
   });
 
-  // ── 8. Protocol parsing ────────────────────────────────────────────────
+  // ── 6. Session.write ─────────────────────────────────────────────────
 
-  describe("protocol parsing", () => {
-    it("should handle multiple JSON messages in single TCP chunk", async () => {
-      mocked.ptySpawnMock
-        .mockReturnValueOnce(helperMakePty(12001, "zsh"))
-        .mockReturnValueOnce(helperMakePty(12002, "zsh"));
+  describe("Session.write", () => {
+    it("should write data to PTY process", () => {
+      const pty = setupPty(10001);
+      const session = createSession({ sessionId: "sess-14" });
 
-      installWiredFixture();
+      session.write("echo hello\n");
 
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
+      expect(pty.write).toHaveBeenCalledWith("echo hello\n");
+    });
+  });
 
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
+  // ── 7. Session.kill ──────────────────────────────────────────────────
 
-      const batch =
-        buildSpawnMsg("sess-a", "zsh") + buildSpawnMsg("sess-b", "zsh");
-      socket.write(batch);
+  describe("Session.kill", () => {
+    it("should kill with given signal", () => {
+      const pty = setupPty(11001);
+      const session = createSession({ sessionId: "sess-15" });
 
-      const msgs = await waitForLines(lines, 2);
-      const parsed = msgs.map((l) => JSON.parse(l));
-      const ids = parsed.map((m: any) => m.id).sort();
-      expect(ids).toEqual(["sess-a", "sess-b"]);
+      session.kill("SIGINT");
 
-      socket.destroy();
-      await agent.stop();
+      expect(pty.kill).toHaveBeenCalledWith("SIGINT");
     });
 
-    it("should handle partial JSON messages split across reads", async () => {
-      mocked.ptySpawnMock.mockReturnValue(helperMakePty(13001, "bash"));
+    it("should default to SIGTERM", () => {
+      const pty = setupPty(11002);
+      const session = createSession({ sessionId: "sess-16" });
 
-      installWiredFixture();
+      session.kill();
 
-      const agent = await createServer({ socketPath: SOCKET_PATH });
-      await agent.start();
+      expect(pty.kill).toHaveBeenCalledWith("SIGTERM");
+    });
+  });
 
-      const { socket, lines } = await connectAndRead(SOCKET_PATH);
+  // ── 8. Session.resize ────────────────────────────────────────────────
 
-      const fullMsg = buildSpawnMsg("sess-1", "bash");
-      const half = Math.floor(fullMsg.length / 2);
-      const part1 = fullMsg.slice(0, half);
-      const part2 = fullMsg.slice(half);
+  describe("Session.resize", () => {
+    it("should resize PTY to new cols/rows", () => {
+      const pty = setupPty(12001);
+      const session = createSession({ sessionId: "sess-17" });
 
-      socket.write(part1);
-      await new Promise((r) => setTimeout(r, 20));
-      socket.write(part2);
+      session.resize(160, 50);
 
-      const msgs = await waitForLines(lines, 1);
-      const resp = JSON.parse(msgs[0]);
-      expect(resp.type).toBe("spawned");
-      expect(resp.id).toBe("sess-1");
-
-      socket.destroy();
-      await agent.stop();
+      expect(pty.resize).toHaveBeenCalledWith(160, 50);
     });
   });
 });

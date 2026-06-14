@@ -1000,6 +1000,8 @@ export const ru: I18nDictionary = {
   "vm.onboarding.docker_selected": "\u2705 Docker. \u0421\u043E\u0437\u0434\u0430\u044E \u043A\u043E\u043D\u0442\u0435\u0439\u043D\u0435\u0440...",
   "vm.onboarding.vm_selected": "✅ {label} ({ram}GB / {vcpus} vCPU / {disk}GB)",
   "vm.onboarding.pending_approval": "⏳ Запрос отправлен администратору.\nПользователь: {username}\nКонфигурация: {config}\n\nВМ будет создана после подтверждения.",
+  "vm.onboarding.vm_ready": "✅ Доступ одобрен. Теперь вы можете использовать агента.",
+  "vm.onboarding.vm_failed": "❌ Не удалось создать ВМ: {error}",
   "vm.onboarding.server_ready": "✅ Сервер готов!\nАдрес: {address}",
   "vm.onboarding.error": "\u274C \u041E\u0448\u0438\u0431\u043A\u0430: {error}",
   "vm.progress.checking": "\u23F3 \u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0435\u0439 VM...",

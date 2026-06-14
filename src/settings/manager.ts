@@ -155,6 +155,7 @@ export interface AccessApprovalRequest {
   lastNotifiedAt?: string;
   adminChatId: number;
   adminMessageId?: number;
+  requesterMessageId?: number;
 }
 
 export interface ScopedConversationSettings {

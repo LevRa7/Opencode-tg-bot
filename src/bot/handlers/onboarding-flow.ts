@@ -42,9 +42,11 @@ export async function deployPendingVm(userId: number): Promise<{ success: boolea
 async function sendAccessRequest(ctx: Context, userId: number): Promise<void> {
   // Dynamically import to avoid circular deps with auth middleware
   const { upsertPendingApprovalRequest } = await import("../middleware/auth-internal.js");
-  const sent = await upsertPendingApprovalRequest(ctx);
-  if (sent) {
-    await ctx.reply(t("auth.requester.sent"));
+  const replyMsg = await ctx.reply(t("auth.requester.sent")).catch(() => undefined);
+  const sent = await upsertPendingApprovalRequest(ctx, replyMsg?.message_id);
+  if (!sent && replyMsg) {
+    // Request not sent (cooldown) — delete the premature message
+    try { await ctx.api.deleteMessage(ctx.chat!.id, replyMsg.message_id); } catch { /* ignore */ }
   }
 }
 
@@ -157,15 +159,15 @@ export async function handleOnboardingCallback(ctx: Context): Promise<boolean> {
     setUserDeployTarget(userId, "vm");
     setUserVmSpecTier(userId, tier);
 
-    // Send approval request to admin
+    // Send approval request to admin and store requester message id for later editing
     const { upsertPendingApprovalRequest } = await import("../middleware/auth-internal.js");
     const usernameStr = ctx.from?.username ? `@${ctx.from.username}` : `ID ${userId}`;
     const configMsg = t("vm.onboarding.vm_selected", { label: tierLabel, ram, vcpus, disk });
-    await upsertPendingApprovalRequest(ctx);
-    await ctx.reply(
+    const replyMsg = await ctx.reply(
       t("vm.onboarding.pending_approval", { username: usernameStr, config: configMsg }),
       { parse_mode: "HTML" },
     );
+    await upsertPendingApprovalRequest(ctx, replyMsg.message_id);
     return true;
   }
 

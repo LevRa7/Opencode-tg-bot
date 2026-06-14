@@ -129,7 +129,7 @@ function isApprovalRequestCooldownActive(request: AccessApprovalRequest): boolea
   return Date.now() - lastNotifiedAt < ACCESS_REQUEST_COOLDOWN_MS;
 }
 
-export async function upsertPendingApprovalRequest(ctx: Context): Promise<boolean> {
+export async function upsertPendingApprovalRequest(ctx: Context, requesterMessageId?: number): Promise<boolean> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
   if (!userId || !chatId) {
@@ -159,6 +159,7 @@ export async function upsertPendingApprovalRequest(ctx: Context): Promise<boolea
     lastNotifiedAt: nowIso,
     adminChatId: config.telegram.adminUserId,
     adminMessageId: existingRequest?.adminMessageId,
+    requesterMessageId: requesterMessageId ?? existingRequest?.requesterMessageId,
   };
 
   const text = await buildAccessRequestText(ctx);
@@ -312,10 +313,14 @@ export async function handleAccessApprovalCallback(ctx: Context): Promise<boolea
       const pending = getPendingVmDeployment(userId);
       if (pending) {
         const result = await deployPendingVm(userId);
-        if (result.success && pending.chatId) {
-          await ctx.api.sendMessage(pending.chatId, "✅ VM создана и готова к работе!").catch(() => {});
-        } else if (!result.success) {
-          await ctx.api.sendMessage(pending.chatId, `❌ Ошибка: ${result.error}`).catch(() => {});
+        const vmMsg = result.success
+          ? t("vm.onboarding.vm_ready")
+          : t("vm.onboarding.vm_failed", { error: result.error || "unknown error" });
+        // Edit the requester's pending approval message if we have its id
+        if (request.requesterMessageId && request.chatId) {
+          await ctx.api.editMessageText(request.chatId, request.requesterMessageId, vmMsg).catch(() => {});
+        } else if (request.chatId) {
+          await ctx.api.sendMessage(request.chatId, vmMsg).catch(() => {});
         }
         removePendingVmDeployment(userId);
       }
@@ -349,9 +354,15 @@ export async function handleAccessApprovalCallback(ctx: Context): Promise<boolea
     const requesterMessage =
       action === "approve" ? t("auth.requester.approved") : t("auth.requester.denied");
 
-    await ctx.api.sendMessage(request.chatId, requesterMessage).catch((error) => {
-      logger.warn(`[Auth] Failed to notify requester about access ${action}: ${error}`);
-    });
+    // Edit the original pending-approval message if we have its ID
+    if (typeof request.requesterMessageId === "number") {
+      await ctx.api.editMessageText(request.chatId, request.requesterMessageId, requesterMessage).catch(() => {
+        // Fallback: send new message if editing fails
+        ctx.api.sendMessage(request.chatId, requesterMessage).catch(() => {});
+      });
+    } else {
+      await ctx.api.sendMessage(request.chatId, requesterMessage).catch(() => {});
+    }
   }
 
   return true;

@@ -996,6 +996,8 @@ export const en = {
   "vm.onboarding.docker_selected": "✅ Docker. Creating container...",
   "vm.onboarding.vm_selected": "✅ {label} ({ram}GB / {vcpus} vCPU / {disk}GB)",
   "vm.onboarding.pending_approval": "⏳ Approval request sent to admin.\nUser: {username}\nConfig: {config}\n\nThe VM will be created after admin approval.",
+  "vm.onboarding.vm_ready": "✅ Access approved. You can now use the agent.",
+  "vm.onboarding.vm_failed": "❌ Failed to create VM: {error}",
   "vm.onboarding.server_ready": "✅ Server ready!\nAddress: {address}",
   "vm.onboarding.error": "❌ Error: {error}",
   "vm.progress.checking": "⏳ Checking existing VM...",

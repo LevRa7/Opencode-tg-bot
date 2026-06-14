@@ -114,7 +114,7 @@ async function getTerminalCmd(userId: number, sessionId: string, cols: number, r
   const deployTarget = getUserDeployTarget(userId);
   const vmInfo = getVmRuntimeInfo(userId);
   // Use TERM=dumb to suppress ANSI color codes, --norc to skip .bashrc fancy prompts
-  const agentCmd = `TERM=dumb node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`;
+  const agentCmd = `NODE_PATH=/usr/local/lib/node_modules TERM=dumb node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`;
 
   if (deployTarget === "vm" && vmInfo?.bridgeIp) {
     return ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",
@@ -125,7 +125,7 @@ async function getTerminalCmd(userId: number, sessionId: string, cols: number, r
     const { getActiveTenantContainerId } = await import("../../process/manager.js");
     const containerId = getActiveTenantContainerId(userId);
     if (containerId) {
-      return ["docker", "exec", "-i", containerId, "node", "/opt/terminal-agent.js", sessionId, String(cols), String(rows), cwd];
+      return ["docker", "exec", "-i", containerId, "sh", "-c", agentCmd];
     }
     return null;
   }

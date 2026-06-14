@@ -72,8 +72,8 @@ function formatUserLabel(ctx: Context): string {
   return t("common.unknown");
 }
 
-function buildAccessRequestText(ctx: Context): string {
-  return [
+async function buildAccessRequestText(ctx: Context): Promise<string> {
+  const lines = [
     t("auth.request.title"),
     t("auth.request.user", { user: formatUserLabel(ctx) }),
     t("auth.request.user_id", { userId: ctx.from?.id ?? "-" }),
@@ -82,9 +82,21 @@ function buildAccessRequestText(ctx: Context): string {
     ctx.from?.language_code
       ? t("auth.request.language", { language: ctx.from.language_code })
       : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ];
+  // Include pending VM deployment info if available
+  try {
+    const userId = ctx.from?.id;
+    if (userId) {
+      const { getPendingVmDeployment } = await import("../handlers/onboarding-flow.js");
+      const pending = getPendingVmDeployment(userId);
+      if (pending) {
+        const { VM_TIERS } = await import("../../vm/types.js");
+        const spec = VM_TIERS[pending.tier];
+        lines.push(`\n📋 VM: ${spec.ramMb / 1024}GB / ${spec.vcpus} vCPU / ${spec.diskGb}GB (${pending.tier})`);
+      }
+    }
+  } catch { /* ignore */ }
+  return lines.filter(Boolean).join("\n");
 }
 
 async function hideCommandsForUnauthorizedPrivateChat(ctx: Context): Promise<void> {
@@ -149,7 +161,7 @@ export async function upsertPendingApprovalRequest(ctx: Context): Promise<boolea
     adminMessageId: existingRequest?.adminMessageId,
   };
 
-  const text = buildAccessRequestText(ctx);
+  const text = await buildAccessRequestText(ctx);
   const keyboard = buildAccessRequestKeyboard(userId);
 
   if (typeof existingRequest?.adminMessageId === "number") {
@@ -294,6 +306,22 @@ export async function handleAccessApprovalCallback(ctx: Context): Promise<boolea
 
   if (action === "approve") {
     await approveTelegramUser(userId);
+    // Trigger pending VM deployment if user was onboarding
+    try {
+      const { getPendingVmDeployment, deployPendingVm, removePendingVmDeployment } = await import("../handlers/onboarding-flow.js");
+      const pending = getPendingVmDeployment(userId);
+      if (pending) {
+        const result = await deployPendingVm(userId, async () => {});
+        if (result.success && pending.chatId) {
+          await ctx.api.sendMessage(pending.chatId, "✅ VM создана и готова к работе!").catch(() => {});
+        } else if (!result.success) {
+          await ctx.api.sendMessage(pending.chatId, `❌ Ошибка: ${result.error}`).catch(() => {});
+        }
+        removePendingVmDeployment(userId);
+      }
+    } catch (err) {
+      logger.warn("[Auth] Failed to deploy VM after approval:", err);
+    }
   }
 
   await removePendingApprovalRequest(userId);

@@ -11,6 +11,34 @@ import { getLocaleOptions, type Locale } from "../../i18n/index.js";
 import { t } from "../../i18n/index.js";
 import { config } from "../../config.js";
 
+// Pending VM deployments waiting for admin approval
+const pendingVmDeployments = new Map<number, {
+  tier: VmSpecTier;
+  chatId: number;
+  username?: string;
+  messageThreadId?: number;
+}>();
+
+export function getPendingVmDeployment(userId: number) {
+  return pendingVmDeployments.get(userId);
+}
+
+export function removePendingVmDeployment(userId: number) {
+  pendingVmDeployments.delete(userId);
+}
+
+export async function deployPendingVm(userId: number, onStep: (step: string) => Promise<void>): Promise<{ success: boolean; error?: string }> {
+  const info = pendingVmDeployments.get(userId);
+  if (!info) return { success: false, error: "No pending deployment" };
+  
+  setUserDeployTarget(userId, "vm");
+  setUserVmSpecTier(userId, info.tier);
+  
+  const result = await processManager.ensureRuntime(onStep);
+  pendingVmDeployments.delete(userId);
+  return result;
+}
+
 async function sendAccessRequest(ctx: Context, userId: number): Promise<void> {
   // Dynamically import to avoid circular deps with auth middleware
   const { upsertPendingApprovalRequest } = await import("../middleware/auth-internal.js");
@@ -107,9 +135,6 @@ export async function handleOnboardingCallback(ctx: Context): Promise<boolean> {
     const spec = VM_TIERS[tier];
     if (!spec) return false;
 
-    setUserDeployTarget(userId, "vm");
-    setUserVmSpecTier(userId, tier);
-
     const tierLabel = t(`vm.tier.${tier}`);
     const ram = String(spec.ramMb / 1024);
     const vcpus = String(spec.vcpus);
@@ -120,23 +145,34 @@ export async function handleOnboardingCallback(ctx: Context): Promise<boolean> {
       t("vm.onboarding.vm_selected", { label: tierLabel, ram, vcpus, disk }),
     );
 
-    const result = await processManager.ensureRuntime(async (step) => {
-      try {
-        await ctx.editMessageText(
-          `${t("vm.onboarding.vm_selected", { label: tierLabel, ram, vcpus, disk })}\n\n${step}`,
-        );
-      } catch { /* message might be deleted */ }
+    // Store pending deployment and send approval request to admin
+    // VM will be deployed only after admin approves
+    pendingVmDeployments.set(userId, {
+      tier,
+      chatId: ctx.chat!.id,
+      username: ctx.from?.username,
+      messageThreadId: ctx.message?.message_thread_id,
     });
-    if (result.success) {
-      const vmInfo = getVmRuntimeInfo(userId);
-      await ctx.reply(
-        t("vm.onboarding.server_ready", { address: vmInfo?.baseUrl || "assigning..." }),
-        { parse_mode: "HTML" },
-      );
-      await sendAccessRequest(ctx, userId);
-    } else {
-      await ctx.reply(t("vm.onboarding.error", { error: result.error || "unknown error" }));
-    }
+
+    setUserDeployTarget(userId, "vm");
+    setUserVmSpecTier(userId, tier);
+
+    // Send rich approval request with username and config
+    const { upsertPendingApprovalRequest } = await import("../middleware/auth-internal.js");
+    const usernameStr = ctx.from?.username ? `@${ctx.from.username}` : `ID ${userId}`;
+    const configMsg = t("vm.onboarding.vm_selected", { label: tierLabel, ram, vcpus, disk });
+    // Store approval message context
+    const approvalCtx = {
+      ...ctx,
+      reply: async (text: string) => {
+        // Override reply to not send to user during approval flow
+      },
+    } as any;
+    await upsertPendingApprovalRequest(approvalCtx);
+    await ctx.reply(
+      t("vm.onboarding.pending_approval", { username: usernameStr, config: configMsg }),
+      { parse_mode: "HTML" },
+    );
     return true;
   }
 

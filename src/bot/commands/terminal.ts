@@ -182,6 +182,32 @@ export async function openTerminalTopic(
       const bridge = await ensureVMPtyBridge(userId, vmInfo.bridgeIp);
       const ptySession = bridge.spawnSession(session.id, { cwd: currentProject.worktree });
       setPtySession(messageThreadId, ptySession);
+
+      // Stream PTY output back to the Telegram topic
+      let outputBuf = "";
+      let outputMsgId: number | null = null;
+      ptySession.onData((data: string) => {
+        outputBuf += data;
+        const safe = outputBuf.slice(-3800);
+        if (outputMsgId) {
+          api.editMessageText(forumChatId, outputMsgId, `<pre>${safe}</pre>`, { parse_mode: "HTML" }).catch(() => {});
+        } else {
+          api.sendMessage(forumChatId, `<pre>${safe}</pre>`, { message_thread_id: messageThreadId, parse_mode: "HTML" })
+            .then((msg) => { outputMsgId = msg.message_id; })
+            .catch(() => {});
+        }
+      });
+
+      ptySession.onExit((code, signal) => {
+        const exitMsg = signal ? `\n[Killed by ${signal}]` : `\n[Exited with code ${code}]`;
+        if (outputMsgId) {
+          api.editMessageText(forumChatId, outputMsgId, `<pre>${(outputBuf + exitMsg).slice(-3800)}</pre>`, { parse_mode: "HTML" }).catch(() => {});
+        } else {
+          api.sendMessage(forumChatId, `<pre>${exitMsg}</pre>`, { message_thread_id: messageThreadId, parse_mode: "HTML" }).catch(() => {});
+        }
+        killPtySession(messageThreadId);
+      });
+
       logger.info(`[Terminal] PTY session spawned for topic ${messageThreadId}`);
     } catch (err) {
       logger.warn("[Terminal] Failed to spawn PTY session:", err);

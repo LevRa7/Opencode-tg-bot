@@ -19,7 +19,7 @@ export async function handleTerminalTextInput(
   const cleanText = text.length > 128 ? text.slice(0, 125) + "..." : text;
 
   if (session) {
-    // Write to persistent PTY
+    // Write to persistent PTY — output is streamed via onData registered in openTerminalTopic
     try {
       if (text.startsWith("^")) {
         const ctrl = text.slice(1).toUpperCase();
@@ -34,17 +34,6 @@ export async function handleTerminalTextInput(
     // Rename topic
     try {
       await ctx.api.editForumTopic(ctx.chat.id, messageThreadId, { name: cleanText });
-    } catch { /* ignore */ }
-
-    // Acknowledge
-    const statusMsg = await ctx.reply(`<pre>$ ${cleanText}</pre>`, { parse_mode: "HTML" });
-    try {
-      await ctx.api.editMessageText(
-        ctx.chat.id,
-        statusMsg.message_id,
-        `<pre>$ ${cleanText}\n[Sent to terminal]</pre>`,
-        { parse_mode: "HTML" },
-      );
     } catch { /* ignore */ }
 
     return true;

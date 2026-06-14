@@ -64,3 +64,4 @@ media/
 # Packaging artifacts
 *.tgz
 docker.zip
+.worktrees/

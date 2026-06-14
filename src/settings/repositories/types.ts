@@ -14,6 +14,8 @@ export interface UserPreferencesRow {
   default_project: string | null;
   default_agent: string | null;
   default_model: string | null;
+  deploy_target: string | null;
+  vm_spec_tier: string | null;
 }
 
 export interface ConversationBindingsRow {
@@ -50,6 +52,11 @@ export interface ServerProcessRow {
 }
 
 export interface TenantRuntimeRow {
+  user_id: number;
+  data: string;
+}
+
+export interface VmRuntimeRow {
   user_id: number;
   data: string;
 }

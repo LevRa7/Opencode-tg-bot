@@ -202,6 +202,7 @@ Open tasks for upcoming iterations:
 - [ ] Git tree support
 - [x] Docker runtime support and deployment guide
 - [x] OpenCode server monitoring with automatic restart on stop/crash
+- [x] VM-based tenant workspace deployment (QEMU/KVM alternative to Docker)
 
 ## Possible Improvements
 

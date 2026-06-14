@@ -5,6 +5,7 @@ import { t } from "../../../src/i18n/index.js";
 
 const mocked = vi.hoisted(() => ({
   getCurrentSession: vi.fn(),
+  setCurrentSession: vi.fn(),
   opencodeClient: {
     session: { fork: vi.fn() },
   },
@@ -18,6 +19,7 @@ const mocked = vi.hoisted(() => ({
 
 vi.mock("../../../src/session/manager.js", () => ({
   getCurrentSession: mocked.getCurrentSession,
+  setCurrentSession: mocked.setCurrentSession,
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({

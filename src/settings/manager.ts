@@ -1,6 +1,7 @@
 import type { Locale } from "../i18n/index.js";
 import type { ModelInfo } from "../model/types.js";
 import type { ScheduledTask } from "../scheduled-task/types.js";
+import type { VmInfo, VmSpecTier } from "../vm/types.js";
 import {
   buildTelegramConversationScopeKey,
   getCurrentTelegramConversationScope,
@@ -52,6 +53,10 @@ import { createSkillArticleCacheRepository } from "./repositories/skill-article-
 import Database from "better-sqlite3";
 
 // ====== TYPE EXPORTS (unchanged from original) ======
+import {
+  type VmRuntimeRepository,
+  createVmRuntimeRepository,
+} from "./repositories/vm-runtimes.js";
 import { createGoalsRepository } from "./repositories/goals.js";
 import {
   createMessageJournalRepository,
@@ -97,6 +102,7 @@ export interface TenantRuntimeInfo {
   pid?: number;
   startTime?: string;
   tenantId: string;
+  deployTarget?: "docker" | "vm";
 }
 
 export interface SessionDirectoryCacheInfo {
@@ -227,6 +233,7 @@ let messageJournalRepo = createMessageJournalRepository(_defaultDb);
 let sessionSharesRepo = createSessionSharesRepository(_defaultDb);
 let messageReactionsRepo = createMessageReactionsRepository(_defaultDb);
 let messageBookmarksRepo = createMessageBookmarksRepository(_defaultDb);
+let vmRuntime: VmRuntimeRepository = createVmRuntimeRepository(_defaultDb);
 let dbInstance: Database.Database | null = _defaultDb;
 
 // ====== INITIALIZATION ======
@@ -264,6 +271,7 @@ export async function loadSettings(): Promise<void> {
   sessionSharesRepo = createSessionSharesRepository(dbInstance);
   messageReactionsRepo = createMessageReactionsRepository(dbInstance);
   messageBookmarksRepo = createMessageBookmarksRepository(dbInstance);
+  vmRuntime = createVmRuntimeRepository(dbInstance);
 }
 
 export function disposeDatabase(): void {
@@ -502,6 +510,34 @@ export function setUserLocale(locale: Locale): void {
   const userKey = getActiveUserScopeKey();
   if (!userKey) return;
   userPrefs.upsert(Number(userKey), { locale });
+}
+
+// ====== DEPLOY TARGET ======
+
+export function getUserDeployTarget(userId?: number): "docker" | "vm" | undefined {
+  const key = userId ?? getActiveUserScopeKey();
+  if (!key) return undefined;
+  const row = userPrefs.get(Number(key));
+  const val = row?.deploy_target;
+  if (val === "docker" || val === "vm") return val;
+  return undefined;
+}
+
+export function setUserDeployTarget(userId: number, target: "docker" | "vm" | null): void {
+  userPrefs.upsert(userId, { deploy_target: target });
+}
+
+export function getUserVmSpecTier(userId?: number): VmSpecTier | undefined {
+  const key = userId ?? getActiveUserScopeKey();
+  if (!key) return undefined;
+  const row = userPrefs.get(Number(key));
+  const val = row?.vm_spec_tier;
+  if (val === "small" || val === "medium" || val === "large" || val === "xlarge") return val;
+  return undefined;
+}
+
+export function setUserVmSpecTier(userId: number, tier: VmSpecTier | null): void {
+  userPrefs.upsert(userId, { vm_spec_tier: tier });
 }
 
 // ====== HIDE FLAGS ======
@@ -756,6 +792,22 @@ export function clearTenantRuntimeInfo(userId: number): Promise<void> {
   return Promise.resolve();
 }
 
+// ====== VM RUNTIMES ======
+
+export function getVmRuntimeInfo(userId: number): VmInfo | undefined {
+  const data = vmRuntime.get(userId);
+  if (!data) return undefined;
+  return JSON.parse(data) as VmInfo;
+}
+
+export function setVmRuntimeInfo(userId: number, info: VmInfo): void {
+  vmRuntime.upsert(userId, JSON.stringify(info));
+}
+
+export function clearVmRuntimeInfo(userId: number): void {
+  vmRuntime.delete(userId);
+}
+
 // ====== SESSION DIRECTORY CACHE ======
 
 export function getSessionDirectoryCache(): SessionDirectoryCacheInfo | undefined {
@@ -1008,4 +1060,5 @@ export async function __resetSettingsForTests(): Promise<void> {
   fileArchiveRepo = createFileArchiveRepository(dbInstance);
   skillArticleCacheRepo = createSkillArticleCacheRepository(dbInstance);
   messageBookmarksRepo = createMessageBookmarksRepository(dbInstance);
+  vmRuntime = createVmRuntimeRepository(dbInstance);
 }

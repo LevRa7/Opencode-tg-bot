@@ -937,6 +937,8 @@ export const ru: I18nDictionary = {
   "cmd.description.fork": "Форкнуть сессию в новый топик",
   "fork.no_session": "Нет активной сессии для копирования.",
   "fork.error": "Не удалось скопировать сессию.",
+  "fork.session_not_found": "Сессия больше не существует на сервере. Создайте новую через /new.",
+  "fork.invalid_directory": "Невозможно скопировать: некорректная рабочая директория сессии.",
   "fork.success": "Создана копия сессии: {title}. Открываю в новом топике...",
   "share.already_shared": "Доступ к сессии уже открыт: {url}",
   "edit.fork_or_revert": "Сообщение изменено. Выберите действие:",
@@ -986,5 +988,20 @@ export const ru: I18nDictionary = {
   "onboarding.skipped": "\u041E\u043A, \u043D\u0430\u0441\u0442\u0440\u043E\u0438\u0442\u044C \u043C\u043E\u0436\u043D\u043E \u043F\u043E\u0437\u0436\u0435 \u0447\u0435\u0440\u0435\u0437 /server.",
 
   "ssh.web_panel_info": "SSH \u0432\u0435\u0431-\u043F\u0430\u043D\u0435\u043B\u044C: https://{domain}\n\u041B\u043E\u0433\u0438\u043D: {username}\n\u041F\u0430\u0440\u043E\u043B\u044C: <code>{password}</code>",
+
+  "vm.tier.small": "\u0411\u0430\u0437\u043E\u0432\u044B\u0439",
+  "vm.tier.medium": "\u0421\u0442\u0430\u043D\u0434\u0430\u0440\u0442\u043D\u044B\u0439",
+  "vm.tier.large": "\u041F\u0440\u043E\u0434\u0432\u0438\u043D\u0443\u0442\u044B\u0439",
+  "vm.tier.xlarge": "\u041C\u0430\u043A\u0441\u0438\u043C\u0430\u043B\u044C\u043D\u044B\u0439",
+  "vm.tier.format": "{label}: {ram}GB RAM / {vcpus} vCPU / {disk}GB SSD",
+  "vm.onboarding.title": "\u0412\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u043A\u043E\u043D\u0444\u0438\u0433\u0443\u0440\u0430\u0446\u0438\u044E \u0441\u0435\u0440\u0432\u0435\u0440\u0430:",
+  "vm.onboarding.docker": "\uD83D\uDC33 Docker (\u0431\u0435\u0437 \u0432\u0438\u0440\u0442\u0443\u0430\u043B\u0438\u0437\u0430\u0446\u0438\u0438)",
+  "vm.onboarding.host": "\uD83D\uDDA5 Host (\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u044B\u0439 \u0441\u0435\u0440\u0432\u0435\u0440)",
+  "vm.onboarding.docker_selected": "\u2705 Docker. \u0421\u043E\u0437\u0434\u0430\u044E \u043A\u043E\u043D\u0442\u0435\u0439\u043D\u0435\u0440...",
+  "vm.onboarding.vm_selected": "\u2705 {label} ({ram}GB / {vcpus} vCPU / {disk}GB). \u0421\u043E\u0437\u0434\u0430\u044E \u0432\u0438\u0440\u0442\u0443\u0430\u043B\u044C\u043D\u044B\u0439 \u0441\u0435\u0440\u0432\u0435\u0440...",
+  "vm.onboarding.server_ready": "\u2705 \u0421\u0435\u0440\u0432\u0435\u0440 \u0433\u043E\u0442\u043E\u0432!\n\u0410\u0434\u0440\u0435\u0441: {address}",
+  "vm.onboarding.error": "\u274C \u041E\u0448\u0438\u0431\u043A\u0430: {error}",
+  "vm.progress.checking": "\u23F3 \u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0435\u0439 VM...",
+  "vm.progress.installing": "\u23F3 \u0423\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0430 \u0441\u043E\u0444\u0442\u0430 \u0438 \u0437\u0430\u043F\u0443\u0441\u043A OpenCode (\u0434\u043E 10 \u043C\u0438\u043D)...",
 
 };

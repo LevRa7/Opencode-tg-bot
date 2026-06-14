@@ -10,10 +10,11 @@ export interface ProcessState {
 export interface ProcessOperationResult {
   success: boolean;
   error?: string;
+  needsVmSpec?: boolean;
 }
 
 export interface ProcessRuntimeInfo {
-  kind: "host" | "tenant";
+  kind: "host" | "tenant" | "vm";
   userId?: number;
   chatId?: number;
   tenantId?: string;
@@ -26,7 +27,7 @@ export interface ProcessRuntimeInfo {
 
 export interface ProcessManagerInterface {
   initialize(): Promise<void>;
-  ensureRuntime(): Promise<ProcessOperationResult>;
+  ensureRuntime(onProgress?: (step: string) => void): Promise<ProcessOperationResult>;
   start(): Promise<ProcessOperationResult>;
   stop(timeoutMs?: number): Promise<ProcessOperationResult>;
   restartTenantRuntimes(): Promise<ProcessOperationResult>;

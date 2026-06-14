@@ -5,6 +5,8 @@ import {
   getPendingAccessRequests,
   setApprovedTelegramUserIds,
   setPendingAccessRequests,
+  getUserDeployTarget,
+  getUserLocale,
   type AccessApprovalRequest,
 } from "../../settings/manager.js";
 import { logger } from "../../utils/logger.js";
@@ -115,7 +117,7 @@ function isApprovalRequestCooldownActive(request: AccessApprovalRequest): boolea
   return Date.now() - lastNotifiedAt < ACCESS_REQUEST_COOLDOWN_MS;
 }
 
-async function upsertPendingApprovalRequest(ctx: Context): Promise<boolean> {
+export async function upsertPendingApprovalRequest(ctx: Context): Promise<boolean> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
   if (!userId || !chatId) {
@@ -243,6 +245,7 @@ function buildAccessDecisionText(
   request: AccessApprovalRequest,
   adminUserId: number | undefined,
 ): string {
+  const emoji = action === "approve" ? "✅" : "❌";
   const actionLabel =
     action === "approve" ? t("auth.decision.approved") : t("auth.decision.denied");
   const decidedByLabel =
@@ -251,7 +254,7 @@ function buildAccessDecisionText(
       : t("auth.decision.decided_by", { adminUserId: t("common.unknown") });
 
   return [
-    actionLabel,
+    `${emoji} ${actionLabel}`,
     t("auth.decision.user", { user: formatApprovedUserLabel(request) }),
     t("auth.decision.user_id", { userId: request.userId }),
     t("auth.decision.chat_id", { chatId: request.chatId }),
@@ -340,6 +343,25 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   }
 
   logger.warn(`Unauthorized access attempt from user ID: ${userId}`);
+
+  // Allow onboarding callbacks for unauthorized users (language/config selection)
+  const data = (ctx.callbackQuery as { data?: string } | undefined)?.data;
+  if (data && (data.startsWith("onboarding:") || data.startsWith("access:"))) {
+    await next();
+    return;
+  }
+
+  // New user without any settings — allow through for onboarding, then request access
+  if (userId && isPrivateChat(ctx) && !ctx.callbackQuery) {
+    const locale = getUserLocale();
+    const deployTarget = getUserDeployTarget(userId);
+    const needsOnboarding = !locale || !deployTarget;
+
+    if (needsOnboarding) {
+      await next();
+      return;
+    }
+  }
 
   await hideCommandsForUnauthorizedPrivateChat(ctx);
   const approvalRequestSent = isPrivateChat(ctx) ? await upsertPendingApprovalRequest(ctx) : false;

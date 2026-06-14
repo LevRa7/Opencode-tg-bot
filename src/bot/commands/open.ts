@@ -21,6 +21,8 @@ import { clearScopeOpenPathIndex, encodeScopedPathReference, decodeScopedPathRef
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { sshManager } from "../../utils/ssh-manager.js";
+import { getVmRuntimeInfo } from "../../settings/manager.js";
+import { execSync } from "node:child_process";
 
 const CALLBACK_PREFIX = "open:";
 const CALLBACK_NAV_PREFIX = "open:nav:";
@@ -28,6 +30,17 @@ const CALLBACK_SELECT_PREFIX = "open:sel:";
 const CALLBACK_PAGE_PREFIX = "open:pg:";
 const CALLBACK_ROOTS = "open:roots";
 const MAX_BUTTON_LABEL_LENGTH = 64;
+
+function isVmActive(userId: number): boolean {
+  return !!getVmRuntimeInfo(userId)?.bridgeIp;
+}
+
+function executeVmCommand(bridgeIp: string, cmd: string): string {
+  return execSync(
+    `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 opencode@${bridgeIp} '${cmd}'`,
+    { encoding: "utf-8", timeout: 10_000 },
+  ).trim();
+}
 
 interface OpenCallbackDeps {
   ensureEventSubscription?: (directory: string) => Promise<void>;
@@ -141,7 +154,7 @@ function decodePaginationCallback(data: string): { path: string; page: number } 
 }
 
 function isAccessAllowed(targetPath: string, userId: number | undefined): boolean {
-  if (userId && sshManager.isSshActive(userId)) {
+  if (userId && (sshManager.isSshActive(userId) || isVmActive(userId))) {
     return isSafeRemotePath(targetPath);
   }
   return isWithinAllowedTenantRoot(targetPath);
@@ -220,7 +233,7 @@ async function renderBrowseView(dirPath: string, page: number = 0, userId?: numb
   }
 
   const { entries, totalCount, page: clampedPage, currentPath, displayPath, hasParent } = result;
-  const isRemote = !!userId && sshManager.isSshActive(userId);
+  const isRemote = !!userId && (sshManager.isSshActive(userId) || isVmActive(userId));
   const totalPages = Math.max(1, Math.ceil(totalCount / MAX_ENTRIES_PER_PAGE));
   const header = buildTreeHeader(displayPath, totalCount, clampedPage, totalPages);
   const keyboard = buildBrowseKeyboard(entries, currentPath, hasParent, clampedPage, totalCount, isRemote);
@@ -252,21 +265,32 @@ export async function openCommand(ctx: CommandContext<Context>) {
     clearOpenPathIndex();
 
     const userId = ctx.from?.id;
-    const isRemote = !!userId && sshManager.isSshActive(userId);
+    const isRemote = !!userId && (sshManager.isSshActive(userId) || isVmActive(userId));
 
     let text: string;
     let keyboard: InlineKeyboard;
 
     if (isRemote) {
-      // SSH mode — start from remote home directory
-      const remoteHome = await sshManager.getRemoteHomeDir(userId);
-      const view = await renderBrowseView(remoteHome, 0, userId);
-      if ("error" in view) {
-        await ctx.reply(t("open.scan_error", { error: view.error }));
-        return;
+      if (userId && sshManager.isSshActive(userId)) {
+        const remoteHome = await sshManager.getRemoteHomeDir(userId);
+        const view = await renderBrowseView(remoteHome, 0, userId);
+        if ("error" in view) {
+          await ctx.reply(t("open.scan_error", { error: view.error }));
+          return;
+        }
+        text = view.text;
+        keyboard = view.keyboard;
+      } else {
+        const vmIp = getVmRuntimeInfo(userId!)?.bridgeIp!;
+        const remoteHome = executeVmCommand(vmIp, "echo $HOME");
+        const view = await renderBrowseView(remoteHome, 0, userId);
+        if ("error" in view) {
+          await ctx.reply(t("open.scan_error", { error: view.error }));
+          return;
+        }
+        text = view.text;
+        keyboard = view.keyboard;
       }
-      text = view.text;
-      keyboard = view.keyboard;
     } else {
       const roots = getTenantBrowserRoots();
 

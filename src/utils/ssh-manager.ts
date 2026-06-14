@@ -278,6 +278,11 @@ class SshManager {
 
   async disconnect(userId: number): Promise<void> {
     this.disconnectRequested.add(userId);
+
+    // Always clear persisted activeConnectionId so stale state
+    // does not trigger unintended SSH recovery on bot restart.
+    await this.setActiveConnectionId(userId, null).catch(() => {});
+
     const conn = this.activeConnections.get(userId);
     if (!conn) return;
 

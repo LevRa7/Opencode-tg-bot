@@ -798,6 +798,8 @@ export const es: I18nDictionary = {
   "fork.success": "Sesión bifurcada: {title}. Abriendo en un nuevo tema...",
   "fork.no_session": "No hay una sesión activa para bifurcar.",
   "fork.error": "Error al bifurcar la sesión.",
+  "fork.session_not_found": "La sesión ya no existe en el servidor. Crea una nueva con /new.",
+  "fork.invalid_directory": "No se puede bifurcar: directorio de trabajo inválido.",
   "share.already_shared": "Sesión ya compartida: {url}",
   "edit.fork_or_revert": "Mensaje editado. Elige una acción:",
   "edit.fork_button": "Bifurcar en nuevo tema",

@@ -4,7 +4,7 @@ import { formatReplyTag } from "../utils/format-reply-tag.js";
 import { opencodeClient } from "../../opencode/client.js";
 import { clearSession, getCurrentSession, setCurrentSession } from "../../session/manager.js";
 import { ingestSessionInfoForCache } from "../../session/cache-manager.js";
-import { getCurrentProject, setConversationCurrentProject, clearProject } from "../../settings/manager.js";
+import { getCurrentProject, setConversationCurrentProject, clearProject, getUserDeployTarget, getUserLocale } from "../../settings/manager.js";
 import { getStoredAgent } from "../../agent/manager.js";
 import { getStoredModel, switchToFallbackModel, getFallbackModel, getRuntimeModelCatalog } from "../../model/manager.js";
 import { isModelUnavailableError } from "../utils/model-error-patterns.js";
@@ -28,6 +28,7 @@ import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { formatErrorDetails } from "../../utils/error-format.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { showLanguageSelection } from "./onboarding-flow.js";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { getDefaultProject } from "../../project/manager.js";
@@ -444,6 +445,17 @@ export async function processUserPrompt(
   const responseMode = options.responseMode ?? "text_only";
   const suppressSendErrorMessage = options.suppressSendErrorMessage === true;
 
+  // New unauthorized user — show onboarding first
+  const userId = ctx.from?.id;
+  if (userId) {
+    const locale = getUserLocale();
+    const deployTarget = getUserDeployTarget(userId);
+    if (!locale || !deployTarget) {
+      await showLanguageSelection(ctx);
+      return true;
+    }
+  }
+
   // Prepend reply/quote tag if the message is a reply
   const replyTag = formatReplyTag(ctx);
   if (replyTag) {
@@ -615,13 +627,31 @@ export async function processUserPrompt(
   }
 
   if (!currentSession) {
-    await ctx.reply(t("bot.creating_session"));
+    const progressMsg = await ctx.reply(t("bot.creating_session"));
+    const progressChatId = progressMsg.chat.id;
+    const progressMessageId = progressMsg.message_id;
 
-    const { data: session, error } = await opencodeClient.session.create({
-      directory: currentProject.worktree,
+    processManager.setGlobalProgressReporter((step: string) => {
+      ctx.api.editMessageText(
+        progressChatId,
+        progressMessageId,
+        `🔄 ${step}`,
+      ).catch(() => {});
     });
 
-    if (error || !session) {
+    let session;
+    let sessionError;
+    try {
+      const result = await opencodeClient.session.create({
+        directory: currentProject.worktree,
+      });
+      session = result.data;
+      sessionError = result.error;
+    } finally {
+      processManager.setGlobalProgressReporter(undefined);
+    }
+
+    if (sessionError || !session) {
       await ctx.reply(t("bot.create_session_error"));
       return false;
     }

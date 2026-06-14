@@ -9,7 +9,7 @@ import { rewriteApiUrl, rewriteWsPath } from "./api-url-rewrite.js";
 import { logger } from "../utils/logger.js";
 import { randomBytes } from "node:crypto";
 
-const PORT = 8080;
+const PORT = parseInt(process.env.HTTP_PORT || "8080", 10);
 const OPENCHAMBER_SERVER = "http://127.0.0.1:8081";
 
 // In-memory token store for MiniApp URL tokens (OpenChamber-compatible).
@@ -207,6 +207,38 @@ function createServer(): http.Server {
     // POST /auth/url-token — OpenChamber-compatible URL token (needed by MiniApp)
     if (req.method === "POST" && req.url === "/auth/url-token") {
       handleUrlToken(req, res);
+      return;
+    }
+
+    // POST /login — password authentication for web panel access.
+    // Validates the password against the resolved proxy target and sets
+    // a cookie so the SPA loads on subsequent requests.
+    if (req.method === "POST" && req.url === "/login") {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+          const password = body.password || "";
+          const host = req.headers.host || "";
+          const target = resolveProxyTarget(host);
+          if (target) {
+            const credentials = Buffer.from(target.authHeader.split(" ")[1] || "", "base64").toString();
+            const [, expectedPassword] = credentials.split(":");
+            if (password === expectedPassword) {
+              const cookie = "oc_auth=1; Path=/; Max-Age=86400; SameSite=Lax; HttpOnly";
+              res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": cookie });
+              res.end(JSON.stringify({ ok: true }));
+              return;
+            }
+          }
+          res.writeHead(401, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid password" }));
+        } catch {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Bad request" }));
+        }
+      });
       return;
     }
 

@@ -183,7 +183,6 @@ export async function handleSshCallback(ctx: Context): Promise<boolean> {
 
   if (data === ACTION_DISCONNECT) {
     await sshManager.disconnect(userId);
-    await sshManager.setActiveConnectionId(userId, null);
     stopEventListening();
 
     // Clear cached session directories from the SSH connection to prevent

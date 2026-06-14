@@ -798,6 +798,8 @@ export const fr: I18nDictionary = {
   "fork.success": "Session divisée : {title}. Ouverture dans un nouveau sujet...",
   "fork.no_session": "Aucune session active à diviser.",
   "fork.error": "Impossible de diviser la session.",
+  "fork.session_not_found": "La session n'existe plus sur le serveur. Créez-en une avec /new.",
+  "fork.invalid_directory": "Division impossible : répertoire de travail invalide.",
   "share.already_shared": "Session déjà partagée : {url}",
   "edit.fork_or_revert": "Message modifié. Choisissez une action :",
   "edit.fork_button": "Diviser dans un nouveau sujet",

@@ -182,29 +182,110 @@ function lookupTargetBySession(sessionId: string): Target {
 }
 
 function lookupTargetAuto(): Target {
-  // Check /tmp/tg-current-chat.json cache first (written by current-chat.ts)
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    throw new Error("TELEGRAM_BOT_TOKEN not found in .env");
+  }
+
+  // Priority 1: TG_CHAT_ID env var (set by bot when spawning agent)
+  const envChatId = process.env.TG_CHAT_ID;
+  const envThreadId = process.env.TG_MESSAGE_THREAD_ID;
+  if (envChatId) {
+    const chatId = Number(envChatId);
+    if (Number.isInteger(chatId) && chatId !== 0) {
+      const messageThreadId = envThreadId ? Number(envThreadId) : null;
+      return {
+        chatId,
+        messageThreadId: messageThreadId && messageThreadId > 0 ? messageThreadId : null,
+        token,
+        sessionId: process.env.TG_CURRENT_SESSION_ID || "env",
+      };
+    }
+  }
+
+  // Priority 2: query bot HTTP endpoint (authoritative in-memory state)
+  // Try with sessionId from cache, env var, or just ask for current active chat
   const cacheFile = "/tmp/tg-current-chat.json";
+  const cachedSessionId = (() => {
+    try {
+      if (fs.existsSync(cacheFile)) {
+        const cached = JSON.parse(fs.readFileSync(cacheFile, "utf-8")) as {
+          sessionId: string;
+        };
+        return cached.sessionId || null;
+      }
+    } catch { /* ignore */ }
+    return null;
+  })();
+  const botSessionId = process.env.TG_CURRENT_SESSION_ID || cachedSessionId;
+  if (botSessionId) {
+    const botTarget = queryBotEndpoint(botSessionId);
+    if (botTarget) {
+      return {
+        chatId: botTarget.chatId,
+        messageThreadId: botTarget.messageThreadId > 0 ? botTarget.messageThreadId : null,
+        token,
+        sessionId: botTarget.sessionId,
+      };
+    }
+  }
+
+  // Priority 3: /tmp/tg-current-chat.json cache (written by bot on each active session)
   try {
     if (fs.existsSync(cacheFile)) {
       const stat = fs.statSync(cacheFile);
-      const isFresh = Date.now() - stat.mtimeMs < 60 * 60 * 1000; // 1 hour TTL
+      const isFresh = Date.now() - stat.mtimeMs < 60 * 60 * 1000;
       if (isFresh) {
         const cached = JSON.parse(fs.readFileSync(cacheFile, "utf-8")) as {
           chatId: number;
           messageThreadId: number | null;
           sessionId: string;
         };
+        if (cached.chatId && cached.messageThreadId != null) {
+          return {
+            chatId: cached.chatId,
+            messageThreadId: cached.messageThreadId > 0 ? cached.messageThreadId : null,
+            token,
+            sessionId: cached.sessionId || "cache",
+          };
+        }
         if (cached.chatId && cached.sessionId) {
-          // Resolve cached sessionId to get token
           try {
-            const target = execLookup(cached.sessionId);
-            return target;
-          } catch { /* cache miss, fall through to --auto */ }
+            return execLookup(cached.sessionId);
+          } catch { /* cache miss, fall through */ }
         }
       }
     }
   } catch { /* ignore cache errors */ }
+
+  // Priority 4: DB lookup via tg-chat-lookup --auto (which also tries bot endpoint)
   return execLookup("--auto");
+}
+
+function queryBotEndpoint(sessionId: string): { chatId: number; messageThreadId: number; sessionId: string } | null {
+  try {
+    const port = process.env.TG_BOT_HTTP_PORT || "8080";
+    const url = `http://localhost:${port}/api/session/${encodeURIComponent(sessionId)}/target`;
+    const output = execSync(
+      `curl -sf --max-time 3 "${url}" 2>/dev/null || true`,
+      { encoding: "utf-8", timeout: 5000 },
+    ).trim();
+    if (!output) return null;
+    const parsed = JSON.parse(output) as {
+      chatId: number;
+      messageThreadId: number | null;
+      sessionId: string;
+      error?: string;
+    };
+    if (parsed.error || !parsed.chatId) return null;
+    return {
+      chatId: parsed.chatId,
+      messageThreadId: parsed.messageThreadId || 0,
+      sessionId: parsed.sessionId,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function execLookup(arg: string): Target {
@@ -294,11 +375,6 @@ function codeLang(filePath: string): string {
   return map[ext] ?? "";
 }
 
-function apiUrlBase(target: Target): string {
-  const envRoot = process.env.TELEGRAM_API_ROOT?.replace(/\/+$/, "") ?? "";
-  return envRoot || "https://api.telegram.org";
-}
-
 function chatTarget(target: Target): Record<string, string> {
   const params: Record<string, string> = {
     chat_id: String(target.chatId),
@@ -354,7 +430,7 @@ async function sendMessageRaw(
   }
 
   const response = await fetch(
-    `${apiUrlBase(target)}/bot${target.token}/sendMessage`,
+    `https://api.telegram.org/bot${target.token}/sendMessage`,
     { method: "POST", body: new URLSearchParams(params) },
   );
 
@@ -394,7 +470,7 @@ async function sendDocument(
   formData.append("parse_mode", "HTML");
 
   const response = await fetch(
-    `${apiUrlBase(target)}/bot${target.token}/sendDocument`,
+    `https://api.telegram.org/bot${target.token}/sendDocument`,
     { method: "POST", body: formData },
   );
 
@@ -425,7 +501,7 @@ async function sendPhoto(
   formData.append("parse_mode", "HTML");
 
   const response = await fetch(
-    `${apiUrlBase(target)}/bot${target.token}/sendPhoto`,
+    `https://api.telegram.org/bot${target.token}/sendPhoto`,
     { method: "POST", body: formData },
   );
 
@@ -456,7 +532,7 @@ async function sendVideo(
   formData.append("parse_mode", "HTML");
 
   const response = await fetch(
-    `${apiUrlBase(target)}/bot${target.token}/sendVideo`,
+    `https://api.telegram.org/bot${target.token}/sendVideo`,
     { method: "POST", body: formData },
   );
 
@@ -487,7 +563,7 @@ async function sendAudio(
   formData.append("parse_mode", "HTML");
 
   const response = await fetch(
-    `${apiUrlBase(target)}/bot${target.token}/sendAudio`,
+    `https://api.telegram.org/bot${target.token}/sendAudio`,
     { method: "POST", body: formData },
   );
 

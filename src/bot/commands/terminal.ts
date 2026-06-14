@@ -1,11 +1,11 @@
 import { CommandContext, Context, InlineKeyboard } from "grammy";
 import type { Api } from "grammy";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import { promises as fs } from "fs";
 import * as path from "path";
 import { opencodeClient } from "../../opencode/client.js";
 import { setCurrentSession, getCurrentSession, type SessionInfo } from "../../session/manager.js";
-import { getCurrentProject, setConversationCurrentProject } from "../../settings/manager.js";
+import { getCurrentProject, setConversationCurrentProject, getVmRuntimeInfo, getUserDeployTarget } from "../../settings/manager.js";
 import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { SessionType } from "../../keyboard/types.js";
@@ -13,6 +13,35 @@ import { getStoredAgent } from "../../agent/manager.js";
 import { getStoredModel } from "../../model/manager.js";
 import { createMainKeyboard } from "../utils/keyboard.js";
 import { getSystemInfo } from "../../utils/system-info.js";
+import type { SystemInfo } from "../../utils/system-info.js";
+
+function getVmSystemInfo(userId: number): SystemInfo | null {
+  try {
+    const vmInfo = getVmRuntimeInfo(userId);
+    if (!vmInfo?.bridgeIp) return null;
+    const raw = execSync(
+      `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 opencode@${vmInfo.bridgeIp} 'cat /proc/cpuinfo | grep "model name" | head -1 | cut -d: -f2- && cat /proc/meminfo | grep -E "MemTotal|MemAvailable"' 2>/dev/null`,
+      { encoding: "utf-8", timeout: 10_000 },
+    ).trim();
+    const lines = raw.split("\n");
+    const cpuModel = lines[0]?.trim().slice(0, 35) || "VM CPU";
+    // Parse MemTotal and MemAvailable in kB
+    const totalMatch = lines[1]?.match(/\d+/);
+    const availMatch = lines[2]?.match(/\d+/);
+    const totalKb = totalMatch ? parseInt(totalMatch[0], 10) : 0;
+    const availKb = availMatch ? parseInt(availMatch[0], 10) : 0;
+    const usedKb = totalKb - availKb;
+    const totalGB = Math.round((totalKb / (1024 * 1024)) * 10) / 10;
+    const usedGB = Math.round((usedKb / (1024 * 1024)) * 10) / 10;
+    const percentUsed = totalKb > 0 ? Math.round((usedKb / totalKb) * 100) : 0;
+    return {
+      cpu: { model: cpuModel, usagePercent: 0 },
+      ram: { usedGB, totalGB, percentUsed },
+    };
+  } catch {
+    return null;
+  }
+}
 import { processManager } from "../../process/manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
@@ -23,6 +52,7 @@ import { showPermissionRequest } from "../handlers/permission.js";
 import { showCurrentQuestion } from "../handlers/question.js";
 import { clearAllInteractionState } from "../../interaction/cleanup.js";
 import { keyboardManager as km } from "../../keyboard/manager.js";
+import { sshManager } from "../../utils/ssh-manager.js";
 import type { TelegramConversationScope } from "../../telegram/scope.js";
 
 const TERMINAL_EXEC_TIMEOUT_MS = 30_000;
@@ -143,7 +173,8 @@ export async function openTerminalTopic(
       showPermissionRequest(api, forumChatId, request, messageThreadId),
   });
 
-  const sysInfo = getSystemInfo();
+  const isVm = !!getVmRuntimeInfo(userId);
+  const sysInfo = isVm ? (getVmSystemInfo(userId) ?? getSystemInfo()) : getSystemInfo();
   const terminalKeyboard = createMainKeyboard(
     getStoredAgent(),
     getStoredModel(),
@@ -184,29 +215,45 @@ export function executeTerminalCommand(
   command: string,
   messageThreadId: number,
   onChunk: (text: string) => void,
+  userId?: number,
+): Promise<{ code: number | null }> {
+  // Determine execution target: VM → SSH to VM, SSH-remote → sshManager, else → local spawn
+  const vmInfo = userId ? getVmRuntimeInfo(userId) : undefined;
+  const isSsh = !!userId && sshManager.isSshActive(userId);
+
+  if (vmInfo?.bridgeIp) {
+    return executeTerminalCommandViaSsh(
+      `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 opencode@${vmInfo.bridgeIp}`,
+      command, messageThreadId, onChunk,
+    );
+  }
+
+  if (isSsh && userId) {
+    return executeTerminalCommandViaSshManager(userId, command, messageThreadId, onChunk);
+  }
+
+  // Default: local spawn
+  return executeTerminalCommandLocal(command, messageThreadId, onChunk);
+}
+
+function executeTerminalCommandLocal(
+  command: string,
+  messageThreadId: number,
+  onChunk: (text: string) => void,
 ): Promise<{ code: number | null }> {
   return new Promise((resolve) => {
     const child = spawn(command, [], {
       shell: true,
       timeout: TERMINAL_EXEC_TIMEOUT_MS,
     });
-
     terminalProcesses.set(messageThreadId, child);
-
-    child.stdout?.on("data", (data: Buffer) => {
-      onChunk(data.toString());
-    });
-
-    child.stderr?.on("data", (data: Buffer) => {
-      onChunk(data.toString());
-    });
-
+    child.stdout?.on("data", (data: Buffer) => onChunk(data.toString()));
+    child.stderr?.on("data", (data: Buffer) => onChunk(data.toString()));
     child.on("close", (code) => {
       terminalProcesses.delete(messageThreadId);
       km.sendKeyboardUpdate().catch(() => {});
       resolve({ code });
     });
-
     child.on("error", (err) => {
       onChunk(`\nError: ${err.message}`);
       terminalProcesses.delete(messageThreadId);
@@ -214,6 +261,53 @@ export function executeTerminalCommand(
       resolve({ code: null });
     });
   });
+}
+
+function executeTerminalCommandViaSsh(
+  sshPrefix: string,
+  command: string,
+  messageThreadId: number,
+  onChunk: (text: string) => void,
+): Promise<{ code: number | null }> {
+  return new Promise((resolve) => {
+    // cd /workspace — use the OpenCode working directory as default
+    // 2>/dev/null suppresses the SSH known_hosts warning
+    const fullCmd = `${sshPrefix} "cd /workspace && ${command.replace(/"/g, '\\"')}" 2>/dev/null`;
+    const child = spawn(fullCmd, [], {
+      shell: true,
+      timeout: TERMINAL_EXEC_TIMEOUT_MS,
+    });
+    terminalProcesses.set(messageThreadId, child);
+    child.stdout?.on("data", (data: Buffer) => onChunk(data.toString()));
+    child.stderr?.on("data", (data: Buffer) => onChunk(data.toString()));
+    child.on("close", (code) => {
+      terminalProcesses.delete(messageThreadId);
+      km.sendKeyboardUpdate().catch(() => {});
+      resolve({ code });
+    });
+    child.on("error", (err) => {
+      onChunk(`\nError: ${err.message}`);
+      terminalProcesses.delete(messageThreadId);
+      km.sendKeyboardUpdate().catch(() => {});
+      resolve({ code: null });
+    });
+  });
+}
+
+async function executeTerminalCommandViaSshManager(
+  userId: number,
+  command: string,
+  messageThreadId: number,
+  onChunk: (text: string) => void,
+): Promise<{ code: number | null }> {
+  try {
+    const output = await sshManager.executeRemoteCommand(userId, command);
+    onChunk(output);
+    return { code: 0 };
+  } catch (err) {
+    onChunk(`\nError: ${err instanceof Error ? err.message : String(err)}`);
+    return { code: null };
+  }
 }
 
 export async function terminalCommand(ctx: CommandContext<Context>) {

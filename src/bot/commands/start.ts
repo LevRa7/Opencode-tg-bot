@@ -6,7 +6,7 @@ import { formatVariantForButton } from "../../variant/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { clearSession } from "../../session/manager.js";
-import { clearProject } from "../../settings/manager.js";
+import { clearProject, getUserDeployTarget, getUserLocale } from "../../settings/manager.js";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
 import { abortCurrentOperation } from "./abort.js";
 import { t } from "../../i18n/index.js";
@@ -14,8 +14,21 @@ import { threadContextManager } from "../../thread/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { getCurrentTelegramConversationScope } from "../../telegram/scope.js";
 import { showWebPanelOnboarding } from "../../server/start-flow.js";
+import { showLanguageSelection } from "../handlers/onboarding-flow.js";
 
 export async function startCommand(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+
+  // New unauthorized user — show onboarding (language → config) before access request
+  if (userId) {
+    const locale = getUserLocale();
+    const deployTarget = getUserDeployTarget(userId);
+    if (!locale || !deployTarget) {
+      await showLanguageSelection(ctx);
+      return;
+    }
+  }
+
   if (ctx.chat) {
     if (!pinnedMessageManager.isInitialized()) {
       pinnedMessageManager.initialize(ctx.api, ctx.chat.id);

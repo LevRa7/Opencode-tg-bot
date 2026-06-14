@@ -216,56 +216,33 @@ function findMostRecentSessionByDirectory(
   };
 }
 
-// ---- active session tracker ----
+// ---- main ----
 
-const ACTIVE_SESSIONS_FILE = "/tmp/tg-active-sessions.json";
-const ACTIVE_TTL_MS = 5 * 60 * 1000; // 5 min
+const BOT_HTTP_PORT = process.env.TG_BOT_HTTP_PORT || "8080";
 
-interface ActiveSessionEntry {
-  sessionId: string;
+interface BotTargetResponse {
   chatId: number;
   messageThreadId: number | null;
-  timestamp: number;
+  sessionId: string;
+  error?: string;
 }
 
-function readActiveSessions(): Record<string, ActiveSessionEntry> {
+function queryBotHttpEndpointSync(sessionId: string): BotTargetResponse | null {
   try {
-    if (!fs.existsSync(ACTIVE_SESSIONS_FILE)) return {};
-    return JSON.parse(fs.readFileSync(ACTIVE_SESSIONS_FILE, "utf-8"));
+    const url = `http://localhost:${BOT_HTTP_PORT}/api/session/${encodeURIComponent(sessionId)}/target`;
+    const { execSync } = require("node:child_process");
+    const output = execSync(
+      `curl -sf --max-time 3 "${url}" 2>/dev/null || true`,
+      { encoding: "utf-8", timeout: 5000 },
+    ).trim();
+    if (!output) return null;
+    const parsed = JSON.parse(output) as BotTargetResponse;
+    if (parsed.error) return null;
+    return parsed;
   } catch {
-    return {};
+    return null;
   }
 }
-
-function tryActiveSession(
-  db: Database.Database,
-  directory: string,
-): { chatId: number; messageThreadId?: number; sessionId: string; directory: string } | null {
-  const store = readActiveSessions();
-  const normalizedDir = path.resolve(directory);
-  const entry = store[normalizedDir];
-  if (!entry) return null;
-
-  const age = Date.now() - entry.timestamp;
-  if (age > ACTIVE_TTL_MS) return null;
-
-  // Verify session still exists in DB
-  const target =
-    lookupConversationBindings(db, entry.sessionId) ??
-    lookupThreadContextBindings(db, entry.sessionId) ??
-    lookupAttachedSessions(db, entry.sessionId);
-
-  if (!target) return null;
-
-  return {
-    chatId: target.chatId,
-    messageThreadId: target.messageThreadId,
-    sessionId: entry.sessionId,
-    directory: normalizedDir,
-  };
-}
-
-// ---- main ----
 
 function main(): void {
   const appHome = resolveAppHome();
@@ -284,25 +261,6 @@ function main(): void {
     // --auto mode: find most recent session for current directory
     if (AUTO) {
       const targetDir = searchDir ? path.resolve(searchDir) : process.cwd();
-
-      // Check active session tracker first: the bot records which session
-      // was most recently used via setCurrentSession(). This resolves the
-      // correct topic when multiple sessions share the same directory.
-      const activeSession = tryActiveSession(db, targetDir);
-      if (activeSession) {
-        const token = process.env.TELEGRAM_BOT_TOKEN ?? "";
-        console.log(
-          JSON.stringify({
-            chatId: activeSession.chatId,
-            messageThreadId: activeSession.messageThreadId ?? null,
-            token,
-            sessionId: activeSession.sessionId,
-            directory: activeSession.directory,
-          }),
-        );
-        return;
-      }
-
       const autoResult = findMostRecentSessionByDirectory(db, targetDir);
 
       if (!autoResult) {
@@ -340,6 +298,22 @@ function main(): void {
       process.exit(1);
     }
 
+    // Priority 1: query bot HTTP endpoint (authoritative in-memory state)
+    const botTarget = queryBotHttpEndpointSync(sessionId);
+    if (botTarget) {
+      const token = process.env.TELEGRAM_BOT_TOKEN ?? "";
+      console.log(
+        JSON.stringify({
+          chatId: botTarget.chatId,
+          messageThreadId: botTarget.messageThreadId,
+          token,
+          sessionId: botTarget.sessionId,
+        }),
+      );
+      return;
+    }
+
+    // Priority 2: DB lookup
     const target =
       lookupConversationBindings(db, sessionId) ??
       lookupThreadContextBindings(db, sessionId) ??

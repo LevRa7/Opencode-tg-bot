@@ -26,6 +26,8 @@ vi.mock("../../src/settings/manager.js", () => {
       return "auto-pass-" + userId;
     }),
     getTenantRuntimeInfo: vi.fn(() => null),
+    getUserDeployTarget: vi.fn(() => undefined),
+    getVmRuntimeInfo: vi.fn(() => undefined),
   };
 });
 
@@ -119,5 +121,65 @@ describe("resolveOpencodeRouteForUser", () => {
     expect(route).toBeDefined();
     expect(route!.baseUrl).toBe("http://localhost:4097");
     expect(route!.kind).toBe("tenant");
+  });
+
+  it("should resolve VM user to VM bridge IP", async () => {
+    const { getUserDeployTarget, getVmRuntimeInfo } = await import("../../src/settings/manager.js");
+    vi.mocked(getUserDeployTarget).mockReturnValue("vm");
+    vi.mocked(getVmRuntimeInfo).mockReturnValue({
+      userId: 42,
+      tier: "small",
+      domainName: "vm-42",
+      qcow2Path: "/tmp/vm.qcow2",
+      cloudInitIsoPath: "/tmp/cloud-init.iso",
+      bridgeIp: "10.100.0.123",
+      baseUrl: "http://10.100.0.123:4096",
+      startTime: "2025-01-01T00:00:00Z",
+      pid: null,
+    });
+
+    const route = resolveOpencodeRouteForUser(42);
+    expect(route).toBeDefined();
+    expect(route!.baseUrl).toBe("http://10.100.0.123:4096");
+    expect(route!.kind).toBe("vm");
+    expect(route!.password).toBe("auto-pass-42");
+  });
+
+  it("should resolve VM pending user to host API fallback", async () => {
+    const { getUserDeployTarget, getVmRuntimeInfo } = await import("../../src/settings/manager.js");
+    vi.mocked(getUserDeployTarget).mockReturnValue("vm");
+    vi.mocked(getVmRuntimeInfo).mockReturnValue(undefined);
+
+    const route = resolveOpencodeRouteForUser(43);
+    expect(route).toBeDefined();
+    expect(route!.baseUrl).toBe("http://localhost:4096");
+    expect(route!.kind).toBe("vm");
+  });
+
+  it("should prioritize SSH over VM route", async () => {
+    const { getUserDeployTarget, getVmRuntimeInfo } = await import("../../src/settings/manager.js");
+    vi.mocked(getUserDeployTarget).mockReturnValue("vm");
+    vi.mocked(getVmRuntimeInfo).mockReturnValue({
+      userId: 42,
+      tier: "small",
+      domainName: "vm-42",
+      qcow2Path: "/tmp/vm.qcow2",
+      cloudInitIsoPath: "/tmp/cloud-init.iso",
+      bridgeIp: "10.100.0.123",
+      baseUrl: "http://10.100.0.123:4096",
+      startTime: "2025-01-01T00:00:00Z",
+      pid: null,
+    });
+
+    mockSsh.isSshActive.mockReturnValue(true);
+    mockSsh.getLocalPort.mockReturnValue(49600);
+    mockSsh.getActiveConnection.mockReturnValue({
+      opencodePassword: "ssh-pass",
+      deployTarget: "host",
+    });
+
+    const route = resolveOpencodeRouteForUser(42);
+    expect(route!.kind).toBe("ssh-host");
+    expect(route!.baseUrl).toBe("http://127.0.0.1:49600");
   });
 });

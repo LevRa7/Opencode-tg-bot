@@ -1,11 +1,11 @@
 import { config } from "../config.js";
-import { getOrCreateServerPassword, getTenantRuntimeInfo } from "../settings/manager.js";
+import { getOrCreateServerPassword, getTenantRuntimeInfo, getUserDeployTarget, getVmRuntimeInfo } from "../settings/manager.js";
 import { sshManager } from "../utils/ssh-manager.js";
 
 export interface OpencodeRoute {
   baseUrl: string;
   password?: string;
-  kind: "host" | "tenant" | "ssh-host" | "ssh-docker";
+  kind: "host" | "tenant" | "ssh-host" | "ssh-docker" | "vm";
 }
 
 export function resolveOpencodeRouteForUser(userId: number): OpencodeRoute | null {
@@ -21,6 +21,18 @@ export function resolveOpencodeRouteForUser(userId: number): OpencodeRoute | nul
         kind: deployTarget === "docker" ? "ssh-docker" : "ssh-host",
       };
     }
+  }
+
+  // VM users — route to the VM bridge IP
+  const deployTarget = getUserDeployTarget(userId);
+  if (deployTarget === "vm") {
+    const vmInfo = getVmRuntimeInfo(userId);
+    const vmPassword = getOrCreateServerPassword(userId);
+    return {
+      baseUrl: vmInfo?.baseUrl ?? config.opencode.apiUrl,
+      password: vmPassword,
+      kind: "vm",
+    };
   }
 
   if (userId === config.telegram.adminUserId) {

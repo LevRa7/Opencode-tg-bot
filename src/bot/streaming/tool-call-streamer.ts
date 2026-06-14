@@ -96,14 +96,25 @@ function splitLeadingBlockquote(text: string, limit: number, openTag: string): s
 }
 
 function splitBeforeBlockquote(text: string, limit: number, openTag: string): string[] | null {
-  const marker = `\n\n${openTag}`;
-  const markerIndex = text.indexOf(marker);
+  // Try double newline separator first (entries joined via buildParts)
+  let marker = `\n\n${openTag}`;
+  let markerIndex = text.indexOf(marker);
+  let skipLen = 2;
+
+  // Fall back to single newline separator (e.g. inline fallback from
+  // formatTechnicalProgressWithDetails when Telegraph publish fails)
+  if (markerIndex < 0) {
+    marker = `\n${openTag}`;
+    markerIndex = text.indexOf(marker);
+    skipLen = 1;
+  }
+
   if (markerIndex < 0) {
     return null;
   }
 
   const prefix = text.slice(0, markerIndex);
-  const suffix = text.slice(markerIndex + 2);
+  const suffix = text.slice(markerIndex + skipLen);
   return [...splitLongText(prefix, limit), ...splitLongText(suffix, limit)];
 }
 

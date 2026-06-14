@@ -310,7 +310,7 @@ if (!config.provider.local) {
 fs.writeFileSync(dst, JSON.stringify(config, null, 2) + "\n", "utf8");
  ' "$HOST_OPENCODE_JSON" "$TENANT_OPENCODE_JSON" "$CLIPROXYAPI_BASE_URL" "$TENANT_CLIPROXYAPI_KEY_REF"
 
-# Install base skills (tg-cli, openai-media-transcriber, gpt-image-api, tg-upload, yandex-rasp)
+# Install base skills (tg-cli, openai-media-transcriber, gpt-image-api, tg-uploader, yandex-rasp, install-vpn, gui-automation)
 if [ -f "$SCRIPT_DIR/vendor/python-tg-cli/SKILL.md" ]; then
   cp "$SCRIPT_DIR/vendor/python-tg-cli/SKILL.md" "$STATE_SKILLS_DIR/tg-cli/SKILL.md"
 fi
@@ -321,11 +321,22 @@ fi
 if [ -d "$SCRIPT_DIR/skills/gpt-image-api" ]; then
   cp -R "$SCRIPT_DIR/skills/gpt-image-api/." "$STATE_SKILLS_DIR/gpt-image-api/"
 fi
-if [ -d "$SCRIPT_DIR/skills/tg-upload" ]; then
-  cp -R "$SCRIPT_DIR/skills/tg-upload/." "$STATE_SKILLS_DIR/tg-upload/"
+if [ -d "$SCRIPT_DIR/skills/tg-uploader" ]; then
+  cp -R "$SCRIPT_DIR/skills/tg-uploader/." "$STATE_SKILLS_DIR/tg-uploader/"
 fi
 if [ -f "$SCRIPT_DIR/skills/yandex-rasp/SKILL.md" ]; then
   cp "$SCRIPT_DIR/skills/yandex-rasp/SKILL.md" "$STATE_SKILLS_DIR/yandex-rasp/SKILL.md"
+fi
+if [ -f "$SCRIPT_DIR/skills/install-vpn/SKILL.md" ]; then
+  mkdir -p "$STATE_SKILLS_DIR/install-vpn"
+  cp "$SCRIPT_DIR/skills/install-vpn/SKILL.md" "$STATE_SKILLS_DIR/install-vpn/SKILL.md"
+fi
+if [ -f "$SCRIPT_DIR/skills/gui-automation/SKILL.md" ]; then
+  mkdir -p "$STATE_SKILLS_DIR/gui-automation"
+  cp "$SCRIPT_DIR/skills/gui-automation/SKILL.md" "$STATE_SKILLS_DIR/gui-automation/SKILL.md"
+  if [ -f "$SCRIPT_DIR/skills/gui-automation/gui_automation.py" ]; then
+    cp "$SCRIPT_DIR/skills/gui-automation/gui_automation.py" "$STATE_SKILLS_DIR/gui-automation/gui_automation.py"
+  fi
 fi
 
 # Install all skills from the baked-in package (opencode-skills-pkg)
@@ -377,8 +388,10 @@ Skills installed in `/state/skills`:
 - `visual-browser` — Chromium via CDP + Playwright
 - `screenshot` — Screenshots via CDP, Playwright, scrot
 - `one-three-one-rule` — Decision framework: 1 problem → 3 options → 1 recommendation
-- `tg-upload` — Send files/text/Telegraph articles to Telegram chats
+- `tg-uploader` — Send files/text/Telegraph articles to Telegram chats
 - `yandex-rasp` — Yandex Rasp API: train/suburban schedules, MiniApp ticket links
+- `install-vpn` — VPN setup: Tailscale, AmneziaWG, 3x-ui (VLESS+XHTTP+REALITY)
+- `gui-automation` — GUI automation: Bezier mouse, CAPTCHA solving, anti-detection patterns
 
 Full catalog at `/usr/local/lib/opencode-skills-pkg/registry/catalog.json` (inside container).
 

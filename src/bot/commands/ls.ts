@@ -2,6 +2,7 @@ import { CommandContext, Context, InlineKeyboard } from "grammy";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import os from "node:os";
+import { execSync } from "node:child_process";
 import {
   appendInlineMenuCancelButton,
   clearActiveInlineMenu,
@@ -9,7 +10,7 @@ import {
 } from "../handlers/inline-menu.js";
 import { interactionManager } from "../../interaction/manager.js";
 import { isForegroundBusy, replyBusyBlocked } from "../utils/busy-guard.js";
-import { getCurrentProject } from "../../settings/manager.js";
+import { getCurrentProject, getVmRuntimeInfo } from "../../settings/manager.js";
 import { sendDownloadedFile } from "../utils/send-downloaded-file.js";
 import { formatFileSize } from "../utils/file-download.js";
 import { getTenantBrowserRoots, isWithinAllowedTenantRoot, isAllowedTenantRoot } from "../utils/browser-roots.js";
@@ -211,6 +212,19 @@ function decodeBackCallback(data: string): { path: string; page: number } | null
   return decodePathWithPageCallback(data, CALLBACK_BACK_PREFIX);
 }
 
+function isVmActive(userId: number): string | null {
+  const vmInfo = getVmRuntimeInfo(userId);
+  if (!vmInfo?.bridgeIp) return null;
+  return vmInfo.bridgeIp;
+}
+
+function executeVmCommand(bridgeIp: string, cmd: string): string {
+  return execSync(
+    `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 opencode@${bridgeIp} '${cmd}'`,
+    { encoding: "utf-8", timeout: 10_000 },
+  ).trim();
+}
+
 async function scanDirectoryRemote(
   userId: number,
   dirPath: string,
@@ -274,6 +288,68 @@ async function scanDirectoryRemote(
   }
 }
 
+async function scanDirectoryVm(
+  bridgeIp: string,
+  dirPath: string,
+  page: number = 0,
+): Promise<
+  | {
+      entries: LsEntry[];
+      totalCount: number;
+      currentPath: string;
+      displayPath: string;
+      hasParent: boolean;
+      page: number;
+    }
+  | { error: string }
+> {
+  try {
+    if (!isSafeRemotePath(dirPath)) {
+      return { error: t("ls.access_denied") };
+    }
+    const output = executeVmCommand(bridgeIp, `ls -1aFL "${dirPath}" 2>/dev/null`);
+    const lines = output.split("\n").filter((l) => l.length > 0);
+
+    const entries: LsEntry[] = [];
+    for (const line of lines) {
+      const name = line.endsWith("/") ? line.slice(0, -1) : line.replace(/[*@=|]$/, "");
+      if (name === "." || name === "..") continue;
+
+      const isDir = line.endsWith("/");
+      entries.push({
+        name,
+        fullPath: dirPath.endsWith("/") ? `${dirPath}${name}` : `${dirPath}/${name}`,
+        type: isDir ? "directory" : "file",
+      });
+    }
+
+    entries.sort((left, right) => {
+      if (left.type !== right.type) {
+        return left.type === "directory" ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+    });
+
+    const totalPages = Math.max(1, Math.ceil(entries.length / MAX_ENTRIES_PER_PAGE));
+    const safePage = Math.max(0, Math.min(page, totalPages - 1));
+
+    const remoteHome = executeVmCommand(bridgeIp, "echo $HOME");
+
+    return {
+      entries: entries.slice(safePage * MAX_ENTRIES_PER_PAGE, (safePage + 1) * MAX_ENTRIES_PER_PAGE),
+      totalCount: entries.length,
+      currentPath: dirPath,
+      displayPath: pathToDisplayPathRemote(dirPath, remoteHome),
+      hasParent: dirPath !== "/",
+      page: safePage,
+    };
+  } catch (error) {
+    return {
+      error: `${t("ls.scan_error")}: ${error instanceof Error ? error.message : "Unknown error"}`,
+    };
+  }
+}
+
 async function scanDirectory(
   dirPath: string,
   page: number = 0,
@@ -291,6 +367,13 @@ async function scanDirectory(
 > {
   if (userId && sshManager.isSshActive(userId)) {
     return scanDirectoryRemote(userId, dirPath, page);
+  }
+
+  if (userId) {
+    const vmIp = isVmActive(userId);
+    if (vmIp) {
+      return scanDirectoryVm(vmIp, dirPath, page);
+    }
   }
 
   try {
@@ -397,7 +480,7 @@ async function renderBrowseView(dirPath: string, page: number = 0, userId?: numb
   if ("error" in result) {
     return result;
   }
-  const isRemote = !!userId && sshManager.isSshActive(userId);
+  const isRemote = !!userId && (sshManager.isSshActive(userId) || !!isVmActive(userId));
   const totalPages = Math.max(1, Math.ceil(result.totalCount / MAX_ENTRIES_PER_PAGE));
   return {
     text: buildLsHeader(result.displayPath, result.totalCount, result.page, totalPages),
@@ -441,9 +524,44 @@ async function getFileDetailsRemote(userId: number, filePath: string): Promise<F
   }
 }
 
+async function getFileDetailsVm(bridgeIp: string, filePath: string): Promise<FileDetails | { error: string }> {
+  try {
+    if (!isSafeRemotePath(filePath)) {
+      return { error: t("ls.access_denied") };
+    }
+    const statOutput = executeVmCommand(bridgeIp, `stat -c '%s %Y' "${filePath}" 2>/dev/null`);
+    const parts = statOutput.trim().split(" ");
+    if (parts.length < 2) {
+      return { error: t("commands.download.not_file") };
+    }
+    const size = parseInt(parts[0], 10);
+    const mtime = parseInt(parts[1], 10);
+    if (isNaN(size) || isNaN(mtime)) {
+      return { error: t("commands.download.not_file") };
+    }
+    return {
+      name: path.posix.basename(filePath),
+      fullPath: filePath,
+      size,
+      modified: new Date(mtime * 1000),
+    };
+  } catch (error) {
+    return {
+      error: `${t("ls.scan_error")}: ${error instanceof Error ? error.message : "Unknown error"}`,
+    };
+  }
+}
+
 async function getFileDetails(filePath: string, userId?: number): Promise<FileDetails | { error: string }> {
   if (userId && sshManager.isSshActive(userId)) {
     return getFileDetailsRemote(userId, filePath);
+  }
+
+  if (userId) {
+    const vmIp = isVmActive(userId);
+    if (vmIp) {
+      return getFileDetailsVm(vmIp, filePath);
+    }
   }
 
   try {
@@ -487,6 +605,15 @@ async function resolveInitialDirectory(userId?: number): Promise<string | null> 
     return sshManager.getRemoteHomeDir(userId);
   }
 
+  if (userId) {
+    const vmIp = isVmActive(userId);
+    if (vmIp) {
+      // Don't use cached directory for VM — it may be stale from
+      // a previous non-VM session. Always query the VM directly.
+      return executeVmCommand(vmIp, "echo $HOME");
+    }
+  }
+
   const roots = getTenantBrowserRoots();
   const rootDir = roots.length > 0 ? roots[0] : getProjectRoot();
   if (!rootDir) {
@@ -518,8 +645,9 @@ export async function lsCommand(ctx: CommandContext<Context>): Promise<void> {
   clearLsPathIndex();
   const userId = ctx.from?.id;
   const isRemote = !!userId && sshManager.isSshActive(userId);
+  const isVm = !!userId && !!isVmActive(userId);
 
-  if (!isRemote) {
+  if (!isRemote && !isVm) {
     const roots = getTenantBrowserRoots();
     if (roots.length === 0) {
       await ctx.reply(t("bot.project_not_selected"));
@@ -534,14 +662,14 @@ export async function lsCommand(ctx: CommandContext<Context>): Promise<void> {
     return;
   }
 
-  if (!isRemote) {
+  if (!isRemote && !isVm) {
     if (!isWithinAllowedTenantRoot(targetDir)) {
-      await ctx.reply(`❌ ${t("ls.access_denied")}`);
+      await ctx.reply(`\u274C ${t("ls.access_denied")}`);
       return;
     }
   } else {
     if (!isSafeRemotePath(targetDir)) {
-      await ctx.reply(`❌ ${t("ls.access_denied")}`);
+      await ctx.reply(`\u274C ${t("ls.access_denied")}`);
       return;
     }
   }
@@ -602,14 +730,38 @@ async function downloadRemoteFileAndClose(ctx: Context, filePath: string, userId
     const localTmp = path.join(tmpDir, `ssh-download-${userId}-${Date.now()}-${fileName}`);
     await sshManager.downloadRemoteFile(userId, filePath, localTmp);
     const downloaded = await sendDownloadedFile(ctx, localTmp, { announce: false });
-    // Clean up temp file
     await fs.unlink(localTmp).catch(() => {});
     if (!downloaded) {
       return;
     }
   } catch (error) {
     logger.error("[Ls] Error downloading remote file:", error);
-    await ctx.reply(`❌ ${t("commands.download.error")}`);
+    await ctx.reply(`\u274C ${t("commands.download.error")}`);
+    return;
+  }
+  clearActiveInlineMenu("ls_downloaded");
+  clearLsPathIndex();
+  await ctx.deleteMessage().catch(() => {});
+}
+
+async function downloadVmFileAndClose(ctx: Context, filePath: string, bridgeIp: string): Promise<void> {
+  await ctx.answerCallbackQuery({ text: t("commands.download.downloading") });
+  try {
+    const tmpDir = os.tmpdir();
+    const fileName = path.posix.basename(filePath);
+    const localTmp = path.join(tmpDir, `vm-download-${Date.now()}-${fileName}`);
+    execSync(
+      `scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null opencode@${bridgeIp}:"${filePath}" "${localTmp}"`,
+      { encoding: "utf-8", stdio: "ignore", timeout: 30_000 },
+    );
+    const downloaded = await sendDownloadedFile(ctx, localTmp, { announce: false });
+    await fs.unlink(localTmp).catch(() => {});
+    if (!downloaded) {
+      return;
+    }
+  } catch (error) {
+    logger.error("[Ls] Error downloading VM file:", error);
+    await ctx.reply(`\u274C ${t("commands.download.error")}`);
     return;
   }
   clearActiveInlineMenu("ls_downloaded");
@@ -630,6 +782,9 @@ async function downloadFileAndClose(ctx: Context, filePath: string): Promise<voi
 
 function isAccessAllowed(targetPath: string, userId: number | undefined): boolean {
   if (userId && sshManager.isSshActive(userId)) {
+    return isSafeRemotePath(targetPath);
+  }
+  if (userId && isVmActive(userId)) {
     return isSafeRemotePath(targetPath);
   }
   return isWithinAllowedTenantRoot(targetPath);
@@ -687,7 +842,12 @@ export async function handleLsCallback(ctx: Context): Promise<boolean> {
       if (isRemote && userId) {
         await downloadRemoteFileAndClose(ctx, downloadPath, userId);
       } else {
-        await downloadFileAndClose(ctx, downloadPath);
+        const vmIp = userId ? isVmActive(userId) : null;
+        if (vmIp) {
+          await downloadVmFileAndClose(ctx, downloadPath, vmIp);
+        } else {
+          await downloadFileAndClose(ctx, downloadPath);
+        }
       }
       return true;
     }

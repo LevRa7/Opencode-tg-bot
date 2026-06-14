@@ -798,6 +798,8 @@ export const de: I18nDictionary = {
   "fork.success": "Sitzung abgespalten: {title}. Wird in neuem Thema geöffnet...",
   "fork.no_session": "Keine aktive Sitzung zum Abspalten.",
   "fork.error": "Abspalten der Sitzung fehlgeschlagen.",
+  "fork.session_not_found": "Sitzung existiert nicht mehr auf dem Server. Erstellen Sie eine neue mit /new.",
+  "fork.invalid_directory": "Abspalten nicht möglich: ungültiges Arbeitsverzeichnis.",
   "share.already_shared": "Sitzung bereits freigegeben: {url}",
   "edit.fork_or_revert": "Nachricht bearbeitet. Aktion wählen:",
   "edit.fork_button": "In neuem Thema abspalten",

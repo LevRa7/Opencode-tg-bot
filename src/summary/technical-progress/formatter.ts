@@ -104,8 +104,23 @@ export async function formatTechnicalProgressWithDetails(
       return { text: `${escapedBase}:\n${escapedBody}`, format: "html" };
     }
 
+    // Truncate spoiler body so total message stays within Telegram-safe
+    // limit (3800 chars).  This also ensures splitLongText never breaks
+    // the blockquote tags open, which would cause Telegram to reject the
+    // message and the ToolCallStreamer to drop all subsequent tool
+    // notifications for the session.
+    const spoilerLimit = 3800;
+    const openTag = "<blockquote expandable>";
+    const closeTag = "</blockquote>";
+    const overhead = escapedBase.length + "\n\n".length + openTag.length + closeTag.length;
+    const maxBodyLen = Math.max(0, spoilerLimit - overhead);
+    const truncatedBody =
+      escapedBody.length > maxBodyLen
+        ? `${escapedBody.slice(0, maxBodyLen - 1)}…`
+        : escapedBody;
+
     return {
-      text: `${escapedBase}\n<blockquote expandable>${escapedBody}</blockquote>`,
+      text: `${escapedBase}\n\n${openTag}${truncatedBody}${closeTag}`,
       format: "html",
     };
   }

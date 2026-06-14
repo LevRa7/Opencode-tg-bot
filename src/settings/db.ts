@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { logger } from "../utils/logger.js";
+import { createVmRuntimeRepository } from "./repositories/vm-runtimes.js";
 
 // Column header comments (table registry):
 //   1: user_preferences — user-level settings (tts, streaming, locale, etc.)
@@ -26,7 +27,9 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     subagent_topic_auto_delete_minutes INTEGER NOT NULL DEFAULT 1,
     default_project                   TEXT,
     default_agent                     TEXT,
-    default_model                     TEXT
+    default_model                     TEXT,
+    deploy_target                     TEXT,
+    vm_spec_tier                      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS conversation_bindings (
@@ -74,6 +77,11 @@ CREATE TABLE IF NOT EXISTS last_restart_request (
 );
 
 CREATE TABLE IF NOT EXISTS tenant_runtimes (
+    user_id INTEGER PRIMARY KEY,
+    data    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS vm_runtimes (
     user_id INTEGER PRIMARY KEY,
     data    TEXT NOT NULL
 );
@@ -313,3 +321,5 @@ export function closeDatabase(db: Database.Database): void {
   logger.info("[DB] Closing database");
   db.close();
 }
+
+export { createVmRuntimeRepository };

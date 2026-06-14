@@ -935,6 +935,8 @@ export const en = {
   "fork.success": "Session forked: {title}. Opening in new topic...",
   "fork.no_session": "No active session to fork.",
   "fork.error": "Failed to fork session.",
+  "fork.session_not_found": "Session no longer exists on the server. Create a new one with /new.",
+  "fork.invalid_directory": "Cannot fork: session has an invalid working directory.",
   "share.already_shared": "Session already shared: {url}",
   "edit.fork_or_revert": "Message edited. Choose action:",
   "edit.fork_button": "Fork in new topic",
@@ -982,6 +984,21 @@ export const en = {
   "onboarding.skipped": "OK, you can set it up later via /server.",
 
   "ssh.web_panel_info": "SSH web panel: https://{domain}\nLogin: {username}\nPassword: <code>{password}</code>",
+
+  "vm.tier.small": "Basic",
+  "vm.tier.medium": "Standard",
+  "vm.tier.large": "Advanced",
+  "vm.tier.xlarge": "Maximum",
+  "vm.tier.format": "{label}: {ram}GB RAM / {vcpus} vCPU / {disk}GB SSD",
+  "vm.onboarding.title": "Select server configuration:",
+  "vm.onboarding.docker": "🐳 Docker (without virtualization)",
+  "vm.onboarding.host": "🖥 Host (local server)",
+  "vm.onboarding.docker_selected": "✅ Docker. Creating container...",
+  "vm.onboarding.vm_selected": "✅ {label} ({ram}GB / {vcpus} vCPU / {disk}GB). Creating virtual server...",
+  "vm.onboarding.server_ready": "✅ Server ready!\nAddress: {address}",
+  "vm.onboarding.error": "❌ Error: {error}",
+  "vm.progress.checking": "⏳ Checking existing VM...",
+  "vm.progress.installing": "⏳ Installing software and launching OpenCode (up to 10 min)...",
 
 } as const;
 

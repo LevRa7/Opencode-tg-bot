@@ -161,6 +161,13 @@ export async function handleRenameTextAnswer(ctx: Context): Promise<boolean> {
 
     await ctx.reply(t("rename.success", { title: newTitle }));
 
+    // Rename the forum topic to reflect the new session title
+    const messageThreadId = extractMessageThreadIdFromContext(ctx);
+    if (messageThreadId && ctx.chat) {
+      const truncated = newTitle.length > 128 ? newTitle.slice(0, 125) + "..." : newTitle;
+      await ctx.api.editForumTopic(ctx.chat.id, messageThreadId, { name: truncated }).catch(() => {});
+    }
+
     logger.info(`[RenameHandler] Session renamed successfully: ${newTitle}`);
   } catch (error) {
     logger.error("[RenameHandler] Error renaming session:", error);

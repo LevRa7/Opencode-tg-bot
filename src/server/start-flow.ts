@@ -38,9 +38,13 @@ export async function handleOnboardingCallback(ctx: Context): Promise<boolean> {
     ].join("\n");
 
     await ctx.editMessageText(msg, { parse_mode: "HTML" });
-  } else if (data === "onboarding:skip_web") {
-    await ctx.editMessageText(t("onboarding.skipped"));
+    return true;
   }
 
-  return true;
+  if (data === "onboarding:skip_web") {
+    await ctx.editMessageText(t("onboarding.skipped"));
+    return true;
+  }
+
+  return false;
 }

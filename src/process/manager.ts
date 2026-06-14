@@ -1,21 +1,29 @@
-import { exec, spawn, type ChildProcess } from "child_process";
+import { exec, execSync, spawn, type ChildProcess } from "child_process";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
 import { config } from "../config.js";
 import {
   clearServerProcess,
   clearTenantRuntimeInfo,
+  clearVmRuntimeInfo,
   getOrCreateServerPassword,
   getServerProcess,
   getTenantRuntimeInfo,
   getTenantRuntimes,
+  getUserDeployTarget,
+  getUserVmSpecTier,
+  getVmRuntimeInfo,
   setServerProcess,
   setTenantRuntimeInfo,
+  setVmRuntimeInfo,
   type TenantRuntimeInfo,
 } from "../settings/manager.js";
 import { getCurrentTelegramConversationScope } from "../telegram/scope.js";
 import { logger } from "../utils/logger.js";
 import { sshManager } from "../utils/ssh-manager.js";
+import { vmManager } from "../vm/manager.js";
+import { VM_TIERS, type VmSpec } from "../vm/types.js";
+import { t } from "../i18n/index.js";
 import type {
   ProcessManagerInterface,
   ProcessOperationResult,
@@ -43,6 +51,21 @@ class ProcessManager implements ProcessManagerInterface {
   };
 
   private tenantStartupLocks = new Map<number, Promise<ProcessOperationResult>>();
+  private vmStartupLocks = new Map<number, Promise<ProcessOperationResult>>();
+  private vmStartupCooldowns = new Map<number, number>();
+  private globalProgressReporter?: (step: string) => void;
+
+  setGlobalProgressReporter(reporter: ((step: string) => void) | undefined): void {
+    this.globalProgressReporter = reporter;
+  }
+
+  private combineProgress(onProgress?: (step: string) => void): ((step: string) => void) | undefined {
+    if (!this.globalProgressReporter && !onProgress) return undefined;
+    return (step: string) => {
+      this.globalProgressReporter?.(step);
+      onProgress?.(step);
+    };
+  }
 
   async initialize(): Promise<void> {
     const savedProcess = getServerProcess();
@@ -80,6 +103,10 @@ class ProcessManager implements ProcessManagerInterface {
 
     // Recover saved SSH connections in the background
     void sshManager.recoverAll();
+
+    vmManager.isAvailable().then((available) => {
+      if (available) logger.info("[ProcessManager] VM deployment available");
+    }).catch(() => {});
   }
 
   private tenantWatcherTimer: ReturnType<typeof setInterval> | null = null;
@@ -126,13 +153,21 @@ class ProcessManager implements ProcessManagerInterface {
     }
   }
 
-  async ensureRuntime(): Promise<ProcessOperationResult> {
+  async ensureRuntime(onProgress?: (step: string) => void): Promise<ProcessOperationResult> {
     if (this.isAdminScope()) {
       if (this.isRunning()) {
         return { success: true };
       }
 
       return this.start();
+    }
+
+    const scope = getCurrentTelegramConversationScope();
+    if (scope) {
+      const target = this.getDeployTarget(scope.userId);
+      if (target === "vm") {
+        return this.ensureVmRuntime(scope.userId, onProgress);
+      }
     }
 
     return this.ensureTenantRuntime();
@@ -227,6 +262,11 @@ class ProcessManager implements ProcessManagerInterface {
 
   async stop(timeoutMs: number = 5000): Promise<ProcessOperationResult> {
     if (!this.isAdminScope()) {
+      const scope = getCurrentTelegramConversationScope();
+      if (scope && this.getDeployTarget(scope.userId) === "vm") {
+        return await this.stopVmRuntime(scope.userId);
+      }
+
       return await this.stopTenantRuntime(timeoutMs);
     }
 
@@ -293,6 +333,10 @@ class ProcessManager implements ProcessManagerInterface {
   isRunning(): boolean {
     if (!this.isAdminScope()) {
       const scope = getCurrentTelegramConversationScope();
+      if (scope && this.getDeployTarget(scope.userId) === "vm") {
+        return this.isVmRunningSync(scope.userId);
+      }
+
       const runtime = scope ? getTenantRuntimeInfo(scope.userId) : undefined;
       if (!runtime?.pid) {
         return false;
@@ -322,7 +366,11 @@ class ProcessManager implements ProcessManagerInterface {
   getPID(): number | null {
     if (!this.isAdminScope()) {
       const scope = getCurrentTelegramConversationScope();
-      return scope ? (getTenantRuntimeInfo(scope.userId)?.pid ?? null) : null;
+      if (!scope) return null;
+      if (this.getDeployTarget(scope.userId) === "vm") {
+        return getVmRuntimeInfo(scope.userId)?.pid ?? null;
+      }
+      return getTenantRuntimeInfo(scope.userId)?.pid ?? null;
     }
 
     return this.state.pid;
@@ -331,7 +379,12 @@ class ProcessManager implements ProcessManagerInterface {
   getUptime(): number | null {
     if (!this.isAdminScope()) {
       const scope = getCurrentTelegramConversationScope();
-      const startTime = scope ? getTenantRuntimeInfo(scope.userId)?.startTime : undefined;
+      if (!scope) return null;
+      if (this.getDeployTarget(scope.userId) === "vm") {
+        const vmInfo = getVmRuntimeInfo(scope.userId);
+        return vmInfo?.startTime ? Date.now() - Date.parse(vmInfo.startTime) : null;
+      }
+      const startTime = getTenantRuntimeInfo(scope.userId)?.startTime;
       return startTime ? Date.now() - Date.parse(startTime) : null;
     }
 
@@ -353,6 +406,20 @@ class ProcessManager implements ProcessManagerInterface {
       };
     }
 
+    if (this.getDeployTarget(scope.userId) === "vm") {
+      const vmInfo = getVmRuntimeInfo(scope.userId);
+      return {
+        kind: "vm",
+        userId: scope.userId,
+        chatId: scope.chatId,
+        tenantId: vmInfo?.domainName,
+        baseUrl: vmInfo?.baseUrl ?? "",
+        managed: Boolean(vmInfo),
+        pid: vmInfo?.pid ?? null,
+        uptimeMs: vmInfo?.startTime ? Date.now() - Date.parse(vmInfo.startTime) : null,
+      };
+    }
+
     const runtime = getTenantRuntimeInfo(scope.userId);
     return {
       kind: "tenant",
@@ -370,6 +437,130 @@ class ProcessManager implements ProcessManagerInterface {
   private isAdminScope(): boolean {
     const scope = getCurrentTelegramConversationScope();
     return !scope || scope.userId === config.telegram.adminUserId;
+  }
+
+  private getDeployTarget(userId: number): "docker" | "vm" {
+    return getUserDeployTarget(userId) ?? "docker";
+  }
+
+  private async ensureVmRuntime(userId: number, onProgress?: (step: string) => void): Promise<ProcessOperationResult> {
+    const progress = this.combineProgress(onProgress);
+    // Check cooldown after a failed attempt
+    const cooldownUntil = this.vmStartupCooldowns.get(userId);
+    if (cooldownUntil && Date.now() < cooldownUntil) {
+      return { success: false, error: "VM creation recently failed, cooling down. Try again shortly." };
+    }
+
+    // Deduplicate concurrent VM startup attempts
+    const existingLock = this.vmStartupLocks.get(userId);
+    if (existingLock) {
+      return existingLock;
+    }
+
+    const startupPromise = this.doEnsureVmRuntime(userId, progress).then((result) => {
+      if (!result.success) {
+        this.vmStartupCooldowns.set(userId, Date.now() + 30_000); // 30s cooldown
+      }
+      return result;
+    }).finally(() => {
+      this.vmStartupLocks.delete(userId);
+    });
+    this.vmStartupLocks.set(userId, startupPromise);
+    return startupPromise;
+  }
+
+  private async doEnsureVmRuntime(userId: number, onProgress?: (step: string) => void): Promise<ProcessOperationResult> {
+    const existing = getVmRuntimeInfo(userId);
+    if (existing) {
+      const alive = await vmManager.isRunning(userId);
+      if (alive) {
+        onProgress?.(t("vm.progress.checking"));
+        const pw = getOrCreateServerPassword(userId);
+        const healthy = await vmManager.waitForHealth(
+          existing.baseUrl,
+          pw,
+          60_000, // 1 minute for quick re-check
+          2000,
+        );
+        if (healthy) {
+          return { success: true };
+        }
+
+        logger.warn(
+          `[ProcessManager] VM exists but unhealthy: userId=${userId}, domain=${existing.domainName}`,
+        );
+      } else {
+        logger.warn(
+          `[ProcessManager] VM exists but dead: userId=${userId}, domain=${existing.domainName}`,
+        );
+      }
+
+      // Stop and clean up old VM before creating new one
+      await vmManager.stop(userId).catch(() => {});
+      await vmManager.destroy(userId).catch(() => {});
+      clearVmRuntimeInfo(userId);
+    }
+
+    const imageResult = await vmManager.ensureBaseImage();
+    if (!imageResult.success) {
+      return imageResult;
+    }
+
+    const tierName = getUserVmSpecTier(userId);
+    if (!tierName) {
+      return { success: false, needsVmSpec: true };
+    }
+
+    const spec: VmSpec = VM_TIERS[tierName];
+
+    let vmInfo;
+    try {
+      vmInfo = await vmManager.createAndStart(userId, spec, { onProgress });
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      logger.error(`[ProcessManager] Failed to create VM for userId=${userId}:`, err);
+      clearVmRuntimeInfo(userId);
+      return { success: false, error: errorMessage };
+    }
+
+    setVmRuntimeInfo(userId, vmInfo);
+
+    const pw = getOrCreateServerPassword(userId);
+    onProgress?.(t("vm.progress.installing"));
+    const healthy = await vmManager.waitForHealth(
+      vmInfo.baseUrl,
+      pw,
+      300_000,
+      2000,
+    );
+
+    if (!healthy) {
+      logger.error(`[ProcessManager] VM health timeout for userId=${userId}`);
+      await vmManager.stop(userId).catch(() => {});
+      clearVmRuntimeInfo(userId);
+      return { success: false, error: `VM at ${vmInfo.baseUrl} did not become ready` };
+    }
+
+    return { success: true };
+  }
+
+  private async stopVmRuntime(userId: number): Promise<ProcessOperationResult> {
+    const result = await vmManager.stop(userId);
+    if (result.success) {
+      clearVmRuntimeInfo(userId);
+    }
+    return result;
+  }
+
+  private isVmRunningSync(userId: number): boolean {
+    try {
+      const domainName = `opencode-tg-${userId}`;
+      const raw = execSync(`virsh domstate ${domainName}`, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
+      const output = (typeof raw === "string" ? raw : String(raw));
+      return output.trim() === "running";
+    } catch {
+      return false;
+    }
   }
 
   private async ensureTenantRuntime(): Promise<ProcessOperationResult> {

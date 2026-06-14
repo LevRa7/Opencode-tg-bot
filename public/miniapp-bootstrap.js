@@ -2,7 +2,12 @@
   'use strict';
   function waitForTelegram(retries) {
     if (window.Telegram && window.Telegram.WebApp) return init();
-    if (retries > 10) return;
+    if (retries > 10) {
+      if (!document.cookie.includes('oc_auth=')) {
+        window.location.replace('/login.html');
+      }
+      return;
+    }
     setTimeout(() => waitForTelegram(retries + 1), 100);
   }
   

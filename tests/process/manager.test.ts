@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchMock = vi.fn();
 
-const { spawnMock, execMock } = vi.hoisted(() => ({
+const { spawnMock, execMock, execSyncMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
   execMock: vi.fn(),
+  execSyncMock: vi.fn(),
 }));
 
 type TenantRuntimeRecord = {
@@ -50,6 +51,20 @@ const {
 vi.mock("child_process", () => ({
   spawn: spawnMock,
   exec: execMock,
+  execSync: execSyncMock,
+}));
+
+vi.mock("../../src/vm/manager.js", () => ({
+  vmManager: {
+    isAvailable: vi.fn().mockResolvedValue(false),
+    ensureBaseImage: vi.fn(),
+    createAndStart: vi.fn(),
+    stop: vi.fn(),
+    destroy: vi.fn(),
+    isRunning: vi.fn(),
+    waitForHealth: vi.fn(),
+    getBridgeIp: vi.fn(),
+  },
 }));
 
 vi.mock("../../src/settings/manager.js", () => ({

@@ -798,6 +798,8 @@ export const zh: I18nDictionary = {
   "fork.success": "会话已分叉：{title}。正在新话题中打开...",
   "fork.no_session": "没有可分叉的活动会话。",
   "fork.error": "分叉会话失败。",
+  "fork.session_not_found": "会话在服务器上已不存在。请用 /new 创建新会话。",
+  "fork.invalid_directory": "无法分叉：会话工作目录无效。",
   "share.already_shared": "会话已共享：{url}",
   "edit.fork_or_revert": "消息已编辑。选择操作：",
   "edit.fork_button": "在新话题中分叉",

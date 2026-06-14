@@ -30,10 +30,11 @@ import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand, abortCurrentOperation } from "./commands/abort.js";
 import { handleServer } from "./commands/server.js";
 import { serverWebCommand, handleServerCallback } from "./commands/server-web.js";
-import { handleOnboardingCallback, showWebPanelOnboarding } from "../server/start-flow.js";
+import { handleOnboardingCallback as handleWebOnboardingCallback, showWebPanelOnboarding } from "../server/start-flow.js";
+import { handleOnboardingCallback } from "./handlers/onboarding-flow.js";
 import { connectCommand, handleProviderAuth, handleProviderInput, isProviderApiKeyPrompt, isAnyProviderPrompt, startProviderAuth } from "./commands/connect.js";
 import { shareCommand, unshareCommand } from "./commands/share.js";
-import { forkCommand } from "./commands/fork.js";
+import { forkCommand, isNotFoundError } from "./commands/fork.js";
 import { revertCommand } from "./commands/revert.js";
 import { deleteMessageCommand } from "./commands/delete-message.js";
 import { memoryCommand } from "./commands/memory.js";
@@ -134,6 +135,7 @@ import type { ResolvedDeferredItem } from "../media/batch-types.js";
 import { composeDeferredMediaPrompt } from "../media/prompt-composer.js";
 import { opencodeClient } from "../opencode/client.js";
 import { getCurrentSession, setCurrentSession, type SessionInfo } from "../session/manager.js";
+import { writeCurrentContext } from "../active-session/tracker.js";
 import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
 import { assistantRunState } from "./assistant-run-state.js";
 import { handleVoiceMessage } from "./handlers/voice.js";
@@ -565,7 +567,44 @@ function setSessionRoutingContext(sessionId: string, routing: SessionRoutingCont
 function syncSessionRoutingContext(sessionId: string): SessionRoutingContext | null {
   const promptRouting = getPromptRoutingContext(sessionId);
   if (!promptRouting) {
-    return routingBySessionId.get(sessionId) ?? null;
+    // When there is no active prompt routing (e.g. background SSE events,
+    // questions, permissions for a session that was re-attached to a different
+    // topic), we must still sync from AttachManager.  Without this the stale
+    // routingBySessionId cache wins and getSessionDeliveryTarget() returns a
+    // target that may point to the wrong forum topic.
+    const attachedScope = attachManager.getScopeForSession(sessionId);
+    if (!attachedScope) {
+      return routingBySessionId.get(sessionId) ?? null;
+    }
+    const attachedTarget = attachManager.getTargetForSession(sessionId);
+    if (!attachedTarget) {
+      return routingBySessionId.get(sessionId) ?? null;
+    }
+
+    const existingRouting = routingBySessionId.get(sessionId);
+    const bot = existingRouting?.bot ?? activeBotInstance;
+    if (!bot) {
+      return null;
+    }
+
+    const routing: SessionRoutingContext = {
+      bot,
+      target: attachedTarget,
+      deliveryTarget: attachedTarget,
+      scope: attachedScope,
+      targetSource: "attached",
+      sourceMessageId: existingRouting?.sourceMessageId,
+    };
+
+    logger.info(
+      `[Routing] syncSessionRoutingContext (no-prompt): session=${sessionId.slice(0, 8)} ` +
+      `target.chatId=${routing.target.chatId} target.threadId=${routing.target.messageThreadId ?? "none"} ` +
+      `deliveryTarget.threadId=${routing.deliveryTarget?.messageThreadId ?? "none"} ` +
+      `source=${routing.targetSource} (synced from attach)`,
+    );
+
+    setSessionRoutingContext(sessionId, routing);
+    return routing;
   }
 
   const attachedScope = attachManager.getScopeForSession(sessionId);
@@ -3744,6 +3783,35 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         childSessionTitle.set(info.id, info.title);
       }
 
+      // Rename forum topic for ROOT sessions (not just child/subagent sessions)
+      if (
+        typeof info?.id === "string" &&
+        typeof info.title === "string" &&
+        (!info.parentID || info.parentID === info.id)
+      ) {
+        const deliveryTarget = getSessionDeliveryTarget(info.id);
+        if (deliveryTarget?.kind === "topic") {
+          const truncated = info.title.length > 128 ? info.title.slice(0, 125) + "..." : info.title;
+          safeBackgroundTask({
+            taskName: `root-topic-rename.${info.id}`,
+            task: async () => {
+              const botApi = getSessionRoutingApi(info.id!);
+              if (!botApi) return;
+              try {
+                await botApi.editForumTopic(deliveryTarget.chatId, deliveryTarget.messageThreadId, {
+                  name: truncated,
+                });
+              } catch (error) {
+                logger.warn("[Bot] Failed to sync root session topic name", {
+                  sessionId: info.id,
+                  error,
+                });
+              }
+            },
+          });
+        }
+      }
+
       if (
         typeof info?.id === "string" &&
         typeof info.parentID === "string" &&
@@ -3995,6 +4063,15 @@ export function createBot(): Bot<Context> {
       if (scope && scope.messageThreadId && isTerminalTopic(scope.messageThreadId)) {
         keyboardManager.setSessionMode(SessionType.TERMINAL);
       }
+      if (scope) {
+        const activeSession = getCurrentSession();
+        writeCurrentContext({
+          chatId: scope.chatId,
+          messageThreadId: scope.messageThreadId ?? null,
+          sessionId: activeSession?.id ?? "unknown",
+          timestamp: Date.now(),
+        });
+      }
       return next();
     });
   });
@@ -4093,6 +4170,11 @@ export function createBot(): Bot<Context> {
       });
 
       if (error || !data) {
+        if (isNotFoundError(error)) {
+          logger.error(`[MjFork] Session not found on server: ${sessionId}`);
+          await ctx.answerCallbackQuery({ text: t("fork.session_not_found") });
+          return;
+        }
         logger.error("[MjFork] Fork failed:", error);
         await ctx.answerCallbackQuery({ text: t("fork.error") });
         return;
@@ -4114,10 +4196,17 @@ export function createBot(): Bot<Context> {
           },
           reason: "fork",
         });
+
+        setCurrentSession({ ...session });
       }
 
       await ctx.answerCallbackQuery();
     } catch (err) {
+      if (isNotFoundError(err)) {
+        logger.error(`[MjFork] Session not found on server (thrown): ${sessionId}`);
+        await ctx.answerCallbackQuery({ text: t("fork.session_not_found") });
+        return;
+      }
       logger.error("[MjFork] Error:", err);
       await ctx.answerCallbackQuery({ text: t("fork.error") });
     }
@@ -4194,7 +4283,7 @@ export function createBot(): Bot<Context> {
       const handledSkills = await handleSkillsCallback(ctx, { bot, ensureEventSubscription });
       const handledMcps = await handleMcpsCallback(ctx);
       const handledServerCb = await handleServerCallback(ctx);
-      const handledOnboarding = await handleOnboardingCallback(ctx);
+      const handledOnboarding = await handleWebOnboardingCallback(ctx) || await handleOnboardingCallback(ctx);
       const callbackData = ctx.callbackQuery?.data ?? "";
 
       let handledMjFork = false;
@@ -4452,19 +4541,28 @@ export function createBot(): Bot<Context> {
     },
     sendDeferredFollowUp: async ({ resolvedDeferredItems }) => {
       const { text, firstContext } = resolvedDeferredItems;
-      if (firstContext) {
-        const promptDeps = { bot, ensureEventSubscription, deferredBatch };
-        await processUserPrompt(firstContext, text, promptDeps, [], { isFollowUpBatch: true });
-        return;
-      }
+      try {
+        if (firstContext) {
+          const promptDeps = { bot, ensureEventSubscription, deferredBatch };
+          await processUserPrompt(firstContext, text, promptDeps, [], { isFollowUpBatch: true });
+          return;
+        }
 
-      const session = getCurrentSession();
-      if (!session) return;
-      await opencodeClient.session.promptAsync({
-        sessionID: session.id,
-        directory: session.directory,
-        parts: [{ type: "text", text }],
-      });
+        const session = getCurrentSession();
+        if (!session) return;
+        await opencodeClient.session.promptAsync({
+          sessionID: session.id,
+          directory: session.directory,
+          parts: [{ type: "text", text }],
+        });
+      } catch (err) {
+        const msg = (err as Error)?.message ?? String(err);
+        if (msg.includes("cooling down") || msg.includes("VM creation recently failed")) {
+          logger.debug("[Bot] VM cooldown active, skipping batch retry");
+          return;
+        }
+        throw err;
+      }
     },
   });
 
@@ -4693,7 +4791,7 @@ export function createBot(): Bot<Context> {
             doEdit();
           }, EDIT_DEBOUNCE_MS - (now - lastEdit));
         }
-      });
+      }, ctx.from?.id);
 
       // Final flush
       if (pendingTimer) {

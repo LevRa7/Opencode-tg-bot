@@ -96,6 +96,7 @@ runcmd:
   - chown -R opencode:opencode /workspace /state
   - rm -f /etc/machine-id /var/lib/dbus/machine-id && systemd-machine-id-setup
   - dhclient -r && dhclient || true
+  - apt-get update -y && apt-get install -y nodejs npm
   - npm install -g --force opencode-ai@1.15.13 2>/dev/null || echo '\''v1 opencode install failed'\''
   - npm install -g node-pty 2>/dev/null || echo '\''node-pty already installed'\''
   - rm -f /home/opencode/.local/share/opencode/opencode.db /home/opencode/.local/share/opencode/opencode.db-wal /home/opencode/.local/share/opencode/opencode.db-shm

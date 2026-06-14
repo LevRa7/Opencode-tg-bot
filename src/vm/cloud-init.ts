@@ -103,7 +103,7 @@ runcmd:
   - node -e 'require("node-pty")' 2>/dev/null || npm install -g node-pty 2>/dev/null || echo 'node-pty install failed'
   - rm -f /home/opencode/.local/share/opencode/opencode.db /home/opencode/.local/share/opencode/opencode.db-wal /home/opencode/.local/share/opencode/opencode.db-shm
   # Copy pre-baked skills from golden image (handle both flat and nested /opt/opencode-skills)
-  - for src in /opt/opencode-skills /opt/opencode-skills/skills; do test -d "$src" && [ "$(ls -A "$src" 2>/dev/null)" ] && cp -r "$src"/* /home/opencode/.config/opencode/skills/ 2>/dev/null && break; done; chown -R opencode:opencode /home/opencode/.config/opencode 2>/dev/null || true
+  - mkdir -p /home/opencode/.config/opencode/skills && for src in /opt/opencode-skills.flat /opt/opencode-skills /opt/opencode-skills/skills; do test -d "$src" && [ "$(ls -A "$src" 2>/dev/null)" ] && cp -r "$src"/* /home/opencode/.config/opencode/skills/ 2>/dev/null && break; done; chown -R opencode:opencode /home/opencode/.config/opencode 2>/dev/null || true
   # Copy terminal-agent if not already present
   - test -f /opt/terminal-agent.js && chmod +x /opt/terminal-agent.js || true
   - systemctl daemon-reload

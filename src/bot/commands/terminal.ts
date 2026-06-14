@@ -174,7 +174,8 @@ export async function startPtySession(
 
   let outputBuf = ""; // cleaned for text display
   let rawOutputBuf = ""; // raw ANSI for xterm.js screenshots
-  let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
+  let textUpdateTimer: ReturnType<typeof setTimeout> | null = null;
+  const TEXT_DEBOUNCE_MS = 3000; // 3s debounce for text updates
 
   const doScreenshot = async () => {
     if (!rawOutputBuf) return;
@@ -252,18 +253,19 @@ export async function startPtySession(
     rawOutputBuf += data;
     outputBuf += (cleanData || data);
     terminalOutputs.set(messageThreadId, rawOutputBuf);
-    // Update text display (always show latest portion)
-    const safe = outputBuf.slice(-3800);
-    const textMsg = terminalTextMsgs.get(messageThreadId);
-    if (textMsg) {
-      textMsg.api.editMessageText(textMsg.chatId, textMsg.msgId, `<pre>${safe}</pre>`, { parse_mode: "HTML" }).catch(() => {});
-    } else {
-      api.sendMessage(forumChatId, `<pre>${safe}</pre>`, { message_thread_id: messageThreadId, parse_mode: "HTML" })
-        .then((msg) => { terminalTextMsgs.set(messageThreadId, { msgId: msg.message_id, api, chatId: forumChatId }); })
-        .catch(() => {});
-    }
-    if (screenshotTimer) clearTimeout(screenshotTimer);
-    screenshotTimer = setTimeout(doScreenshot, 500);
+    // Debounce text updates — update every 3s max
+    if (textUpdateTimer) clearTimeout(textUpdateTimer);
+    textUpdateTimer = setTimeout(() => {
+      const safe = outputBuf.slice(-3800);
+      const textMsg = terminalTextMsgs.get(messageThreadId);
+      if (textMsg) {
+        textMsg.api.editMessageText(textMsg.chatId, textMsg.msgId, `<pre>${safe}</pre>`, { parse_mode: "HTML" }).catch(() => {});
+      } else {
+        api.sendMessage(forumChatId, `<pre>${safe}</pre>`, { message_thread_id: messageThreadId, parse_mode: "HTML" })
+          .then((msg) => { terminalTextMsgs.set(messageThreadId, { msgId: msg.message_id, api, chatId: forumChatId }); })
+          .catch(() => {});
+      }
+    }, TEXT_DEBOUNCE_MS);
   });
 
   ptySession.onExit((code, signal) => {

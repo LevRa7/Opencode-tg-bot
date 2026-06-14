@@ -58,7 +58,7 @@ import { streamCommand } from "./commands/stream.js";
 import { ttsCommand } from "./commands/tts.js";
 import { terminalCommand } from "./commands/terminal.js";
 import { openTerminalTopic } from "./commands/terminal.js";
-import { isTerminalTopic, executeTerminalCommand, killTerminalProcess, loadTerminalTopics } from "./commands/terminal.js";
+import { isTerminalTopic, executeTerminalCommand, killTerminalProcess, loadTerminalTopics, takeTerminalScreenshot } from "./commands/terminal.js";
 import { handleTerminalTextInput } from "./commands/terminal-text-handler.js";
 import { worktreeCommand, handleWorktreeCallback } from "./commands/worktree.js";
 import { openCommand, handleOpenCallback, clearOpenPathIndex } from "./commands/open.js";
@@ -4119,6 +4119,14 @@ export function createBot(): Bot<Context> {
   bot.command("restart", restartCommand);
   bot.command("tts", ttsCommand);
   bot.command("terminal", terminalCommand);
+  bot.command("screen", async (ctx) => {
+    const mtId = ctx.message?.message_thread_id;
+    if (!isTerminalTopic(mtId)) {
+      await ctx.reply("This command only works in a terminal topic.");
+      return;
+    }
+    await takeTerminalScreenshot(mtId!, ctx.api, ctx.chat.id);
+  });
   bot.command("opencode_start", opencodeStartCommand);
   bot.command("opencode_stop", opencodeStopCommand);
   bot.command("projects", projectsCommand);

@@ -1,4 +1,4 @@
-import { CommandContext, Context, InlineKeyboard } from "grammy";
+import { CommandContext, Context, InlineKeyboard, InputFile } from "grammy";
 import type { Api } from "grammy";
 import { spawn, execSync } from "child_process";
 import { promises as fs } from "fs";
@@ -188,6 +188,7 @@ export async function openTerminalTopic(
       let outputMsgId: number | null = null;
       ptySession.onData((data: string) => {
         outputBuf += data;
+        terminalOutputs.set(messageThreadId, outputBuf);
         const safe = outputBuf.slice(-3800);
         if (outputMsgId) {
           api.editMessageText(forumChatId, outputMsgId, `<pre>${safe}</pre>`, { parse_mode: "HTML" }).catch(() => {});
@@ -382,10 +383,42 @@ export async function terminalCommand(ctx: CommandContext<Context>) {
   }
 }
 
-// ── PTY Bridge manager ──
+export function getTerminalOutput(messageThreadId: number): string | undefined {
+  return terminalOutputs.get(messageThreadId);
+}
+
+export async function takeTerminalScreenshot(
+  messageThreadId: number,
+  api: Api,
+  chatId: number,
+): Promise<void> {
+  const output = terminalOutputs.get(messageThreadId);
+  if (!output) {
+    await api.sendMessage(chatId, "No terminal output yet", { message_thread_id: messageThreadId });
+    return;
+  }
+
+  const { chromium } = await import("playwright");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setViewportSize({ width: 800, height: 600 });
+    const safe = output.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    await page.setContent(
+      `<html><body style="margin:0;background:#1a1a2e;color:#e0e0e0;font:14px monospace;padding:12px;white-space:pre-wrap;word-break:break-all">${safe}</body></html>`
+    );
+    const buf = await page.screenshot({ type: "png", fullPage: true });
+    await api.sendPhoto(chatId, new InputFile(buf, "terminal.png"), {
+      message_thread_id: messageThreadId,
+    });
+  } finally {
+    await browser.close();
+  }
+}
 
 const vmBridges = new Map<number, VMPtyBridge>();
 const ptySessions = new Map<number, PtySessionHandle>();
+const terminalOutputs = new Map<number, string>(); // messageThreadId → accumulated output
 
 export async function ensureVMPtyBridge(userId: number, bridgeIp: string): Promise<VMPtyBridge> {
   const existing = vmBridges.get(userId);

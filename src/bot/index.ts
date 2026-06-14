@@ -58,7 +58,7 @@ import { streamCommand } from "./commands/stream.js";
 import { ttsCommand } from "./commands/tts.js";
 import { terminalCommand } from "./commands/terminal.js";
 import { openTerminalTopic } from "./commands/terminal.js";
-import { isTerminalTopic, executeTerminalCommand, killTerminalProcess, loadTerminalTopics, takeTerminalScreenshot, handleTerminalScrollButton } from "./commands/terminal.js";
+import { isTerminalTopic, executeTerminalCommand, killTerminalProcess, loadTerminalTopics, takeTerminalScreenshot, handleTerminalScrollButton, getPtySession } from "./commands/terminal.js";
 import { handleTerminalTextInput } from "./commands/terminal-text-handler.js";
 import { worktreeCommand, handleWorktreeCallback } from "./commands/worktree.js";
 import { openCommand, handleOpenCallback, clearOpenPathIndex } from "./commands/open.js";
@@ -4276,9 +4276,23 @@ export function createBot(): Bot<Context> {
       const data = ctx.callbackQuery?.data ?? "";
       if (data.startsWith("term:")) {
         const parts = data.split(":");
-        const action = parts[1] as "up" | "down" | "refresh";
-        const mtId = parseInt(parts[2]);
-        await handleTerminalScrollButton(action, mtId, ctx.api, ctx.chat!.id);
+        if (parts[1] === "key") {
+          // Arrow keys, Enter, Tab, Esc — send to PTY
+          const mtId = parseInt(parts[3]);
+          const key = parts[2];
+          const session = getPtySession(mtId);
+          if (session) {
+            const keyMap: Record<string, string> = {
+              up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",
+              enter: "\r", tab: "\t", esc: "\x1b",
+            };
+            session.write(keyMap[key] ?? "\r");
+          }
+        } else {
+          const action = parts[1] as "up" | "down" | "refresh";
+          const mtId = parseInt(parts[2]);
+          await handleTerminalScrollButton(action, mtId, ctx.api, ctx.chat!.id);
+        }
         await ctx.answerCallbackQuery();
         return;
       }

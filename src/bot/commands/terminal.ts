@@ -159,7 +159,7 @@ export async function startPtySession(
 ): Promise<void> {
   if (ptySessions.has(messageThreadId)) return;
 
-  const cmd = await getTerminalCmd(userId, sessionId, 80, 24, worktree);
+  const cmd = await getTerminalCmd(userId, sessionId, 80, 72, worktree);
   if (!cmd) return;
 
   const bridgeKey = userId; // reuse bridge per user
@@ -620,9 +620,16 @@ export async function takeTerminalScreenshot(
       api.deleteMessage(chatId, oldKeyboardMsg).catch(() => {});
     }
     const navKeyboard = new InlineKeyboard()
-      .text("⬆ -20", `term:up:${messageThreadId}`)
+      .text("⬆", `term:key:${messageThreadId}:up`)
+      .text("⬇", `term:key:${messageThreadId}:down`)
+      .text("⬅", `term:key:${messageThreadId}:left`)
+      .text("➡", `term:key:${messageThreadId}:right`).row()
+      .text("⏎ Enter", `term:key:${messageThreadId}:enter`)
+      .text("↹ Tab", `term:key:${messageThreadId}:tab`)
+      .text("⏏ Esc", `term:key:${messageThreadId}:esc`).row()
+      .text("⬆-20", `term:up:${messageThreadId}`)
       .text("🔄", `term:refresh:${messageThreadId}`)
-      .text("⬇ +20", `term:down:${messageThreadId}`);
+      .text("⬇+20", `term:down:${messageThreadId}`);
     const sent = await api.sendPhoto(chatId, new InputFile(buf, "terminal.png"), {
       message_thread_id: messageThreadId,
       reply_markup: navKeyboard,

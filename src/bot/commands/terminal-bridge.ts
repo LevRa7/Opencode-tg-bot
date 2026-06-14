@@ -1,35 +1,38 @@
-// STUB — RED phase. Tests will fail because these are empty.
-// Replace with real implementation in GREEN phase.
+// VMPtyBridge — SSH pipe bridge to terminal agent on VM
+//
+// STUB — RED phase. Tests will fail.
+
+import type { ChildProcess } from "child_process";
 
 export interface PtySessionHandle {
   id: string;
   write(data: string): void;
   resize(cols: number, rows: number): void;
-  kill(): void;
-}
-
-export interface BridgeCallbacks {
-  onData: (sessionId: string, data: string) => void;
-  onExit: (sessionId: string, code: number | null) => void;
+  kill(signal?: string): void;
+  onData(callback: (data: string) => void): void;
+  onExit(callback: (code: number | null, signal?: string) => void): void;
 }
 
 export class VMPtyBridge {
-  constructor(_bridgeIp: string, _callbacks: BridgeCallbacks) {
+  private bridgeIp: string;
+
+  constructor(bridgeIp: string) {
     throw new Error("Not implemented");
   }
-  start(): Promise<void> {
+
+  spawnSession(sessionId: string, opts?: { cols?: number; rows?: number; cwd?: string }): PtySessionHandle {
     throw new Error("Not implemented");
   }
-  stop(): Promise<void> {
+
+  getSession(sessionId: string): PtySessionHandle | undefined {
     throw new Error("Not implemented");
   }
-  spawnSession(_cmd: string, _cwd?: string, _cols?: number, _rows?: number): Promise<PtySessionHandle> {
+
+  killAll(): void {
     throw new Error("Not implemented");
   }
-  getSession(_id: string): PtySessionHandle | undefined {
-    throw new Error("Not implemented");
-  }
-  requestScreenshot(_sessionId: string): Promise<string> {
+
+  get sessionCount(): number {
     throw new Error("Not implemented");
   }
 }

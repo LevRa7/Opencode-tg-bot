@@ -206,19 +206,22 @@ export async function startPtySession(
         `);
         await page.waitForTimeout(500);
         const buf = await page.screenshot({ type: "png" });
+        // Delete old keyboard message if any
+        const oldKeyboardMsg = terminalLastKeyboardMsgs.get(messageThreadId);
+        if (oldKeyboardMsg) {
+          api.deleteMessage(forumChatId, oldKeyboardMsg).catch(() => {});
+        }
+        // Send screenshot with inline keyboard
+        const navKeyboard = new InlineKeyboard()
+          .text("⬆ -20", `term:up:${messageThreadId}`)
+          .text("🔄", `term:refresh:${messageThreadId}`)
+          .text("⬇ +20", `term:down:${messageThreadId}`);
         const sent = await api.sendPhoto(forumChatId, new InputFile(buf, "terminal.png"), {
           message_thread_id: messageThreadId,
-        });
-        // Send navigation buttons as a reply to the screenshot
-        const navKeyboard = new InlineKeyboard()
-          .text("⬆ -20", `term_up_${messageThreadId}`)
-          .text("🔄", `term_refresh_${messageThreadId}`)
-          .text("⬇ +20", `term_down_${messageThreadId}`);
-        await api.sendMessage(forumChatId, `Line ${scrollOffset}+`, {
-          message_thread_id: messageThreadId,
           reply_markup: navKeyboard,
-          reply_to_message_id: sent.message_id,
+          caption: `Line ${scrollOffset}+`,
         });
+        terminalLastKeyboardMsgs.set(messageThreadId, sent.message_id);
       } finally {
         await browser.close();
       }
@@ -523,11 +526,11 @@ export async function handleTerminalScrollButton(
 ): Promise<void> {
   const current = terminalScrollOffsets.get(messageThreadId) ?? 0;
   if (action === "up") {
-    setTerminalScrollOffset(messageThreadId, current - 20);
+    setTerminalScrollOffset(messageThreadId, Math.max(0, current - 20));
   } else if (action === "down") {
     setTerminalScrollOffset(messageThreadId, current + 20);
   }
-  // Refresh: just retake screenshot at current scroll
+  // Refresh: just retake screenshot at new scroll position
   await takeTerminalScreenshot(messageThreadId, api, chatId);
 }
 
@@ -569,18 +572,20 @@ export async function takeTerminalScreenshot(
     `);
     await page.waitForTimeout(500);
     const buf = await page.screenshot({ type: "png" });
+    const oldKeyboardMsg = terminalLastKeyboardMsgs.get(messageThreadId);
+    if (oldKeyboardMsg) {
+      api.deleteMessage(chatId, oldKeyboardMsg).catch(() => {});
+    }
+    const navKeyboard = new InlineKeyboard()
+      .text("⬆ -20", `term:up:${messageThreadId}`)
+      .text("🔄", `term:refresh:${messageThreadId}`)
+      .text("⬇ +20", `term:down:${messageThreadId}`);
     const sent = await api.sendPhoto(chatId, new InputFile(buf, "terminal.png"), {
       message_thread_id: messageThreadId,
-    });
-    const navKeyboard = new InlineKeyboard()
-      .text("⬆ -20", `term_up_${messageThreadId}`)
-      .text("🔄", `term_refresh_${messageThreadId}`)
-      .text("⬇ +20", `term_down_${messageThreadId}`);
-    await api.sendMessage(chatId, `Line ${scrollOffset}+`, {
-      message_thread_id: messageThreadId,
       reply_markup: navKeyboard,
-      reply_to_message_id: sent.message_id,
+      caption: `Line ${scrollOffset}+`,
     });
+    terminalLastKeyboardMsgs.set(messageThreadId, sent.message_id);
   } finally {
     await browser.close();
   }
@@ -589,7 +594,8 @@ export async function takeTerminalScreenshot(
 const vmBridges = new Map<number, VMPtyBridge>();
 const ptySessions = new Map<number, PtySessionHandle>();
 const terminalOutputs = new Map<number, string>(); // messageThreadId → accumulated raw output
-const terminalScrollOffsets = new Map<number, number>(); // messageThreadId → scroll line offset
+const terminalScrollOffsets = new Map<number, number>();
+const terminalLastKeyboardMsgs = new Map<number, number>(); // track keyboard msg for replacement // messageThreadId → scroll line offset
 
 export async function ensureVMPtyBridge(userId: number, bridgeIp: string): Promise<VMPtyBridge> {
   const existing = vmBridges.get(userId);

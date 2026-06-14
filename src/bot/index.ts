@@ -4272,16 +4272,13 @@ export function createBot(): Bot<Context> {
         clearOpenPathIndex();
         clearLsPathIndex();
       }
-      // Terminal scroll buttons
+      // Terminal scroll buttons (data format: "term:up:123" or "term:down:123" or "term:refresh:123")
       const data = ctx.callbackQuery?.data ?? "";
-      if (data.startsWith("term_up_") || data.startsWith("term_down_") || data.startsWith("term_refresh_")) {
-        const [action, mtIdStr] = data.replace("term_", "").split("_");
-        const mtId = parseInt(mtIdStr);
-        if (action === "refresh") {
-          await handleTerminalScrollButton("refresh", mtId, ctx.api, ctx.chat!.id);
-        } else {
-          await handleTerminalScrollButton(action as "up" | "down", mtId, ctx.api, ctx.chat!.id);
-        }
+      if (data.startsWith("term:")) {
+        const parts = data.split(":");
+        const action = parts[1] as "up" | "down" | "refresh";
+        const mtId = parseInt(parts[2]);
+        await handleTerminalScrollButton(action, mtId, ctx.api, ctx.chat!.id);
         await ctx.answerCallbackQuery();
         return;
       }

@@ -175,6 +175,18 @@ export async function openTerminalTopic(
   });
 
   const isVm = !!getVmRuntimeInfo(userId);
+  // Start persistent PTY session for VM users
+  const vmInfo = getVmRuntimeInfo(userId);
+  if (vmInfo?.bridgeIp) {
+    try {
+      const bridge = await ensureVMPtyBridge(userId, vmInfo.bridgeIp);
+      const ptySession = bridge.spawnSession(session.id, { cwd: currentProject.worktree });
+      setPtySession(messageThreadId, ptySession);
+      logger.info(`[Terminal] PTY session spawned for topic ${messageThreadId}`);
+    } catch (err) {
+      logger.warn("[Terminal] Failed to spawn PTY session:", err);
+    }
+  }
   const sysInfo = isVm ? (getVmSystemInfo(userId) ?? getSystemInfo()) : getSystemInfo();
   const terminalKeyboard = createMainKeyboard(
     getStoredAgent(),

@@ -2,8 +2,19 @@
 // Separated from terminal.ts to enable unit testing of intra-module dependencies.
 
 import type { PtySessionHandle } from "./terminal-bridge.js";
-import { getPtySession } from "./terminal.js";
-import { executeTerminalCommand } from "./terminal.js";
+import { getPtySession, executeTerminalCommand, takeTerminalScreenshot } from "./terminal.js";
+
+// Debounced screenshot timers per topic
+const screenshotTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+function scheduleScreenshot(messageThreadId: number, api: any, chatId: number) {
+  const existing = screenshotTimers.get(messageThreadId);
+  if (existing) clearTimeout(existing);
+  screenshotTimers.set(messageThreadId, setTimeout(() => {
+    screenshotTimers.delete(messageThreadId);
+    takeTerminalScreenshot(messageThreadId, api, chatId).catch(() => {});
+  }, 2000)); // 2s after last command
+}
 
 export async function handleTerminalTextInput(
   text: string,
@@ -19,32 +30,35 @@ export async function handleTerminalTextInput(
   const cleanText = text.length > 128 ? text.slice(0, 125) + "..." : text;
 
   if (session) {
-    // Write to persistent PTY
+    // Write to persistent PTY — output is streamed via onData registered in openTerminalTopic
     try {
       if (text.startsWith("^")) {
-        const ctrl = text.slice(1).toUpperCase();
-        if (ctrl === "C") { session.write("\x03"); }
-        else if (ctrl === "D") { session.write("\x04"); }
-        else { session.write(text + "\n"); }
+        const ctrl = text.slice(1);
+        if (ctrl.length === 1) {
+          const code = ctrl.toUpperCase().charCodeAt(0);
+          if (code >= 65 && code <= 90) {
+            // ^A-^Z → Ctrl key (ASCII 1-26)
+            session.write(String.fromCharCode(code - 64));
+          } else if (ctrl === "[") {
+            session.write("\x1b"); // ESC
+          } else if (ctrl === "@") {
+            session.write("\x00"); // NUL
+          } else {
+            session.write(text + "\n");
+          }
+        } else {
+          session.write(text + "\n");
+        }
       } else {
         session.write(text + "\n");
       }
     } catch { /* PTY write may fail */ }
 
-    // Rename topic
+    // Schedule debounced screenshot after command
+    scheduleScreenshot(messageThreadId, ctx.api, ctx.chat.id);
+
     try {
       await ctx.api.editForumTopic(ctx.chat.id, messageThreadId, { name: cleanText });
-    } catch { /* ignore */ }
-
-    // Acknowledge
-    const statusMsg = await ctx.reply(`<pre>$ ${cleanText}</pre>`, { parse_mode: "HTML" });
-    try {
-      await ctx.api.editMessageText(
-        ctx.chat.id,
-        statusMsg.message_id,
-        `<pre>$ ${cleanText}\n[Sent to terminal]</pre>`,
-        { parse_mode: "HTML" },
-      );
     } catch { /* ignore */ }
 
     return true;

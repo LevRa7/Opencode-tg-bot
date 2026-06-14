@@ -14,6 +14,7 @@ import { getStoredModel } from "../../model/manager.js";
 import { createMainKeyboard } from "../utils/keyboard.js";
 import { getSystemInfo } from "../../utils/system-info.js";
 import type { SystemInfo } from "../../utils/system-info.js";
+import { VMPtyBridge, type PtySessionHandle } from "./terminal-bridge.js";
 
 function getVmSystemInfo(userId: number): SystemInfo | null {
   try {
@@ -340,5 +341,44 @@ export async function terminalCommand(ctx: CommandContext<Context>) {
   } catch (err) {
     logger.error("[Bot] Error in /terminal command:", err);
     await ctx.reply(t("error.generic"));
+  }
+}
+
+// ── PTY Bridge manager ──
+
+const vmBridges = new Map<number, VMPtyBridge>();
+const ptySessions = new Map<number, PtySessionHandle>();
+
+export async function ensureVMPtyBridge(userId: number, bridgeIp: string): Promise<VMPtyBridge> {
+  const existing = vmBridges.get(userId);
+  if (existing) return existing;
+
+  const bridge = new VMPtyBridge(bridgeIp);
+  vmBridges.set(userId, bridge);
+  return bridge;
+}
+
+export function getPtySession(messageThreadId: number): PtySessionHandle | undefined {
+  return ptySessions.get(messageThreadId);
+}
+
+export function setPtySession(messageThreadId: number, session: PtySessionHandle): void {
+  ptySessions.set(messageThreadId, session);
+}
+
+export async function killPtySession(messageThreadId: number): Promise<void> {
+  const session = ptySessions.get(messageThreadId);
+  if (session) {
+    session.kill();
+    ptySessions.delete(messageThreadId);
+  }
+}
+
+export async function disconnectVMBridge(userId: number): Promise<void> {
+  const bridge = vmBridges.get(userId);
+  if (bridge) {
+    try { bridge.killAll(); } catch { /* ignore errors from mock/stale bridges */ }
+    vmBridges.delete(userId);
+    ptySessions.clear();
   }
 }

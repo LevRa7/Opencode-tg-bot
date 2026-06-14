@@ -1,11 +1,10 @@
 /**
  * Tests for handleTerminalTextInput — terminal text handler entry point.
  *
- * SUT: handleTerminalTextInput (to be added to src/bot/commands/terminal.ts)
+ * SUT: handleTerminalTextInput (in src/bot/commands/terminal-text-handler.ts)
  *
- * RED PHASE: These tests WILL fail because handleTerminalTextInput,
- * getPtySession, and setPtySession do NOT exist yet in terminal.ts.
- * This is the expected TDD RED state.
+ * RED PHASE: These tests WILL fail because handleTerminalTextInput
+ * does NOT exist yet. This is the expected TDD RED state.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -41,25 +40,21 @@ const mocked = vi.hoisted(() => ({
 }));
 
 // ---------------------------------------------------------------------------
-// module mocks
+// module mocks — mock terminal.ts exports used by terminal-text-handler.ts
 // ---------------------------------------------------------------------------
 
-vi.mock("../../src/bot/commands/terminal.js", async (importOriginal) => {
-  const actual = await importOriginal<Record<string, unknown>>();
-  return {
-    ...actual,
-    getPtySession: mocked.getPtySessionMock,
-    setPtySession: mocked.setPtySessionMock,
-    executeTerminalCommand: mocked.executeTerminalCommandMock,
-    isTerminalTopic: mocked.isTerminalTopicMock,
-  };
-});
+vi.mock("../../../src/bot/commands/terminal.js", () => ({
+  getPtySession: mocked.getPtySessionMock,
+  setPtySession: mocked.setPtySessionMock,
+  executeTerminalCommand: mocked.executeTerminalCommandMock,
+  isTerminalTopic: mocked.isTerminalTopicMock,
+}));
 
 // ---------------------------------------------------------------------------
 // SUT import — will be undefined until function is added to terminal.ts (RED)
 // ---------------------------------------------------------------------------
 
-import { handleTerminalTextInput as _raw } from "../../src/bot/commands/terminal.js";
+import { handleTerminalTextInput as _raw } from "../../src/bot/commands/terminal-text-handler.js";
 
 const handleTerminalTextInput = _raw as unknown as (
   text: string,

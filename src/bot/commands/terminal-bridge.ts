@@ -1,8 +1,9 @@
 // VMPtyBridge — SSH pipe bridge to terminal agent on VM
-//
-// STUB — RED phase. Tests will fail.
+// Spawns: ssh opencode@<bridgeIp> node /opt/terminal-agent.js <sessionId> <cols> <rows> [cwd]
+// Returns PtySessionHandle with write/resize/kill/onData/onExit
 
-import type { ChildProcess } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
+import { logger } from "../../utils/logger.js";
 
 export interface PtySessionHandle {
   id: string;
@@ -15,24 +16,101 @@ export interface PtySessionHandle {
 
 export class VMPtyBridge {
   private bridgeIp: string;
+  private sessions: Map<string, PtySessionHandle> = new Map();
 
   constructor(bridgeIp: string) {
-    throw new Error("Not implemented");
+    this.bridgeIp = bridgeIp;
   }
 
   spawnSession(sessionId: string, opts?: { cols?: number; rows?: number; cwd?: string }): PtySessionHandle {
-    throw new Error("Not implemented");
+    const cols = opts?.cols ?? 80;
+    const rows = opts?.rows ?? 24;
+    const cwd = opts?.cwd ?? "/workspace";
+
+    const sshArgs = [
+      "-o", "StrictHostKeyChecking=no",
+      "-o", "UserKnownHostsFile=/dev/null",
+      "-o", "ConnectTimeout=5",
+      `opencode@${this.bridgeIp}`,
+      `node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`,
+    ];
+
+    const child = spawn("ssh", sshArgs, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const dataCallbacks: Array<(data: string) => void> = [];
+    const exitCallbacks: Array<(code: number | null, signal?: string) => void> = [];
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      const data = chunk.toString();
+      for (const cb of dataCallbacks) {
+        try { cb(data); } catch { /* swallow */ }
+      }
+    });
+
+    child.stderr?.on("data", (chunk: Buffer) => {
+      const data = chunk.toString();
+      for (const cb of dataCallbacks) {
+        try { cb(data); } catch { /* swallow */ }
+      }
+    });
+
+    child.on("close", (code: number | null, signal: string | null) => {
+      for (const cb of exitCallbacks) {
+        try { cb(code, signal ?? undefined); } catch { /* swallow */ }
+      }
+      this.sessions.delete(sessionId);
+    });
+
+    child.on("error", (err: Error) => {
+      logger.error(`[VMPtyBridge] SSH error for session ${sessionId}:`, err);
+      for (const cb of exitCallbacks) {
+        try { cb(null, "error"); } catch { /* swallow */ }
+      }
+      this.sessions.delete(sessionId);
+    });
+
+    const handle: PtySessionHandle = {
+      id: sessionId,
+      write(data: string) {
+        if (child.stdin && !child.killed) {
+          child.stdin.write(data);
+        }
+      },
+      resize(newCols: number, newRows: number) {
+        if (!child.killed) {
+          child.kill("SIGWINCH");
+        }
+      },
+      kill(signal?: string) {
+        child.kill(signal ?? "SIGTERM");
+      },
+      onData(callback: (data: string) => void) {
+        dataCallbacks.push(callback);
+      },
+      onExit(callback: (code: number | null, signal?: string) => void) {
+        exitCallbacks.push(callback);
+      },
+    };
+
+    this.sessions.set(sessionId, handle);
+    logger.info(`[VMPtyBridge] Session ${sessionId} spawned on ${this.bridgeIp}`);
+    return handle;
   }
 
   getSession(sessionId: string): PtySessionHandle | undefined {
-    throw new Error("Not implemented");
+    return this.sessions.get(sessionId);
   }
 
   killAll(): void {
-    throw new Error("Not implemented");
+    for (const [, session] of this.sessions) {
+      try { session.kill(); } catch { /* swallow */ }
+    }
+    this.sessions.clear();
   }
 
   get sessionCount(): number {
-    throw new Error("Not implemented");
+    return this.sessions.size;
   }
 }

@@ -44,7 +44,7 @@ async function sendAccessRequest(ctx: Context, userId: number): Promise<void> {
   const { upsertPendingApprovalRequest } = await import("../middleware/auth-internal.js");
   const sent = await upsertPendingApprovalRequest(ctx);
   if (sent) {
-    await ctx.reply("Запрос доступа отправлен администратору. После подтверждения можно будет пользоваться ботом.");
+    await ctx.reply(t("auth.requester.sent"));
   }
 }
 
@@ -55,7 +55,7 @@ export async function showLanguageSelection(ctx: Context): Promise<void> {
     callback_data: `onboarding:lang:${locale.code}`,
   }]);
 
-  await ctx.reply("Выберите язык / Choose language:", {
+  await ctx.reply(t("settings.language.title"), {
     reply_markup: { inline_keyboard: keyboard },
   });
 }

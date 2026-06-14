@@ -110,6 +110,40 @@ export function killTerminalProcess(messageThreadId: number): boolean {
   return false;
 }
 
+async function getTerminalCmd(userId: number, sessionId: string, cols: number, rows: number, cwd: string): Promise<string[] | null> {
+  const deployTarget = getUserDeployTarget(userId);
+  const vmInfo = getVmRuntimeInfo(userId);
+
+  if (deployTarget === "vm" && vmInfo?.bridgeIp) {
+    return ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",
+      `opencode@${vmInfo.bridgeIp}`, `node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`];
+  }
+
+  if (deployTarget === "docker") {
+    const { getActiveTenantContainerId } = await import("../../process/manager.js");
+    const containerId = getActiveTenantContainerId(userId);
+    if (containerId) {
+      return ["docker", "exec", "-i", containerId, "node", "/opt/terminal-agent.js", sessionId, String(cols), String(rows), cwd];
+    }
+    return null;
+  }
+
+  if (deployTarget === "ssh") {
+    try {
+      const { sshManager } = await import("../../utils/ssh-manager.js");
+      const connInfo = sshManager.getConnectionInfo(userId);
+      if (connInfo) {
+        return ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",
+          `${connInfo.username}@${connInfo.host}`, `node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`];
+      }
+    } catch { /* SSH not available */ }
+    return null;
+  }
+
+  // Local: spawn directly
+  return ["node", "/opt/terminal-agent.js", sessionId, String(cols), String(rows), cwd];
+}
+
 export async function startPtySession(
   userId: number,
   sessionId: string,
@@ -118,12 +152,19 @@ export async function startPtySession(
   api: Api,
   forumChatId: number,
 ): Promise<void> {
-  const vmInfo = getVmRuntimeInfo(userId);
-  if (!vmInfo?.bridgeIp) return;
-  if (ptySessions.has(messageThreadId)) return; // already active
+  if (ptySessions.has(messageThreadId)) return;
 
-  const bridge = await ensureVMPtyBridge(userId, vmInfo.bridgeIp);
-  const ptySession = bridge.spawnSession(sessionId, { cwd: worktree });
+  const cmd = await getTerminalCmd(userId, sessionId, 80, 24, worktree);
+  if (!cmd) return;
+
+  const bridgeKey = userId; // reuse bridge per user
+  let bridge = vmBridges.get(bridgeKey);
+  if (!bridge) {
+    bridge = new VMPtyBridge("generic"); // bridgeIp not used for non-VM — cmd is what matters
+    vmBridges.set(bridgeKey, bridge);
+  }
+
+  const ptySession = bridge.spawnSessionWithCmd(sessionId, cmd);
   setPtySession(messageThreadId, ptySession);
 
   let outputBuf = "";

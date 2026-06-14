@@ -1,5 +1,5 @@
-// VMPtyBridge — SSH pipe bridge to terminal agent on VM
-// Spawns: ssh opencode@<bridgeIp> node /opt/terminal-agent.js <sessionId> <cols> <rows> [cwd]
+// PtyBridge — Pipe bridge to terminal agent via child_process
+// Supports VM (SSH), Docker (docker exec), local (direct node), and SSH-remote.
 // Returns PtySessionHandle with write/resize/kill/onData/onExit
 
 import { spawn } from "child_process";
@@ -22,6 +22,15 @@ export class VMPtyBridge {
     this.bridgeIp = bridgeIp;
   }
 
+  /**
+   * Spawn a session using a custom command (for non-VM targets).
+   * cmd[0] = executable, cmd[1...] = arguments
+   */
+  spawnSessionWithCmd(sessionId: string, cmd: string[]): PtySessionHandle {
+    const child = spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+    return this._wrapChild(sessionId, child);
+  }
+
   spawnSession(sessionId: string, opts?: { cols?: number; rows?: number; cwd?: string }): PtySessionHandle {
     const cols = opts?.cols ?? 80;
     const rows = opts?.rows ?? 24;
@@ -39,6 +48,10 @@ export class VMPtyBridge {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
+    return this._wrapChild(sessionId, child);
+  }
+
+  private _wrapChild(sessionId: string, child: ReturnType<typeof spawn>): PtySessionHandle {
     const dataCallbacks: Array<(data: string) => void> = [];
     const exitCallbacks: Array<(code: number | null, signal?: string) => void> = [];
 

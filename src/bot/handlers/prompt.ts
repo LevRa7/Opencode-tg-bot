@@ -667,20 +667,19 @@ export async function processUserPrompt(
     };
 
     setCurrentSession(currentSession);
-    const activeScope = threadContextManager.getActiveScope();
-    if (activeScope) {
+    if (scope) {
       await attachSessionForScope({
-        scope: activeScope,
+        scope,
         session: currentSession,
         reason: "new_session",
         restoreQuestion: () =>
-          showCurrentQuestion(ctx.api, activeScope.chatId, activeScope.messageThreadId),
+          showCurrentQuestion(ctx.api, scope.chatId, scope.messageThreadId),
         restorePermission: (request) =>
           showPermissionRequest(
             ctx.api,
-            activeScope.chatId,
+            scope.chatId,
             request,
-            activeScope.messageThreadId,
+            scope.messageThreadId,
           ),
       });
     }
@@ -727,7 +726,7 @@ export async function processUserPrompt(
     return false;
   }
 
-  const busyScope = threadContextManager.getActiveScope() ?? scope;
+  const busyScope = scope ?? threadContextManager.getActiveScope();
   foregroundSessionState.markBusy(currentSession.id, currentSession.directory, resolveBusyScopeForSession(currentSession.id, busyScope));
   const sessionIsBusy = await isSessionBusy(currentSession.id, currentSession.directory);
 
@@ -747,20 +746,19 @@ export async function processUserPrompt(
     return false;
   }
 
-  const activeScope = threadContextManager.getActiveScope();
-  if (activeScope) {
+  if (scope) {
     await attachSessionForScope({
-      scope: activeScope,
+      scope,
       session: currentSession,
       reason: "prompt",
       restoreQuestion: () =>
-        showCurrentQuestion(ctx.api, activeScope.chatId, activeScope.messageThreadId),
+        showCurrentQuestion(ctx.api, scope.chatId, scope.messageThreadId),
       restorePermission: (request) =>
         showPermissionRequest(
           ctx.api,
-          activeScope.chatId,
+          scope.chatId,
           request,
-          activeScope.messageThreadId,
+          scope.messageThreadId,
         ),
     });
   }

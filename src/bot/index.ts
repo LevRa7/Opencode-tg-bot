@@ -4277,9 +4277,9 @@ export function createBot(): Bot<Context> {
       if (data.startsWith("term:")) {
         const parts = data.split(":");
         if (parts[1] === "key") {
-          // Arrow keys, Enter, Tab, Esc — send to PTY
-          const mtId = parseInt(parts[3]);
-          const key = parts[2];
+          // term:key:<mtId>:<keyName>
+          const mtId = parseInt(parts[2]);
+          const key = parts[3];
           const session = getPtySession(mtId);
           if (session) {
             const keyMap: Record<string, string> = {
@@ -4289,6 +4289,7 @@ export function createBot(): Bot<Context> {
             session.write(keyMap[key] ?? "\r");
           }
         } else {
+          // term:<action>:<mtId>
           const action = parts[1] as "up" | "down" | "refresh";
           const mtId = parseInt(parts[2]);
           await handleTerminalScrollButton(action, mtId, ctx.api, ctx.chat!.id);

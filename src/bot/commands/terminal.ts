@@ -200,16 +200,19 @@ export async function startPtySession(
             term.open(document.getElementById('terminal'));
             var data = ${escaped};
             term.write(data.replace(/\\n/g, '\\r\\n'));
-            // Scroll up from bottom: offset lines above latest
-            var scrollUp = ${scrollOffset};
-            if (scrollUp > 0) {
-              term.scrollToBottom();
-              term.scrollLines(-scrollUp);
-            }
+            // Wait for write buffer to flush, then scroll
+            setTimeout(function() {
+              var scrollUp = ${scrollOffset};
+              if (scrollUp > 0) {
+                term.scrollToBottom();
+                term.scrollLines(-scrollUp);
+              }
+              document.title = 'READY';
+            }, 200);
           </script>
           </html>
         `);
-        await page.waitForTimeout(500);
+        await page.waitForFunction(() => document.title === 'READY', { timeout: 5000 });
         const buf = await page.screenshot({ type: "png" });
         // Delete old keyboard message if any
         const oldKeyboardMsg = terminalLastKeyboardMsgs.get(messageThreadId);
@@ -561,26 +564,28 @@ export async function takeTerminalScreenshot(
     const escaped = JSON.stringify(output);
     const xtermJs = await fs.readFile(require.resolve("xterm/lib/xterm.js"), "utf-8");
     const xtermCss = await fs.readFile(require.resolve("xterm/css/xterm.css"), "utf-8");
-    await page.setContent(`
-      <html><head><style>${xtermCss} body{margin:0;background:#1a1a2e}</style></head>
-      <body><div id="terminal"></div></body>
-      <script>${xtermJs}</script>
-      <script>
-        var term = new Terminal({ cols: ${TERM_COLS}, rows: ${TERM_ROWS}, scrollback: 5000,
-          theme: { background: '#1a1a2e', foreground: '#e0e0e0' } });
-        term.open(document.getElementById('terminal'));
-        var data = ${escaped};
-        term.write(data.replace(/\\n/g, '\\r\\n'));
-        // Scroll up from bottom: offset lines above latest
-        var scrollUp = ${scrollOffset};
-        if (scrollUp > 0) {
-          term.scrollToBottom();
-          term.scrollLines(-scrollUp);
-        }
-      </script>
-      </html>
-    `);
-    await page.waitForTimeout(500);
+        await page.setContent(`
+          <html><head><style>${xtermCss} body{margin:0;background:#1a1a2e}</style></head>
+          <body><div id="terminal"></div></body>
+          <script>${xtermJs}</script>
+          <script>
+            var term = new Terminal({ cols: ${TERM_COLS}, rows: ${TERM_ROWS}, scrollback: 5000,
+              theme: { background: '#1a1a2e', foreground: '#e0e0e0' } });
+            term.open(document.getElementById('terminal'));
+            var data = ${escaped};
+            term.write(data.replace(/\\n/g, '\\r\\n'));
+            setTimeout(function() {
+              var scrollUp = ${scrollOffset};
+              if (scrollUp > 0) {
+                term.scrollToBottom();
+                term.scrollLines(-scrollUp);
+              }
+              document.title = 'READY';
+            }, 200);
+          </script>
+          </html>
+        `);
+        await page.waitForFunction(() => document.title === 'READY', { timeout: 5000 });
     const buf = await page.screenshot({ type: "png" });
     const oldKeyboardMsg = terminalLastKeyboardMsgs.get(messageThreadId);
     if (oldKeyboardMsg) {

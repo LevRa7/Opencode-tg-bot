@@ -115,8 +115,9 @@ export function killTerminalProcess(messageThreadId: number): boolean {
 async function getTerminalCmd(userId: number, sessionId: string, cols: number, rows: number, cwd: string): Promise<string[] | null> {
   const deployTarget = getUserDeployTarget(userId);
   const vmInfo = getVmRuntimeInfo(userId);
-  // Use TERM=dumb to suppress ANSI color codes, --norc to skip .bashrc fancy prompts
-  const agentCmd = `NODE_PATH=/usr/local/lib/node_modules TERM=dumb node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`;
+  // Use xterm-256color so TUI apps (nano, vim, top) work properly
+  // ANSI is cleaned for text display, but preserved for xterm.js screenshots
+  const agentCmd = `NODE_PATH=/usr/local/lib/node_modules node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`;
 
   if (deployTarget === "vm" && vmInfo?.bridgeIp) {
     return ["ssh", "-q", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",

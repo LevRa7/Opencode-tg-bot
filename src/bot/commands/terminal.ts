@@ -201,13 +201,14 @@ export async function startPtySession(
             term.write(data.replace(/\\n/g, '\\r\\n'));
             // Wait for write buffer to flush, then scroll
             setTimeout(function() {
+              // Always start from bottom (latest output), then scroll up if needed
+              term.scrollToBottom();
               var scrollUp = ${scrollOffset};
               if (scrollUp > 0) {
-                term.scrollToBottom();
                 term.scrollLines(-scrollUp);
               }
               document.title = 'READY';
-            }, 200);
+            }, 300);
           </script>
           </html>
         `);
@@ -600,13 +601,14 @@ export async function takeTerminalScreenshot(
             var data = ${escaped};
             term.write(data.replace(/\\n/g, '\\r\\n'));
             setTimeout(function() {
+              // Always start from bottom (latest output), then scroll up if needed
+              term.scrollToBottom();
               var scrollUp = ${scrollOffset};
               if (scrollUp > 0) {
-                term.scrollToBottom();
                 term.scrollLines(-scrollUp);
               }
               document.title = 'READY';
-            }, 200);
+            }, 300);
           </script>
           </html>
         `);

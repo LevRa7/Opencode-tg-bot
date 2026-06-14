@@ -173,7 +173,6 @@ export async function startPtySession(
 
   let outputBuf = ""; // cleaned for text display
   let rawOutputBuf = ""; // raw ANSI for xterm.js screenshots
-  let outputMsgId: number | null = null;
   let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
 
   const doScreenshot = async () => {
@@ -241,23 +240,24 @@ export async function startPtySession(
   ptySession.onData((data: string) => {
     // Strip ANSI escape sequences for clean output
     const cleanData = data
-      .replace(/\x1b\[[\d;?]*[a-zA-Z]/g, "")   // CSI: ESC[digits;?letters
-      .replace(/\x1b\][^\x07]*\x07/g, "")        // OSC: ESC]...BEL
-      .replace(/\x1b\][^\x1b]*\x1b\\/g, "")      // OSC with ST terminator
-      .replace(/\x1b[PX^_].*?\x1b\\/g, "")        // Other escape sequences
-      .replace(/\x1b[^a-zA-Z\[\]]/g, "")          // Any remaining ESC not part of valid seq
-      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ""); // control chars except \t(09) \n(0a)
-    if (!cleanData && !data.includes("\n")) return; // skip pure control noise
-    rawOutputBuf += data; // keep raw for xterm.js screenshots (includes ANSI/TUI sequences)
-    outputBuf += (cleanData || data); // keep cleaned for text display
-    terminalOutputs.set(messageThreadId, rawOutputBuf); // store raw for /screen
-    terminalOutputs.set(messageThreadId, outputBuf);
+      .replace(/\x1b\[[\d;?]*[a-zA-Z]/g, "")
+      .replace(/\x1b\][^\x07]*\x07/g, "")
+      .replace(/\x1b\][^\x1b]*\x1b\\/g, "")
+      .replace(/\x1b[PX^_].*?\x1b\\/g, "")
+      .replace(/\x1b[^a-zA-Z\[\]]/g, "")
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+    if (!cleanData && !data.includes("\n")) return;
+    rawOutputBuf += data;
+    outputBuf += (cleanData || data);
+    terminalOutputs.set(messageThreadId, rawOutputBuf);
+    // Update text display (always show latest portion)
     const safe = outputBuf.slice(-3800);
-    if (outputMsgId) {
-      api.editMessageText(forumChatId, outputMsgId, `<pre>${safe}</pre>`, { parse_mode: "HTML" }).catch(() => {});
+    const textMsg = terminalTextMsgs.get(messageThreadId);
+    if (textMsg) {
+      textMsg.api.editMessageText(textMsg.chatId, textMsg.msgId, `<pre>${safe}</pre>`, { parse_mode: "HTML" }).catch(() => {});
     } else {
       api.sendMessage(forumChatId, `<pre>${safe}</pre>`, { message_thread_id: messageThreadId, parse_mode: "HTML" })
-        .then((msg) => { outputMsgId = msg.message_id; })
+        .then((msg) => { terminalTextMsgs.set(messageThreadId, { msgId: msg.message_id, api, chatId: forumChatId }); })
         .catch(() => {});
     }
     if (screenshotTimer) clearTimeout(screenshotTimer);
@@ -266,10 +266,10 @@ export async function startPtySession(
 
   ptySession.onExit((code, signal) => {
     const exitMsg = signal ? `\n[Killed by ${signal}]` : `\n[Exited with code ${code}]`;
-    if (outputMsgId) {
-      api.editMessageText(forumChatId, outputMsgId, `<pre>${(outputBuf + exitMsg).slice(-3800)}</pre>`, { parse_mode: "HTML" }).catch(() => {});
-    } else {
-      api.sendMessage(forumChatId, `<pre>${exitMsg}</pre>`, { message_thread_id: messageThreadId, parse_mode: "HTML" }).catch(() => {});
+    const textMsg = terminalTextMsgs.get(messageThreadId);
+    if (textMsg) {
+      outputBuf += exitMsg;
+      textMsg.api.editMessageText(textMsg.chatId, textMsg.msgId, `<pre>${(outputBuf).slice(-3800)}</pre>`, { parse_mode: "HTML" }).catch(() => {});
     }
     killPtySession(messageThreadId);
   });
@@ -532,14 +532,39 @@ export async function handleTerminalScrollButton(
   api: Api,
   chatId: number,
 ): Promise<void> {
-  const current = terminalScrollOffsets.get(messageThreadId) ?? 0;
-  if (action === "up") {
-    setTerminalScrollOffset(messageThreadId, current + 20); // older content
-  } else if (action === "down") {
-    setTerminalScrollOffset(messageThreadId, Math.max(0, current - 20)); // newer content
+  if (action === "refresh") {
+    setTerminalScrollOffset(messageThreadId, 0);
+  } else {
+    const current = terminalScrollOffsets.get(messageThreadId) ?? 0;
+    if (action === "up") {
+      setTerminalScrollOffset(messageThreadId, current + 20);
+    } else {
+      setTerminalScrollOffset(messageThreadId, Math.max(0, current - 20));
+    }
   }
-  // Refresh: just retake screenshot at new scroll position
+  // Update text display to match scroll (show scrolled portion of clean output)
+  refreshTerminalText(messageThreadId);
   await takeTerminalScreenshot(messageThreadId, api, chatId);
+}
+
+function refreshTerminalText(messageThreadId: number): void {
+  const scrollOffset = terminalScrollOffsets.get(messageThreadId) ?? 0;
+  const textInfo = terminalTextMsgs.get(messageThreadId);
+  if (!textInfo) return;
+  const raw = terminalOutputs.get(messageThreadId);
+  if (!raw) return;
+  // Clean ANSI for text display, show scrolled portion
+  const clean = raw
+    .replace(/\x1b\[[\d;?]*[a-zA-Z]/g, "")
+    .replace(/\x1b\][^\x07]*\x07/g, "")
+    .replace(/\x1b\][^\x1b]*\x1b\\/g, "")
+    .replace(/\x1b[PX^_].*?\x1b\\/g, "")
+    .replace(/\x1b[^a-zA-Z\[\]]/g, "")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+  // Show lines from scrollOffset to scrollOffset+72
+  const lines = clean.split("\n");
+  const visible = lines.slice(scrollOffset, scrollOffset + 72).join("\n");
+  textInfo.api.editMessageText(textInfo.chatId, textInfo.msgId, `<pre>${visible.slice(-3800)}</pre>`, { parse_mode: "HTML" }).catch(() => {});
 }
 
 export async function takeTerminalScreenshot(
@@ -610,7 +635,8 @@ const vmBridges = new Map<number, VMPtyBridge>();
 const ptySessions = new Map<number, PtySessionHandle>();
 const terminalOutputs = new Map<number, string>(); // messageThreadId → accumulated raw output
 const terminalScrollOffsets = new Map<number, number>();
-const terminalLastKeyboardMsgs = new Map<number, number>(); // track keyboard msg for replacement // messageThreadId → scroll line offset
+const terminalLastKeyboardMsgs = new Map<number, number>();
+const terminalTextMsgs = new Map<number, { msgId: number; api: Api; chatId: number }>(); // for scroll-synced text updates // messageThreadId → scroll line offset
 
 export async function ensureVMPtyBridge(userId: number, bridgeIp: string): Promise<VMPtyBridge> {
   const existing = vmBridges.get(userId);

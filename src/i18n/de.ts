@@ -843,5 +843,7 @@ export const de: I18nDictionary = {
   "onboarding.your_web_panel": "Dein OpenCode Web-Panel:",
   "onboarding.save_password_hint": "Passwort speichern. Du kannst es später über /server ändern.",
   "onboarding.skipped": "OK, du kannst es später über /server einrichten.",
+  "vm.onboarding.vm_ready": "✅ Zugriff genehmigt. Du kannst jetzt den Agenten verwenden.",
+  "vm.onboarding.vm_failed": "❌ Fehler beim Erstellen der VM: {error}",
   "ssh.web_panel_info": "SSH Web-Panel: https://{domain}\nBenutzername: {username}\nPasswort: <code>{password}</code>",
 };

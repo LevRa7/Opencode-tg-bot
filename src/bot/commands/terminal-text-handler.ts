@@ -2,7 +2,19 @@
 // Separated from terminal.ts to enable unit testing of intra-module dependencies.
 
 import type { PtySessionHandle } from "./terminal-bridge.js";
-import { getPtySession, executeTerminalCommand } from "./terminal.js";
+import { getPtySession, executeTerminalCommand, takeTerminalScreenshot } from "./terminal.js";
+
+// Debounced screenshot timers per topic
+const screenshotTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+function scheduleScreenshot(messageThreadId: number, api: any, chatId: number) {
+  const existing = screenshotTimers.get(messageThreadId);
+  if (existing) clearTimeout(existing);
+  screenshotTimers.set(messageThreadId, setTimeout(() => {
+    screenshotTimers.delete(messageThreadId);
+    takeTerminalScreenshot(messageThreadId, api, chatId).catch(() => {});
+  }, 2000)); // 2s after last command
+}
 
 export async function handleTerminalTextInput(
   text: string,
@@ -41,6 +53,9 @@ export async function handleTerminalTextInput(
         session.write(text + "\n");
       }
     } catch { /* PTY write may fail */ }
+
+    // Schedule debounced screenshot after command
+    scheduleScreenshot(messageThreadId, ctx.api, ctx.chat.id);
 
     try {
       await ctx.api.editForumTopic(ctx.chat.id, messageThreadId, { name: cleanText });

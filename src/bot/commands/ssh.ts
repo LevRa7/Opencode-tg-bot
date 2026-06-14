@@ -183,7 +183,11 @@ export async function handleSshCallback(ctx: Context): Promise<boolean> {
 
   if (data === ACTION_DISCONNECT) {
     await sshManager.disconnect(userId);
-    stopEventListening();
+    // Stop only the event listener for the current project, not all users
+    const currentProject = getCurrentProject();
+    if (currentProject?.worktree) {
+      stopEventListening(currentProject.worktree);
+    }
 
     // Clear cached session directories from the SSH connection to prevent
     // them from mixing with local projects in /projects and /sessions.

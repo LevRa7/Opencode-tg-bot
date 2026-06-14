@@ -96,11 +96,14 @@ runcmd:
   - chown -R opencode:opencode /workspace /state
   - rm -f /etc/machine-id /var/lib/dbus/machine-id && systemd-machine-id-setup
   - dhclient -r && dhclient || true
-  - command -v node 2>/dev/null || { apt-get update -y && apt-get install -y nodejs npm; }
+  # nodejs + npm already in golden image — skip apt
   - command -v opencode 2>/dev/null || npm install -g --force opencode-ai@1.15.13 2>/dev/null || echo 'v1 opencode install failed'
   - node -e 'require("node-pty")' 2>/dev/null || npm install -g node-pty 2>/dev/null || echo 'node-pty install failed'
   - rm -f /home/opencode/.local/share/opencode/opencode.db /home/opencode/.local/share/opencode/opencode.db-wal /home/opencode/.local/share/opencode/opencode.db-shm
-  - test -d /opt/opencode-skills && cp -r /opt/opencode-skills /home/opencode/.config/opencode/skills 2>/dev/null && chown -R opencode:opencode /home/opencode/.config/opencode || true
+  # Copy pre-baked skills from golden image
+  - test -d /opt/opencode-skills && cp -r /opt/opencode-skills/* /home/opencode/.config/opencode/skills/ 2>/dev/null && chown -R opencode:opencode /home/opencode/.config/opencode || true
+  # Copy terminal-agent if not already present
+  - test -f /opt/terminal-agent.js && chmod +x /opt/terminal-agent.js || true
   - systemctl daemon-reload
   - systemctl restart opencode || systemctl start opencode
 `;

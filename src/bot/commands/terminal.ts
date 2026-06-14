@@ -279,6 +279,9 @@ export async function startPtySession(
   });
 
   logger.info(`[Terminal] PTY session spawned for topic ${messageThreadId}`);
+  
+  // Take initial screenshot after shell prompt appears
+  setTimeout(() => doScreenshot(), 1500);
 }
 
 function formatForumTopicUrl(chatId: number, messageThreadId: number): string {

@@ -62,11 +62,8 @@ export class VMPtyBridge {
       }
     });
 
-    child.stderr?.on("data", (chunk: Buffer) => {
-      const data = chunk.toString();
-      for (const cb of dataCallbacks) {
-        try { cb(data); } catch { /* swallow */ }
-      }
+    child.stderr?.on("data", (_chunk: Buffer) => {
+      // Suppress stderr (SSH warnings, etc.) — don't forward to terminal output
     });
 
     child.on("close", (code: number | null, signal: string | null) => {

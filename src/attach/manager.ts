@@ -4,6 +4,7 @@ import {
   type TelegramConversationScope,
 } from "../telegram/scope.js";
 import type { AttachedSessionState } from "./types.js";
+import { logger } from "../utils/logger.js";
 
 interface TelegramTarget {
   chatId: number;
@@ -44,7 +45,11 @@ class AttachManager {
     }
 
     const currentState = this.statesByScopeKey.get(currentScopeKey);
-    return !currentState || currentState.scope.userId === nextScope.userId;
+    if (currentState && currentState.scope.userId !== nextScope.userId) {
+      logger.warn(`[AttachManager] Blocked cross-user route replacement: session=${sessionId} currentUser=${currentState.scope.userId} nextUser=${nextScope.userId}`);
+      return false;
+    }
+    return true;
   }
 
   attach(

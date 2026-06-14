@@ -311,7 +311,7 @@ export async function handleAccessApprovalCallback(ctx: Context): Promise<boolea
       const { getPendingVmDeployment, deployPendingVm, removePendingVmDeployment } = await import("../handlers/onboarding-flow.js");
       const pending = getPendingVmDeployment(userId);
       if (pending) {
-        const result = await deployPendingVm(userId, async () => {});
+        const result = await deployPendingVm(userId);
         if (result.success && pending.chatId) {
           await ctx.api.sendMessage(pending.chatId, "✅ VM создана и готова к работе!").catch(() => {});
         } else if (!result.success) {

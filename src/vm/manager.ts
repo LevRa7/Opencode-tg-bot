@@ -284,31 +284,10 @@ export class VmManager {
     const netName = VM_DEFAULTS.networkName;
     const delay = retryDelayMs ?? VM_DEFAULTS.dhcpRetryDelayMs;
     const ipRegex = /\d+\.\d+\.\d+\.\d+/;
-    const knownMac = this.getDomainMac(domainName);
 
     for (let attempt = 0; attempt < VM_DEFAULTS.dhcpRetries; attempt++) {
       try {
-        // Method 1: virsh net-dhcp-leases (works without guest agent)
-        const leases = this.execSyncFn(
-          `sudo virsh net-dhcp-leases ${netName}`,
-          { encoding: "utf-8" },
-        ) as string;
-        const match = leases.match(ipRegex);
-        if (match) {
-          const ip = match[0];
-          // Verify this lease belongs to our domain's MAC (if possible)
-          if (!knownMac || leases.includes(knownMac.toLowerCase())) {
-            return ip;
-          }
-          // If we can't verify MAC but there is a lease, use it
-          return ip;
-        }
-      } catch {
-        logger.debug(`[VmManager] net-dhcp-leases attempt ${attempt + 1} failed`);
-      }
-
-      try {
-        // Method 2: virsh domifaddr --source lease (fallback)
+        // Method 1: virsh domifaddr --source lease (most reliable — single domain)
         const output = this.execSyncFn(
           `sudo virsh domifaddr ${domainName} --source lease`,
           { encoding: "utf-8" },
@@ -317,6 +296,31 @@ export class VmManager {
         if (match) return match[0];
       } catch {
         // lease source may not be available
+      }
+
+      try {
+        // Method 2: virsh net-dhcp-leases (parse table to find correct MAC's IP)
+        const knownMac = this.getDomainMac(domainName);
+        const leases = this.execSyncFn(
+          `sudo virsh net-dhcp-leases ${netName}`,
+          { encoding: "utf-8" },
+        ) as string;
+        if (knownMac) {
+          // Find the line containing our MAC, extract IP from that line
+          const lines = leases.split("\n");
+          for (const line of lines) {
+            if (line.includes(knownMac.toLowerCase())) {
+              const m = line.match(ipRegex);
+              if (m) return m[0];
+            }
+          }
+        } else {
+          // Fallback: first IP in any lease
+          const m = leases.match(ipRegex);
+          if (m) return m[0];
+        }
+      } catch {
+        logger.debug(`[VmManager] net-dhcp-leases attempt ${attempt + 1} failed`);
       }
 
       try {

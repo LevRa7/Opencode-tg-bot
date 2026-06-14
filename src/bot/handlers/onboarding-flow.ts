@@ -27,14 +27,14 @@ export function removePendingVmDeployment(userId: number) {
   pendingVmDeployments.delete(userId);
 }
 
-export async function deployPendingVm(userId: number, onStep: (step: string) => Promise<void>): Promise<{ success: boolean; error?: string }> {
+export async function deployPendingVm(userId: number): Promise<{ success: boolean; error?: string }> {
   const info = pendingVmDeployments.get(userId);
   if (!info) return { success: false, error: "No pending deployment" };
   
   setUserDeployTarget(userId, "vm");
   setUserVmSpecTier(userId, info.tier);
   
-  const result = await processManager.ensureRuntime(onStep);
+  const result = await processManager.ensureRuntime(async () => {});
   pendingVmDeployments.delete(userId);
   return result;
 }

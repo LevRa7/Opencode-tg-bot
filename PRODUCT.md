@@ -196,7 +196,7 @@ Open tasks for upcoming iterations:
 - [ ] `/messages` command: browse session messages with fork/revert actions
 - [x] `/skills` command: browse skills and choose one for usage
 - [x] `/worktree` command: switch between git worktrees
-- [x] `/open` command: browse project files and open them
+- [x] `/open` command: browse project files and open them (VM + SSH support)
 - [x] `/mcps` command: browse available MCP servers
 - [x] Model fallback auto-switch on model-unavailable errors with per-scope persistence and keyboard update
 - [ ] Git tree support
@@ -209,5 +209,6 @@ Open tasks for upcoming iterations:
 Optional or longer-term enhancements:
 
 - [ ] Create new OpenCode projects directly from Telegram
-- [x] Add project file browsing helpers (for example, `ls` and `open` flows)
+- [x] Add project file browsing helpers (for example, `ls` and `open` flows) (VM + SSH routing)
 - [x] Add a bot settings command with in-chat UI
+- [ ] Terminal PTY agent with interactive shell on VM (/terminal with real bash)

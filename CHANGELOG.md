@@ -14,6 +14,34 @@ Documentation rule:
 
 - **VM deployment for tenant workspaces:** New deployment target — QEMU/KVM virtual machines as an alternative to Docker containers. New `src/vm/` module with `VmManager` class (lifecycle via virsh CLI), `cloud-init.ts` (ISO generation with random sudo password per user), and 4 VM spec tiers (2GB/1vCPU/20GB through 16GB/8vCPU/250GB). Thin provisioning via qcow2 backing files + virtio-mem for dynamic memory. ProcessManager gets `kind: "vm"` branch with `ensureVmRuntime()`. opencodeClient proxy adds vm route resolution. Bot handler `onboarding-flow.ts` shows inline menu for language selection → deploy target selection at first launch. AGENTS.md updated with tg-uploader, tg-cli, VPN, gui-automation rules. New skills added: tg-uploader (v3), install-vpn, gui-automation. scripts/tg-upload.ts upgraded to v3 with bot HTTP endpoint target resolution.
 
+- **VM file browsing (`/ls`) and file open (`/open`):** VM users now browse and open files on their tenant VM via SSH instead of the local filesystem. New helpers `executeVmCommand()`, `scanDirectoryVm()`, `getFileDetailsVm()` in `ls.ts` and `file-tree.ts` route through SSH to the VM bridge IP. `open.ts` separates SSH/VM paths in `openCommand`. Fixes `sessionDirectories` cache returning stale host path for VM users. Affects: `src/bot/commands/ls.ts`, `src/bot/commands/open.ts`, `src/bot/commands/file-tree.ts`.
+
+- **Terminal command routing:** `executeTerminalCommand` in `terminal.ts` now accepts `userId` parameter and routes: VM users → SSH to bridge IP (`cd /workspace && <cmd>` with `2>/dev/null`), SSH-remote users → `sshManager`, local users → `spawn()`. VM priority over SSH. Affects: `src/bot/commands/terminal.ts`, `src/bot/index.ts`.
+
+- **Session rename topic sync:** `/rename` command now calls `ctx.api.editForumTopic()` after `session.update()` to keep the forum topic name in sync with the session title. SSE `session.updated` handler also renames root session topics (not just child). Affects: `src/bot/commands/rename.ts`, `src/bot/index.ts`.
+
+- **Skills on VM:** 143+ skills copied from container `/root/.config/opencode/skills/` to VM golden image. `kabi-tg-cli v0.6.0` installed via pip3. `build-golden.sh` updated with v1 opencode install, skills copy, tg-cli install. Affects: `build-golden.sh`, `src/vm/cloud-init.ts`.
+
+- **i18n onboarding:** VM tier labels and onboarding texts moved to `en.ts`/`ru.ts` (`vm.tier.*`, `vm.onboarding.*`, `vm.progress.*`). `showDeployTargetSelection()` and `handleOnboardingCallback()` use `t()` for localization. Affects: `src/bot/commands/onboarding-flow.ts`, `src/i18n/en.ts`, `src/i18n/ru.ts`.
+
+- **Admin VM menu with Host option:** Admin user (6931112349) sees "Host" button in tier selection. `onboarding:host` → `setUserDeployTarget("docker")` → routes to host. Affects: `src/bot/commands/onboarding-flow.ts`.
+
+- **Route-resolver VM path:** `/server-web` (MiniApp) route-resolver added VM check (`getUserDeployTarget(userId) === "vm"`) with `kind: "vm"`. Affects: `src/server/route-resolver.ts`.
+
+### Fixed
+
+- **V1 opencode auth (lildax v2 bug):** V2 lildax (1.17.4) has broken Basic auth middleware. Fix: install `opencode-ai@1.15.13` (v1) alongside `@opencode-ai/cli`, cloud-init writes systemd service with `ExecStart=/usr/local/bin/opencode serve`, deletes old lildax DB. Affects: `src/vm/cloud-init.ts`, `build-golden.sh`.
+
+- **VM creation cleanup:** Old qcow2 and ISO files not cleaned before new VM creation → `createAndStart` deletes stale files (destroy + undefine + rm -f qcow2 + rm -f ISO) before cloning. Affects: `src/vm/manager.ts`.
+
+- **AsyncLocalStorage scope loss:** After `execSync` in `doEnsureVmRuntime`, Telegram scope lost → `getCurrentOpencodeRoute()` returned `null` scope → fell back to `localhost:4096` (host). Fix: `getCurrentOpencodeRoute(preCapturedScope)` accepts optional scope, proxy captures scope before `ensureRuntime()`. Affects: `src/opencode/client.ts`.
+
+- **SSH `$HOME` expansion bug:** Double-quotes in SSH commands caused local shell `$HOME` expansion (resolved to host `/home/me`). Fix: single-quotes in `executeVmCommand`. Affects: `src/bot/commands/terminal.ts`, `src/bot/commands/ls.ts`.
+
+### Tests
+
+- Added 32 VM tests, 11 terminal tests, 12 client-vm tests, 9 route-resolver tests, 16 onboarding tests (80 total). Files: `tests/bot/commands/terminal.test.ts`, `tests/opencode/client-vm.test.ts`, `tests/server/route-resolver.test.ts`, `tests/bot/handlers/onboarding-flow.test.ts`.
+
 - **Active session tracker for tg-upload topic resolution:** New `src/active-session/tracker.ts` writes `/tmp/tg-active-sessions.json` mapping directory → `{sessionId, chatId, messageThreadId, timestamp}` whenever the bot calls `setCurrentSession()`. `tg-chat-lookup.ts --auto` now reads this file first and prefers the most recently active session (within 5 min TTL) over the default "most recently created" sorting. This fixes file delivery landing in the wrong forum topic when multiple sessions share the same directory. 9 unit tests + 7 integration tests (multi-topic switching, stale entry fallback, corrupted file resilience).
 
 - **Active session tracking in `setCurrentSession()`:** `src/settings/manager.ts:setCurrentSession()` now calls `recordActiveSession()` from the tracker, passing the session's directory, chatId, and messageThreadId from the current Telegram conversation scope.

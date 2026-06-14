@@ -1,6 +1,8 @@
 import { CommandContext, Context, InlineKeyboard, InputFile } from "grammy";
 import type { Api } from "grammy";
 import { spawn, execSync } from "child_process";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
 import { promises as fs } from "fs";
 import * as path from "path";
 import { opencodeClient } from "../../opencode/client.js";
@@ -142,8 +144,8 @@ async function getTerminalCmd(userId: number, sessionId: string, cols: number, r
     return null;
   }
 
-  // Local: spawn directly with TERM=dumb
-  return ["sh", "-c", agentCmd];
+  // Local: spawn directly, use the host's npm global path
+  return ["sh", "-c", `NODE_PATH="$(npm root -g 2>/dev/null || echo /usr/local/lib/node_modules)" TERM=dumb node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`];
 }
 
 export async function startPtySession(
@@ -169,33 +171,41 @@ export async function startPtySession(
   const ptySession = bridge.spawnSessionWithCmd(sessionId, cmd);
   setPtySession(messageThreadId, ptySession);
 
-  let outputBuf = "";
+  let outputBuf = ""; // cleaned for text display
+  let rawOutputBuf = ""; // raw ANSI for xterm.js screenshots
   let outputMsgId: number | null = null;
   let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
 
   const doScreenshot = async () => {
-    if (!outputBuf) return;
+    if (!rawOutputBuf) return;
     try {
-      // Strip ANSI escape sequences for clean screenshot
-      const clean = outputBuf
-        .replace(/\x1b\[[\d;?]*[a-zA-Z]/g, "")
-        .replace(/\x1b\][^\x07]*\x07/g, "")
-        .replace(/\x1b\]0;[^\x07]*\x07/g, "")      // OSC title sequences
-        .replace(/\x1b[PX^_].*?\x1b\\/g, "")
-        .replace(/\x1b[^a-zA-Z\[\]]/g, "")
-        .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "")
-        .replace(/\[?2004\w/g, "");                 // leftover bracketed paste mode markers
-      if (!clean.trim()) return;
       const { chromium } = await import("playwright");
       const browser = await chromium.launch({ headless: true });
       try {
         const page = await browser.newPage();
         await page.setViewportSize({ width: 800, height: 600 });
-        const safe = clean.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        await page.setContent(
-          `<html><body style="margin:0;background:#1a1a2e;color:#e0e0e0;font:14px monospace;padding:12px;white-space:pre-wrap;word-break:break-all">${safe}</body></html>`
-        );
-        const buf = await page.screenshot({ type: "png", fullPage: true });
+        // Escape raw output for JS string embedding
+        const escaped = JSON.stringify(rawOutputBuf);
+        // Use xterm.js from node_modules for local rendering
+        const xtermJs = await fs.readFile(require.resolve("xterm/lib/xterm.js"), "utf-8");
+        const xtermCss = await fs.readFile(require.resolve("xterm/css/xterm.css"), "utf-8");
+        await page.setContent(`
+          <html><head><style>${xtermCss} body{margin:0;background:#1a1a2e}</style></head>
+          <body><div id="terminal"></div></body>
+          <script>${xtermJs}</script>
+          <script>
+            const term = new Terminal({ cols: 80, rows: 24, theme: { background: '#1a1a2e', foreground: '#e0e0e0' } });
+            term.open(document.getElementById('terminal'));
+            const output = ${escaped};
+            term.write(output.replace(/\\n/g, '\\n\\r'));
+          </script>
+          </html>
+        `);
+        await page.waitForTimeout(500);
+        const el = await page.$("#terminal");
+        const buf = el
+          ? await el.screenshot({ type: "png" })
+          : await page.screenshot({ type: "png", fullPage: true });
         await api.sendPhoto(forumChatId, new InputFile(buf, "terminal.png"), {
           message_thread_id: messageThreadId,
         });
@@ -217,7 +227,9 @@ export async function startPtySession(
       .replace(/\x1b[^a-zA-Z\[\]]/g, "")          // Any remaining ESC not part of valid seq
       .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ""); // control chars except \t(09) \n(0a)
     if (!cleanData && !data.includes("\n")) return; // skip pure control noise
-    outputBuf += (cleanData || data); // keep original buf, display cleaned
+    rawOutputBuf += data; // keep raw for xterm.js screenshots (includes ANSI/TUI sequences)
+    outputBuf += (cleanData || data); // keep cleaned for text display
+    terminalOutputs.set(messageThreadId, rawOutputBuf); // store raw for /screen
     terminalOutputs.set(messageThreadId, outputBuf);
     const safe = outputBuf.slice(-3800);
     if (outputMsgId) {
@@ -501,11 +513,25 @@ export async function takeTerminalScreenshot(
   try {
     const page = await browser.newPage();
     await page.setViewportSize({ width: 800, height: 600 });
-    const safe = output.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    await page.setContent(
-      `<html><body style="margin:0;background:#1a1a2e;color:#e0e0e0;font:14px monospace;padding:12px;white-space:pre-wrap;word-break:break-all">${safe}</body></html>`
-    );
-    const buf = await page.screenshot({ type: "png", fullPage: true });
+    const escaped = JSON.stringify(output);
+    const xtermJs = await fs.readFile(require.resolve("xterm/lib/xterm.js"), "utf-8");
+    const xtermCss = await fs.readFile(require.resolve("xterm/css/xterm.css"), "utf-8");
+    await page.setContent(`
+      <html><head><style>${xtermCss} body{margin:0;background:#1a1a2e}</style></head>
+      <body><div id="terminal"></div></body>
+      <script>${xtermJs}</script>
+      <script>
+        const term = new Terminal({ cols: 80, rows: 24, theme: { background: '#1a1a2e', foreground: '#e0e0e0' } });
+        term.open(document.getElementById('terminal'));
+        term.write(${escaped}.replace(/\\n/g, '\\n\\r'));
+      </script>
+      </html>
+    `);
+    await page.waitForTimeout(500);
+    const el = await page.$("#terminal");
+    const buf = el
+      ? await el.screenshot({ type: "png" })
+      : await page.screenshot({ type: "png", fullPage: true });
     await api.sendPhoto(chatId, new InputFile(buf, "terminal.png"), {
       message_thread_id: messageThreadId,
     });

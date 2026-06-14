@@ -59,6 +59,7 @@ import { ttsCommand } from "./commands/tts.js";
 import { terminalCommand } from "./commands/terminal.js";
 import { openTerminalTopic } from "./commands/terminal.js";
 import { isTerminalTopic, executeTerminalCommand, killTerminalProcess, loadTerminalTopics } from "./commands/terminal.js";
+import { handleTerminalTextInput } from "./commands/terminal-text-handler.js";
 import { worktreeCommand, handleWorktreeCallback } from "./commands/worktree.js";
 import { openCommand, handleOpenCallback, clearOpenPathIndex } from "./commands/open.js";
 import { clearLsPathIndex, handleLsCallback, lsCommand } from "./commands/ls.js";
@@ -4752,55 +4753,12 @@ export function createBot(): Bot<Context> {
     // Terminal topic: execute as shell command, not LLM
     const mtId = ctx.message?.message_thread_id;
     if (isTerminalTopic(mtId)) {
-      // Rename topic to command
-      try {
-        const cleanText = stripMessageTags(text);
-        const truncated = cleanText.length > 128 ? cleanText.slice(0, 125) + "..." : cleanText;
-        await ctx.api.editForumTopic(ctx.chat.id, mtId!, { name: truncated });
-      } catch { /* ignore */ }
-
-      const statusMsg = await ctx.reply(`<pre>$ ${text}</pre>`, { parse_mode: "HTML" });
-
-      let accumulated = "";
-      let lastEdit = Date.now();
-      const EDIT_DEBOUNCE_MS = 200;
-      let pendingTimer: ReturnType<typeof setTimeout> | null = null;
-
-      const doEdit = async () => {
-        pendingTimer = null;
-        const safe = accumulated.slice(-3800);
-        try {
-          await ctx.api.editMessageText(
-            ctx.chat.id,
-            statusMsg.message_id,
-            `<pre>$ ${text}\n${safe}</pre>`,
-            { parse_mode: "HTML" },
-          );
-        } catch { /* ignore edit failures */ }
-      };
-
-      await executeTerminalCommand(text, mtId!, (chunk: string) => {
-        accumulated += chunk;
-        const now = Date.now();
-        if (now - lastEdit >= EDIT_DEBOUNCE_MS) {
-          lastEdit = now;
-          doEdit();
-        } else if (!pendingTimer) {
-          pendingTimer = setTimeout(() => {
-            lastEdit = Date.now();
-            doEdit();
-          }, EDIT_DEBOUNCE_MS - (now - lastEdit));
-        }
-      }, ctx.from?.id);
-
-      // Final flush
-      if (pendingTimer) {
-        clearTimeout(pendingTimer);
-        pendingTimer = null;
-      }
-      await doEdit();
-
-      return;
+      const handled = await handleTerminalTextInput(stripMessageTags(text), mtId!, ctx.from?.id ?? 0, {
+        reply: (txt: string, opts?: any) => ctx.reply(txt, opts),
+        api: ctx.api,
+        chat: ctx.chat,
+      });
+      if (handled) return;
     }
 
     await processUserPrompt(ctx, text, promptDeps);

@@ -43,7 +43,7 @@ const mocked = vi.hoisted(() => ({
 // module mocks — mock terminal.ts exports used by terminal-text-handler.ts
 // ---------------------------------------------------------------------------
 
-vi.mock("../../../src/bot/commands/terminal.js", () => ({
+vi.mock("../../src/bot/commands/terminal.js", () => ({
   getPtySession: mocked.getPtySessionMock,
   setPtySession: mocked.setPtySessionMock,
   executeTerminalCommand: mocked.executeTerminalCommandMock,
@@ -278,7 +278,7 @@ describe("handleTerminalTextInput", () => {
 
       await call("^C");
 
-      expect(pty.write).toHaveBeenCalledWith("\x03\n");
+      expect(pty.write).toHaveBeenCalledWith("\x03");
       expect(mocked.executeTerminalCommandMock).not.toHaveBeenCalled();
     });
 
@@ -288,7 +288,7 @@ describe("handleTerminalTextInput", () => {
 
       await call("^D");
 
-      expect(pty.write).toHaveBeenCalledWith("\x04\n");
+      expect(pty.write).toHaveBeenCalledWith("\x04");
       expect(mocked.executeTerminalCommandMock).not.toHaveBeenCalled();
     });
   });

@@ -2,7 +2,7 @@
 // Spawns: ssh opencode@<bridgeIp> node /opt/terminal-agent.js <sessionId> <cols> <rows> [cwd]
 // Returns PtySessionHandle with write/resize/kill/onData/onExit
 
-import { spawn, type ChildProcess } from "child_process";
+import { spawn } from "child_process";
 import { logger } from "../../utils/logger.js";
 
 export interface PtySessionHandle {
@@ -78,13 +78,13 @@ export class VMPtyBridge {
           child.stdin.write(data);
         }
       },
-      resize(newCols: number, newRows: number) {
+      resize(_newCols: number, _newRows: number) {
         if (!child.killed) {
-          child.kill("SIGWINCH");
+          (child.kill as any)("SIGWINCH");
         }
       },
       kill(signal?: string) {
-        child.kill(signal ?? "SIGTERM");
+        (child.kill as any)(signal ?? "SIGTERM");
       },
       onData(callback: (data: string) => void) {
         dataCallbacks.push(callback);

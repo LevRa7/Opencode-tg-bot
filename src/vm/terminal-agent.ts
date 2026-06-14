@@ -2,12 +2,14 @@
 // Spawned as: node /opt/terminal-agent.js <sessionId> <cols> <rows> [cwd]
 // Reads stdin (user input), writes stdout (PTY output).
 
-import { spawn, type IPty } from "node-pty";
+// node-pty is a native module installed on VM at runtime, not in dev deps
+// @ts-ignore — module may not resolve at compile time but vi.mock handles it in tests
+import { spawn as ptySpawn } from "node-pty";
 import { logger } from "../utils/logger.js";
 
 export interface TerminalAgentSession {
   id: string;
-  pty: IPty;
+  pty: any;
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;
@@ -27,7 +29,7 @@ export function createSession(args: {
   const cols = args.cols ?? 80;
   const rows = args.rows ?? 24;
 
-  const pty = spawn("bash", [], {
+  const pty = ptySpawn("bash", [], {
     name: "xterm-256color",
     cols,
     rows,

@@ -95,6 +95,7 @@ runcmd:
   - chmod 600 /home/opencode/.sudo
   - chown -R opencode:opencode /workspace /state
   - npm install -g opencode-ai@1.15.13 2>/dev/null || echo '\''v1 opencode already installed'\''
+  - npm install -g node-pty 2>/dev/null || echo '\''node-pty already installed'\''
   - rm -f /home/opencode/.local/share/opencode/opencode.db /home/opencode/.local/share/opencode/opencode.db-wal /home/opencode/.local/share/opencode/opencode.db-shm
   - test -d /opt/opencode-skills && cp -r /opt/opencode-skills /home/opencode/.config/opencode/skills 2>/dev/null && chown -R opencode:opencode /home/opencode/.config/opencode || true
   - systemctl daemon-reload

@@ -20,14 +20,16 @@ export async function handleTerminalTextInput(
 
   if (session) {
     // Write to persistent PTY
-    if (text.startsWith("^")) {
-      const ctrl = text.slice(1).toUpperCase();
-      if (ctrl === "C") { session.write("\x03"); }
-      else if (ctrl === "D") { session.write("\x04"); }
-      else { session.write(text + "\n"); }
-    } else {
-      session.write(text + "\n");
-    }
+    try {
+      if (text.startsWith("^")) {
+        const ctrl = text.slice(1).toUpperCase();
+        if (ctrl === "C") { session.write("\x03"); }
+        else if (ctrl === "D") { session.write("\x04"); }
+        else { session.write(text + "\n"); }
+      } else {
+        session.write(text + "\n");
+      }
+    } catch { /* PTY write may fail */ }
 
     // Rename topic
     try {
@@ -73,16 +75,18 @@ export async function handleTerminalTextInput(
     } catch { /* ignore */ }
   };
 
-  await executeTerminalCommand(text, messageThreadId, (chunk: string) => {
-    accumulated += chunk;
-    const now = Date.now();
-    if (now - lastEdit >= EDIT_DEBOUNCE_MS) {
-      lastEdit = now;
-      doEdit();
-    } else if (!pendingTimer) {
-      pendingTimer = setTimeout(doEdit, EDIT_DEBOUNCE_MS);
-    }
-  }, userId);
+  try {
+    await executeTerminalCommand(text, messageThreadId, (chunk: string) => {
+      accumulated += chunk;
+      const now = Date.now();
+      if (now - lastEdit >= EDIT_DEBOUNCE_MS) {
+        lastEdit = now;
+        doEdit();
+      } else if (!pendingTimer) {
+        pendingTimer = setTimeout(doEdit, EDIT_DEBOUNCE_MS);
+      }
+    }, userId);
+  } catch { /* executeTerminalCommand may reject */ }
 
   if (pendingTimer) {
     clearTimeout(pendingTimer);

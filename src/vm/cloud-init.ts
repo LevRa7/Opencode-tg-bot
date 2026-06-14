@@ -95,7 +95,6 @@ runcmd:
   - chmod 600 /home/opencode/.sudo
   - chown -R opencode:opencode /workspace /state
   - rm -f /etc/machine-id /var/lib/dbus/machine-id && systemd-machine-id-setup
-  - dhclient -r && dhclient || true
   # nodejs + npm already in golden image — skip apt
   - command -v opencode 2>/dev/null || npm install -g --force opencode-ai@1.15.13 2>/dev/null || echo 'v1 opencode install failed'
   - node -e 'require("node-pty")' 2>/dev/null || npm install -g node-pty 2>/dev/null || echo 'node-pty install failed'

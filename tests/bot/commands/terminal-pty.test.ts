@@ -23,6 +23,7 @@ const mocked = vi.hoisted(() => ({
   sshManagerIsActiveMock: vi.fn(),
   sshManagerExecMock: vi.fn(),
   execSyncMock: vi.fn(),
+  MockBridge: vi.fn(),
 }));
 
 vi.mock("child_process", async (importOriginal) => {
@@ -153,9 +154,8 @@ vi.mock("fs", () => ({
 // terminal-bridge mock — constructor-based VMPtyBridge (no start/stop)
 // ---------------------------------------------------------------------------
 
-const MockBridge = vi.fn();
 vi.mock("../../../src/bot/commands/terminal-bridge.js", () => ({
-  VMPtyBridge: MockBridge,
+  VMPtyBridge: mocked.MockBridge,
 }));
 
 // ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ import {
 describe("terminal-pty", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    MockBridge.mockClear();
+    mocked.MockBridge.mockClear();
   });
 
   // =========================================================================
@@ -190,7 +190,7 @@ describe("terminal-pty", () => {
       const bridge = await ensureVMPtyBridge(1, "10.100.0.100");
 
       expect(bridge).toBeDefined();
-      expect(MockBridge).toHaveBeenCalledWith("10.100.0.100");
+      expect(mocked.MockBridge).toHaveBeenCalledWith("10.100.0.100");
     });
 
     it("should return existing bridge on second call (singleton per userId)", async () => {
@@ -203,7 +203,7 @@ describe("terminal-pty", () => {
     it("should use provided bridgeIp", async () => {
       await ensureVMPtyBridge(5, "192.168.1.1");
 
-      expect(MockBridge).toHaveBeenCalledWith("192.168.1.1");
+      expect(mocked.MockBridge).toHaveBeenCalledWith("192.168.1.1");
     });
 
     it("should isolate bridges per userId", async () => {
@@ -276,7 +276,7 @@ describe("terminal-pty", () => {
       await ensureVMPtyBridge(51, "10.100.0.2");
 
       // A new bridge was constructed after the old was disconnected
-      expect(MockBridge).toHaveBeenCalledTimes(1);
+      expect(mocked.MockBridge).toHaveBeenCalledTimes(1);
     });
 
     it("should no-op for unknown userId", async () => {

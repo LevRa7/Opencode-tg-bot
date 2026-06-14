@@ -43,7 +43,7 @@ export function createSession(args: {
     }
   });
 
-  pty.onExit((exitResult: any) => {
+  pty.onExit(function (this: any, exitResult: any) {
     // node-pty passes { exitCode, signal? } but test mock passes (code, signal) as two args
     const exitInfo: { exitCode: number; signal?: number } =
       typeof exitResult === "object" && exitResult !== null ? exitResult

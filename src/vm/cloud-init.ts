@@ -95,12 +95,15 @@ runcmd:
   - chmod 600 /home/opencode/.sudo
   - chown -R opencode:opencode /workspace /state
   - rm -f /etc/machine-id /var/lib/dbus/machine-id && systemd-machine-id-setup
-  # nodejs + npm already in golden image — skip apt
-  - command -v opencode 2>/dev/null || npm install -g --force opencode-ai@1.15.13 2>/dev/null || echo 'v1 opencode install failed'
+  # Install Node.js if not in golden image
+  - command -v node 2>/dev/null || (apt-get update -qq && apt-get install -y -qq nodejs npm) || echo 'nodejs install failed'
+  # Install OpenCode CLI
+  - command -v opencode 2>/dev/null || npm install -g --force opencode-ai@1.15.13 || echo 'v1 opencode install failed'
+  # Install node-pty for interactive terminal (skip failure — terminal won't work but bot still functional)
   - node -e 'require("node-pty")' 2>/dev/null || npm install -g node-pty 2>/dev/null || echo 'node-pty install failed'
   - rm -f /home/opencode/.local/share/opencode/opencode.db /home/opencode/.local/share/opencode/opencode.db-wal /home/opencode/.local/share/opencode/opencode.db-shm
-  # Copy pre-baked skills from golden image
-  - test -d /opt/opencode-skills && cp -r /opt/opencode-skills/* /home/opencode/.config/opencode/skills/ 2>/dev/null && chown -R opencode:opencode /home/opencode/.config/opencode || true
+  # Copy pre-baked skills from golden image (handle both flat and nested /opt/opencode-skills)
+  - for src in /opt/opencode-skills /opt/opencode-skills/skills; do test -d "$src" && [ "$(ls -A "$src" 2>/dev/null)" ] && cp -r "$src"/* /home/opencode/.config/opencode/skills/ 2>/dev/null && break; done; chown -R opencode:opencode /home/opencode/.config/opencode 2>/dev/null || true
   # Copy terminal-agent if not already present
   - test -f /opt/terminal-agent.js && chmod +x /opt/terminal-agent.js || true
   - systemctl daemon-reload

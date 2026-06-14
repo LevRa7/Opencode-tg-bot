@@ -200,7 +200,12 @@ export async function startPtySession(
             term.open(document.getElementById('terminal'));
             var data = ${escaped};
             term.write(data.replace(/\\n/g, '\\r\\n'));
-            term.scrollToLine(${scrollOffset});
+            // Scroll up from bottom: offset lines above latest
+            var scrollUp = ${scrollOffset};
+            if (scrollUp > 0) {
+              term.scrollToBottom();
+              term.scrollLines(-scrollUp);
+            }
           </script>
           </html>
         `);
@@ -219,7 +224,7 @@ export async function startPtySession(
         const sent = await api.sendPhoto(forumChatId, new InputFile(buf, "terminal.png"), {
           message_thread_id: messageThreadId,
           reply_markup: navKeyboard,
-          caption: `Line ${scrollOffset}+`,
+          caption: `↑${scrollOffset} lines`,
         });
         terminalLastKeyboardMsgs.set(messageThreadId, sent.message_id);
       } finally {
@@ -526,9 +531,9 @@ export async function handleTerminalScrollButton(
 ): Promise<void> {
   const current = terminalScrollOffsets.get(messageThreadId) ?? 0;
   if (action === "up") {
-    setTerminalScrollOffset(messageThreadId, Math.max(0, current - 20));
+    setTerminalScrollOffset(messageThreadId, current + 20); // older content
   } else if (action === "down") {
-    setTerminalScrollOffset(messageThreadId, current + 20);
+    setTerminalScrollOffset(messageThreadId, Math.max(0, current - 20)); // newer content
   }
   // Refresh: just retake screenshot at new scroll position
   await takeTerminalScreenshot(messageThreadId, api, chatId);
@@ -566,7 +571,12 @@ export async function takeTerminalScreenshot(
         term.open(document.getElementById('terminal'));
         var data = ${escaped};
         term.write(data.replace(/\\n/g, '\\r\\n'));
-        term.scrollToLine(${scrollOffset});
+        // Scroll up from bottom: offset lines above latest
+        var scrollUp = ${scrollOffset};
+        if (scrollUp > 0) {
+          term.scrollToBottom();
+          term.scrollLines(-scrollUp);
+        }
       </script>
       </html>
     `);
@@ -583,7 +593,7 @@ export async function takeTerminalScreenshot(
     const sent = await api.sendPhoto(chatId, new InputFile(buf, "terminal.png"), {
       message_thread_id: messageThreadId,
       reply_markup: navKeyboard,
-      caption: `Line ${scrollOffset}+`,
+      caption: `↑${scrollOffset} lines`,
     });
     terminalLastKeyboardMsgs.set(messageThreadId, sent.message_id);
   } finally {

@@ -2,8 +2,7 @@
 // Separated from terminal.ts to enable unit testing of intra-module dependencies.
 
 import type { PtySessionHandle } from "./terminal-bridge.js";
-import { getPtySession } from "./terminal.js";
-import { executeTerminalCommand } from "./terminal.js";
+import { getPtySession, executeTerminalCommand } from "./terminal.js";
 
 export async function handleTerminalTextInput(
   text: string,
@@ -31,7 +30,6 @@ export async function handleTerminalTextInput(
       }
     } catch { /* PTY write may fail */ }
 
-    // Rename topic
     try {
       await ctx.api.editForumTopic(ctx.chat.id, messageThreadId, { name: cleanText });
     } catch { /* ignore */ }

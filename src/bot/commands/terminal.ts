@@ -110,6 +110,78 @@ export function killTerminalProcess(messageThreadId: number): boolean {
   return false;
 }
 
+export async function startPtySession(
+  userId: number,
+  sessionId: string,
+  worktree: string,
+  messageThreadId: number,
+  api: Api,
+  forumChatId: number,
+): Promise<void> {
+  const vmInfo = getVmRuntimeInfo(userId);
+  if (!vmInfo?.bridgeIp) return;
+  if (ptySessions.has(messageThreadId)) return; // already active
+
+  const bridge = await ensureVMPtyBridge(userId, vmInfo.bridgeIp);
+  const ptySession = bridge.spawnSession(sessionId, { cwd: worktree });
+  setPtySession(messageThreadId, ptySession);
+
+  let outputBuf = "";
+  let outputMsgId: number | null = null;
+  let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const doScreenshot = async () => {
+    if (!outputBuf) return;
+    try {
+      const { chromium } = await import("playwright");
+      const browser = await chromium.launch({ headless: true });
+      try {
+        const page = await browser.newPage();
+        await page.setViewportSize({ width: 800, height: 600 });
+        const safe = outputBuf.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        await page.setContent(
+          `<html><body style="margin:0;background:#1a1a2e;color:#e0e0e0;font:14px monospace;padding:12px;white-space:pre-wrap;word-break:break-all">${safe}</body></html>`
+        );
+        const buf = await page.screenshot({ type: "png", fullPage: true });
+        await api.sendPhoto(forumChatId, new InputFile(buf, "terminal.png"), {
+          message_thread_id: messageThreadId,
+        });
+      } finally {
+        await browser.close();
+      }
+    } catch (err) {
+      logger.warn("[Terminal] Screenshot failed:", err);
+    }
+  };
+
+  ptySession.onData((data: string) => {
+    outputBuf += data;
+    terminalOutputs.set(messageThreadId, outputBuf);
+    const safe = outputBuf.slice(-3800);
+    if (outputMsgId) {
+      api.editMessageText(forumChatId, outputMsgId, `<pre>${safe}</pre>`, { parse_mode: "HTML" }).catch(() => {});
+    } else {
+      api.sendMessage(forumChatId, `<pre>${safe}</pre>`, { message_thread_id: messageThreadId, parse_mode: "HTML" })
+        .then((msg) => { outputMsgId = msg.message_id; })
+        .catch(() => {});
+    }
+    if (screenshotTimer) clearTimeout(screenshotTimer);
+    screenshotTimer = setTimeout(doScreenshot, 500);
+  });
+
+  ptySession.onExit((code, signal) => {
+    const exitMsg = signal ? `\n[Killed by ${signal}]` : `\n[Exited with code ${code}]`;
+    if (outputMsgId) {
+      api.editMessageText(forumChatId, outputMsgId, `<pre>${(outputBuf + exitMsg).slice(-3800)}</pre>`, { parse_mode: "HTML" }).catch(() => {});
+    } else {
+      api.sendMessage(forumChatId, `<pre>${exitMsg}</pre>`, { message_thread_id: messageThreadId, parse_mode: "HTML" }).catch(() => {});
+    }
+    killPtySession(messageThreadId);
+  });
+
+  logger.info(`[Terminal] PTY session spawned for topic ${messageThreadId}`);
+}
+
 function formatForumTopicUrl(chatId: number, messageThreadId: number): string {
   const rawId = String(chatId).replace(/^-100/, "");
   return `https://t.me/c/${rawId}/${messageThreadId}`;
@@ -176,73 +248,8 @@ export async function openTerminalTopic(
 
   const isVm = !!getVmRuntimeInfo(userId);
   // Start persistent PTY session for VM users
-  const vmInfo = getVmRuntimeInfo(userId);
-  if (vmInfo?.bridgeIp) {
-    try {
-      const bridge = await ensureVMPtyBridge(userId, vmInfo.bridgeIp);
-      const ptySession = bridge.spawnSession(session.id, { cwd: currentProject.worktree });
-      setPtySession(messageThreadId, ptySession);
+  await startPtySession(userId, session.id, currentProject.worktree, messageThreadId, api, forumChatId);
 
-      // Stream PTY output back to the Telegram topic
-      let outputBuf = "";
-      let outputMsgId: number | null = null;
-      let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
-
-      const doScreenshot = async () => {
-        if (!outputBuf) return;
-        try {
-          const { chromium } = await import("playwright");
-          const browser = await chromium.launch({ headless: true });
-          try {
-            const page = await browser.newPage();
-            await page.setViewportSize({ width: 800, height: 600 });
-            const safe = outputBuf.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-            await page.setContent(
-              `<html><body style="margin:0;background:#1a1a2e;color:#e0e0e0;font:14px monospace;padding:12px;white-space:pre-wrap;word-break:break-all">${safe}</body></html>`
-            );
-            const buf = await page.screenshot({ type: "png", fullPage: true });
-            await api.sendPhoto(forumChatId, new InputFile(buf, "terminal.png"), {
-              message_thread_id: messageThreadId,
-            });
-          } finally {
-            await browser.close();
-          }
-        } catch (err) {
-          logger.warn("[Terminal] Screenshot failed:", err);
-        }
-      };
-
-      ptySession.onData((data: string) => {
-        outputBuf += data;
-        terminalOutputs.set(messageThreadId, outputBuf);
-        const safe = outputBuf.slice(-3800);
-        if (outputMsgId) {
-          api.editMessageText(forumChatId, outputMsgId, `<pre>${safe}</pre>`, { parse_mode: "HTML" }).catch(() => {});
-        } else {
-          api.sendMessage(forumChatId, `<pre>${safe}</pre>`, { message_thread_id: messageThreadId, parse_mode: "HTML" })
-            .then((msg) => { outputMsgId = msg.message_id; })
-            .catch(() => {});
-        }
-        // Debounce screenshot — take after 500ms of no new output
-        if (screenshotTimer) clearTimeout(screenshotTimer);
-        screenshotTimer = setTimeout(doScreenshot, 500);
-      });
-
-      ptySession.onExit((code, signal) => {
-        const exitMsg = signal ? `\n[Killed by ${signal}]` : `\n[Exited with code ${code}]`;
-        if (outputMsgId) {
-          api.editMessageText(forumChatId, outputMsgId, `<pre>${(outputBuf + exitMsg).slice(-3800)}</pre>`, { parse_mode: "HTML" }).catch(() => {});
-        } else {
-          api.sendMessage(forumChatId, `<pre>${exitMsg}</pre>`, { message_thread_id: messageThreadId, parse_mode: "HTML" }).catch(() => {});
-        }
-        killPtySession(messageThreadId);
-      });
-
-      logger.info(`[Terminal] PTY session spawned for topic ${messageThreadId}`);
-    } catch (err) {
-      logger.warn("[Terminal] Failed to spawn PTY session:", err);
-    }
-  }
   const sysInfo = isVm ? (getVmSystemInfo(userId) ?? getSystemInfo()) : getSystemInfo();
   const terminalKeyboard = createMainKeyboard(
     getStoredAgent(),

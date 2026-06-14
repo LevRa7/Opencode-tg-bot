@@ -65,3 +65,4 @@ media/
 *.tgz
 docker.zip
 .worktrees/
+node_modules/

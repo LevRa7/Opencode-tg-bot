@@ -11,6 +11,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Deterministic MAC: 52:54:00 + 3 bytes from userId hash (avoid conflicts) */
+function generateMacForUser(userId: number): string {
+  const h = knuthHash(userId);
+  const b0 = (h >>> 16) & 0xff;
+  const b1 = (h >>> 8) & 0xff;
+  const b2 = h & 0xff;
+  return `52:54:00:${b0.toString(16).padStart(2, "0")}:${b1.toString(16).padStart(2, "0")}:${b2.toString(16).padStart(2, "0")}`;
+}
+
+/** Deterministic last octet of IP: 10.100.0.<10-250> from userId hash */
+function generateIpForUser(userId: number): string {
+  const h = knuthHash(userId);
+  const octet = (h % 241) + 10; // 10..250
+  return `10.100.0.${octet}`;
+}
+
+/** Knuth's multiplicative hash — good distribution for integer keys */
+function knuthHash(n: number): number {
+  return ((n * 2654435761) >>> 0);
+}
+
 export class VmManager {
   private execSyncFn: typeof nodeExecSync;
 
@@ -124,6 +145,20 @@ export class VmManager {
       this.execSyncFn(`sudo rm -f ${isoPath}`, { stdio: "ignore" });
     } catch { /* file didn't exist — ok */ }
 
+    // Reserve deterministic IP for this user to prevent conflicts
+    const reservedMac = generateMacForUser(userId);
+    const reservedIp = generateIpForUser(userId);
+    try {
+      // Remove any stale reservation for this MAC
+      const deleteCmd = `sudo virsh net-update ${VM_DEFAULTS.networkName} delete ip-dhcp-host "<host mac='${reservedMac}' />" --live --config --parent-index 0`;
+      const addCmd = `sudo virsh net-update ${VM_DEFAULTS.networkName} add ip-dhcp-host "<host mac='${reservedMac}' ip='${reservedIp}' />" --live --config --parent-index 0`;
+      try { this.execSyncFn(deleteCmd, { stdio: "pipe" }); } catch { /* no stale entry */ }
+      this.execSyncFn(addCmd, { stdio: "pipe" });
+      logger.info(`[VmManager] Reserved IP ${reservedIp} for user ${userId} (MAC ${reservedMac})`);
+    } catch (e) {
+      logger.warn(`[VmManager] DHCP reservation failed for user ${userId}: ${e}`);
+    }
+
     report(t("vm.progress.clone_image"));
     this.execSyncFn(
       `sudo qemu-img create -f qcow2 -b ${baseImage} -F qcow2 ${clonePath} ${spec.diskGb}G`,
@@ -133,7 +168,7 @@ export class VmManager {
     report(t("vm.progress.cloud_init"));
     generateCloudInitIso(userId, spec, opencodePw, sudoPw, isoPath, this.execSyncFn, write, mkdir);
 
-    const domainXml = this.buildDomainXml(domainName, clonePath, isoPath, spec);
+    const domainXml = this.buildDomainXml(domainName, clonePath, isoPath, spec, userId);
     write(xmlPath, domainXml);
 
     report(t("vm.progress.define_vm"));
@@ -163,7 +198,8 @@ export class VmManager {
     };
   }
 
-  private buildDomainXml(name: string, diskPath: string, isoPath: string, spec: VmSpec): string {
+  private buildDomainXml(name: string, diskPath: string, isoPath: string, spec: VmSpec, userId: number): string {
+    const mac = generateMacForUser(userId);
     return `<domain type="kvm">
   <name>${name}</name>
     <maxMemory slots="16" unit="MiB">${spec.ramMb}</maxMemory>
@@ -182,6 +218,7 @@ export class VmManager {
       <target dev="hda"/>
     </disk>
     <interface type="network">
+      <mac address="${mac}"/>
       <source network="${VM_DEFAULTS.networkName}"/>
       <model type="virtio"/>
     </interface>
@@ -231,6 +268,15 @@ export class VmManager {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
     }
+
+    // Remove DHCP reservation
+    try {
+      const mac = generateMacForUser(userId);
+      this.execSyncFn(
+        `sudo virsh net-update ${VM_DEFAULTS.networkName} delete ip-dhcp-host "<host mac='${mac}' />" --live --config --parent-index 0`,
+        { stdio: "ignore" },
+      );
+    } catch { /* ignore — reservation may not exist */ }
 
     try {
       const isoPath = path.join(VM_DEFAULTS.imagesDir, `cloud-init-${userId}.iso`);

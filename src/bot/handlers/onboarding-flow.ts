@@ -157,18 +157,11 @@ export async function handleOnboardingCallback(ctx: Context): Promise<boolean> {
     setUserDeployTarget(userId, "vm");
     setUserVmSpecTier(userId, tier);
 
-    // Send rich approval request with username and config
+    // Send approval request to admin
     const { upsertPendingApprovalRequest } = await import("../middleware/auth-internal.js");
     const usernameStr = ctx.from?.username ? `@${ctx.from.username}` : `ID ${userId}`;
     const configMsg = t("vm.onboarding.vm_selected", { label: tierLabel, ram, vcpus, disk });
-    // Store approval message context
-    const approvalCtx = {
-      ...ctx,
-      reply: async (text: string) => {
-        // Override reply to not send to user during approval flow
-      },
-    } as any;
-    await upsertPendingApprovalRequest(approvalCtx);
+    await upsertPendingApprovalRequest(ctx);
     await ctx.reply(
       t("vm.onboarding.pending_approval", { username: usernameStr, config: configMsg }),
       { parse_mode: "HTML" },

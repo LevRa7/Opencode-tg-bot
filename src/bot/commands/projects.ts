@@ -274,7 +274,8 @@ export async function handleProjectSelect(
       `[Bot] Project selected: ${selectedProject.name || selectedProject.worktree} (id: ${projectId})`,
     );
 
-    stopEventListening();
+    const previousProject = getCurrentProject();
+    stopEventListening(previousProject?.worktree);
     backgroundSessionTracker.clear();
 
     const previousSession = getCurrentSession();

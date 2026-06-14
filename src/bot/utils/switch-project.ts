@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
 import type { ProjectInfo } from "../../settings/manager.js";
-import { setCurrentProject } from "../../settings/manager.js";
+import { setCurrentProject, getCurrentProject } from "../../settings/manager.js";
 import { clearSession, getCurrentSession } from "../../session/manager.js";
 import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
@@ -39,8 +39,12 @@ export async function switchToProject(
   reason: string,
   options: SwitchToProjectOptions = {},
 ) {
+  const previousProject = getCurrentProject();
   detachAttachedSession(reason);
-  stopEventListening();
+  // Stop only the event listener for the old project directory, not all projects
+  if (previousProject?.worktree) {
+    stopEventListening(previousProject.worktree);
+  }
   backgroundSessionTracker.clear();
   const previousSession = getCurrentSession();
   if (previousSession) {

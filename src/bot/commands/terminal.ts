@@ -179,14 +179,15 @@ export async function startPtySession(
   const doScreenshot = async () => {
     if (!rawOutputBuf) return;
     try {
+      const scrollOffset = terminalScrollOffsets.get(messageThreadId) ?? 0;
       const { chromium } = await import("playwright");
       const browser = await chromium.launch({ headless: true });
       try {
         const page = await browser.newPage();
-        await page.setViewportSize({ width: 800, height: 600 });
-        // Escape raw output for JS string embedding
+        const TERM_ROWS = 72; // 3x normal height
+        const TERM_COLS = 80;
+        await page.setViewportSize({ width: 860, height: TERM_ROWS * 18 + 40 });
         const escaped = JSON.stringify(rawOutputBuf);
-        // Use xterm.js from node_modules for local rendering
         const xtermJs = await fs.readFile(require.resolve("xterm/lib/xterm.js"), "utf-8");
         const xtermCss = await fs.readFile(require.resolve("xterm/css/xterm.css"), "utf-8");
         await page.setContent(`
@@ -194,20 +195,29 @@ export async function startPtySession(
           <body><div id="terminal"></div></body>
           <script>${xtermJs}</script>
           <script>
-            const term = new Terminal({ cols: 80, rows: 24, theme: { background: '#1a1a2e', foreground: '#e0e0e0' } });
+            var term = new Terminal({ cols: ${TERM_COLS}, rows: ${TERM_ROWS}, scrollback: 5000,
+              theme: { background: '#1a1a2e', foreground: '#e0e0e0' } });
             term.open(document.getElementById('terminal'));
-            const output = ${escaped};
-            term.write(output.replace(/\\n/g, '\\n\\r'));
+            var data = ${escaped};
+            term.write(data.replace(/\\n/g, '\\r\\n'));
+            term.scrollToLine(${scrollOffset});
           </script>
           </html>
         `);
         await page.waitForTimeout(500);
-        const el = await page.$("#terminal");
-        const buf = el
-          ? await el.screenshot({ type: "png" })
-          : await page.screenshot({ type: "png", fullPage: true });
-        await api.sendPhoto(forumChatId, new InputFile(buf, "terminal.png"), {
+        const buf = await page.screenshot({ type: "png" });
+        const sent = await api.sendPhoto(forumChatId, new InputFile(buf, "terminal.png"), {
           message_thread_id: messageThreadId,
+        });
+        // Send navigation buttons as a reply to the screenshot
+        const navKeyboard = new InlineKeyboard()
+          .text("⬆ -20", `term_up_${messageThreadId}`)
+          .text("🔄", `term_refresh_${messageThreadId}`)
+          .text("⬇ +20", `term_down_${messageThreadId}`);
+        await api.sendMessage(forumChatId, `Line ${scrollOffset}+`, {
+          message_thread_id: messageThreadId,
+          reply_markup: navKeyboard,
+          reply_to_message_id: sent.message_id,
         });
       } finally {
         await browser.close();
@@ -497,6 +507,30 @@ export function getTerminalOutput(messageThreadId: number): string | undefined {
   return terminalOutputs.get(messageThreadId);
 }
 
+export function getTerminalScrollOffset(messageThreadId: number): number {
+  return terminalScrollOffsets.get(messageThreadId) ?? 0;
+}
+
+export function setTerminalScrollOffset(messageThreadId: number, offset: number): void {
+  terminalScrollOffsets.set(messageThreadId, Math.max(0, offset));
+}
+
+export async function handleTerminalScrollButton(
+  action: "up" | "down" | "refresh",
+  messageThreadId: number,
+  api: Api,
+  chatId: number,
+): Promise<void> {
+  const current = terminalScrollOffsets.get(messageThreadId) ?? 0;
+  if (action === "up") {
+    setTerminalScrollOffset(messageThreadId, current - 20);
+  } else if (action === "down") {
+    setTerminalScrollOffset(messageThreadId, current + 20);
+  }
+  // Refresh: just retake screenshot at current scroll
+  await takeTerminalScreenshot(messageThreadId, api, chatId);
+}
+
 export async function takeTerminalScreenshot(
   messageThreadId: number,
   api: Api,
@@ -508,11 +542,14 @@ export async function takeTerminalScreenshot(
     return;
   }
 
+  const scrollOffset = terminalScrollOffsets.get(messageThreadId) ?? 0;
+  const TERM_ROWS = 72;
+  const TERM_COLS = 80;
   const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage();
-    await page.setViewportSize({ width: 800, height: 600 });
+    await page.setViewportSize({ width: 860, height: TERM_ROWS * 18 + 40 });
     const escaped = JSON.stringify(output);
     const xtermJs = await fs.readFile(require.resolve("xterm/lib/xterm.js"), "utf-8");
     const xtermCss = await fs.readFile(require.resolve("xterm/css/xterm.css"), "utf-8");
@@ -521,19 +558,28 @@ export async function takeTerminalScreenshot(
       <body><div id="terminal"></div></body>
       <script>${xtermJs}</script>
       <script>
-        const term = new Terminal({ cols: 80, rows: 24, theme: { background: '#1a1a2e', foreground: '#e0e0e0' } });
+        var term = new Terminal({ cols: ${TERM_COLS}, rows: ${TERM_ROWS}, scrollback: 5000,
+          theme: { background: '#1a1a2e', foreground: '#e0e0e0' } });
         term.open(document.getElementById('terminal'));
-        term.write(${escaped}.replace(/\\n/g, '\\n\\r'));
+        var data = ${escaped};
+        term.write(data.replace(/\\n/g, '\\r\\n'));
+        term.scrollToLine(${scrollOffset});
       </script>
       </html>
     `);
     await page.waitForTimeout(500);
-    const el = await page.$("#terminal");
-    const buf = el
-      ? await el.screenshot({ type: "png" })
-      : await page.screenshot({ type: "png", fullPage: true });
-    await api.sendPhoto(chatId, new InputFile(buf, "terminal.png"), {
+    const buf = await page.screenshot({ type: "png" });
+    const sent = await api.sendPhoto(chatId, new InputFile(buf, "terminal.png"), {
       message_thread_id: messageThreadId,
+    });
+    const navKeyboard = new InlineKeyboard()
+      .text("⬆ -20", `term_up_${messageThreadId}`)
+      .text("🔄", `term_refresh_${messageThreadId}`)
+      .text("⬇ +20", `term_down_${messageThreadId}`);
+    await api.sendMessage(chatId, `Line ${scrollOffset}+`, {
+      message_thread_id: messageThreadId,
+      reply_markup: navKeyboard,
+      reply_to_message_id: sent.message_id,
     });
   } finally {
     await browser.close();
@@ -542,7 +588,8 @@ export async function takeTerminalScreenshot(
 
 const vmBridges = new Map<number, VMPtyBridge>();
 const ptySessions = new Map<number, PtySessionHandle>();
-const terminalOutputs = new Map<number, string>(); // messageThreadId → accumulated output
+const terminalOutputs = new Map<number, string>(); // messageThreadId → accumulated raw output
+const terminalScrollOffsets = new Map<number, number>(); // messageThreadId → scroll line offset
 
 export async function ensureVMPtyBridge(userId: number, bridgeIp: string): Promise<VMPtyBridge> {
   const existing = vmBridges.get(userId);

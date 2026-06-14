@@ -58,7 +58,7 @@ import { streamCommand } from "./commands/stream.js";
 import { ttsCommand } from "./commands/tts.js";
 import { terminalCommand } from "./commands/terminal.js";
 import { openTerminalTopic } from "./commands/terminal.js";
-import { isTerminalTopic, executeTerminalCommand, killTerminalProcess, loadTerminalTopics, takeTerminalScreenshot } from "./commands/terminal.js";
+import { isTerminalTopic, executeTerminalCommand, killTerminalProcess, loadTerminalTopics, takeTerminalScreenshot, handleTerminalScrollButton } from "./commands/terminal.js";
 import { handleTerminalTextInput } from "./commands/terminal-text-handler.js";
 import { worktreeCommand, handleWorktreeCallback } from "./commands/worktree.js";
 import { openCommand, handleOpenCallback, clearOpenPathIndex } from "./commands/open.js";
@@ -4127,6 +4127,16 @@ export function createBot(): Bot<Context> {
     }
     await takeTerminalScreenshot(mtId!, ctx.api, ctx.chat.id);
   });
+  bot.command("up", async (ctx) => {
+    const mtId = ctx.message?.message_thread_id;
+    if (!isTerminalTopic(mtId)) return;
+    await handleTerminalScrollButton("up", mtId!, ctx.api, ctx.chat.id);
+  });
+  bot.command("down", async (ctx) => {
+    const mtId = ctx.message?.message_thread_id;
+    if (!isTerminalTopic(mtId)) return;
+    await handleTerminalScrollButton("down", mtId!, ctx.api, ctx.chat.id);
+  });
   bot.command("opencode_start", opencodeStartCommand);
   bot.command("opencode_stop", opencodeStopCommand);
   bot.command("projects", projectsCommand);
@@ -4261,6 +4271,19 @@ export function createBot(): Bot<Context> {
       if (handledInlineCancel) {
         clearOpenPathIndex();
         clearLsPathIndex();
+      }
+      // Terminal scroll buttons
+      const data = ctx.callbackQuery?.data ?? "";
+      if (data.startsWith("term_up_") || data.startsWith("term_down_") || data.startsWith("term_refresh_")) {
+        const [action, mtIdStr] = data.replace("term_", "").split("_");
+        const mtId = parseInt(mtIdStr);
+        if (action === "refresh") {
+          await handleTerminalScrollButton("refresh", mtId, ctx.api, ctx.chat!.id);
+        } else {
+          await handleTerminalScrollButton(action as "up" | "down", mtId, ctx.api, ctx.chat!.id);
+        }
+        await ctx.answerCallbackQuery();
+        return;
       }
       const handledSsh = await handleSshCallback(ctx);
       if (handledSsh) {

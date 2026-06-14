@@ -116,7 +116,7 @@ async function getTerminalCmd(userId: number, sessionId: string, cols: number, r
 
   if (deployTarget === "vm" && vmInfo?.bridgeIp) {
     return ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",
-      `opencode@${vmInfo.bridgeIp}`, `node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`];
+      `opencode@${vmInfo.bridgeIp}`, `NODE_PATH=/usr/local/lib/node_modules node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`];
   }
 
   if (deployTarget === "docker") {
@@ -133,8 +133,8 @@ async function getTerminalCmd(userId: number, sessionId: string, cols: number, r
       const { sshManager } = await import("../../utils/ssh-manager.js");
       const connInfo = sshManager.getConnectionInfo(userId);
       if (connInfo) {
-        return ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",
-          `${connInfo.username}@${connInfo.host}`, `node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`];
+      return ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",
+        `${connInfo.username}@${connInfo.host}`, `NODE_PATH=/usr/local/lib/node_modules node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`];
       }
     } catch { /* SSH not available */ }
     return null;

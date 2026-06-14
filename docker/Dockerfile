@@ -36,6 +36,7 @@ RUN pip3 install --break-system-packages --no-cache-dir \
 # Install skill dependencies: Node.js packages (global)
 RUN npm install -g \
     better-sqlite3 dotenv express qrcode tsx \
+    node-pty \
   && npm cache clean --force 2>/dev/null || true
 
 # Install playwright (browser automation) — skip browser binary download, uses system chromium
@@ -89,6 +90,10 @@ RUN chmod +x /usr/local/bin/merge-agents
 
 # Skills package (baked into image — all tenants can use it)
 COPY opencode-skills-pkg /usr/local/lib/opencode-skills-pkg
+
+# Terminal agent — PTY terminal for VM + Docker tenants
+COPY terminal-agent.js /opt/terminal-agent.js
+RUN chmod +x /opt/terminal-agent.js
 
 # Skills installer script
 COPY bin/install-opencode-skills.sh /usr/local/bin/install-opencode-skills

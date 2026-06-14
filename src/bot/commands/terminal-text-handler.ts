@@ -21,10 +21,22 @@ export async function handleTerminalTextInput(
     // Write to persistent PTY — output is streamed via onData registered in openTerminalTopic
     try {
       if (text.startsWith("^")) {
-        const ctrl = text.slice(1).toUpperCase();
-        if (ctrl === "C") { session.write("\x03"); }
-        else if (ctrl === "D") { session.write("\x04"); }
-        else { session.write(text + "\n"); }
+        const ctrl = text.slice(1);
+        if (ctrl.length === 1) {
+          const code = ctrl.toUpperCase().charCodeAt(0);
+          if (code >= 65 && code <= 90) {
+            // ^A-^Z → Ctrl key (ASCII 1-26)
+            session.write(String.fromCharCode(code - 64));
+          } else if (ctrl === "[") {
+            session.write("\x1b"); // ESC
+          } else if (ctrl === "@") {
+            session.write("\x00"); // NUL
+          } else {
+            session.write(text + "\n");
+          }
+        } else {
+          session.write(text + "\n");
+        }
       } else {
         session.write(text + "\n");
       }

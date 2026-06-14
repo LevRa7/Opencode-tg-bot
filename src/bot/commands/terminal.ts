@@ -117,7 +117,7 @@ async function getTerminalCmd(userId: number, sessionId: string, cols: number, r
   const agentCmd = `NODE_PATH=/usr/local/lib/node_modules TERM=dumb node /opt/terminal-agent.js ${sessionId} ${cols} ${rows} ${cwd}`;
 
   if (deployTarget === "vm" && vmInfo?.bridgeIp) {
-    return ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",
+    return ["ssh", "-q", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",
       `opencode@${vmInfo.bridgeIp}`, agentCmd];
   }
 
@@ -135,7 +135,7 @@ async function getTerminalCmd(userId: number, sessionId: string, cols: number, r
       const { sshManager } = await import("../../utils/ssh-manager.js");
       const connInfo = sshManager.getConnectionInfo(userId);
       if (connInfo) {
-        return ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",
+        return ["ssh", "-q", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",
           `${connInfo.username}@${connInfo.host}`, agentCmd];
       }
     } catch { /* SSH not available */ }
@@ -176,12 +176,22 @@ export async function startPtySession(
   const doScreenshot = async () => {
     if (!outputBuf) return;
     try {
+      // Strip ANSI escape sequences for clean screenshot
+      const clean = outputBuf
+        .replace(/\x1b\[[\d;?]*[a-zA-Z]/g, "")
+        .replace(/\x1b\][^\x07]*\x07/g, "")
+        .replace(/\x1b\]0;[^\x07]*\x07/g, "")      // OSC title sequences
+        .replace(/\x1b[PX^_].*?\x1b\\/g, "")
+        .replace(/\x1b[^a-zA-Z\[\]]/g, "")
+        .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "")
+        .replace(/\[?2004\w/g, "");                 // leftover bracketed paste mode markers
+      if (!clean.trim()) return;
       const { chromium } = await import("playwright");
       const browser = await chromium.launch({ headless: true });
       try {
         const page = await browser.newPage();
         await page.setViewportSize({ width: 800, height: 600 });
-        const safe = outputBuf.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const safe = clean.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
         await page.setContent(
           `<html><body style="margin:0;background:#1a1a2e;color:#e0e0e0;font:14px monospace;padding:12px;white-space:pre-wrap;word-break:break-all">${safe}</body></html>`
         );
@@ -198,7 +208,16 @@ export async function startPtySession(
   };
 
   ptySession.onData((data: string) => {
-    outputBuf += data;
+    // Strip ANSI escape sequences for clean output
+    const cleanData = data
+      .replace(/\x1b\[[\d;?]*[a-zA-Z]/g, "")   // CSI: ESC[digits;?letters
+      .replace(/\x1b\][^\x07]*\x07/g, "")        // OSC: ESC]...BEL
+      .replace(/\x1b\][^\x1b]*\x1b\\/g, "")      // OSC with ST terminator
+      .replace(/\x1b[PX^_].*?\x1b\\/g, "")        // Other escape sequences
+      .replace(/\x1b[^a-zA-Z\[\]]/g, "")          // Any remaining ESC not part of valid seq
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ""); // control chars except \t(09) \n(0a)
+    if (!cleanData && !data.includes("\n")) return; // skip pure control noise
+    outputBuf += (cleanData || data); // keep original buf, display cleaned
     terminalOutputs.set(messageThreadId, outputBuf);
     const safe = outputBuf.slice(-3800);
     if (outputMsgId) {

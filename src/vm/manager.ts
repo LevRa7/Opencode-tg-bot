@@ -2,6 +2,7 @@ import { execSync as nodeExecSync } from "child_process";
 import { existsSync, unlinkSync, writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "fs";
 import path from "path";
 import { logger } from "../utils/logger.js";
+import { t } from "../i18n/index.js";
 import { VM_DEFAULTS, type VmInfo, type VmOperationResult, type VmSpec } from "./types.js";
 import { generateSudoPassword, generateCloudInitIso } from "./cloud-init.js";
 import { getOrCreateServerPassword } from "../settings/manager.js";
@@ -99,17 +100,17 @@ export class VmManager {
     const isoPath = path.join(VM_DEFAULTS.imagesDir, `cloud-init-${userId}.iso`);
     const xmlPath = path.join(VM_DEFAULTS.imagesDir, `${domainName}.xml`);
 
-    report("🔐 Настройка доступа...");
+    report(t("vm.progress.setup_access"));
     try {
       this.execSyncFn(`sudo setfacl -m u:libvirt-qemu:x ${path.dirname(VM_DEFAULTS.imagesDir)}`, { stdio: "ignore" });
       this.execSyncFn(`sudo setfacl -m u:libvirt-qemu:x ${VM_DEFAULTS.imagesDir}`, { stdio: "ignore" });
     } catch { /* non-fatal — may already be set */ }
 
-    report("🌐 Настройка сети...");
+    report(t("vm.progress.setup_network"));
     await this.ensureNetwork();
 
     // Clean up any leftover from previous attempt before creating new
-    report("🧹 Очистка предыдущей VM...");
+    report(t("vm.progress.cleanup_vm"));
     try {
       this.execSyncFn(`sudo virsh destroy ${domainName} --graceful`, { stdio: "ignore" });
     } catch { /* not running — ok */ }
@@ -123,25 +124,25 @@ export class VmManager {
       this.execSyncFn(`sudo rm -f ${isoPath}`, { stdio: "ignore" });
     } catch { /* file didn't exist — ok */ }
 
-    report("📦 Клонирование образа...");
+    report(t("vm.progress.clone_image"));
     this.execSyncFn(
       `sudo qemu-img create -f qcow2 -b ${baseImage} -F qcow2 ${clonePath} ${spec.diskGb}G`,
       { stdio: "ignore" },
     );
 
-    report("⚙️ Генерация cloud-init...");
+    report(t("vm.progress.cloud_init"));
     generateCloudInitIso(userId, spec, opencodePw, sudoPw, isoPath, this.execSyncFn, write, mkdir);
 
     const domainXml = this.buildDomainXml(domainName, clonePath, isoPath, spec);
     write(xmlPath, domainXml);
 
-    report("🖥 Определение VM...");
+    report(t("vm.progress.define_vm"));
     this.execSyncFn(`sudo virsh define ${xmlPath}`, { stdio: "pipe" });
 
-    report("🚀 Запуск VM...");
+    report(t("vm.progress.start_vm"));
     this.execSyncFn(`sudo virsh start ${domainName}`, { stdio: "pipe" });
 
-    report("🌐 Ожидание IP (DHCP)...");
+    report(t("vm.progress.wait_ip"));
     const bridgeIp = await this.getBridgeIp(userId, deps?.dhcpRetryDelayMs);
     if (!bridgeIp) {
       throw new Error(`VM started but DHCP lease not obtained within ${((VM_DEFAULTS.dhcpRetries * VM_DEFAULTS.dhcpRetryDelayMs) / 1000).toFixed(0)}s`);

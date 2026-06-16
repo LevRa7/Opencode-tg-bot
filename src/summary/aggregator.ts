@@ -223,6 +223,7 @@ class SummaryAggregator {
   private messageThreadId: number | undefined = undefined;
   private typingTimer: ReturnType<typeof setInterval> | null = null;
   private typingIndicatorEnabled = true;
+  private typingStoppedForCompletion = false;
   private partHashes: Map<string, Set<string>> = new Map();
   private trackedSessionParents: Map<string, string | null> = new Map();
   private activeRootSessionIds: Set<string> = new Set();
@@ -337,6 +338,10 @@ class SummaryAggregator {
     }
 
     if (this.typingTimer) {
+      return;
+    }
+
+    if (this.typingStoppedForCompletion) {
       return;
     }
 
@@ -501,6 +506,7 @@ class SummaryAggregator {
     }
 
     this.activeRootSessionIds.add(sessionId);
+    this.typingStoppedForCompletion = false;
 
     if (this.currentSessionId !== sessionId) {
       this.currentSessionId = sessionId;
@@ -565,6 +571,7 @@ class SummaryAggregator {
 
   clear(): void {
     this.stopTypingIndicator();
+    this.typingStoppedForCompletion = false;
     this.currentSessionId = null;
     this.textMessageStates.clear();
     this.messages.clear();
@@ -1252,6 +1259,7 @@ class SummaryAggregator {
 
         if (this.textMessageStates.size === 0) {
           logger.debug("[Aggregator] No more active messages, stopping typing indicator");
+          this.typingStoppedForCompletion = true;
           this.stopTypingIndicator();
         }
       }

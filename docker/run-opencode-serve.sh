@@ -306,6 +306,12 @@ if (!config.provider.local) {
 
 // Preserve model if it starts with cliproxyapi/ (already in host config)
 // No need to change model field.
+// Remap deprecated models to their working replacements
+if (typeof config.model === "string") {
+  if (config.model === "cliproxyapi/gemini-3.5-flash") {
+    config.model = "opencode/deepseek-v4-flash-free";
+  }
+}
 
 fs.writeFileSync(dst, JSON.stringify(config, null, 2) + "\n", "utf8");
  ' "$HOST_OPENCODE_JSON" "$TENANT_OPENCODE_JSON" "$CLIPROXYAPI_BASE_URL" "$TENANT_CLIPROXYAPI_KEY_REF"
@@ -322,9 +328,11 @@ if [ -d "$SCRIPT_DIR/skills/gpt-image-api" ]; then
   cp -R "$SCRIPT_DIR/skills/gpt-image-api/." "$STATE_SKILLS_DIR/gpt-image-api/"
 fi
 if [ -d "$SCRIPT_DIR/skills/tg-uploader" ]; then
+  mkdir -p "$STATE_SKILLS_DIR/tg-uploader"
   cp -R "$SCRIPT_DIR/skills/tg-uploader/." "$STATE_SKILLS_DIR/tg-uploader/"
 fi
 if [ -f "$SCRIPT_DIR/skills/yandex-rasp/SKILL.md" ]; then
+  mkdir -p "$STATE_SKILLS_DIR/yandex-rasp"
   cp "$SCRIPT_DIR/skills/yandex-rasp/SKILL.md" "$STATE_SKILLS_DIR/yandex-rasp/SKILL.md"
 fi
 if [ -f "$SCRIPT_DIR/skills/install-vpn/SKILL.md" ]; then

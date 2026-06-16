@@ -107,6 +107,7 @@ runcmd:
   # Copy terminal-agent if not already present
   - test -f /opt/terminal-agent.js && chmod +x /opt/terminal-agent.js || true
   - systemctl daemon-reload
+  - systemctl enable opencode
   - systemctl restart opencode || systemctl start opencode
 `;
 

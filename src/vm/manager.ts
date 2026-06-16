@@ -63,17 +63,21 @@ export class VmManager {
 
   async ensureNetwork(): Promise<VmOperationResult> {
     const netName = VM_DEFAULTS.networkName;
+    const subnet = VM_DEFAULTS.networkSubnetCidr;
     try {
       const check = this.execSyncFn(`sudo virsh net-info ${netName}`, {
         stdio: "pipe",
         encoding: "utf-8",
       }) as string;
       if (check.includes("Active:") && check.includes("yes")) {
+        // Network is active — fix routing and verify bridge
+        this.fixVmRouting(subnet);
         return { success: true };
       }
       this.execSyncFn(`sudo virsh net-start ${netName}`, { stdio: "pipe" });
       this.execSyncFn(`sudo virsh net-autostart ${netName}`, { stdio: "ignore" });
       logger.info(`[VmManager] Network ${netName} started`);
+      this.fixVmRouting(subnet);
       return { success: true };
     } catch {
       const netXml = `<network>
@@ -93,8 +97,21 @@ export class VmManager {
       this.execSyncFn(`sudo virsh net-start ${netName}`, { stdio: "pipe" });
       this.execSyncFn(`sudo virsh net-autostart ${netName}`, { stdio: "ignore" });
       logger.info(`[VmManager] Network ${netName} created and started`);
+      this.fixVmRouting(subnet);
       return { success: true };
     }
+  }
+
+  /** Fix Tailscale route conflict: ensure local VM subnet traffic goes through virbr1, not tailscale0.
+   *  VMs advertise 10.100.0.0/24 via Tailscale, which creates a table-52 route that overrides the
+   *  local bridge route. We add a higher-priority ip rule to use the main table for this subnet. */
+  private fixVmRouting(subnet: string): void {
+    try {
+      // Remove any stale Tailscale route in table 52 for our subnet
+      this.execSyncFn(`sudo ip rule del to ${subnet} table 52 2>/dev/null || true`, { stdio: "ignore" });
+      // Add high-priority rule to route local subnet through main table (virbr1)
+      this.execSyncFn(`sudo ip rule add to ${subnet} table main priority 100 2>/dev/null || true`, { stdio: "ignore" });
+    } catch { /* non-fatal — routing fix is best-effort */ }
   }
 
   async createAndStart(

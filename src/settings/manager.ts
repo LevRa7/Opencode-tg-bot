@@ -809,6 +809,10 @@ export function clearVmRuntimeInfo(userId: number): void {
   vmRuntime.delete(userId);
 }
 
+export function getAllVmRuntimeUserIds(): number[] {
+  return vmRuntime.getAll().map((row) => row.user_id);
+}
+
 // ====== SESSION DIRECTORY CACHE ======
 
 export function getSessionDirectoryCache(): SessionDirectoryCacheInfo | undefined {

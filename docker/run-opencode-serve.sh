@@ -306,12 +306,6 @@ if (!config.provider.local) {
 
 // Preserve model if it starts with cliproxyapi/ (already in host config)
 // No need to change model field.
-// Remap deprecated models to their working replacements
-if (typeof config.model === "string") {
-  if (config.model === "cliproxyapi/gemini-3.5-flash") {
-    config.model = "opencode/deepseek-v4-flash-free";
-  }
-}
 
 fs.writeFileSync(dst, JSON.stringify(config, null, 2) + "\n", "utf8");
  ' "$HOST_OPENCODE_JSON" "$TENANT_OPENCODE_JSON" "$CLIPROXYAPI_BASE_URL" "$TENANT_CLIPROXYAPI_KEY_REF"

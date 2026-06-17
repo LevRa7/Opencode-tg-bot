@@ -23,8 +23,8 @@ done
 PKG_SKILLS="$SOURCE_DIR/skills"
 
 if [ ! -d "$PKG_SKILLS" ]; then
-  echo "Error: skills package not found at $PKG_SKILLS" >&2
-  exit 1
+  echo "Notice: skills package directory not found at $PKG_SKILLS — skipping bulk install (base skills already installed separately)" >&2
+  exit 0
 fi
 
 mkdir -p "$TARGET_DIR"

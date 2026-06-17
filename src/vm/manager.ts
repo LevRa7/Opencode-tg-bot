@@ -32,6 +32,15 @@ function knuthHash(n: number): number {
   return ((n * 2654435761) >>> 0);
 }
 
+/** Deterministic IPv6 from VPS /64 range: 2607:9d00:2000:1f6::<hash%2^64>
+ *  Address ::1 is reserved for gateway. User addresses start from ::2. */
+export function generateIpv6ForUser(userId: number): string {
+  const h = knuthHash(userId);
+  const host = BigInt(h >>> 0) % ((1n << 64n) - 2n) + 2n;
+  const hex = host.toString(16).padStart(16, "0");
+  return `2607:9d00:2000:1f6::${hex}`;
+}
+
 export class VmManager {
   private execSyncFn: typeof nodeExecSync;
 
@@ -112,6 +121,28 @@ export class VmManager {
       // Add high-priority rule to route local subnet through main table (virbr1)
       this.execSyncFn(`sudo ip rule add to ${subnet} table main priority 100 2>/dev/null || true`, { stdio: "ignore" });
     } catch { /* non-fatal — routing fix is best-effort */ }
+  }
+
+  async addVmIpv6Route(domainName: string, ipv6: string): Promise<void> {
+    try {
+      const list = this.execSyncFn(
+        `sudo virsh domiflist ${domainName}`,
+        { encoding: "utf-8", stdio: "pipe" },
+      ) as string;
+      const vnetLine = list.split("\n").find(l => l.includes("vnet"));
+      if (!vnetLine) return;
+      const iface = vnetLine.trim().split(/\s+/)[0];
+      this.execSyncFn(`sudo ip -6 route add ${ipv6}/128 dev ${iface}`, { stdio: "ignore" });
+    } catch { /* non-fatal */ }
+  }
+
+  async addVpsIpv6Route(ipv6: string): Promise<void> {
+    try {
+      this.execSyncFn(
+        `ssh root@192.129.148.93 ip -6 route add ${ipv6}/128 dev wg1`,
+        { stdio: "ignore" },
+      );
+    } catch { /* non-fatal */ }
   }
 
   async createAndStart(
@@ -197,6 +228,11 @@ export class VmManager {
     report(t("vm.progress.start_vm"));
     this.execSyncFn(`sudo virsh start ${domainName}`, { stdio: "pipe" });
 
+    // Add IPv6 routes for this VM
+    const ipv6 = generateIpv6ForUser(userId);
+    await this.addVmIpv6Route(domainName, ipv6);
+    await this.addVpsIpv6Route(ipv6);
+
     report(t("vm.progress.wait_ip"));
     const bridgeIp = await this.getBridgeIp(userId, deps?.dhcpRetryDelayMs);
     if (!bridgeIp) {
@@ -215,6 +251,7 @@ export class VmManager {
       startTime: new Date().toISOString(),
       pid: null,
       sudoPassword: sudoPw,
+      ipv6: generateIpv6ForUser(userId),
     };
   }
 

@@ -354,13 +354,10 @@ export async function handleAccessApprovalCallback(ctx: Context): Promise<boolea
     const requesterMessage =
       action === "approve" ? t("auth.requester.approved") : t("auth.requester.denied");
 
-    // Edit the original pending-approval message if we have its ID
-    if (typeof request.requesterMessageId === "number") {
-      await ctx.api.editMessageText(request.chatId, request.requesterMessageId, requesterMessage).catch(() => {
-        // Fallback: send new message if editing fails
-        ctx.api.sendMessage(request.chatId, requesterMessage).catch(() => {});
-      });
-    } else {
+    // Always send approval confirmation as a NEW message so the user gets a notification.
+    // Do not edit requesterMessageId — that was already used for the VM deployment message
+    // and edits don't trigger push notifications in Telegram.
+    if (request.chatId) {
       await ctx.api.sendMessage(request.chatId, requesterMessage).catch(() => {});
     }
   }

@@ -341,11 +341,15 @@ if [ -f "$SCRIPT_DIR/skills/gui-automation/SKILL.md" ]; then
   fi
 fi
 
-# Install all skills from the baked-in package (opencode-skills-pkg)
+# Install all skills from the baked-in package (opencode-skills-pkg).
+# When running on the host (non-Docker mode), the skills/ subdirectory may not
+# exist in the host copy of the package — that's fine, base skills are already
+# installed separately above. Inside Docker, /usr/local/lib/opencode-skills-pkg
+# has the full skills tree.
 if [ -d "$SCRIPT_DIR/opencode-skills-pkg" ]; then
   bash "$SCRIPT_DIR/bin/install-opencode-skills.sh" \
     --source "$SCRIPT_DIR/opencode-skills-pkg" \
-    --target "$STATE_SKILLS_DIR"
+    --target "$STATE_SKILLS_DIR" || true
 fi
 
 cat > "$STATE_DIR/MAP.md" <<'EOF'

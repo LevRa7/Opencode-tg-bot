@@ -147,6 +147,9 @@ export class VmManager {
     report(t("vm.progress.setup_network"));
     await this.ensureNetwork();
 
+    report("Enabling KSM");
+    await this.ensureKsm();
+
     // Clean up any leftover from previous attempt before creating new
     report(t("vm.progress.cleanup_vm"));
     try {
@@ -215,10 +218,31 @@ export class VmManager {
     };
   }
 
+  async ensureKsm(): Promise<void> {
+    // KSM deduplicates identical memory pages across VMs sharing the same base image.
+    // Aggressive tuning: scan more pages per pass (1024), short sleep (20ms).
+    const ksmCmds = [
+      "echo 1 > /sys/kernel/mm/ksm/run",
+      "echo 1024 > /sys/kernel/mm/ksm/pages_to_scan",
+      "echo 20 > /sys/kernel/mm/ksm/sleep_millisecs",
+    ];
+    for (const cmd of ksmCmds) {
+      try {
+        this.execSyncFn(`sudo sh -c '${cmd}'`, { stdio: "ignore" });
+      } catch {
+        // KSM not available on this kernel — non-fatal
+      }
+    }
+  }
+
   private buildDomainXml(name: string, diskPath: string, isoPath: string, spec: VmSpec, userId: number): string {
     const mac = generateMacForUser(userId);
     return `<domain type="kvm">
   <name>${name}</name>
+  <memoryBacking>
+    <source type="kvm"/>
+    <access mode="shared"/>
+  </memoryBacking>
     <maxMemory slots="16" unit="MiB">${spec.ramMb}</maxMemory>
     <memory unit="MiB">${Math.max(1024, spec.ramMb - 1024)}</memory>
   <vcpu>${spec.vcpus}</vcpu>

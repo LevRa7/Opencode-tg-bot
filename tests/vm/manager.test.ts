@@ -89,23 +89,20 @@ describe("VmManager", () => {
   });
 
   describe("getBridgeIp", () => {
-    it("returns IP from net-dhcp-leases", async () => {
-      const mockExec = vi.fn().mockReturnValue(
-        " Name       MAC address          Protocol     Address\n" +
-        " vnet0      52:54:00:ab:cd:ef    ipv4         192.168.122.100/24",
-      );
-      const mgr = new VmManager(mockExec);
+    it("returns deterministic IP for user", async () => {
+      const mgr = new VmManager(vi.fn());
       const result = await mgr.getBridgeIp(1, 0);
-      expect(result).toBe("192.168.122.100");
+      // Deterministic IP: 10.100.0.(knuthHash(1) % 241 + 10)
+      expect(result).toMatch(/^10\.100\.0\.\d{1,3}$/);
     });
 
-    it("returns null when virsh fails on every attempt", async () => {
+    it("returns deterministic IP even when virsh fails", async () => {
       const mockExec = vi.fn().mockImplementation(() => {
         throw new Error("virsh error");
       });
       const mgr = new VmManager(mockExec);
       const result = await mgr.getBridgeIp(1, 0);
-      expect(result).toBeNull();
+      expect(result).toMatch(/^10\.100\.0\.\d{1,3}$/);
     });
   });
 
@@ -228,6 +225,81 @@ describe("VmManager", () => {
     });
   });
 
+  describe("buildDomainXml", () => {
+    it("includes memoryBacking for KSM with shared access", () => {
+      const mgr = new VmManager(vi.fn());
+      const xml = (mgr as any).buildDomainXml(
+        "opencode-tg-1",
+        "/images/disk.qcow2",
+        "/images/cloud-init.iso",
+        VM_TIERS.small,
+        1,
+      ) as string;
+
+      expect(xml).toContain("<memoryBacking>");
+      expect(xml).toContain('<source type="kvm"/>');
+      expect(xml).toContain('<access mode="shared"/>');
+      expect(xml).toContain("</memoryBacking>");
+    });
+
+    it("includes memoryBacking before devices block", () => {
+      const mgr = new VmManager(vi.fn());
+      const xml = (mgr as any).buildDomainXml(
+        "opencode-tg-1",
+        "/images/disk.qcow2",
+        "/images/cloud-init.iso",
+        VM_TIERS.small,
+        1,
+      ) as string;
+
+      const backingPos = xml.indexOf("<memoryBacking>");
+      const devicesPos = xml.indexOf("<devices>");
+      expect(backingPos).toBeGreaterThan(0);
+      expect(backingPos).toBeLessThan(devicesPos);
+    });
+  });
+
+  describe("ensureKsm", () => {
+    it("enables KSM on the host by writing to sysfs", async () => {
+      const mockExec = vi.fn();
+      const mgr = new VmManager(mockExec);
+
+      await mgr.ensureKsm();
+
+      expect(mockExec).toHaveBeenCalledWith(
+        "sudo sh -c 'echo 1 > /sys/kernel/mm/ksm/run'",
+        expect.any(Object),
+      );
+    });
+
+    it("tunes KSM for aggressive page merging", async () => {
+      const mockExec = vi.fn();
+      const mgr = new VmManager(mockExec);
+
+      await mgr.ensureKsm();
+
+      // pages_to_scan: scan more pages per pass
+      expect(mockExec).toHaveBeenCalledWith(
+        "sudo sh -c 'echo 1024 > /sys/kernel/mm/ksm/pages_to_scan'",
+        expect.any(Object),
+      );
+      // sleep_millisecs: shorter sleep between scans for faster merging
+      expect(mockExec).toHaveBeenCalledWith(
+        "sudo sh -c 'echo 20 > /sys/kernel/mm/ksm/sleep_millisecs'",
+        expect.any(Object),
+      );
+    });
+
+    it("does not throw when KSM sysfs is unavailable (no KSM support)", async () => {
+      const mockExec = vi.fn().mockImplementation(() => {
+        throw new Error("No such file or directory");
+      });
+      const mgr = new VmManager(mockExec);
+
+      await expect(mgr.ensureKsm()).resolves.toBeUndefined();
+    });
+  });
+
   describe("createAndStart", () => {
     const smallSpec: VmSpec = VM_TIERS.small;
     const imagesDir = "/home/me/vm-images";
@@ -260,7 +332,7 @@ describe("VmManager", () => {
       expect(result.qcow2Path).toBe(`${imagesDir}/opencode-tg-1.qcow2`);
       expect(result.cloudInitIsoPath).toBe(`${imagesDir}/cloud-init-1.iso`);
       expect(result.sudoPassword).toBe("sudo-secret");
-      expect(result.bridgeIp).toBe("192.168.122.100");
+      expect(result.bridgeIp).toMatch(/^10\.100\.0\.\d{1,3}$/);
       expect(result.baseUrl).toContain("4096");
       expect(result.startTime).toBeTruthy();
 
@@ -284,6 +356,16 @@ describe("VmManager", () => {
       expect(mockWrite).toHaveBeenCalledWith(
         `${imagesDir}/opencode-tg-1.xml`,
         expect.stringContaining("<domain"),
+      );
+      // domain XML includes KSM memoryBacking
+      const xmlCall = mockWrite.mock.calls.find((c: any[]) =>
+        String(c[1]).includes("<domain"),
+      );
+      expect(xmlCall[1]).toContain("<memoryBacking>");
+      // KSM is enabled on host before VM starts
+      expect(mockExec).toHaveBeenCalledWith(
+        "sudo sh -c 'echo 1 > /sys/kernel/mm/ksm/run'",
+        expect.any(Object),
       );
     });
 

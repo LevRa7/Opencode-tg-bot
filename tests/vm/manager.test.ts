@@ -225,40 +225,6 @@ describe("VmManager", () => {
     });
   });
 
-  describe("buildDomainXml", () => {
-    it("includes memoryBacking for KSM with shared access", () => {
-      const mgr = new VmManager(vi.fn());
-      const xml = (mgr as any).buildDomainXml(
-        "opencode-tg-1",
-        "/images/disk.qcow2",
-        "/images/cloud-init.iso",
-        VM_TIERS.small,
-        1,
-      ) as string;
-
-      expect(xml).toContain("<memoryBacking>");
-      expect(xml).toContain('<source type="kvm"/>');
-      expect(xml).toContain('<access mode="shared"/>');
-      expect(xml).toContain("</memoryBacking>");
-    });
-
-    it("includes memoryBacking before devices block", () => {
-      const mgr = new VmManager(vi.fn());
-      const xml = (mgr as any).buildDomainXml(
-        "opencode-tg-1",
-        "/images/disk.qcow2",
-        "/images/cloud-init.iso",
-        VM_TIERS.small,
-        1,
-      ) as string;
-
-      const backingPos = xml.indexOf("<memoryBacking>");
-      const devicesPos = xml.indexOf("<devices>");
-      expect(backingPos).toBeGreaterThan(0);
-      expect(backingPos).toBeLessThan(devicesPos);
-    });
-  });
-
   describe("ensureKsm", () => {
     it("enables KSM on the host by writing to sysfs", async () => {
       const mockExec = vi.fn();
@@ -357,11 +323,6 @@ describe("VmManager", () => {
         `${imagesDir}/opencode-tg-1.xml`,
         expect.stringContaining("<domain"),
       );
-      // domain XML includes KSM memoryBacking
-      const xmlCall = mockWrite.mock.calls.find((c: any[]) =>
-        String(c[1]).includes("<domain"),
-      );
-      expect(xmlCall[1]).toContain("<memoryBacking>");
       // KSM is enabled on host before VM starts
       expect(mockExec).toHaveBeenCalledWith(
         "sudo sh -c 'echo 1 > /sys/kernel/mm/ksm/run'",

@@ -239,10 +239,6 @@ export class VmManager {
     const mac = generateMacForUser(userId);
     return `<domain type="kvm">
   <name>${name}</name>
-  <memoryBacking>
-    <source type="kvm"/>
-    <access mode="shared"/>
-  </memoryBacking>
     <maxMemory slots="16" unit="MiB">${spec.ramMb}</maxMemory>
     <memory unit="MiB">${Math.max(1024, spec.ramMb - 1024)}</memory>
   <vcpu>${spec.vcpus}</vcpu>

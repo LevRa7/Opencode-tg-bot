@@ -843,7 +843,7 @@ export const fr: I18nDictionary = {
   "onboarding.your_web_panel": "Votre panneau Web OpenCode :",
   "onboarding.save_password_hint": "Enregistrez votre mot de passe. Vous pouvez le changer via /server.",
   "onboarding.skipped": "OK, vous pourrez le configurer plus tard via /server.",
-  "vm.onboarding.vm_ready": "✅ Accès approuvé. Vous pouvez maintenant utiliser l'agent.",
+  "vm.onboarding.vm_ready": "✅ Accès approuvé. IPv6: {ipv6}. Vous pouvez maintenant utiliser l'agent.",
   "vm.onboarding.vm_failed": "❌ Échec de la création de la VM : {error}",
   "ssh.web_panel_info": "Panneau Web SSH : https://{domain}\nIdentifiant : {username}\nMot de passe : <code>{password}</code>",
 };

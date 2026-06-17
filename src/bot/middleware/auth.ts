@@ -93,6 +93,9 @@ async function buildAccessRequestText(ctx: Context): Promise<string> {
         const { VM_TIERS } = await import("../../vm/types.js");
         const spec = VM_TIERS[pending.tier];
         lines.push(`\n📋 VM: ${spec.ramMb / 1024}GB / ${spec.vcpus} vCPU / ${spec.diskGb}GB (${pending.tier})`);
+        if (pending.ipv6) {
+          lines.push(`🌐 IPv6: ${pending.ipv6}`);
+        }
       }
     }
   } catch { /* ignore */ }
@@ -313,8 +316,9 @@ export async function handleAccessApprovalCallback(ctx: Context): Promise<boolea
       const pending = getPendingVmDeployment(userId);
       if (pending) {
         const result = await deployPendingVm(userId);
+        const ipv6 = pending.ipv6 ?? "TBD";
         const vmMsg = result.success
-          ? t("vm.onboarding.vm_ready")
+          ? t("vm.onboarding.vm_ready", { ipv6 })
           : t("vm.onboarding.vm_failed", { error: result.error || "unknown error" });
         // Edit the requester's pending approval message if we have its id
         if (request.requesterMessageId && request.chatId) {

@@ -6,6 +6,7 @@ import {
   getVmRuntimeInfo,
 } from "../../settings/manager.js";
 import { VM_TIERS, type VmSpecTier } from "../../vm/types.js";
+import { generateIpv6ForUser } from "../../vm/manager.js";
 import { processManager } from "../../process/manager.js";
 import { getLocaleOptions, type Locale } from "../../i18n/index.js";
 import { t } from "../../i18n/index.js";
@@ -17,6 +18,7 @@ const pendingVmDeployments = new Map<number, {
   chatId: number;
   username?: string;
   messageThreadId?: number;
+  ipv6: string;
 }>();
 
 export function getPendingVmDeployment(userId: number) {
@@ -154,6 +156,7 @@ export async function handleOnboardingCallback(ctx: Context): Promise<boolean> {
       chatId: ctx.chat!.id,
       username: ctx.from?.username,
       messageThreadId: ctx.message?.message_thread_id,
+      ipv6: generateIpv6ForUser(userId),
     });
 
     setUserDeployTarget(userId, "vm");

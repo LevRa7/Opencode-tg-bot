@@ -91,8 +91,9 @@ write_files:
       WantedBy=multi-user.target
     permissions: '0644'
 runcmd:
-  - ip -6 addr add ${ipv6 ?? "::1"}/128 dev eth0 2>/dev/null || true
-  - ip -6 route replace default via fd00:1::1 dev eth0 2>/dev/null || true
+  - IFACE=$(ip -o link show | grep -o "e[mn][a-z0-9]*" | head -1) && ip -6 addr add ${ipv6 ?? "::1"}/128 dev \$IFACE 2>/dev/null || true
+  - IFACE=$(ip -o link show | grep -o "e[mn][a-z0-9]*" | head -1) && sysctl -w net.ipv6.conf.\${IFACE}.ndisc_notify=1 2>/dev/null || true
+  - IFACE=$(ip -o link show | grep -o "e[mn][a-z0-9]*" | head -1) && ip -6 route replace default via fe80::1 dev \$IFACE 2>/dev/null || true
   - echo "${sudoPassword}" > /home/opencode/.sudo
   - chown opencode:opencode /home/opencode/.sudo
   - chmod 600 /home/opencode/.sudo

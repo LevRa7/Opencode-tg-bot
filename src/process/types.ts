@@ -28,6 +28,7 @@ export interface ProcessRuntimeInfo {
 export interface ProcessManagerInterface {
   initialize(): Promise<void>;
   ensureRuntime(onProgress?: (step: string) => void): Promise<ProcessOperationResult>;
+  ensureRuntimeForUser(userId: number): Promise<ProcessOperationResult>;
   start(): Promise<ProcessOperationResult>;
   stop(timeoutMs?: number): Promise<ProcessOperationResult>;
   restartTenantRuntimes(): Promise<ProcessOperationResult>;

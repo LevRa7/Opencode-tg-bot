@@ -295,9 +295,13 @@ export function __resetLoggerForTests(): void {
 }
 
 function log(level: LogLevel, args: unknown[]): void {
+  if (!shouldLog(level)) {
+    return;
+  }
+
   writeToConsole(level, args);
 
-  if (shouldLog(level) && logStream) {
+  if (logStream) {
     const line = withPrefix(level, args)
       .map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
       .join(" ");

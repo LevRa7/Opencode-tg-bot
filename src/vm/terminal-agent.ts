@@ -29,8 +29,8 @@ export function createSession(args: {
   const cols = args.cols ?? 80;
   const rows = args.rows ?? 24;
 
-  const pty = ptySpawn("bash", [], {
-    name: "xterm-256color",
+  const pty = ptySpawn("bash", ["--norc"], {
+    name: "dumb",
     cols,
     rows,
     cwd: cwd ?? process.cwd(),

@@ -72,8 +72,8 @@ function formatUserLabel(ctx: Context): string {
   return t("common.unknown");
 }
 
-function buildAccessRequestText(ctx: Context): string {
-  return [
+async function buildAccessRequestText(ctx: Context): Promise<string> {
+  const lines = [
     t("auth.request.title"),
     t("auth.request.user", { user: formatUserLabel(ctx) }),
     t("auth.request.user_id", { userId: ctx.from?.id ?? "-" }),
@@ -82,9 +82,24 @@ function buildAccessRequestText(ctx: Context): string {
     ctx.from?.language_code
       ? t("auth.request.language", { language: ctx.from.language_code })
       : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ];
+  // Include pending VM deployment info if available
+  try {
+    const userId = ctx.from?.id;
+    if (userId) {
+      const { getPendingVmDeployment } = await import("../handlers/onboarding-flow.js");
+      const pending = getPendingVmDeployment(userId);
+      if (pending) {
+        const { VM_TIERS } = await import("../../vm/types.js");
+        const spec = VM_TIERS[pending.tier];
+        lines.push(`\n📋 VM: ${spec.ramMb / 1024}GB / ${spec.vcpus} vCPU / ${spec.diskGb}GB (${pending.tier})`);
+        if (pending.ipv6) {
+          lines.push(`🌐 IPv6: ${pending.ipv6}`);
+        }
+      }
+    }
+  } catch { /* ignore */ }
+  return lines.filter(Boolean).join("\n");
 }
 
 async function hideCommandsForUnauthorizedPrivateChat(ctx: Context): Promise<void> {
@@ -117,7 +132,7 @@ function isApprovalRequestCooldownActive(request: AccessApprovalRequest): boolea
   return Date.now() - lastNotifiedAt < ACCESS_REQUEST_COOLDOWN_MS;
 }
 
-export async function upsertPendingApprovalRequest(ctx: Context): Promise<boolean> {
+export async function upsertPendingApprovalRequest(ctx: Context, requesterMessageId?: number): Promise<boolean> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
   if (!userId || !chatId) {
@@ -147,9 +162,10 @@ export async function upsertPendingApprovalRequest(ctx: Context): Promise<boolea
     lastNotifiedAt: nowIso,
     adminChatId: config.telegram.adminUserId,
     adminMessageId: existingRequest?.adminMessageId,
+    requesterMessageId: requesterMessageId ?? existingRequest?.requesterMessageId,
   };
 
-  const text = buildAccessRequestText(ctx);
+  const text = await buildAccessRequestText(ctx);
   const keyboard = buildAccessRequestKeyboard(userId);
 
   if (typeof existingRequest?.adminMessageId === "number") {
@@ -294,6 +310,27 @@ export async function handleAccessApprovalCallback(ctx: Context): Promise<boolea
 
   if (action === "approve") {
     await approveTelegramUser(userId);
+    // Trigger pending VM deployment if user was onboarding
+    try {
+      const { getPendingVmDeployment, deployPendingVm, removePendingVmDeployment } = await import("../handlers/onboarding-flow.js");
+      const pending = getPendingVmDeployment(userId);
+      if (pending) {
+        const result = await deployPendingVm(userId);
+        const ipv6 = pending.ipv6 ?? "TBD";
+        const vmMsg = result.success
+          ? t("vm.onboarding.vm_ready", { ipv6 })
+          : t("vm.onboarding.vm_failed", { error: result.error || "unknown error" });
+        // Edit the requester's pending approval message if we have its id
+        if (request.requesterMessageId && request.chatId) {
+          await ctx.api.editMessageText(request.chatId, request.requesterMessageId, vmMsg).catch(() => {});
+        } else if (request.chatId) {
+          await ctx.api.sendMessage(request.chatId, vmMsg).catch(() => {});
+        }
+        removePendingVmDeployment(userId);
+      }
+    } catch (err) {
+      logger.warn("[Auth] Failed to deploy VM after approval:", err);
+    }
   }
 
   await removePendingApprovalRequest(userId);
@@ -321,9 +358,12 @@ export async function handleAccessApprovalCallback(ctx: Context): Promise<boolea
     const requesterMessage =
       action === "approve" ? t("auth.requester.approved") : t("auth.requester.denied");
 
-    await ctx.api.sendMessage(request.chatId, requesterMessage).catch((error) => {
-      logger.warn(`[Auth] Failed to notify requester about access ${action}: ${error}`);
-    });
+    // Always send approval confirmation as a NEW message so the user gets a notification.
+    // Do not edit requesterMessageId — that was already used for the VM deployment message
+    // and edits don't trigger push notifications in Telegram.
+    if (request.chatId) {
+      await ctx.api.sendMessage(request.chatId, requesterMessage).catch(() => {});
+    }
   }
 
   return true;

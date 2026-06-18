@@ -58,7 +58,7 @@ import { streamCommand } from "./commands/stream.js";
 import { ttsCommand } from "./commands/tts.js";
 import { terminalCommand } from "./commands/terminal.js";
 import { openTerminalTopic } from "./commands/terminal.js";
-import { isTerminalTopic, executeTerminalCommand, killTerminalProcess, loadTerminalTopics } from "./commands/terminal.js";
+import { isTerminalTopic, executeTerminalCommand, killTerminalProcess, loadTerminalTopics, takeTerminalScreenshot, handleTerminalScrollButton, getPtySession } from "./commands/terminal.js";
 import { handleTerminalTextInput } from "./commands/terminal-text-handler.js";
 import { worktreeCommand, handleWorktreeCallback } from "./commands/worktree.js";
 import { openCommand, handleOpenCallback, clearOpenPathIndex } from "./commands/open.js";
@@ -4119,6 +4119,24 @@ export function createBot(): Bot<Context> {
   bot.command("restart", restartCommand);
   bot.command("tts", ttsCommand);
   bot.command("terminal", terminalCommand);
+  bot.command("screen", async (ctx) => {
+    const mtId = ctx.message?.message_thread_id;
+    if (!isTerminalTopic(mtId)) {
+      await ctx.reply("This command only works in a terminal topic.");
+      return;
+    }
+    await takeTerminalScreenshot(mtId!, ctx.api, ctx.chat.id);
+  });
+  bot.command("up", async (ctx) => {
+    const mtId = ctx.message?.message_thread_id;
+    if (!isTerminalTopic(mtId)) return;
+    await handleTerminalScrollButton("up", mtId!, ctx.api, ctx.chat.id);
+  });
+  bot.command("down", async (ctx) => {
+    const mtId = ctx.message?.message_thread_id;
+    if (!isTerminalTopic(mtId)) return;
+    await handleTerminalScrollButton("down", mtId!, ctx.api, ctx.chat.id);
+  });
   bot.command("opencode_start", opencodeStartCommand);
   bot.command("opencode_stop", opencodeStopCommand);
   bot.command("projects", projectsCommand);
@@ -4253,6 +4271,31 @@ export function createBot(): Bot<Context> {
       if (handledInlineCancel) {
         clearOpenPathIndex();
         clearLsPathIndex();
+      }
+      // Terminal scroll buttons (data format: "term:up:123" or "term:down:123" or "term:refresh:123")
+      const data = ctx.callbackQuery?.data ?? "";
+      if (data.startsWith("term:")) {
+        const parts = data.split(":");
+        if (parts[1] === "key") {
+          // term:key:<mtId>:<keyName>
+          const mtId = parseInt(parts[2]);
+          const key = parts[3];
+          const session = getPtySession(mtId);
+          if (session) {
+            const keyMap: Record<string, string> = {
+              up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",
+              enter: "\r", tab: "\t", esc: "\x1b",
+            };
+            session.write(keyMap[key] ?? "\r");
+          }
+        } else {
+          // term:<action>:<mtId>
+          const action = parts[1] as "up" | "down" | "refresh";
+          const mtId = parseInt(parts[2]);
+          await handleTerminalScrollButton(action, mtId, ctx.api, ctx.chat!.id);
+        }
+        await ctx.answerCallbackQuery();
+        return;
       }
       const handledSsh = await handleSshCallback(ctx);
       if (handledSsh) {

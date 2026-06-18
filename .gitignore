@@ -34,6 +34,7 @@ Thumbs.db
 .agent/
 .agents/
 skills/
+!/docker/opencode-skills-pkg/skills/
 skills-lock.json
 
 # Project specific

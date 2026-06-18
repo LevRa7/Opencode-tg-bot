@@ -31,6 +31,7 @@ export function generateCloudInitIso(
   execSyncFn?: ExecSyncFn,
   writeFn?: WriteFileSyncFn,
   mkdirFn?: MkdirSyncFn,
+  ipv6?: string,
 ): void {
   const exec = execSyncFn ?? nodeExecSync;
   const write = writeFn ?? writeFileSync;
@@ -90,15 +91,27 @@ write_files:
       WantedBy=multi-user.target
     permissions: '0644'
 runcmd:
+  - IFACE=$(ip -o link show | grep -o "e[mn][a-z0-9]*" | head -1) && ip -6 addr add ${ipv6 ?? "::1"}/128 dev \$IFACE 2>/dev/null || true
+  - IFACE=$(ip -o link show | grep -o "e[mn][a-z0-9]*" | head -1) && sysctl -w net.ipv6.conf.\${IFACE}.ndisc_notify=1 2>/dev/null || true
+  - IFACE=$(ip -o link show | grep -o "e[mn][a-z0-9]*" | head -1) && ip -6 route replace default via fe80::1 dev \$IFACE 2>/dev/null || true
   - echo "${sudoPassword}" > /home/opencode/.sudo
   - chown opencode:opencode /home/opencode/.sudo
   - chmod 600 /home/opencode/.sudo
   - chown -R opencode:opencode /workspace /state
-  - npm install -g opencode-ai@1.15.13 2>/dev/null || echo '\''v1 opencode already installed'\''
-  - npm install -g node-pty 2>/dev/null || echo '\''node-pty already installed'\''
+  - rm -f /etc/machine-id /var/lib/dbus/machine-id && systemd-machine-id-setup
+  # Install Node.js if not in golden image
+  - command -v node 2>/dev/null || (apt-get update -qq && apt-get install -y -qq nodejs npm) || echo 'nodejs install failed'
+  # Install OpenCode CLI
+  - command -v opencode 2>/dev/null || npm install -g --force opencode-ai@1.15.13 || echo 'v1 opencode install failed'
+  # Install node-pty for interactive terminal (skip failure — terminal won't work but bot still functional)
+  - node -e 'require("node-pty")' 2>/dev/null || npm install -g node-pty 2>/dev/null || echo 'node-pty install failed'
   - rm -f /home/opencode/.local/share/opencode/opencode.db /home/opencode/.local/share/opencode/opencode.db-wal /home/opencode/.local/share/opencode/opencode.db-shm
-  - test -d /opt/opencode-skills && cp -r /opt/opencode-skills /home/opencode/.config/opencode/skills 2>/dev/null && chown -R opencode:opencode /home/opencode/.config/opencode || true
+  # Copy pre-baked skills from golden image (handle both flat and nested /opt/opencode-skills)
+  - mkdir -p /home/opencode/.config/opencode/skills && for src in /opt/opencode-skills.flat /opt/opencode-skills /opt/opencode-skills/skills; do test -d "$src" && [ "$(ls -A "$src" 2>/dev/null)" ] && cp -r "$src"/* /home/opencode/.config/opencode/skills/ 2>/dev/null && break; done; chown -R opencode:opencode /home/opencode/.config/opencode 2>/dev/null || true
+  # Copy terminal-agent if not already present
+  - test -f /opt/terminal-agent.js && chmod +x /opt/terminal-agent.js || true
   - systemctl daemon-reload
+  - systemctl enable opencode
   - systemctl restart opencode || systemctl start opencode
 `;
 

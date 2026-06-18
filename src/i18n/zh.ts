@@ -843,5 +843,7 @@ export const zh: I18nDictionary = {
   "onboarding.your_web_panel": "你的 OpenCode 网页面板：",
   "onboarding.save_password_hint": "请保存密码。以后可以通过 /server 修改。",
   "onboarding.skipped": "好的，你可以稍后通过 /server 进行设置。",
+  "vm.onboarding.vm_ready": "✅ 访问已批准。IPv6: {ipv6}。现在可以使用代理。",
+  "vm.onboarding.vm_failed": "❌ 创建虚拟机失败：{error}",
   "ssh.web_panel_info": "SSH 网页面杻：https://{domain}\n登录名：{username}\n密码：<code>{password}</code>",
 };

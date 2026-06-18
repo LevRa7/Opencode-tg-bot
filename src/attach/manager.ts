@@ -4,6 +4,7 @@ import {
   type TelegramConversationScope,
 } from "../telegram/scope.js";
 import type { AttachedSessionState } from "./types.js";
+import { logger } from "../utils/logger.js";
 
 interface TelegramTarget {
   chatId: number;
@@ -37,14 +38,24 @@ class AttachManager {
   private readonly scopeKeyBySessionId = new Map<string, string>();
   private nextSequence = 0;
 
-  private canReplaceSessionRoute(sessionId: string, nextScope: TelegramConversationScope): boolean {
+  private   canReplaceSessionRoute(sessionId: string, nextScope: TelegramConversationScope): boolean {
     const currentScopeKey = this.scopeKeyBySessionId.get(sessionId);
     if (!currentScopeKey) {
-      return true;
+      return true; // no existing route — always allow
     }
 
     const currentState = this.statesByScopeKey.get(currentScopeKey);
-    return !currentState || currentState.scope.userId === nextScope.userId;
+    if (!currentState) {
+      return true; // stale scope key, no state — allow
+    }
+
+    // Only block if different user AND the current user still has an active scope
+    if (currentState.scope.userId !== nextScope.userId) {
+      logger.warn(`[AttachManager] Reassigning session ${sessionId} from user ${currentState.scope.userId} to ${nextScope.userId}`);
+      // Remove old route before setting new one — this is a re-assignment
+      this.scopeKeyBySessionId.delete(sessionId);
+    }
+    return true;
   }
 
   attach(

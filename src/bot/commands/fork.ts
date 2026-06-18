@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { Context } from "grammy";
 import { opencodeClient } from "../../opencode/client.js";
-import { getCurrentSession, setCurrentSession } from "../../session/manager.js";
+import { getCurrentSession } from "../../session/manager.js";
 import { attachSessionForScope } from "../../attach/service.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { t } from "../../i18n/index.js";
@@ -77,7 +77,8 @@ export async function forkCommand(ctx: Context): Promise<void> {
         reason: "fork",
       });
 
-      setCurrentSession({ ...session });
+      // forkedSession is now attached to newTopic via attachSessionForScope above.
+      // Original topic keeps its session via existing scope binding.
     }
 
     await ctx.reply(

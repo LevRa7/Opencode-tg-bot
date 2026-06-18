@@ -155,6 +155,7 @@ export interface AccessApprovalRequest {
   lastNotifiedAt?: string;
   adminChatId: number;
   adminMessageId?: number;
+  requesterMessageId?: number;
 }
 
 export interface ScopedConversationSettings {
@@ -806,6 +807,10 @@ export function setVmRuntimeInfo(userId: number, info: VmInfo): void {
 
 export function clearVmRuntimeInfo(userId: number): void {
   vmRuntime.delete(userId);
+}
+
+export function getAllVmRuntimeUserIds(): number[] {
+  return vmRuntime.getAll().map((row) => row.user_id);
 }
 
 // ====== SESSION DIRECTORY CACHE ======

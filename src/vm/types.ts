@@ -46,6 +46,7 @@ export interface VmInfo {
   startTime: string;
   pid: number | null;
   sudoPassword?: string;
+  ipv6?: string;
 }
 
 export interface VmOperationResult {

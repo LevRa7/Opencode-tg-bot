@@ -322,9 +322,11 @@ if [ -d "$SCRIPT_DIR/skills/gpt-image-api" ]; then
   cp -R "$SCRIPT_DIR/skills/gpt-image-api/." "$STATE_SKILLS_DIR/gpt-image-api/"
 fi
 if [ -d "$SCRIPT_DIR/skills/tg-uploader" ]; then
+  mkdir -p "$STATE_SKILLS_DIR/tg-uploader"
   cp -R "$SCRIPT_DIR/skills/tg-uploader/." "$STATE_SKILLS_DIR/tg-uploader/"
 fi
 if [ -f "$SCRIPT_DIR/skills/yandex-rasp/SKILL.md" ]; then
+  mkdir -p "$STATE_SKILLS_DIR/yandex-rasp"
   cp "$SCRIPT_DIR/skills/yandex-rasp/SKILL.md" "$STATE_SKILLS_DIR/yandex-rasp/SKILL.md"
 fi
 if [ -f "$SCRIPT_DIR/skills/install-vpn/SKILL.md" ]; then
@@ -339,11 +341,15 @@ if [ -f "$SCRIPT_DIR/skills/gui-automation/SKILL.md" ]; then
   fi
 fi
 
-# Install all skills from the baked-in package (opencode-skills-pkg)
+# Install all skills from the baked-in package (opencode-skills-pkg).
+# When running on the host (non-Docker mode), the skills/ subdirectory may not
+# exist in the host copy of the package — that's fine, base skills are already
+# installed separately above. Inside Docker, /usr/local/lib/opencode-skills-pkg
+# has the full skills tree.
 if [ -d "$SCRIPT_DIR/opencode-skills-pkg" ]; then
   bash "$SCRIPT_DIR/bin/install-opencode-skills.sh" \
     --source "$SCRIPT_DIR/opencode-skills-pkg" \
-    --target "$STATE_SKILLS_DIR"
+    --target "$STATE_SKILLS_DIR" || true
 fi
 
 cat > "$STATE_DIR/MAP.md" <<'EOF'

@@ -6,6 +6,7 @@ import {
   clearServerProcess,
   clearTenantRuntimeInfo,
   clearVmRuntimeInfo,
+  getAllVmRuntimeUserIds,
   getOrCreateServerPassword,
   getServerProcess,
   getTenantRuntimeInfo,
@@ -101,6 +102,9 @@ class ProcessManager implements ProcessManagerInterface {
     // Start periodic tenant health watcher to detect and recover from dead tenants
     this.startTenantWatcher();
 
+    // Start periodic VM health watcher to detect and recover from dead VMs
+    this.startVmWatcher();
+
     // Recover saved SSH connections in the background
     void sshManager.recoverAll();
 
@@ -130,6 +134,52 @@ class ProcessManager implements ProcessManagerInterface {
     logger.debug("[ProcessManager] Tenant health watcher started");
   }
 
+  private vmWatcherTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Periodically checks all VM runtimes. If a VM is dead/unhealthy, triggers recovery. */
+  private startVmWatcher(intervalMs: number = 120_000): void {
+    if (this.vmWatcherTimer) return;
+    this.vmWatcherTimer = setInterval(async () => {
+      await this.checkAndRecoverVmRuntimes();
+    }, intervalMs);
+    this.vmWatcherTimer.unref?.();
+    logger.debug("[ProcessManager] VM health watcher started");
+
+    // Run immediately on startup
+    this.checkAndRecoverVmRuntimes().catch(() => {});
+  }
+
+  private async checkAndRecoverVmRuntimes(): Promise<void> {
+    const vmRuntimes = getAllVmRuntimeUserIds();
+    for (const userId of vmRuntimes) {
+      try {
+        const info = getVmRuntimeInfo(userId);
+        if (!info) continue;
+
+        const alive = await vmManager.isRunning(userId);
+        if (!alive) {
+          logger.warn(`[ProcessManager] VM watcher: VM dead for userId=${userId}, triggering recovery`);
+          clearVmRuntimeInfo(userId);
+          this.ensureVmRuntime(userId).catch(() => {});
+          continue;
+        }
+
+        const pw = getOrCreateServerPassword(userId);
+        const healthy = await vmManager.waitForHealth(info.baseUrl, pw, 30_000, 2000);
+        if (!healthy) {
+          logger.warn(`[ProcessManager] VM watcher: VM unhealthy for userId=${userId}, triggering recovery`);
+          // Stop+destroy old VM and create new one
+          await vmManager.stop(userId).catch(() => {});
+          await vmManager.destroy(userId).catch(() => {});
+          clearVmRuntimeInfo(userId);
+          this.ensureVmRuntime(userId).catch(() => {});
+        }
+      } catch {
+        // skip individual failures — don't block watcher
+      }
+    }
+  }
+
   private async checkAndCleanupDeadTenants(): Promise<void> {
     const runtimes = getTenantRuntimes();
     for (const runtime of Object.values(runtimes)) {
@@ -151,6 +201,12 @@ class ProcessManager implements ProcessManagerInterface {
         await clearTenantRuntimeInfo(runtime.userId);
       }
     }
+  }
+
+  /** Bypass Telegram scope — deploy/verify VM runtime for a specific user.
+   *  Used by admin approval flow where scope belongs to admin, not the VM user. */
+  async ensureRuntimeForUser(userId: number): Promise<ProcessOperationResult> {
+    return this.ensureVmRuntime(userId);
   }
 
   async ensureRuntime(onProgress?: (step: string) => void): Promise<ProcessOperationResult> {
@@ -183,6 +239,13 @@ class ProcessManager implements ProcessManagerInterface {
 
     try {
       logger.info("[ProcessManager] Starting host OpenCode server process...");
+
+      // Kill orphan opencode processes from previous runs to free port 4096
+      try {
+        execSync("pkill -f 'opencode serve' 2>/dev/null || true", { stdio: "ignore" });
+        execSync("pkill -f '.opencode serve' 2>/dev/null || true", { stdio: "ignore" });
+        logger.debug("[ProcessManager] Cleaned up orphan opencode processes");
+      } catch { /* non-fatal */ }
 
       const isWindows = process.platform === "win32";
       const command = isWindows ? "cmd.exe" : "opencode";

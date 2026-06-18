@@ -31,6 +31,7 @@ export function generateCloudInitIso(
   execSyncFn?: ExecSyncFn,
   writeFn?: WriteFileSyncFn,
   mkdirFn?: MkdirSyncFn,
+  ipv6?: string,
 ): void {
   const exec = execSyncFn ?? nodeExecSync;
   const write = writeFn ?? writeFileSync;
@@ -59,6 +60,8 @@ bootcmd:
     DHCP=yes
     NETEOF
     networkctl reload 2>/dev/null || true
+  - |
+    ip -6 addr add ${ipv6 ?? "::1"}/128 dev eth0 2>/dev/null || true
 write_files:
   - path: /workspace/AGENTS.md
     content: |

@@ -33,12 +33,14 @@ function knuthHash(n: number): number {
 }
 
 /** Deterministic IPv6 from VPS /64 range: 2607:9d00:2000:1f6::<hash%2^64>
- *  Address ::1 is reserved for gateway. User addresses start from ::2. */
+ *  Address ::1 is reserved for gateway. User addresses start from ::2.
+ *  Returns fully-expanded format (no :: shorthand) for iproute2 compatibility. */
 export function generateIpv6ForUser(userId: number): string {
   const h = knuthHash(userId);
   const host = BigInt(h >>> 0) % ((1n << 64n) - 2n) + 2n;
   const hex = host.toString(16).padStart(16, "0");
-  return `2607:9d00:2000:1f6::${hex}`;
+  const groups = hex.match(/.{1,4}/g)!.join(":");
+  return `2607:9d00:2000:1f6:${groups}`;
 }
 
 export class VmManager {
@@ -217,7 +219,8 @@ export class VmManager {
     );
 
     report(t("vm.progress.cloud_init"));
-    generateCloudInitIso(userId, spec, opencodePw, sudoPw, isoPath, this.execSyncFn, write, mkdir);
+    const ipv6 = generateIpv6ForUser(userId);
+    generateCloudInitIso(userId, spec, opencodePw, sudoPw, isoPath, this.execSyncFn, write, mkdir, ipv6);
 
     const domainXml = this.buildDomainXml(domainName, clonePath, isoPath, spec, userId);
     write(xmlPath, domainXml);
@@ -229,7 +232,6 @@ export class VmManager {
     this.execSyncFn(`sudo virsh start ${domainName}`, { stdio: "pipe" });
 
     // Add IPv6 routes for this VM
-    const ipv6 = generateIpv6ForUser(userId);
     await this.addVmIpv6Route(domainName, ipv6);
     await this.addVpsIpv6Route(ipv6);
 

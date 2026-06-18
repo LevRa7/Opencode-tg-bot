@@ -293,6 +293,31 @@ describe("VmManager", () => {
     });
   });
 
+  describe("verifyVmBoot", () => {
+    it("returns true when cloud-init has finished", async () => {
+      const log = "Cloud-init v. 22.4.2 finished at Thu, 18 Jun 2026";
+      const mockExec = vi.fn().mockReturnValue(log);
+      const mgr = new VmManager(mockExec);
+      const result = await mgr.verifyVmBoot("test-vm", 1000);
+      expect(result).toBe(true);
+    });
+
+    it("returns false on timeout when no cloud-init completion", async () => {
+      const mockExec = vi.fn().mockReturnValue("kernel boot messages only");
+      const mgr = new VmManager(mockExec);
+      const result = await mgr.verifyVmBoot("test-vm", 1000);
+      expect(result).toBe(false);
+    });
+
+    it("detects stalled console (no new lines for many checks)", async () => {
+      const log = Array(20).fill("kernel message").join("\n");
+      const mockExec = vi.fn().mockReturnValue(log);
+      const mgr = new VmManager(mockExec);
+      const result = await mgr.verifyVmBoot("test-vm", 5000);
+      expect(result).toBe(false);
+    }, 10000);
+  });
+
   describe("createAndStart", () => {
     const smallSpec: VmSpec = VM_TIERS.small;
     const imagesDir = "/home/me/vm-images";

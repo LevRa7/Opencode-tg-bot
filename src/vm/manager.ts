@@ -242,6 +242,13 @@ export class VmManager {
     }
     const host = bridgeIp;
 
+    // Verify VM actually boots (cloud-init completes). Non-blocking — warn if stuck.
+    this.verifyVmBoot(domainName, 120_000).then(booted => {
+      if (!booted) {
+        logger.warn(`[VmManager] VM ${domainName} did not complete cloud-init within 2min`);
+      }
+    });
+
     return {
       userId,
       tier: spec.tier,
@@ -255,6 +262,39 @@ export class VmManager {
       sudoPassword: sudoPw,
       ipv6: generateIpv6ForUser(userId),
     };
+  }
+
+  /** Check VM console log for cloud-init completion within timeout.
+   *  Returns true if cloud-init finished, false on timeout or kernel hang. */
+  async verifyVmBoot(domainName: string, timeoutMs?: number): Promise<boolean> {
+    const deadline = Date.now() + (timeoutMs ?? 300_000);
+    let lastLineCount = 0;
+    let stallCount = 0;
+    while (Date.now() < deadline) {
+      try {
+        const log = this.execSyncFn(
+          `sudo cat /var/log/libvirt/qemu/${domainName}-console.log 2>/dev/null || echo ""`,
+          { encoding: "utf-8", stdio: "pipe" },
+        ) as string;
+        if (log.includes("Cloud-init v.") && log.includes("finished")) {
+          return true;
+        }
+        // Detect kernel hang: if log has lines but isn't growing for 15 checks (30s)
+        const lines = log.split("\n").filter(Boolean).length;
+        if (lines > 10 && lines === lastLineCount) {
+          stallCount++;
+          if (stallCount >= 15) {
+            logger.warn(`[VmManager] VM ${domainName} console stalled at ${lines} lines`);
+            return false;
+          }
+        } else {
+          stallCount = 0;
+          lastLineCount = lines;
+        }
+      } catch { /* retry */ }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    return false;
   }
 
   async ensureKsm(): Promise<void> {

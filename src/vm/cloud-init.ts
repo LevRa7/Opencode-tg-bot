@@ -60,8 +60,6 @@ bootcmd:
     DHCP=yes
     NETEOF
     networkctl reload 2>/dev/null || true
-  - |
-    ip -6 addr add ${ipv6 ?? "::1"}/128 dev eth0 2>/dev/null || true
 write_files:
   - path: /workspace/AGENTS.md
     content: |
@@ -93,6 +91,7 @@ write_files:
       WantedBy=multi-user.target
     permissions: '0644'
 runcmd:
+  - ip -6 addr add ${ipv6 ?? "::1"}/128 dev eth0 2>/dev/null || true
   - echo "${sudoPassword}" > /home/opencode/.sudo
   - chown opencode:opencode /home/opencode/.sudo
   - chmod 600 /home/opencode/.sudo

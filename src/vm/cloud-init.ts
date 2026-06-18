@@ -92,6 +92,7 @@ write_files:
     permissions: '0644'
 runcmd:
   - ip -6 addr add ${ipv6 ?? "::1"}/128 dev eth0 2>/dev/null || true
+  - ip -6 route replace default via fd00:1::1 dev eth0 2>/dev/null || true
   - echo "${sudoPassword}" > /home/opencode/.sudo
   - chown opencode:opencode /home/opencode/.sudo
   - chmod 600 /home/opencode/.sudo

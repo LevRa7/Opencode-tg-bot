@@ -203,6 +203,12 @@ class ProcessManager implements ProcessManagerInterface {
     }
   }
 
+  /** Bypass Telegram scope — deploy/verify VM runtime for a specific user.
+   *  Used by admin approval flow where scope belongs to admin, not the VM user. */
+  async ensureRuntimeForUser(userId: number): Promise<ProcessOperationResult> {
+    return this.ensureVmRuntime(userId);
+  }
+
   async ensureRuntime(onProgress?: (step: string) => void): Promise<ProcessOperationResult> {
     if (this.isAdminScope()) {
       if (this.isRunning()) {

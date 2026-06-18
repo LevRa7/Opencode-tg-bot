@@ -36,7 +36,7 @@ export async function deployPendingVm(userId: number): Promise<{ success: boolea
   setUserDeployTarget(userId, "vm");
   setUserVmSpecTier(userId, info.tier);
   
-  const result = await processManager.ensureRuntime(async () => {});
+  const result = await processManager.ensureRuntimeForUser(userId);
   pendingVmDeployments.delete(userId);
   return result;
 }

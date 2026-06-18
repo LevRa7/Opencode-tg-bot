@@ -1,0 +1,8 @@
+{
+  "name": "visual-browser-skills",
+  "version": "1.0.0",
+  "description": "Hermes Agent skills: Xvfb screen management, Chromium visual browser, screenshot capture",
+  "scripts": {
+    "install": "bash install.sh"
+  }
+}

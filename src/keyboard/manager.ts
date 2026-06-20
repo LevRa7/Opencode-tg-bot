@@ -35,7 +35,7 @@ class KeyboardManager {
   private autoUpdateInterval: ReturnType<typeof setInterval> | null = null;
 
   private readonly UPDATE_DEBOUNCE_MS = 2000;
-  private readonly AUTO_UPDATE_MS = 3000;
+  private readonly AUTO_UPDATE_MS = 30000;
 
   private getScopeKey(): string {
     return getCurrentTelegramConversationScopeKey();

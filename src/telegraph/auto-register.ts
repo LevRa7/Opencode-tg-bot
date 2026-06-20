@@ -2,22 +2,14 @@ import { logger } from "../utils/logger.js";
 import { encryptToken } from "./token-encryption.js";
 
 const CREATE_ACCOUNT_URL = "https://api.telegra.ph/createAccount";
+const COOLDOWN_MS = 30 * 60 * 1000;
+
+let lastFailureTime = 0;
 
 export async function ensureUserKeys(
-  keysRepo: {
-    countByUser(userId: number): number;
-    insert(params: {
-      user_id: number;
-      token_encrypted: string;
-      author_name?: string;
-      created_at: number;
-    }): number;
-    getAllByUser(
-      userId: number,
-    ): Array<{ id: number; token_encrypted: string; is_active: number }>;
-  },
+  keysRepo: TelegraphKeysRepo,
   userId: number,
-  config: { authorName: string; timeoutMs: number },
+  config: TelegraphConfig,
   encryptionKey: Buffer,
   maxKeysPerUser: number,
 ): Promise<void> {
@@ -25,9 +17,16 @@ export async function ensureUserKeys(
   const needed = maxKeysPerUser - existingCount;
   if (needed <= 0) return;
 
-  logger.info(
-    `[AutoRegister] Creating ${needed} Telegraph accounts for user ${userId}`,
-  );
+  if (lastFailureTime > 0 && Date.now() - lastFailureTime < COOLDOWN_MS) {
+    const remaining = Math.round((COOLDOWN_MS - (Date.now() - lastFailureTime)) / 60000);
+    logger.debug(`[AutoRegister] Cooling down, ${remaining}min until next attempt`);
+    return;
+  }
+
+  const pid = process.pid;
+  logger.info(`[AutoRegister] Creating ${needed} Telegraph accounts for user ${userId} (pid=${pid})`);
+
+  let created = 0;
 
   for (let i = 0; i < needed; i++) {
     const index = existingCount + i + 1;
@@ -46,27 +45,23 @@ export async function ensureUserKeys(
         body: params,
         signal: controller.signal,
       });
+
       clearTimeout(timer);
 
       if (!response.ok) {
-        logger.warn(
-          `[AutoRegister] createAccount failed for ${shortName}: HTTP ${response.status}`,
-        );
+        logger.warn(`[AutoRegister] createAccount failed for ${shortName}: HTTP ${response.status}`);
         continue;
       }
 
-      const data = (await response.json()) as {
-        ok: boolean;
-        result?: { access_token: string };
-      };
+      const data = (await response.json()) as TelegraphResponse;
+
       if (!data.ok || !data.result?.access_token) {
-        logger.warn(
-          `[AutoRegister] createAccount API error for ${shortName}`,
-        );
+        logger.warn(`[AutoRegister] createAccount API error for ${shortName}`);
         continue;
       }
 
       const encrypted = encryptToken(data.result.access_token, encryptionKey);
+
       keysRepo.insert({
         user_id: userId,
         token_encrypted: encrypted,
@@ -75,10 +70,16 @@ export async function ensureUserKeys(
       });
 
       logger.info(`[AutoRegister] Created Telegraph account ${shortName}`);
+      created++;
     } catch (error) {
       logger.warn(`[AutoRegister] Failed to create account ${shortName}`, {
         error,
       });
     }
+  }
+
+  if (created === 0) {
+    lastFailureTime = Date.now();
+    logger.warn("[AutoRegister] All attempts failed, cooling down for %d minutes", Math.round(COOLDOWN_MS / 60000));
   }
 }

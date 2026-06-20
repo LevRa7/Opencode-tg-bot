@@ -6,7 +6,6 @@ import {
   clearServerProcess,
   clearTenantRuntimeInfo,
   clearVmRuntimeInfo,
-  getAllVmRuntimeUserIds,
   getOrCreateServerPassword,
   getServerProcess,
   getTenantRuntimeInfo,
@@ -14,6 +13,7 @@ import {
   getUserDeployTarget,
   getUserVmSpecTier,
   getVmRuntimeInfo,
+  getVmStatePersistence,
   setServerProcess,
   setTenantRuntimeInfo,
   setVmRuntimeInfo,
@@ -23,7 +23,10 @@ import { getCurrentTelegramConversationScope } from "../telegram/scope.js";
 import { logger } from "../utils/logger.js";
 import { sshManager } from "../utils/ssh-manager.js";
 import { vmManager } from "../vm/manager.js";
-import { VM_TIERS, type VmSpec } from "../vm/types.js";
+import { VM_TIERS, derivePassword, type VmSpec } from "../vm/types.js";
+import { createLibvirtHealthProxy } from "../vm/health-proxy.js";
+import { createVmLifecycleManager } from "../vm/lifecycle-manager.js";
+import { createVmOrchestrator } from "../vm/orchestrator.js";
 import { t } from "../i18n/index.js";
 import type {
   ProcessManagerInterface,
@@ -150,33 +153,14 @@ class ProcessManager implements ProcessManagerInterface {
   }
 
   private async checkAndRecoverVmRuntimes(): Promise<void> {
-    const vmRuntimes = getAllVmRuntimeUserIds();
-    for (const userId of vmRuntimes) {
-      try {
-        const info = getVmRuntimeInfo(userId);
-        if (!info) continue;
-
-        const alive = await vmManager.isRunning(userId);
-        if (!alive) {
-          logger.warn(`[ProcessManager] VM watcher: VM dead for userId=${userId}, triggering recovery`);
-          clearVmRuntimeInfo(userId);
-          this.ensureVmRuntime(userId).catch(() => {});
-          continue;
-        }
-
-        const pw = getOrCreateServerPassword(userId);
-        const healthy = await vmManager.waitForHealth(info.baseUrl, pw, 30_000, 2000);
-        if (!healthy) {
-          logger.warn(`[ProcessManager] VM watcher: VM unhealthy for userId=${userId}, triggering recovery`);
-          // Stop+destroy old VM and create new one
-          await vmManager.stop(userId).catch(() => {});
-          await vmManager.destroy(userId).catch(() => {});
-          clearVmRuntimeInfo(userId);
-          this.ensureVmRuntime(userId).catch(() => {});
-        }
-      } catch {
-        // skip individual failures — don't block watcher
-      }
+    try {
+      const persistence = getVmStatePersistence();
+      const healthProxy = createLibvirtHealthProxy({ pollMs: 2000, timeoutMs: 30_000 });
+      const lifecycle = createVmLifecycleManager({ vmManager, healthProxy });
+      const orchestrator = createVmOrchestrator(lifecycle);
+      await orchestrator.recoverAll(persistence);
+    } catch (err) {
+      logger.error("[ProcessManager] VM recovery cycle failed: %s", err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -508,13 +492,11 @@ class ProcessManager implements ProcessManagerInterface {
 
   private async ensureVmRuntime(userId: number, onProgress?: (step: string) => void): Promise<ProcessOperationResult> {
     const progress = this.combineProgress(onProgress);
-    // Check cooldown after a failed attempt
     const cooldownUntil = this.vmStartupCooldowns.get(userId);
     if (cooldownUntil && Date.now() < cooldownUntil) {
       return { success: false, error: "VM creation recently failed, cooling down. Try again shortly." };
     }
 
-    // Deduplicate concurrent VM startup attempts
     const existingLock = this.vmStartupLocks.get(userId);
     if (existingLock) {
       return existingLock;
@@ -522,7 +504,7 @@ class ProcessManager implements ProcessManagerInterface {
 
     const startupPromise = this.doEnsureVmRuntime(userId, progress).then((result) => {
       if (!result.success) {
-        this.vmStartupCooldowns.set(userId, Date.now() + 30_000); // 30s cooldown
+        this.vmStartupCooldowns.set(userId, Date.now() + 30_000);
       }
       return result;
     }).finally(() => {
@@ -533,37 +515,9 @@ class ProcessManager implements ProcessManagerInterface {
   }
 
   private async doEnsureVmRuntime(userId: number, onProgress?: (step: string) => void): Promise<ProcessOperationResult> {
-    const existing = getVmRuntimeInfo(userId);
-    if (existing) {
-      const alive = await vmManager.isRunning(userId);
-      if (alive) {
-        onProgress?.(t("vm.progress.checking"));
-        const pw = getOrCreateServerPassword(userId);
-        const healthy = await vmManager.waitForHealth(
-          existing.baseUrl,
-          pw,
-          60_000, // 1 minute for quick re-check
-          2000,
-        );
-        if (healthy) {
-          return { success: true };
-        }
-
-        logger.warn(
-          `[ProcessManager] VM exists but unhealthy: userId=${userId}, domain=${existing.domainName}`,
-        );
-      } else {
-        logger.warn(
-          `[ProcessManager] VM exists but dead: userId=${userId}, domain=${existing.domainName}`,
-        );
-      }
-
-      // Stop and clean up old VM before creating new one
-      await vmManager.stop(userId).catch(() => {});
-      await vmManager.destroy(userId).catch(() => {});
-      clearVmRuntimeInfo(userId);
-    }
-
+    const persistence = getVmStatePersistence();
+    const healthProxy = createLibvirtHealthProxy({ pollMs: 2000, timeoutMs: 300_000 });
+    const lifecycle = createVmLifecycleManager({ vmManager, healthProxy });
     const imageResult = await vmManager.ensureBaseImage();
     if (!imageResult.success) {
       return imageResult;
@@ -576,35 +530,21 @@ class ProcessManager implements ProcessManagerInterface {
 
     const spec: VmSpec = VM_TIERS[tierName];
 
-    let vmInfo;
     try {
-      vmInfo = await vmManager.createAndStart(userId, spec, { onProgress });
+      const handle = await lifecycle.acquire(userId, persistence, {
+        spec,
+        onProgress,
+        timeoutMs: 300_000,
+        pollMs: 2000,
+      });
+
+      logger.info("[ProcessManager] VM runtime ready: userId=%d, baseUrl=%s", userId, handle.baseUrl);
+      return { success: true };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      logger.error(`[ProcessManager] Failed to create VM for userId=${userId}:`, err);
-      clearVmRuntimeInfo(userId);
+      logger.error("[ProcessManager] VM lifecycle acquire failed for userId=%d: %s", userId, errorMessage);
       return { success: false, error: errorMessage };
     }
-
-    setVmRuntimeInfo(userId, vmInfo);
-
-    const pw = getOrCreateServerPassword(userId);
-    onProgress?.(t("vm.progress.installing"));
-    const healthy = await vmManager.waitForHealth(
-      vmInfo.baseUrl,
-      pw,
-      300_000,
-      2000,
-    );
-
-    if (!healthy) {
-      logger.error(`[ProcessManager] VM health timeout for userId=${userId}`);
-      await vmManager.stop(userId).catch(() => {});
-      clearVmRuntimeInfo(userId);
-      return { success: false, error: `VM at ${vmInfo.baseUrl} did not become ready` };
-    }
-
-    return { success: true };
   }
 
   private async stopVmRuntime(userId: number): Promise<ProcessOperationResult> {

@@ -86,6 +86,31 @@ CREATE TABLE IF NOT EXISTS vm_runtimes (
     data    TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS vm_states (
+    vm_id           TEXT PRIMARY KEY,
+    user_id         INTEGER NOT NULL,
+    environment_type TEXT NOT NULL DEFAULT 'libvirt',
+    spec_tier       TEXT NOT NULL DEFAULT 'small',
+    assigned_ipv4   TEXT,
+    assigned_mac    TEXT,
+    domain_name     TEXT,
+    password_hash   TEXT,
+    version         INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'provisioning',
+    failure_count   INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(user_id)
+);
+
+CREATE TABLE IF NOT EXISTS ip_allocations (
+    ipv4          TEXT PRIMARY KEY,
+    user_id       INTEGER NOT NULL,
+    vm_id         TEXT NOT NULL,
+    assigned_at   TEXT NOT NULL,
+    UNIQUE(user_id)
+);
+
 CREATE TABLE IF NOT EXISTS attached_sessions (
     scope_key TEXT PRIMARY KEY,
     session   TEXT

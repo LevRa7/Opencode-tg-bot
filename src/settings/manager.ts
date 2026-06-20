@@ -57,6 +57,9 @@ import {
   type VmRuntimeRepository,
   createVmRuntimeRepository,
 } from "./repositories/vm-runtimes.js";
+import { createVmStatePersistence, type VmStatePersistence, type VmStateRecord } from "../vm/state-persistence.js";
+import { createVmRuntimeRegistry, type VmRuntimeRegistry } from "../vm/environment-registry.js";
+import { createNetworkPoolAllocator } from "../vm/network-pool.js";
 import { createGoalsRepository } from "./repositories/goals.js";
 import {
   createMessageJournalRepository,
@@ -235,6 +238,9 @@ let sessionSharesRepo = createSessionSharesRepository(_defaultDb);
 let messageReactionsRepo = createMessageReactionsRepository(_defaultDb);
 let messageBookmarksRepo = createMessageBookmarksRepository(_defaultDb);
 let vmRuntime: VmRuntimeRepository = createVmRuntimeRepository(_defaultDb);
+let vmStatePersistence: VmStatePersistence = createVmStatePersistence(_defaultDb);
+let vmPool = createNetworkPoolAllocator(_defaultDb);
+let vmRegistry: VmRuntimeRegistry = createVmRuntimeRegistry(vmPool);
 let dbInstance: Database.Database | null = _defaultDb;
 
 // ====== INITIALIZATION ======
@@ -270,9 +276,10 @@ export async function loadSettings(): Promise<void> {
   skillArticleCacheRepo = createSkillArticleCacheRepository(dbInstance);
   messageJournalRepo = createMessageJournalRepository(dbInstance);
   sessionSharesRepo = createSessionSharesRepository(dbInstance);
-  messageReactionsRepo = createMessageReactionsRepository(dbInstance);
-  messageBookmarksRepo = createMessageBookmarksRepository(dbInstance);
   vmRuntime = createVmRuntimeRepository(dbInstance);
+  vmStatePersistence = createVmStatePersistence(dbInstance);
+  vmPool = createNetworkPoolAllocator(dbInstance);
+  vmRegistry = createVmRuntimeRegistry(vmPool);
 }
 
 export function disposeDatabase(): void {
@@ -793,6 +800,24 @@ export function clearTenantRuntimeInfo(userId: number): Promise<void> {
   return Promise.resolve();
 }
 
+// ====== VM STATE PERSISTENCE ======
+
+export function getVmStatePersistence(): VmStatePersistence {
+  return vmStatePersistence;
+}
+
+export function getActiveVmStateRecords(): VmStateRecord[] {
+  return vmStatePersistence.listActive();
+}
+
+export function getNetworkPoolAllocator() {
+  return vmPool;
+}
+
+export function getVmRuntimeRegistry(): VmRuntimeRegistry {
+  return vmRegistry;
+}
+
 // ====== VM RUNTIMES ======
 
 export function getVmRuntimeInfo(userId: number): VmInfo | undefined {
@@ -1066,4 +1091,7 @@ export async function __resetSettingsForTests(): Promise<void> {
   skillArticleCacheRepo = createSkillArticleCacheRepository(dbInstance);
   messageBookmarksRepo = createMessageBookmarksRepository(dbInstance);
   vmRuntime = createVmRuntimeRepository(dbInstance);
+  vmStatePersistence = createVmStatePersistence(dbInstance);
+  vmPool = createNetworkPoolAllocator(dbInstance);
+  vmRegistry = createVmRuntimeRegistry(vmPool);
 }

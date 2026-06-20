@@ -1,11 +1,14 @@
 import { execSync as nodeExecSync } from "child_process";
 import { existsSync, unlinkSync, writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "fs";
 import path from "path";
+import { randomUUID } from "node:crypto";
 import { logger } from "../utils/logger.js";
 import { t } from "../i18n/index.js";
-import { VM_DEFAULTS, type VmInfo, type VmOperationResult, type VmSpec } from "./types.js";
-import { generateSudoPassword, generateCloudInitIso } from "./cloud-init.js";
+import { VM_DEFAULTS, derivePassword, type VmHandle, type VmInfo, type VmOperationResult, type VmSpec } from "./types.js";
+import { generateCloudInitIso } from "./cloud-init.js";
 import { getOrCreateServerPassword } from "../settings/manager.js";
+import type { VmStatePersistence, VmStateRecord } from "./state-persistence.js";
+import { createLibvirtHealthProxy, type HealthStatus } from "./health-proxy.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -161,7 +164,7 @@ export class VmManager {
   ): Promise<VmInfo> {
     const report = deps?.onProgress ?? (() => {});
     const opencodePw = deps?.opencodePassword ?? getOrCreateServerPassword(userId);
-    const sudoPw = deps?.sudoPassword ?? generateSudoPassword();
+    const sudoPw = deps?.sudoPassword ?? derivePassword(userId, spec.tier);
     const write = deps?.writeFileSync ?? fsWriteFileSync;
     const mkdir = deps?.mkdirSync ?? fsMkdirSync;
 
@@ -463,6 +466,49 @@ export class VmManager {
     } catch {
       return null;
     }
+  }
+
+  async provision(userId: number, spec: VmSpec): Promise<VmHandle> {
+    const info = await this.createAndStart(userId, spec);
+    const vmId = randomUUID();
+    return this.toVmHandle(vmId, info);
+  }
+
+  async attach(existing: VmStateRecord): Promise<VmHandle | null> {
+    const running = await this.isRunning(existing.userId);
+    if (!running) return null;
+    return {
+      vmId: existing.vmId,
+      userId: existing.userId,
+      domainName: existing.domainName,
+      ipv4: existing.assignedIpv4,
+      mac: existing.assignedMac,
+      baseUrl: `http://${existing.assignedIpv4}:${VM_DEFAULTS.opencodePort}`,
+      password: existing.passwordHash,
+      specTier: existing.specTier,
+    };
+  }
+
+  async healthCheck(handle: VmHandle, options?: { timeoutMs?: number; pollMs?: number }): Promise<HealthStatus> {
+    const proxy = createLibvirtHealthProxy({ timeoutMs: options?.timeoutMs, pollMs: options?.pollMs });
+    return proxy.check(handle);
+  }
+
+  async destroyHandle(handle: VmHandle): Promise<VmOperationResult> {
+    return this.destroy(handle.userId);
+  }
+
+  private toVmHandle(vmId: string, info: VmInfo): VmHandle {
+    return {
+      vmId,
+      userId: info.userId,
+      domainName: info.domainName,
+      ipv4: info.bridgeIp ?? "",
+      mac: generateMacForUser(info.userId),
+      baseUrl: info.baseUrl,
+      password: info.sudoPassword ?? "",
+      specTier: info.tier,
+    };
   }
 }
 

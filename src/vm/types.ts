@@ -53,3 +53,30 @@ export interface VmOperationResult {
   success: boolean;
   error?: string;
 }
+
+export interface VmHandle {
+  vmId: string;
+  userId: number;
+  domainName: string;
+  ipv4: string;
+  mac: string;
+  baseUrl: string;
+  password: string;
+  specTier: string;
+}
+
+export interface VmEnvironment {
+  provision(userId: number, spec: VmSpec): Promise<VmHandle>;
+  attach(userId: number): Promise<VmHandle | null>;
+  healthCheck(handle: VmHandle): Promise<import("./health-proxy.js").HealthStatus>;
+  destroy(handle: VmHandle): Promise<VmOperationResult>;
+}
+
+import { createHash } from "node:crypto";
+
+export function derivePassword(userId: number, specTier: string): string {
+  return createHash("sha256")
+    .update(`vm:${userId}:${specTier}:opencode-tg-secret`)
+    .digest("base64url")
+    .slice(0, 16);
+}

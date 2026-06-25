@@ -128,7 +128,7 @@ import {
 } from "./handlers/prompt.js";
 import { deletePromptRetryContext, getPromptRetryContext } from "./handlers/prompt-context.js";
 import { switchToFallbackModel, getStoredModel, getFallbackModel, isAlreadyOnFallbackModel } from "../model/manager.js";
-import { isModelUnavailableError } from "./utils/model-error-patterns.js";
+import { isModelUnavailableError, isSseReadTimeoutError } from "./utils/model-error-patterns.js";
 import { stripMessageTags } from "./utils/strip-message-tags.js";
 import type { ModelInfo } from "../model/types.js";
 import { IncomingMediaBatch } from "./incoming-media-batch.js";
@@ -136,7 +136,7 @@ import type { ResolvedDeferredItem } from "../media/batch-types.js";
 import { composeDeferredMediaPrompt } from "../media/prompt-composer.js";
 import { opencodeClient } from "../opencode/client.js";
 import { getCurrentSession, setCurrentSession, type SessionInfo } from "../session/manager.js";
-import { writeCurrentContext } from "../active-session/tracker.js";
+import { writeCurrentContext, findActiveSessionById } from "../active-session/tracker.js";
 import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
 import { assistantRunState } from "./assistant-run-state.js";
 import { handleVoiceMessage } from "./handlers/voice.js";
@@ -181,6 +181,7 @@ import { threadContextManager } from "../thread/manager.js";
 import { processManager } from "../process/manager.js";
 import {
   withMessageThreadId,
+  type TelegramThreadTarget,
   type TelegramDeliveryTarget,
 } from "./utils/message-thread.js";
 import { SubagentTopicService } from "./subagent-topics/service.js";
@@ -211,6 +212,7 @@ import {
   splitTextIntoChunks,
   TELEGRAM_MESSAGE_LIMIT,
 } from "./utils/reasoning-format.js";
+import { isRichContent, trySendRichMessage } from "./utils/rich-message.js";
 import {
   buildTelegramConversationScopeKey,
   extractTelegramConversationScopeFromContext,
@@ -318,7 +320,7 @@ interface SessionRoutingContext {
   };
   deliveryTarget?: TelegramDeliveryTarget | null;
   scope: TelegramConversationScope | null;
-  targetSource: "attached" | "prompt";
+  targetSource: "attached" | "prompt" | "recovery";
   sourceMessageId?: number;
 }
 
@@ -345,6 +347,14 @@ const childReasoningBuffer = new Map<string, { messageId: string; text: string }
 const childTypingIntervals = new Map<string, ReturnType<typeof setInterval>>();
 const childSessionTitle = new Map<string, string>();
 const childTopicLastSetName = new Map<string, string>();
+
+export function setChildTopicLastSetName(sessionId: string, name: string): void {
+  childTopicLastSetName.set(sessionId, name);
+}
+
+export function getChildTopicLastSetName(sessionId: string): string | undefined {
+  return childTopicLastSetName.get(sessionId);
+}
 
 interface ChildSessionMeta {
   agent: string;
@@ -574,47 +584,52 @@ function syncSessionRoutingContext(sessionId: string): SessionRoutingContext | n
     // routingBySessionId cache wins and getSessionDeliveryTarget() returns a
     // target that may point to the wrong forum topic.
     const attachedScope = attachManager.getScopeForSession(sessionId);
-    if (!attachedScope) {
-      return routingBySessionId.get(sessionId) ?? null;
-    }
-    const attachedTarget = attachManager.getTargetForSession(sessionId);
-    if (!attachedTarget) {
-      return routingBySessionId.get(sessionId) ?? null;
-    }
-
-    const existingRouting = routingBySessionId.get(sessionId);
-    const bot = existingRouting?.bot ?? activeBotInstance;
-    if (!bot) {
-      return null;
+    if (attachedScope) {
+      const attachedTarget = attachManager.getTargetForSession(sessionId);
+      if (attachedTarget) {
+        return commitSyncedRouting(sessionId, {
+          botSource: "attached",
+          target: attachedTarget,
+          scope: attachedScope,
+        });
+      }
     }
 
-    const routing: SessionRoutingContext = {
-      bot,
-      target: attachedTarget,
-      deliveryTarget: attachedTarget,
-      scope: attachedScope,
-      targetSource: "attached",
-      sourceMessageId: existingRouting?.sourceMessageId,
-    };
+    const cached = routingBySessionId.get(sessionId);
+    if (cached) {
+      return cached;
+    }
 
-    logger.info(
-      `[Routing] syncSessionRoutingContext (no-prompt): session=${sessionId.slice(0, 8)} ` +
-      `target.chatId=${routing.target.chatId} target.threadId=${routing.target.messageThreadId ?? "none"} ` +
-      `deliveryTarget.threadId=${routing.deliveryTarget?.messageThreadId ?? "none"} ` +
-      `source=${routing.targetSource} (synced from attach)`,
-    );
+    // Recovery after restart: attachManager and promptRouting are in-memory and lost.
+    // Try to find the session's last known scope from the persistent active-session tracker.
+    const recovery = tryRecoverRoutingFromActiveSession(sessionId);
+    if (recovery) {
+      return recovery;
+    }
 
-    setSessionRoutingContext(sessionId, routing);
-    return routing;
+    return null;
   }
 
   const attachedScope = attachManager.getScopeForSession(sessionId);
   const attachedTarget = attachedScope ? attachManager.getTargetForSession(sessionId) : null;
 
+  // attachedTarget comes from attachManager.buildTarget(scope) which uses
+  // extractTelegramConversationScopeFromContext — that strips messageThreadId
+  // for non-forum chats (private chats with topics are not supergroup forums).
+  // When attachedTarget lacks messageThreadId but promptRouting.target has one,
+  // merge the thread ID so replies land in the correct topic.
+  const effectiveTarget = attachedTarget
+    ? (attachedTarget.messageThreadId !== undefined
+        ? attachedTarget
+        : (promptRouting.target.messageThreadId !== undefined
+            ? { ...attachedTarget, messageThreadId: promptRouting.target.messageThreadId }
+            : attachedTarget))
+    : promptRouting.target;
+
   const routing: SessionRoutingContext = {
     bot: promptRouting.bot,
-    target: attachedTarget ?? promptRouting.target,
-    deliveryTarget: attachedTarget ?? promptRouting.target,
+    target: effectiveTarget,
+    deliveryTarget: effectiveTarget,
     scope: attachedScope ?? promptRouting.scope,
     targetSource: attachedTarget ? "attached" : "prompt",
     sourceMessageId: promptRouting.sourceMessageId,
@@ -624,11 +639,70 @@ function syncSessionRoutingContext(sessionId: string): SessionRoutingContext | n
     `[Routing] syncSessionRoutingContext: session=${sessionId.slice(0, 8)} ` +
     `target.chatId=${routing.target.chatId} target.threadId=${routing.target.messageThreadId ?? "none"} ` +
     `deliveryTarget.threadId=${routing.deliveryTarget?.messageThreadId ?? "none"} ` +
-    `source=${routing.targetSource} isForum=${promptRouting.isForumChat}`,
+    `source=${routing.targetSource} ` +
+    `isForum=${promptRouting.isForumChat}`,
   );
 
   setSessionRoutingContext(sessionId, routing);
   return routing;
+}
+
+function commitSyncedRouting(
+  sessionId: string,
+  opts: {
+    botSource: "attached" | "prompt" | "recovery";
+    target: TelegramThreadTarget;
+    deliveryTarget?: TelegramThreadTarget;
+    scope: TelegramConversationScope | null;
+    sourceMessageId?: number;
+  },
+): SessionRoutingContext | null {
+  const existingRouting = routingBySessionId.get(sessionId);
+  const bot = existingRouting?.bot ?? activeBotInstance;
+  if (!bot) {
+    return null;
+  }
+
+  const routing: SessionRoutingContext = {
+    bot,
+    target: opts.target,
+    deliveryTarget: opts.deliveryTarget ?? opts.target,
+    scope: opts.scope,
+    targetSource: opts.botSource,
+    sourceMessageId: opts.sourceMessageId ?? existingRouting?.sourceMessageId,
+  };
+
+  setSessionRoutingContext(sessionId, routing);
+  return routing;
+}
+
+function tryRecoverRoutingFromActiveSession(sessionId: string): SessionRoutingContext | null {
+  const entry = findActiveSessionById(sessionId);
+  if (!entry) {
+    return null;
+  }
+
+  const recoveryTarget: TelegramThreadTarget = entry.messageThreadId
+    ? { chatId: entry.chatId, messageThreadId: entry.messageThreadId }
+    : { chatId: entry.chatId };
+
+  const recoveryScope: TelegramConversationScope = {
+    userId: entry.chatId,
+    chatId: entry.chatId,
+    messageThreadId: entry.messageThreadId ?? undefined,
+  };
+
+  logger.info(
+    `[Routing] recovery after restart: session=${sessionId.slice(0, 8)} ` +
+    `chatId=${entry.chatId} threadId=${entry.messageThreadId ?? "none"} ` +
+    `source=recovery`,
+  );
+
+  return commitSyncedRouting(sessionId, {
+    botSource: "recovery",
+    target: recoveryTarget,
+    scope: recoveryScope,
+  });
 }
 
 async function tryAutoCreateSessionTopic(
@@ -728,7 +802,21 @@ function hasLiveSessionTarget(sessionId: string): boolean {
 }
 
 function getSessionRoutingTarget(sessionId: string) {
-  return resolveAttachedSessionTarget(sessionId) ?? getSessionRoutingContext(sessionId)?.target;
+  const attachedTarget = resolveAttachedSessionTarget(sessionId);
+  if (attachedTarget) {
+    // attachedTarget comes from attachManager.getTargetForSession which strips
+    // messageThreadId for non-forum chats.  When prompt routing carries a
+    // valid thread ID, merge it so thinking and final-response deliveries
+    // land in the correct topic.
+    if (attachedTarget.messageThreadId === undefined) {
+      const routingTarget = getSessionRoutingContext(sessionId)?.target;
+      if (routingTarget?.messageThreadId !== undefined) {
+        return { ...attachedTarget, messageThreadId: routingTarget.messageThreadId };
+      }
+    }
+    return attachedTarget;
+  }
+  return getSessionRoutingContext(sessionId)?.target;
 }
 
 function getSessionDeliveryTarget(sessionId: string): TelegramDeliveryTarget | null {
@@ -2125,13 +2213,44 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         const finalFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
         let finalText = messageText;
         let finalParseMode: "html" | "raw" | "markdown_v2" = finalFormat;
+        let richMessageDelivered = false;
 
         if (mode > 0) {
-          finalText = (finalFormat as string) === "html" ? messageText : markdownToHtml(messageText);
-          finalParseMode = "html";
+          // Bot API 10.1: try native rich message for tables/headings/task-lists
+          if (isRichContent(messageText)) {
+            const deliveryTarget = getSessionDeliveryTarget(sessionId);
+            const richResult = await trySendRichMessage(botApi, chatId, messageText, {
+              messageThreadId: deliveryTarget?.messageThreadId ?? target.messageThreadId,
+            });
+            if (richResult?.success) {
+              richMessageDelivered = true;
+            }
+          }
+          if (!richMessageDelivered) {
+            finalText = (finalFormat as string) === "html" ? messageText : markdownToHtml(messageText);
+            finalParseMode = "html";
+          }
         }
 
         try {
+          if (richMessageDelivered) {
+            assistantRunState.markFinalResponsePublished(sessionId, {
+              logicalMessageId: completionLogicalMessageId,
+            });
+            await clearThinkingBlockStream(sessionId, false);
+            await Promise.all([
+              messageDraftStreamManager.flushSession(sessionId),
+              toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
+              toolCallStreamer.breakSession(sessionId, "assistant_message_completed"),
+            ]);
+            await sendTtsResponseForSession({
+              api: botApi,
+              sessionId,
+              chatId,
+              text: messageText,
+              messageThreadId: target.messageThreadId,
+            });
+          } else {
           const finalizeAssistantDelivery = finalAssistantDeliveryOrchestrator.enqueue({
             sessionId,
             channel: "durable",
@@ -2222,6 +2341,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             text: messageText,
             messageThreadId: target.messageThreadId,
           });
+          }
         } catch (err) {
           finalAssistantDeliveryOrchestrator.clearSession(sessionId);
           localFileFollowUpTracker.clearSession(sessionId);
@@ -2321,6 +2441,28 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         toolCallStreamer.flushSession(sessionId, "session_idle"),
       ]);
 
+      // Sync forum topic name with session title BEFORE sending final footer
+      if (!managedChildSessionIds.has(sessionId) && target?.messageThreadId) {
+        const sessionTitle = childSessionTitle.get(sessionId);
+        if (sessionTitle) {
+          const truncated = sessionTitle.length > 128 ? sessionTitle.slice(0, 125) + "..." : sessionTitle;
+          const lastSetName = childTopicLastSetName.get(sessionId);
+          if (truncated !== lastSetName) {
+            safeBackgroundTask({
+              taskName: `topic-sync.${sessionId}`,
+              task: async () => {
+                try {
+                  await botApi.editForumTopic(target.chatId, target.messageThreadId!, { name: truncated });
+                  childTopicLastSetName.set(sessionId, truncated);
+                } catch {
+                  // ignore rename failures
+                }
+              },
+            });
+          }
+        }
+      }
+
       if (completedRun?.hasPublishedFinalResponse) {
         const agent = completedRun.actualAgent || completedRun.configuredAgent;
         const providerID = completedRun.actualProviderID || completedRun.configuredProviderID;
@@ -2333,6 +2475,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             eventTimeMs: completedRun.completedAt,
             waitForLogicalMessageDurable: completedRun.publishedFinalLogicalMessageId,
             deliver: async () => {
+              // Stop typing before sending the final footer
+              summaryAggregator.stopTypingIndicator();
               const keyboard = await getReplyKeyboardForSession(sessionId);
               await botApi.sendMessage(
                 target.chatId,
@@ -2360,28 +2504,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
           await finalAssistantDeliveryOrchestrator.flushSession(sessionId);
           await footerDelivery;
-        }
-      }
-
-      // Sync forum topic name with session title after response completes
-      if (!managedChildSessionIds.has(sessionId) && target?.messageThreadId) {
-        const sessionTitle = childSessionTitle.get(sessionId);
-        if (sessionTitle) {
-          const truncated = sessionTitle.length > 128 ? sessionTitle.slice(0, 125) + "..." : sessionTitle;
-          const lastSetName = childTopicLastSetName.get(sessionId);
-          if (truncated !== lastSetName) {
-            safeBackgroundTask({
-              taskName: `topic-sync.${sessionId}`,
-              task: async () => {
-                try {
-                  await botApi.editForumTopic(target.chatId, target.messageThreadId!, { name: truncated });
-                  childTopicLastSetName.set(sessionId, truncated);
-                } catch {
-                  // ignore rename failures
-                }
-              },
-            });
-          }
         }
       }
 
@@ -3088,6 +3210,54 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       }
     }
 
+    if (isSseReadTimeoutError(message)) {
+      const retryCtx = getPromptRetryContext(sessionId);
+      if (retryCtx?.directory && routing && target) {
+        logger.warn(
+          `[Bot] session.error SSE read timeout: "${message}", auto-retrying sessionId=${sessionId}`,
+        );
+        try {
+          void routing.bot.api
+            .sendMessage(
+              target.chatId,
+              t("bot.session_sse_timeout_retry"),
+              withMessageThreadId({ disable_notification: true }, target.messageThreadId),
+            )
+            .catch(() => {});
+
+          assistantRunState.clearRun(sessionId, "session_error_sse_timeout");
+          deletePromptRetryContext(sessionId);
+          summaryAggregator.setSession(sessionId);
+
+          await runWithTelegramConversationScope(routingScope, async () =>
+            opencodeClient.session.promptAsync({
+              sessionID: sessionId,
+              directory: retryCtx.directory,
+              parts: [{ type: "text", text: retryCtx.lastText }],
+              agent: retryCtx.agent,
+            }),
+          );
+
+          assistantRunState.startRun(sessionId, {
+            startedAt: Date.now(),
+            configuredAgent: retryCtx.agent,
+          });
+
+          await clearThinkingBlockStream(sessionId, shouldClearThinkingBlock);
+          return;
+        } catch (retryError) {
+          logger.warn(
+            `[Bot] SSE timeout retry failed, falling through to error display: sessionId=${sessionId}`,
+            retryError,
+          );
+        }
+      } else {
+        logger.warn(
+          `[Bot] session.error SSE read timeout without retry context: sessionId=${sessionId}`,
+        );
+      }
+    }
+
     if (!routing || !target || !hasLiveTarget) {
       finalAssistantDeliveryOrchestrator.clearSession(sessionId);
       clearPromptResponseMode(sessionId);
@@ -3791,17 +3961,25 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         (!info.parentID || info.parentID === info.id)
       ) {
         const deliveryTarget = getSessionDeliveryTarget(info.id);
-        if (deliveryTarget?.kind === "topic") {
+        // Only sessions delivered into a forum topic carry a messageThreadId;
+        // TelegramDeliveryTarget has no discriminant, so the presence of a numeric
+        // thread id is what tells us this root session lives in a renamable topic.
+        const topicThreadId = deliveryTarget?.messageThreadId;
+        if (deliveryTarget && typeof topicThreadId === "number") {
           const truncated = info.title.length > 128 ? info.title.slice(0, 125) + "..." : info.title;
+          // Skip SSE-driven rename if command handler already renamed to this value
+          const lastSet = childTopicLastSetName.get(info.id);
+          if (lastSet === truncated) return;
           safeBackgroundTask({
             taskName: `root-topic-rename.${info.id}`,
             task: async () => {
               const botApi = getSessionRoutingApi(info.id!);
               if (!botApi) return;
               try {
-                await botApi.editForumTopic(deliveryTarget.chatId, deliveryTarget.messageThreadId, {
+                await botApi.editForumTopic(deliveryTarget.chatId, topicThreadId, {
                   name: truncated,
                 });
+                childTopicLastSetName.set(info.id!, truncated);
               } catch (error) {
                 logger.warn("[Bot] Failed to sync root session topic name", {
                   sessionId: info.id,
@@ -3918,7 +4096,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     // caused massive repetition in subagent topics.
 
     if (config.bot.trackBackgroundSessions) {
-      backgroundSessionTracker.processEvent(event, getCurrentSession()?.id ?? null);
+      try {
+        backgroundSessionTracker.processEvent(event, getCurrentSession()?.id ?? null);
+      } catch (err) {
+        logger.error("[Bot] backgroundSessionTracker.processEvent failed:", err);
+      }
     }
 
     summaryAggregator.processEvent(event);
@@ -4031,7 +4213,8 @@ export function createBot(): Bot<Context> {
     }
 
     if (method === "sendMessage") {
-      logger.debug(`[Bot API] sendMessage to chat ${(payload as { chat_id?: number }).chat_id}`);
+      const mtid = (payload as { message_thread_id?: number }).message_thread_id;
+      logger.debug(`[Bot API] sendMessage to chat ${(payload as { chat_id?: number }).chat_id} threadId=${mtid ?? "none"}`);
     }
 
     return withTelegramRateLimitRetry(() => prev(method, payload, signal), {
@@ -4062,6 +4245,7 @@ export function createBot(): Bot<Context> {
     return runWithTelegramConversationScope(scope, () => {
       threadContextManager.activateFromContext(ctx);
       if (scope && scope.messageThreadId && isTerminalTopic(scope.messageThreadId)) {
+        keyboardManager.initialize(ctx.api, scope.chatId);
         keyboardManager.setSessionMode(SessionType.TERMINAL);
       }
       if (scope) {

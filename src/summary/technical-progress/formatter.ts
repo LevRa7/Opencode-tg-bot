@@ -1,5 +1,6 @@
 import { getLocale, t } from "../../i18n/index.js";
 import type { TechnicalDetailsPublisher, TechnicalDetailsPublishRequest } from "../../telegraph/details-publisher.js";
+import { markdownToHtml } from "../../bot/utils/reasoning-format.js";
 import { classifyTechnicalProgress } from "./classify.js";
 import { buildTechnicalDetails } from "./details.js";
 import { buildProgressMetric } from "./metrics.js";
@@ -98,7 +99,7 @@ export async function formatTechnicalProgressWithDetails(
 
   if (!url) {
     const escapedBase = escapeTelegramHtml(base.text);
-    const escapedBody = escapeTelegramHtml(details.body);
+    const escapedBody = markdownToHtml(details.body);
 
     if (toolInfo.tool === "todowrite") {
       return { text: `${escapedBase}:\n${escapedBody}`, format: "html" };

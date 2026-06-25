@@ -3,7 +3,7 @@ import { t } from "../i18n/index.js";
 import { formatCompactToolInfo } from "./formatter.js";
 import type { SubagentInfo } from "./aggregator.js";
 import type { ToolInfo } from "./aggregator.js";
-import { escapeHtml } from "../bot/utils/reasoning-format.js";
+import { escapeHtml, markdownToHtml } from "../bot/utils/reasoning-format.js";
 
 function truncateToLines(text: string, maxLines: number): string {
   const lines = text.split("\n");
@@ -97,9 +97,9 @@ async function formatSubagentCard(subagent: SubagentInfo): Promise<string> {
 
   const lastMsg = subagent.lastMessage?.trim();
   const lastMessageLine = lastMsg
-    ? `💬 ${escapeHtml(truncateToLines(lastMsg, 2))}`
+    ? `💬 ${markdownToHtml(truncateToLines(lastMsg, 2))}`
     : subagent.stoppedLine
-      ? `• ${escapeHtml(subagent.stoppedLine)}`
+      ? `• ${markdownToHtml(subagent.stoppedLine)}`
       : subagent.topicLinkLabel && subagent.topicLinkUrl
         ? `• <a href="${escapeHtml(subagent.topicLinkUrl)}">${escapeHtml(subagent.topicLinkLabel)}</a>`
         : "";

@@ -212,7 +212,7 @@ import {
   splitTextIntoChunks,
   TELEGRAM_MESSAGE_LIMIT,
 } from "./utils/reasoning-format.js";
-import { trySendRichMessage } from "./utils/rich-message.js";
+import { extractToolOutput, formatToolOutputForRichMessage, isRichContent, trySendRichMessage } from "./utils/rich-message.js";
 import {
   buildTelegramConversationScopeKey,
   extractTelegramConversationScopeFromContext,
@@ -2215,13 +2215,15 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         let finalParseMode: "html" | "raw" | "markdown_v2" = finalFormat;
         let richMessageDelivered = false;
 
-        // Bot API 10.1: always try native rich message for final answers
-        const deliveryTarget = getSessionDeliveryTarget(sessionId);
-        const richResult = await trySendRichMessage(botApi, chatId, messageText, {
-          messageThreadId: deliveryTarget?.messageThreadId ?? target.messageThreadId,
-        });
-        if (richResult?.success) {
-          richMessageDelivered = true;
+        // Bot API 10.1: native rich message for structured markdown content
+        if (isRichContent(messageText)) {
+          const deliveryTarget = getSessionDeliveryTarget(sessionId);
+          const richResult = await trySendRichMessage(botApi, chatId, messageText, {
+            messageThreadId: deliveryTarget?.messageThreadId ?? target.messageThreadId,
+          });
+          if (richResult?.success) {
+            richMessageDelivered = true;
+          }
         }
 
         if (!richMessageDelivered && mode > 0) {
@@ -2623,6 +2625,38 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                 prefix,
                 linkedProgress.text,
               );
+
+              // Send tool output as native rich message with code formatting
+              void (async () => {
+                try {
+                  const rawOutput = extractToolOutput(
+                    toolInfo.tool,
+                    toolInfo.input as Record<string, unknown> | undefined,
+                    toolInfo.metadata as Record<string, unknown> | undefined,
+                    (toolInfo.state as Record<string, unknown>)?.output,
+                  );
+                  if (!rawOutput) return;
+                  const richMarkdown = formatToolOutputForRichMessage(
+                    toolInfo.tool,
+                    toolInfo.input as Record<string, unknown> | undefined,
+                    rawOutput,
+                  );
+                  if (richMarkdown) {
+                    const toolApi = getSessionRoutingApi(toolInfo.sessionId);
+                    const toolTarget = getSessionRoutingTarget(toolInfo.sessionId);
+                    if (toolApi && toolTarget) {
+                      await trySendRichMessage(
+                        toolApi,
+                        toolTarget.chatId,
+                        richMarkdown,
+                        { messageThreadId: toolTarget.messageThreadId },
+                      );
+                    }
+                  }
+                } catch {
+                  // ignore rich message errors for tool outputs
+                }
+              })();
             },
           });
         });

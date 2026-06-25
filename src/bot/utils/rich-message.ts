@@ -71,6 +71,146 @@ function hasHeading(text: string): boolean {
   return /^#{1,6}\s+\S/m.test(text);
 }
 
+/**
+ * Format tool call output as rich markdown suitable for sendRichMessage.
+ * Returns null if the output is empty or trivial.
+ */
+export function formatToolOutputForRichMessage(
+  tool: string,
+  input: Record<string, unknown> | undefined,
+  output: string | undefined,
+): string | null {
+  if (!output || output.trim().length === 0) return null;
+
+  const body = output.trim();
+
+  switch (tool) {
+    case "bash": {
+      const cmd = typeof input?.command === "string" ? input.command.trim() : "";
+      const header = cmd ? `$ ${cmd}` : "";
+      return `\`\`\`bash\n${header ? `${header}\n\n` : ""}${body}\n\`\`\``;
+    }
+    case "write":
+    case "edit": {
+      const fp = typeof input?.filePath === "string" ? input.filePath.trim() : "";
+      const content = typeof input?.content === "string" ? input.content : body;
+      const header = fp ? `📄 ${fp}\n\n` : "";
+      const lang = detectCodeLang(fp);
+      return `${header}\`\`\`${lang}\n${content}\n\`\`\``;
+    }
+    case "read": {
+      const fp = typeof input?.filePath === "string" ? input.filePath.trim() : "";
+      const header = fp ? `📄 ${fp}\n\n` : "";
+      const lang = detectCodeLang(fp);
+      return `${header}\`\`\`${lang}\n${body}\n\`\`\``;
+    }
+    case "grep":
+    case "glob": {
+      const pattern = typeof input?.pattern === "string" ? input.pattern : "";
+      const header = pattern ? `**${pattern}**\n\n` : "";
+      return `${header}\`\`\`\n${body}\n\`\`\``;
+    }
+    case "diff":
+    case "apply_patch":
+    case "filediff":
+      return `\`\`\`diff\n${body}\n\`\`\``;
+    case "reasoning":
+      return body;
+    case "todowrite":
+      return body;
+    default:
+      return `\`\`\`\n${body}\n\`\`\``;
+  }
+}
+
+function detectCodeLang(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase();
+  if (!ext) return "";
+  const langMap: Record<string, string> = {
+    ts: "typescript", tsx: "typescript",
+    js: "javascript", jsx: "javascript",
+    py: "python", rs: "rust", go: "go",
+    java: "java", kt: "kotlin", swift: "swift",
+    c: "c", cpp: "cpp", h: "c", hpp: "cpp",
+    css: "css", scss: "scss", html: "html", htm: "html",
+    json: "json", yaml: "yaml", yml: "yaml",
+    toml: "toml", xml: "xml", sql: "sql",
+    sh: "bash", bash: "bash", zsh: "bash",
+    md: "markdown", mdx: "markdown",
+    dockerfile: "dockerfile", nix: "nix",
+  };
+  return langMap[ext] ?? "";
+}
+
+/**
+ * Extract the raw output text from a tool info for rich message formatting.
+ * Returns the most relevant content: command output, file content, diff, etc.
+ */
+export function extractToolOutput(tool: string, input: Record<string, unknown> | undefined, metadata: Record<string, unknown> | undefined, stateOutput: unknown): string | null {
+  switch (tool) {
+    case "bash": {
+      const output = extractString(metadata?.output) ?? extractString(stateOutput);
+      return output;
+    }
+    case "write":
+    case "edit": {
+      const content = typeof input?.content === "string" ? input.content : "";
+      if (content) return content;
+      return extractString(stateOutput);
+    }
+    case "read": {
+      return readExtractContent(extractString(stateOutput));
+    }
+    case "grep":
+    case "glob": {
+      const output = extractString(metadata?.output);
+      if (output) return output;
+      const results = metadata?.results;
+      if (Array.isArray(results)) {
+        return results.map(String).join("\n");
+      }
+      return null;
+    }
+    case "diff":
+    case "apply_patch":
+    case "filediff":
+      return extractString(metadata?.diff);
+    case "reasoning":
+      return extractString(metadata?.reasoningText);
+    case "todowrite": {
+      const todos = metadata?.todos;
+      if (Array.isArray(todos)) {
+        return todos
+          .map((t: unknown) => {
+            const item = t as Record<string, unknown>;
+            const icon = item.status === "completed" ? "- [x]" : item.status === "in_progress" ? "- [ ]" : "- [ ]";
+            return `${icon} ${String(item.content ?? "")}`;
+          })
+          .join("\n");
+      }
+      return null;
+    }
+    default:
+      return extractString(metadata?.output)
+        ?? extractString(metadata?.result)
+        ?? extractString(stateOutput);
+  }
+}
+
+function extractString(value: unknown): string | null {
+  if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  return null;
+}
+
+function readExtractContent(raw: string | null): string | null {
+  if (!raw) return null;
+  const contentMatch = raw.match(/<content>\s*([\s\S]*?)\s*<\/content>/i);
+  if (contentMatch?.[1]) return contentMatch[1].trim();
+  const entriesMatch = raw.match(/<entries>\s*([\s\S]*?)\s*<\/entries>/i);
+  if (entriesMatch?.[1]) return entriesMatch[1].trim();
+  return raw;
+}
+
 function hasGfmTable(text: string): boolean {
   // Pipe-delimited rows: | a | b | followed by divider |---|---|
   return /^\|.+\|$/m.test(text) && /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/m.test(text);
@@ -142,7 +282,7 @@ export async function trySendRichMessage(
   markdown: string,
   options?: RichSendOptions,
 ): Promise<RichSendResult | null> {
-  if (!isRichSizeOk(markdown)) {
+  if (!isRichContent(markdown) || !isRichSizeOk(markdown)) {
     return null;
   }
 

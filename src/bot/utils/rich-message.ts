@@ -142,7 +142,7 @@ export async function trySendRichMessage(
   markdown: string,
   options?: RichSendOptions,
 ): Promise<RichSendResult | null> {
-  if (!isRichContent(markdown) || !isRichSizeOk(markdown)) {
+  if (!isRichSizeOk(markdown)) {
     return null;
   }
 
@@ -177,7 +177,7 @@ export async function tryEditRichMessage(
   markdown: string,
   options?: RichSendOptions,
 ): Promise<RichSendResult | null> {
-  if (!isRichContent(markdown) || !isRichSizeOk(markdown)) {
+  if (!isRichSizeOk(markdown)) {
     return null;
   }
 

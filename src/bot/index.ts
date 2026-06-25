@@ -212,7 +212,7 @@ import {
   splitTextIntoChunks,
   TELEGRAM_MESSAGE_LIMIT,
 } from "./utils/reasoning-format.js";
-import { isRichContent, trySendRichMessage } from "./utils/rich-message.js";
+import { trySendRichMessage } from "./utils/rich-message.js";
 import {
   buildTelegramConversationScopeKey,
   extractTelegramConversationScopeFromContext,
@@ -2215,15 +2215,13 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         let finalParseMode: "html" | "raw" | "markdown_v2" = finalFormat;
         let richMessageDelivered = false;
 
-        // Bot API 10.1: try native rich message for structured markdown content
-        if (isRichContent(messageText)) {
-          const deliveryTarget = getSessionDeliveryTarget(sessionId);
-          const richResult = await trySendRichMessage(botApi, chatId, messageText, {
-            messageThreadId: deliveryTarget?.messageThreadId ?? target.messageThreadId,
-          });
-          if (richResult?.success) {
-            richMessageDelivered = true;
-          }
+        // Bot API 10.1: always try native rich message for final answers
+        const deliveryTarget = getSessionDeliveryTarget(sessionId);
+        const richResult = await trySendRichMessage(botApi, chatId, messageText, {
+          messageThreadId: deliveryTarget?.messageThreadId ?? target.messageThreadId,
+        });
+        if (richResult?.success) {
+          richMessageDelivered = true;
         }
 
         if (!richMessageDelivered && mode > 0) {

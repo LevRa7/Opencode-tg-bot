@@ -42,8 +42,8 @@ interface RichSendOptions {
  * Detect whether raw markdown text contains rich-only constructs
  * that would benefit from native Telegram rendering via sendRichMessage.
  *
- * Rich-eligible constructs: GFM tables, task lists, <details> blocks,
- * LaTeX math expressions.
+ * Rich-eligible constructs: GFM tables, task lists, code blocks,
+ * blockquotes, headings, <details> blocks, LaTeX math.
  */
 export function isRichContent(text: string): boolean {
   if (!text) return false;
@@ -52,8 +52,23 @@ export function isRichContent(text: string): boolean {
     hasGfmTable(text) ||
     hasTaskList(text) ||
     hasDetailsBlock(text) ||
-    hasLatexMath(text)
+    hasLatexMath(text) ||
+    hasCodeBlock(text) ||
+    hasBlockquote(text) ||
+    hasHeading(text)
   );
+}
+
+function hasCodeBlock(text: string): boolean {
+  return /^```/m.test(text);
+}
+
+function hasBlockquote(text: string): boolean {
+  return /^> /m.test(text);
+}
+
+function hasHeading(text: string): boolean {
+  return /^#{1,6}\s+\S/m.test(text);
 }
 
 function hasGfmTable(text: string): boolean {

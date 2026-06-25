@@ -91,12 +91,13 @@ function buildTelegraphArticleBody(filePath: string, content: string, changes: C
   const lines = content.split("\n");
   const parts: string[] = [];
 
-  parts.push(`<h3>${escapeXml(filePath)}</h3>`);
+  // Telegraph content-builder maps #/##/### → h3, #### → h4
+  parts.push(`### ${filePath}`);
   const lastUpdated = changes.length > 0
     ? new Date(changes[0]!.createdAt).toISOString().replace("T", " ").slice(0, 19)
     : "—";
-  parts.push(`<p><i>Last updated: ${lastUpdated} UTC · Total changes: ${changes.length}</i></p>`);
-  parts.push("<hr/>");
+  parts.push(`*Last updated: ${lastUpdated} UTC · Total changes: ${changes.length}*`);
+  parts.push("---");
 
   const changeMap = new Map<number, ChangeRecord>();
   for (const ch of changes) {
@@ -116,33 +117,41 @@ function buildTelegraphArticleBody(filePath: string, content: string, changes: C
     const line = lines[i]!;
 
     if (change && !inBlockquote) {
-      if (parts.length > 2) parts.push("</blockquote>");
+      if (parts.length > 2) parts.push(""); // close prev block
       const dateStr = new Date(change.createdAt).toISOString().replace("T", " ").slice(0, 19);
       const desc = change.description ?? "Change";
-      parts.push(`<blockquote>📅 ${dateStr}<br/>`);
-      parts.push(`<b><code>${escapeXml(line)}</code></b><br/>`);
-      parts.push(`<i>${escapeXml(desc)}</i><br/>`);
+      parts.push(`> 📅 ${dateStr}`);
+      const escapedLine = escapeMdInCode(line);
+      parts.push(`> **\`${escapedLine}\`**`);
+      parts.push(`> *${desc}*`);
       inBlockquote = true;
     } else if (!change && inBlockquote) {
-      parts.push(`<code>${escapeXml(line)}</code>`);
+      const escapedLine = escapeMdInCode(line);
+      parts.push(`\`${escapedLine}\``);
       const nextLineHasChange = (i + 1 < lines.length) && changeMap.has(lineNum + 1);
       if (!nextLineHasChange) {
-        parts.push("</blockquote>");
         inBlockquote = false;
       }
     } else if (change && inBlockquote) {
-      parts.push(`<code>${escapeXml(line)}</code>`);
+      const escapedLine = escapeMdInCode(line);
+      parts.push(`\`${escapedLine}\``);
     } else {
-      parts.push(`<code>${escapeXml(line)}</code>`);
+      const escapedLine = escapeMdInCode(line);
+      parts.push(`\`${escapedLine}\``);
     }
   }
-  if (inBlockquote) parts.push("</blockquote>");
 
   const full = parts.join("\n");
   if (full.length > ARTICLE_SIZE_LIMIT) {
-    return full.slice(0, ARTICLE_SIZE_LIMIT - 100) + "\n<p><i>[truncated — use /open to view full file]</i></p>";
+    return full.slice(0, ARTICLE_SIZE_LIMIT - 100) + "\n\n*[truncated]*";
   }
   return full;
+}
+
+function escapeMdInCode(s: string): string {
+  // Inside backtick code, only ` needs escaping (which is impossible in markdown)
+  // so we replace backtick with a lookalike to avoid breaking the code span
+  return s.replace(/`/g, "´");
 }
 
 export class FileDiffLogger {

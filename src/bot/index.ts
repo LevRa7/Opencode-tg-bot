@@ -2215,21 +2215,20 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         let finalParseMode: "html" | "raw" | "markdown_v2" = finalFormat;
         let richMessageDelivered = false;
 
-        if (mode > 0) {
-          // Bot API 10.1: try native rich message for tables/headings/task-lists
-          if (isRichContent(messageText)) {
-            const deliveryTarget = getSessionDeliveryTarget(sessionId);
-            const richResult = await trySendRichMessage(botApi, chatId, messageText, {
-              messageThreadId: deliveryTarget?.messageThreadId ?? target.messageThreadId,
-            });
-            if (richResult?.success) {
-              richMessageDelivered = true;
-            }
+        // Bot API 10.1: try native rich message for structured markdown content
+        if (isRichContent(messageText)) {
+          const deliveryTarget = getSessionDeliveryTarget(sessionId);
+          const richResult = await trySendRichMessage(botApi, chatId, messageText, {
+            messageThreadId: deliveryTarget?.messageThreadId ?? target.messageThreadId,
+          });
+          if (richResult?.success) {
+            richMessageDelivered = true;
           }
-          if (!richMessageDelivered) {
-            finalText = (finalFormat as string) === "html" ? messageText : markdownToHtml(messageText);
-            finalParseMode = "html";
-          }
+        }
+
+        if (!richMessageDelivered && mode > 0) {
+          finalText = (finalFormat as string) === "html" ? messageText : markdownToHtml(messageText);
+          finalParseMode = "html";
         }
 
         try {

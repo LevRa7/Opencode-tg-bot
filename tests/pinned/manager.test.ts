@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TelegramConversationScope } from "../../src/telegram/scope.js";
 import { runWithTelegramConversationScope } from "../../src/telegram/scope.js";
 
@@ -157,23 +157,20 @@ describe("pinned/manager", () => {
         await pinnedMessageManager.refresh();
 
         expect(fakeApi.editMessageText).toHaveBeenCalledTimes(1);
-        expect(fakeApi.editMessageText).toHaveBeenCalledWith(
-          123,
-          777,
-          expect.any(String),
-          {
-            message_thread_id: 10,
-          },
-        );
+        // editMessageText must NOT receive message_thread_id — Telegram's
+        // editMessageText has no such parameter and rejects it with
+        // "400: message can't be edited". The message is identified by chat+id.
+        expect(fakeApi.editMessageText).toHaveBeenCalledWith(123, 777, expect.any(String));
         expect(fakeApi.pinChatMessage).not.toHaveBeenCalled();
         expect(pinnedMessageManager.getState().createdInCurrentProcess).toBe(false);
       });
     });
 
-    it("targets the active message thread when creating and refreshing a pinned message", async () => {
+    it("creates the pinned message in the topic but does NOT pass message_thread_id to editMessageText", async () => {
       await runWithTelegramConversationScope(scopeA, async () => {
         await pinnedMessageManager.onSessionChange("ses-1", "Test Session");
 
+        // sendMessage carries the thread id so the message lands in the topic.
         expect(fakeApi.sendMessage).toHaveBeenCalledWith(123, expect.any(String), {
           message_thread_id: 10,
         });
@@ -185,9 +182,11 @@ describe("pinned/manager", () => {
 
         await pinnedMessageManager.refresh();
 
-        expect(fakeApi.editMessageText).toHaveBeenCalledWith(123, 999, expect.any(String), {
-          message_thread_id: 10,
-        });
+        // editMessageText must be called WITHOUT message_thread_id. Passing it
+        // (the old bug) made Telegram reject every edit with
+        // "400: message can't be edited", which spammed the log and (with the
+        // recreate fix) duplicated the pinned message on every update.
+        expect(fakeApi.editMessageText).toHaveBeenCalledWith(123, 999, expect.any(String));
       });
     });
   });
@@ -257,6 +256,84 @@ describe("pinned/manager", () => {
 
       expect(fakeApi.unpinAllChatMessages).not.toHaveBeenCalled();
       expect(fakeApi.sendMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // The pinned message is created+pinned once after a prompt, then edited in
+  // place at most once every 5s (leading + trailing throttle) instead of editing
+  // on every event. Explicit refreshes bypass the throttle. New messages are
+  // never sent on updates. Uses fake timers to drive the 5s window.
+  describe("edit throttle (5s)", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const fullTokens = (input: number) => ({
+      input,
+      output: 0,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    });
+
+    it("does not edit within 5s of the last edit, then applies one trailing edit", async () => {
+      await runWithTelegramConversationScope(scopeA, async () => {
+        await pinnedMessageManager.onSessionChange("ses-1", "Test Session");
+        fakeApi.editMessageText.mockClear();
+
+        // Two rapid automatic updates inside the 5s window.
+        await pinnedMessageManager.onMessageComplete(fullTokens(1000));
+        await pinnedMessageManager.onCostUpdate(0.5);
+
+        // No immediate edit — throttled.
+        expect(fakeApi.editMessageText).not.toHaveBeenCalled();
+
+        // After the window closes, exactly one trailing edit with the latest state.
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(fakeApi.editMessageText).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("edits immediately when >= 5s elapsed since the last edit (leading edge)", async () => {
+      await runWithTelegramConversationScope(scopeA, async () => {
+        await pinnedMessageManager.onSessionChange("ses-1", "Test Session");
+        fakeApi.editMessageText.mockClear();
+
+        await vi.advanceTimersByTimeAsync(5000); // 5s since creation
+
+        await pinnedMessageManager.onMessageComplete(fullTokens(2000));
+        expect(fakeApi.editMessageText).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("never sends a new message on throttled updates — only edits", async () => {
+      await runWithTelegramConversationScope(scopeA, async () => {
+        await pinnedMessageManager.onSessionChange("ses-1", "Test Session");
+        fakeApi.sendMessage.mockClear();
+
+        await pinnedMessageManager.onCostUpdate(0.5);
+        await vi.advanceTimersByTimeAsync(5000);
+        await pinnedMessageManager.onCostUpdate(0.7);
+        await vi.advanceTimersByTimeAsync(5000);
+
+        expect(fakeApi.sendMessage).not.toHaveBeenCalled();
+      });
+    });
+
+    it("lets an explicit refresh bypass the throttle and edit immediately", async () => {
+      await runWithTelegramConversationScope(scopeA, async () => {
+        await pinnedMessageManager.onSessionChange("ses-1", "Test Session");
+        pinnedMessageManager.updateTokensSilent(fullTokens(1000));
+        fakeApi.editMessageText.mockClear();
+
+        // Within the 5s window, but forceUpdate must edit right away.
+        await pinnedMessageManager.refresh();
+        expect(fakeApi.editMessageText).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });

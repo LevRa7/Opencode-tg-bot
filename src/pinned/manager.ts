@@ -31,11 +31,20 @@ interface ScopedPinnedRuntime {
   state: PinnedMessageState;
   contextLimit: number | null;
   updateDebounceTimer: ReturnType<typeof setTimeout> | null;
+  // Trailing-edge timer for the edit throttle: holds the pending flush scheduled
+  // to run when the current 5s edit window closes. Null when no flush is queued.
+  throttleTimer: ReturnType<typeof setTimeout> | null;
   updateTask: Promise<void> | null;
   pendingUpdate: boolean;
   pendingForceUpdate: boolean;
   lastRenderedMessageText: string | null;
 }
+
+// The pinned status message is edited in place at most once per this interval.
+// Automatic updates (tokens/cost/diffs) coalesce within the window and apply as a
+// single trailing edit; explicit refreshes bypass it. This keeps a steady cadence
+// and avoids hammering editMessageText (and Telegram rate limits) on every event.
+const PINNED_EDIT_THROTTLE_MS = 5000;
 
 function createInitialPinnedMessageState(): PinnedMessageState {
   return {
@@ -61,6 +70,7 @@ function createScopedPinnedRuntime(): ScopedPinnedRuntime {
     state: createInitialPinnedMessageState(),
     contextLimit: null,
     updateDebounceTimer: null,
+    throttleTimer: null,
     updateTask: null,
     pendingUpdate: false,
     pendingForceUpdate: false,
@@ -97,18 +107,6 @@ class PinnedMessageManager {
     return {
       message_thread_id: runtime.state.messageThreadId,
     } as Parameters<Api["sendMessage"]>[2];
-  }
-
-  private getEditMessageThreadOptions(
-    runtime: ScopedPinnedRuntime,
-  ): Parameters<Api["editMessageText"]>[3] {
-    if (!runtime.state.messageThreadId || runtime.state.messageThreadId <= 0) {
-      return undefined;
-    }
-
-    return {
-      message_thread_id: runtime.state.messageThreadId,
-    } as Parameters<Api["editMessageText"]>[3];
   }
 
   initialize(api: Api, chatId: number): void {
@@ -681,6 +679,13 @@ class PinnedMessageManager {
         disable_notification: true,
       });
 
+      // Keep the keyboard's context bar in sync after a (re)create, mirroring the
+      // edit path (see flushPendingPinnedUpdates). Without this, a recreate would
+      // leave the token counter showing stale data until the next successful edit.
+      if (this.onKeyboardUpdateCallback && runtime.state.tokensLimit > 0) {
+        this.onKeyboardUpdateCallback(runtime.state.tokensUsed, runtime.state.tokensLimit);
+      }
+
       logger.info(`[PinnedManager] Created and pinned message: ${sentMessage.message_id}`);
     } catch (err) {
       logger.error("[PinnedManager] Error creating pinned message:", err);
@@ -699,6 +704,43 @@ class PinnedMessageManager {
       runtime.pendingForceUpdate = true;
     }
 
+    // Throttle automatic edits to at most one per PINNED_EDIT_THROTTLE_MS. Inside
+    // the window, coalesce into a single trailing flush; once the window has
+    // elapsed (or on the very first update with no prior edit), flush immediately
+    // (leading edge). Explicit refreshes bypass the throttle and supersede any
+    // pending trailing flush so the user-visible refresh is immediate.
+    if (forceUpdate) {
+      if (runtime.throttleTimer) {
+        clearTimeout(runtime.throttleTimer);
+        runtime.throttleTimer = null;
+      }
+    } else {
+      const elapsed = Date.now() - runtime.state.lastUpdated;
+      if (runtime.state.lastUpdated > 0 && elapsed < PINNED_EDIT_THROTTLE_MS) {
+        this.scheduleThrottledFlush(runtime, PINNED_EDIT_THROTTLE_MS - elapsed);
+        return;
+      }
+    }
+
+    await this.flushPinnedUpdateTask(runtime);
+  }
+
+  private scheduleThrottledFlush(runtime: ScopedPinnedRuntime, delayMs: number): void {
+    if (runtime.throttleTimer) {
+      // A trailing flush is already queued; flushPendingPinnedUpdates reads the
+      // current state when it fires, so the latest update coalesces into it.
+      return;
+    }
+    const scope = getCurrentTelegramConversationScope();
+    runtime.throttleTimer = setTimeout(() => {
+      runtime.throttleTimer = null;
+      runWithTelegramConversationScope(scope, () => {
+        void this.flushPinnedUpdateTask(runtime);
+      });
+    }, delayMs);
+  }
+
+  private async flushPinnedUpdateTask(runtime: ScopedPinnedRuntime): Promise<void> {
     if (runtime.updateTask) {
       await runtime.updateTask;
       return;
@@ -731,12 +773,12 @@ class PinnedMessageManager {
       }
 
       try {
-        await runtime.api.editMessageText(
-          runtime.chatId,
-          runtime.state.messageId,
-          text,
-          this.getEditMessageThreadOptions(runtime),
-        );
+        // editMessageText is identified by chat_id + message_id only. It does NOT
+        // accept message_thread_id; passing it (the old behavior) made Telegram
+        // reject every edit with "400: message can't be edited" in topic-scoped
+        // chats. The thread id is still applied on sendMessage in
+        // createPinnedMessage, which is enough to place the message in the topic.
+        await runtime.api.editMessageText(runtime.chatId, runtime.state.messageId, text);
         runtime.state.lastUpdated = Date.now();
         runtime.lastRenderedMessageText = text;
 
@@ -760,19 +802,38 @@ class PinnedMessageManager {
         }
 
         if (errorMessage.includes("message to edit not found")) {
-          logger.warn("[PinnedManager] Pinned message was deleted, recreating...");
-          runtime.state.messageId = null;
-          runtime.state.createdInCurrentProcess = false;
-          runtime.lastRenderedMessageText = null;
-          runtime.pendingForceUpdate = false;
-          clearPinnedMessageId();
-          await this.createPinnedMessage();
+          // The pinned message was actually deleted (e.g. by the user), so there
+          // is no message to edit. Recreating here does not spam: the old message
+          // is gone, so this replaces it rather than duplicating it.
+          await this.recreatePinnedMessage(runtime, "was deleted");
           continue;
         }
 
         logger.error("[PinnedManager] Error updating pinned message:", err);
       }
     }
+  }
+
+  /**
+   * Recreates the pinned message after it was actually deleted (the "message to
+   * edit not found" case). Drops the dead message id and creates a fresh one;
+   * because the old message no longer exists this replaces rather than
+   * duplicates. The accumulated state (tokens, cost, diffs) carries over through
+   * createPinnedMessage()'s formatMessage(). The old id is logged for analysis.
+   */
+  private async recreatePinnedMessage(
+    runtime: ScopedPinnedRuntime,
+    reason: string,
+  ): Promise<void> {
+    logger.warn(
+      `[PinnedManager] Pinned message #${runtime.state.messageId} ${reason}, recreating...`,
+    );
+    runtime.state.messageId = null;
+    runtime.state.createdInCurrentProcess = false;
+    runtime.lastRenderedMessageText = null;
+    runtime.pendingForceUpdate = false;
+    clearPinnedMessageId();
+    await this.createPinnedMessage();
   }
 
   private async unpinOldMessage(): Promise<void> {
@@ -794,6 +855,10 @@ class PinnedMessageManager {
       runtime.lastRenderedMessageText = null;
       runtime.pendingUpdate = false;
       runtime.pendingForceUpdate = false;
+      if (runtime.throttleTimer) {
+        clearTimeout(runtime.throttleTimer);
+        runtime.throttleTimer = null;
+      }
       clearPinnedMessageId();
 
       logger.debug("[PinnedManager] Unpinned old messages");
@@ -823,6 +888,10 @@ class PinnedMessageManager {
       runtime.lastRenderedMessageText = null;
       runtime.pendingUpdate = false;
       runtime.pendingForceUpdate = false;
+      if (runtime.throttleTimer) {
+        clearTimeout(runtime.throttleTimer);
+        runtime.throttleTimer = null;
+      }
       clearPinnedMessageId();
       return;
     }
@@ -837,6 +906,10 @@ class PinnedMessageManager {
       runtime.lastRenderedMessageText = null;
       runtime.pendingUpdate = false;
       runtime.pendingForceUpdate = false;
+      if (runtime.throttleTimer) {
+        clearTimeout(runtime.throttleTimer);
+        runtime.throttleTimer = null;
+      }
       clearPinnedMessageId();
 
       logger.info("[PinnedManager] Cleared pinned message state");
@@ -850,6 +923,9 @@ export function __resetPinnedMessageManagersForTests(): void {
   for (const runtime of pinnedMessageManager["scopedRuntimes"].values()) {
     if (runtime.updateDebounceTimer) {
       clearTimeout(runtime.updateDebounceTimer);
+    }
+    if (runtime.throttleTimer) {
+      clearTimeout(runtime.throttleTimer);
     }
   }
   pinnedMessageManager["scopedRuntimes"] = new Map<string, ScopedPinnedRuntime>();

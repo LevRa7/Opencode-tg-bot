@@ -1,41 +1,21 @@
 import type { Context } from "grammy";
-import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
+import { isForegroundBusy } from "./busy-guard.js";
 import { abortCurrentOperation } from "../commands/abort.js";
-import {
-  extractTelegramConversationScopeFromContext,
-  runWithTelegramConversationScope,
-} from "../../telegram/scope.js";
 
 /**
- * Runs a session-mutating action safely while a model response may be streaming.
- *
- * Purpose (abort-then-act): commands like /new or /compact must not race an
- * in-flight run. If the foreground session is busy, we abort the running prompt
- * first (abortCurrentOperation polls until the session is idle and releases the
- * busy state), and only then run the action. If nothing is running, we run the
- * action directly.
- *
- * Scope nuance: foreground busy state is marked under the conversation scope
- * derived from the originating ctx (see foregroundSessionState.markBusy(...) in
- * src/bot/handlers/prompt.ts). From a grammY command handler the *ambient*
- * AsyncLocalStorage scope is typically "global", so a bare isBusy() would read
- * the wrong (global) scope and could return a false negative, skipping the
- * needed abort. To avoid that, we resolve the conversation scope from ctx and
- * run both the busy check and the abort under that scope via
- * runWithTelegramConversationScope, so isBusy() resolves the same scope the run
- * was marked under, and abort sees the correct ambient scope too.
+ * Run a session-mutating action safely while a response may be streaming.
+ * If the foreground session is busy (checked under the ctx's conversation scope via
+ * isForegroundBusy), abort the in-flight run first (abortCurrentOperation aborts +
+ * polls until idle + releases busy state), then run the action; else run it directly.
+ * action() runs with the handler's normal ambient scope and resolves its own scope
+ * from ctx, so it is intentionally not wrapped.
  */
 export async function abortThenRun(
   ctx: Context,
   action: () => Promise<void>,
 ): Promise<void> {
-  const scope = extractTelegramConversationScopeFromContext(ctx);
-
-  await runWithTelegramConversationScope(scope, async () => {
-    if (foregroundSessionState.isBusy()) {
-      await abortCurrentOperation(ctx, { notifyUser: true });
-    }
-  });
-
+  if (isForegroundBusy(ctx)) {
+    await abortCurrentOperation(ctx, { notifyUser: true });
+  }
   await action();
 }

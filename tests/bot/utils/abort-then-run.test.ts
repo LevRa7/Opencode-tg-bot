@@ -8,9 +8,7 @@ const { abortCurrentOperation } = vi.hoisted(() => ({
 }));
 let busy = false;
 vi.mock("../../../src/bot/commands/abort.js", () => ({ abortCurrentOperation }));
-vi.mock("../../../src/scheduled-task/foreground-state.js", () => ({
-  foregroundSessionState: { isBusy: () => busy },
-}));
+vi.mock("../../../src/bot/utils/busy-guard.js", () => ({ isForegroundBusy: () => busy }));
 
 import { abortThenRun } from "../../../src/bot/utils/abort-then-run.js";
 

@@ -17,12 +17,6 @@ export function isSessionMutatingCommand(command?: string): boolean {
   return Boolean(command && SESSION_MUTATING_COMMAND_SET.has(command));
 }
 
-// All user commands are allowed through the guard while busy. Session-mutating
-// commands self-manage abort-then-act in their handlers (see abortThenRun).
-export function isBusyAllowedCommand(_command?: string): boolean {
-  return true;
-}
-
 export function allowsBusyInteraction(kind: InteractionKind | undefined): boolean {
   return kind === "question" || kind === "permission" || kind === "inline";
 }

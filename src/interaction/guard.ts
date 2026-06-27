@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
 import { interactionManager } from "./manager.js";
-import { allowsBusyInteraction, isBusyAllowedCommand } from "./busy.js";
+import { allowsBusyInteraction } from "./busy.js";
 import type {
   BlockReason,
   ExpectedInput,
@@ -146,11 +146,9 @@ export function resolveInteractionGuardDecision(ctx: Context): GuardDecision {
 
   if (isBusy) {
     if (inputType === "command") {
-      if (isBusyAllowedCommand(command)) {
-        return createAllowDecision(inputType, state, command, true);
-      }
-
-      return createBusyBlockDecision(inputType, state, "command_not_allowed", command);
+      // While busy, all commands are allowed. Session-mutating commands abort the
+      // in-flight run first via abortThenRun() in their handlers (see ./busy.ts).
+      return createAllowDecision(inputType, state, command, true);
     }
 
     // When no interaction state is active and the session is busy, allow all

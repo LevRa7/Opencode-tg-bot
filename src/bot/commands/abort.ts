@@ -7,12 +7,16 @@ import { t } from "../../i18n/index.js";
 import { foregroundSessionState } from "../../scheduled-task/foreground-state.js";
 import { resolveScopedSessionFromContext } from "../runtime/scope-session-resolver.js";
 import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
-import { getCurrentTelegramConversationScopeKey } from "../../telegram/scope.js";
+import {
+  getCurrentTelegramConversationScopeKey,
+  runWithTelegramConversationScope,
+} from "../../telegram/scope.js";
 import { assistantRunState } from "../assistant-run-state.js";
 import { markAttachedSessionIdle } from "../../attach/service.js";
 import { clearPromptResponseMode } from "../handlers/prompt.js";
 import { markUserAbortRequested } from "../utils/abort-error-suppression.js";
 import { summaryAggregator } from "../../summary/aggregator.js";
+import { pinnedMessageManager } from "../../pinned/manager.js";
 
 import type { TelegramConversationScope } from "../../telegram/scope.js";
 
@@ -116,7 +120,6 @@ export async function abortCurrentOperation(
 
       if (!chatId) {
         logger.warn("[Abort] Chat context is missing while aborting active session");
-        return;
       }
     }
 
@@ -140,7 +143,9 @@ export async function abortCurrentOperation(
         logger.warn("[Abort] Abort request failed:", abortError);
         await releaseAbortBusyState(currentSession.id, "abort_unconfirmed", currentScope);
         if (notifyUser && chatId !== null && waitingMessageId !== null) {
-          await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_unconfirmed"));
+          await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_unconfirmed"), {
+            parse_mode: "HTML",
+          });
         }
         return;
       }
@@ -148,7 +153,9 @@ export async function abortCurrentOperation(
       if (abortResult !== true) {
         await releaseAbortBusyState(currentSession.id, "abort_maybe_finished", currentScope);
         if (notifyUser && chatId !== null && waitingMessageId !== null) {
-          await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_maybe_finished"));
+          await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_maybe_finished"), {
+            parse_mode: "HTML",
+          });
         }
         return;
       }
@@ -162,25 +169,41 @@ export async function abortCurrentOperation(
       if (finalStatus === "idle" || finalStatus === "not-found") {
         await releaseAbortBusyState(currentSession.id, "abort_confirmed", currentScope);
         if (notifyUser && chatId !== null && waitingMessageId !== null) {
-          await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.success"));
+          await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.success"), {
+            parse_mode: "HTML",
+          });
         }
       } else {
+        await releaseAbortBusyState(currentSession.id, "abort_still_busy", currentScope);
         if (notifyUser && chatId !== null && waitingMessageId !== null) {
-          await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_still_busy"));
+          await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_still_busy"), {
+            parse_mode: "HTML",
+          });
         }
       }
+
+      // Finalize the pinned status message so it reflects the stopped state.
+      // The normal completion path (onMessageComplete/onCostUpdate) never fired
+      // because the run was aborted, so push the current state explicitly.
+      await runWithTelegramConversationScope(currentScope, () =>
+        pinnedMessageManager.refresh(),
+      ).catch(() => {});
     } catch (error) {
       clearTimeout(timeoutId);
       await releaseAbortBusyState(currentSession.id, "abort_error", currentScope);
 
       if (error instanceof Error && error.name === "AbortError") {
         if (notifyUser && chatId !== null && waitingMessageId !== null) {
-          await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_timeout"));
+          await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_timeout"), {
+            parse_mode: "HTML",
+          });
         }
       } else {
         logger.error("[Abort] Error while aborting session:", error);
         if (notifyUser && chatId !== null && waitingMessageId !== null) {
-          await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_local_only"));
+          await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_local_only"), {
+            parse_mode: "HTML",
+          });
         }
       }
     }

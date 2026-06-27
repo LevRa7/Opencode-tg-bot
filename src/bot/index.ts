@@ -2933,6 +2933,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     localFileFollowUpTracker.clearSession(sessionId);
       foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
       summaryAggregator.stopTypingIndicator();
+      // Finalize the pinned status message after an error (the normal completion
+      // path never fired), so it no longer shows an in-progress state.
+      await runWithTelegramConversationScope(getSessionRoutingScope(sessionId), () =>
+        pinnedMessageManager.refresh(),
+      ).catch(() => {});
       await scheduledTaskRuntime.flushDeferredDeliveries();
   });
 

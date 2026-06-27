@@ -943,6 +943,18 @@ export const en = {
   "connect.empty": "No AI providers configured.",
   "connect.error": "Failed to list providers.",
   "cmd.description.connect": "Connect AI providers",
+
+  "review.memory_updated": "🧠 Memory updated",
+  "review.memory_updated_user": "🧠 Memory updated by user",
+  "review.memory_removed": "🧠 Memory removed",
+  "review.skill_patched": "🔧 Skill patched",
+  "review.skill_saved": "💾 Skill saved",
+  "review.skill_created": "✨ Skill created",
+  "review.title": "📋 Review",
+  "review.nothing_to_save": "📭 Nothing to save",
+  "file_server.not_running": "⚠️ File server is not running",
+  "file_server.delivered": "📁 File delivered",
+  "maps.skill_name": "Maps",
 } as const;
 
 export type I18nKey = keyof typeof en;

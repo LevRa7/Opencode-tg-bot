@@ -890,4 +890,16 @@ export const zh: I18nDictionary = {
   "connect.empty": "No AI providers configured.",
   "connect.error": "Failed to list providers.",
   "cmd.description.connect": "Connect AI providers",
+
+  "review.memory_updated": "🧠 记忆已更新",
+  "review.memory_updated_user": "🧠 用户已更新记忆",
+  "review.memory_removed": "🧠 记忆已删除",
+  "review.skill_patched": "🔧 技能已修补",
+  "review.skill_saved": "💾 技能已保存",
+  "review.skill_created": "✨ 技能已创建",
+  "review.title": "📋 审查",
+  "review.nothing_to_save": "📭 无内容可保存",
+  "file_server.not_running": "⚠️ 文件服务器未运行",
+  "file_server.delivered": "📁 文件已发送",
+  "maps.skill_name": "地图",
 };

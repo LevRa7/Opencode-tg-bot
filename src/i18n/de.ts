@@ -963,4 +963,16 @@ export const de: I18nDictionary = {
   "connect.empty": "No AI providers configured.",
   "connect.error": "Failed to list providers.",
   "cmd.description.connect": "Connect AI providers",
+
+  "review.memory_updated": "🧠 Speicher aktualisiert",
+  "review.memory_updated_user": "🧠 Speicher vom Benutzer aktualisiert",
+  "review.memory_removed": "🧠 Speicher entfernt",
+  "review.skill_patched": "🔧 Skill gepatcht",
+  "review.skill_saved": "💾 Skill gespeichert",
+  "review.skill_created": "✨ Skill erstellt",
+  "review.title": "📋 Überprüfung",
+  "review.nothing_to_save": "📭 Nichts zu speichern",
+  "file_server.not_running": "⚠️ Dateiserver läuft nicht",
+  "file_server.delivered": "📁 Datei zugestellt",
+  "maps.skill_name": "Karten",
 };

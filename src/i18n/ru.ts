@@ -946,4 +946,16 @@ export const ru: I18nDictionary = {
   "connect.empty": "Нет настроенных AI провайдеров.",
   "connect.error": "Не удалось получить список провайдеров.",
   "cmd.description.connect": "Подключить AI провайдеров",
+
+  "review.memory_updated": "🧠 Память обновлена",
+  "review.memory_updated_user": "🧠 Память обновлена пользователем",
+  "review.memory_removed": "🧠 Память удалена",
+  "review.skill_patched": "🔧 Навык обновлён",
+  "review.skill_saved": "💾 Навык сохранён",
+  "review.skill_created": "✨ Навык создан",
+  "review.title": "📋 Обзор",
+  "review.nothing_to_save": "📭 Нечего сохранять",
+  "file_server.not_running": "⚠️ Файловый сервер не запущен",
+  "file_server.delivered": "📁 Файл доставлен",
+  "maps.skill_name": "Карты",
 };

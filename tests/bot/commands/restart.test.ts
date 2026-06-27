@@ -20,6 +20,11 @@ const mocked = vi.hoisted(() => ({
   setLastRestartRequestMock: vi.fn(async (restartRequest: { updateId: number; requestedAt: string }) => {
     mocked.lastRestartRequest = restartRequest;
   }),
+  abortThenRunMock: vi.fn(async (_ctx: unknown, action: () => Promise<void>) => action()),
+}));
+
+vi.mock("../../../src/bot/utils/abort-then-run.js", () => ({
+  abortThenRun: mocked.abortThenRunMock,
 }));
 
 vi.mock("../../../src/runtime/restart.js", () => ({
@@ -72,11 +77,24 @@ describe("bot/commands/restart", () => {
     stopBotContainersMock.mockResolvedValue(undefined);
     mocked.lastRestartRequest = undefined;
     mocked.setLastRestartRequestMock.mockClear();
+    mocked.abortThenRunMock.mockClear();
     __resetRestartStateForTests();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("delegates to abortThenRun before restarting", async () => {
+    restartTenantRuntimesMock.mockResolvedValue({ success: true });
+
+    const ctx = createContext();
+    await restartCommand(ctx);
+
+    expect(mocked.abortThenRunMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(restartCurrentProcessMock).toHaveBeenCalledTimes(1);
   });
 
   it("notifies user and restarts tenants before triggering process restart", async () => {

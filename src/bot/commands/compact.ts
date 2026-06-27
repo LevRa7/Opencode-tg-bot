@@ -7,10 +7,12 @@ import { logger } from "../../utils/logger.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { t } from "../../i18n/index.js";
 import { keyboardManager } from "../../keyboard/manager.js";
+import { abortThenRun } from "../utils/abort-then-run.js";
 
 export async function compactCommand(ctx: CommandContext<Context>): Promise<void> {
-  const messageThreadId = extractMessageThreadIdFromContext(ctx);
-  const session = getCurrentSession();
+  await abortThenRun(ctx, async () => {
+    const messageThreadId = extractMessageThreadIdFromContext(ctx);
+    const session = getCurrentSession();
 
   if (!session) {
     await ctx.reply(
@@ -70,5 +72,6 @@ export async function compactCommand(ctx: CommandContext<Context>): Promise<void
         .editMessageText(chatId, progressMessage.message_id, t("context.error"))
         .catch(() => {});
     },
+  });
   });
 }

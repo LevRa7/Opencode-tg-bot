@@ -929,6 +929,7 @@ export const en = {
   "connect.empty": "No AI providers configured.",
   "connect.error": "Failed to list providers.",
   "cmd.description.connect": "Connect AI providers",
+  "cmd.description.opencode_restart": "Restart OpenCode server",
   "location.live_started": "Live location tracking started. Your coordinates will be added to messages.",
   "location.live_stopped": "Live location tracking stopped.",
   "cmd.description.fork": "Fork session into new topic",
@@ -1020,6 +1021,16 @@ export const en = {
   "review.self_improvement_review": "Self-improvement review",
   "bot.session_sse_timeout_retry": "SSE timeout, retrying...",
   "tool.diff.truncated": "...truncated ({shown}/{total} lines)",
+
+  "opencode_restart.restarting": "⏳ Restarting OpenCode server…",
+  "opencode_restart.remote_configured": "OpenCode server is configured remotely. Use /ssh to manage it.",
+  "opencode_restart.stop_error": "❌ Failed to stop OpenCode server: {error}",
+  "opencode_restart.start_error": "❌ Failed to start OpenCode server: {error}",
+  "opencode_restart.not_ready": "⚠️ OpenCode server started but not ready after restart (PID {pid}).",
+  "opencode_restart.success": "✅ OpenCode server restarted successfully (PID {pid}, version {version}).",
+  "opencode_restart.success_ssh": "✅ SSH disconnected and reconnected successfully.",
+  "opencode_restart.ssh_reconnect_error": "❌ SSH reconnect failed: {error}",
+  "opencode_restart.error": "❌ An error occurred during restart.",
 
 } as const;
 

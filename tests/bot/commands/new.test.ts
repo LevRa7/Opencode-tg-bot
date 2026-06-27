@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
 import { newCommand } from "../../../src/bot/commands/new.js";
-import { foregroundSessionState } from "../../../src/scheduled-task/foreground-state.js";
 import { t } from "../../../src/i18n/index.js";
 
 const mocked = vi.hoisted(() => ({
@@ -18,6 +17,11 @@ const mocked = vi.hoisted(() => ({
   threadGetActiveScopeMock: vi.fn(),
   attachSessionForScopeMock: vi.fn(),
   getDefaultProjectMock: vi.fn(),
+  abortThenRunMock: vi.fn(async (_ctx: unknown, action: () => Promise<void>) => action()),
+}));
+
+vi.mock("../../../src/bot/utils/abort-then-run.js", () => ({
+  abortThenRun: mocked.abortThenRunMock,
 }));
 
 vi.mock("../../../src/opencode/client.js", () => ({
@@ -75,6 +79,8 @@ vi.mock("../../../src/pinned/manager.js", () => ({
 vi.mock("../../../src/keyboard/manager.js", () => ({
   keyboardManager: {
     initialize: vi.fn(),
+    setSessionMode: vi.fn(),
+    getKeyboard: vi.fn(() => ({ keyboard: true })),
   },
 }));
 
@@ -117,7 +123,6 @@ function createContext(): Context {
 
 describe("bot/commands/new", () => {
   beforeEach(() => {
-    foregroundSessionState.__resetForTests();
     mocked.sessionCreateMock.mockReset();
     mocked.getCurrentProjectMock.mockReset();
     mocked.setCurrentProjectMock.mockReset();
@@ -131,20 +136,28 @@ describe("bot/commands/new", () => {
     mocked.getCurrentSessionMock.mockReset();
     mocked.clearSummaryMock.mockReset();
     mocked.clearInteractionMock.mockReset();
+    mocked.abortThenRunMock.mockClear();
     mocked.getCurrentProjectMock.mockReturnValue({ id: "project-1", worktree: "/repo" });
     mocked.getDefaultProjectMock.mockResolvedValue({ id: "default-project", worktree: "/default" });
     mocked.threadGetActiveScopeMock.mockReturnValue(null);
     mocked.attachSessionForScopeMock.mockResolvedValue(undefined);
   });
 
-  it("blocks new session creation while foreground session is busy", async () => {
-    foregroundSessionState.markBusy("session-1", "test");
+  it("delegates to abortThenRun before creating a session", async () => {
+    mocked.sessionCreateMock.mockResolvedValue({
+      data: { id: "session-1", title: "AbortAndCreate" },
+      error: null,
+    });
 
     const ctx = createContext();
     await newCommand(ctx as never);
 
-    expect(mocked.sessionCreateMock).not.toHaveBeenCalled();
-    expect(ctx.reply).toHaveBeenCalledWith(t("interaction.blocked.finish_current"));
+    expect(mocked.abortThenRunMock).toHaveBeenCalledTimes(1);
+    expect(mocked.sessionCreateMock).toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith(
+      t("new.created", { title: "AbortAndCreate" }),
+      expect.objectContaining({ message_thread_id: 88 }),
+    );
   });
 
   it("attaches keyboard reply to the current topic when a session is created", async () => {

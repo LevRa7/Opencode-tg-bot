@@ -340,20 +340,20 @@ describe("interaction guard", () => {
     expect(decision.inputType).toBe("other");
   });
 
-  it("allows only abort, status, and help commands while busy without interaction", () => {
+  it("allows all commands while busy without interaction", () => {
     foregroundSessionState.markBusy("session-1", "test");
 
     expect(resolveInteractionGuardDecision(createContext({ text: "/abort" })).allow).toBe(true);
     expect(resolveInteractionGuardDecision(createContext({ text: "/status" })).allow).toBe(true);
     expect(resolveInteractionGuardDecision(createContext({ text: "/help" })).allow).toBe(true);
 
-    const blockedDecision = resolveInteractionGuardDecision(createContext({ text: "/new" }));
-    expect(blockedDecision.allow).toBe(false);
-    expect(blockedDecision.reason).toBe("command_not_allowed");
-    expect(blockedDecision.busy).toBe(true);
+    // Session-mutating commands are now allowed while busy; they abort-then-act in handlers.
+    const newDecision = resolveInteractionGuardDecision(createContext({ text: "/new" }));
+    expect(newDecision.allow).toBe(true);
+    expect(newDecision.busy).toBe(true);
   });
 
-  it("blocks new work only in the same topic when busy state is scoped to that topic", () => {
+  it("scopes busy state to the topic where work is running", () => {
     runWithTelegramConversationScope(
       { userId: 1, chatId: 100, messageThreadId: 10 },
       () => foregroundSessionState.markBusy("session-1", "test"),
@@ -368,15 +368,15 @@ describe("interaction guard", () => {
       () => resolveInteractionGuardDecision(createContext({ text: "/new" })),
     );
 
-    expect(sameTopicDecision.allow).toBe(false);
-    expect(sameTopicDecision.reason).toBe("command_not_allowed");
+    // /new is allowed even when busy (abort-then-act in handler); the busy flag is per-topic.
+    expect(sameTopicDecision.allow).toBe(true);
     expect(sameTopicDecision.busy).toBe(true);
 
     expect(otherTopicDecision.allow).toBe(true);
     expect(otherTopicDecision.state).toBeNull();
   });
 
-  it("allows plain text and media while busy without interaction, but blocks unallowed commands", () => {
+  it("allows plain text, media, and commands while busy without interaction", () => {
     foregroundSessionState.markBusy("session-1", "test");
 
     const startDecision = resolveInteractionGuardDecision(createContext({ text: "/start" }));
@@ -384,14 +384,13 @@ describe("interaction guard", () => {
     const voiceDecision = resolveInteractionGuardDecision(createContext({ voice: true }));
     const photoDecision = resolveInteractionGuardDecision(createContext({ photo: true }));
 
-    expect(startDecision.allow).toBe(false);
-    expect(startDecision.reason).toBe("command_not_allowed");
+    expect(startDecision.allow).toBe(true);
     expect(textDecision.allow).toBe(true);
     expect(voiceDecision.allow).toBe(true);
     expect(photoDecision.allow).toBe(true);
   });
 
-  it("allows valid question answers while busy", () => {
+  it("allows valid question answers and commands while busy", () => {
     foregroundSessionState.markBusy("session-1", "test");
     interactionManager.start({
       kind: "question",
@@ -403,15 +402,14 @@ describe("interaction guard", () => {
     );
     const textDecision = resolveInteractionGuardDecision(createContext({ text: "custom answer" }));
     const commandDecision = resolveInteractionGuardDecision(createContext({ text: "/status" }));
-    const blockedCommand = resolveInteractionGuardDecision(createContext({ text: "/new" }));
+    const newCommand = resolveInteractionGuardDecision(createContext({ text: "/new" }));
 
     expect(callbackDecision.allow).toBe(true);
     expect(callbackDecision.busy).toBe(true);
     expect(textDecision.allow).toBe(true);
     expect(textDecision.busy).toBe(true);
     expect(commandDecision.allow).toBe(true);
-    expect(blockedCommand.allow).toBe(false);
-    expect(blockedCommand.reason).toBe("command_not_allowed");
+    expect(newCommand.allow).toBe(true);
   });
 
   it("allows valid permission callback while busy and blocks other inputs", () => {

@@ -29,6 +29,7 @@ const mocked = vi.hoisted(() => ({
   keyboardUpdateModelMock: vi.fn(),
   keyboardUpdateVariantMock: vi.fn(),
   keyboardUpdateContextMock: vi.fn(),
+  keyboardSendKeyboardUpdateMock: vi.fn().mockResolvedValue(undefined),
   bindModelToActiveContextMock: vi.fn(),
   loggerDebugMock: vi.fn(),
   loggerInfoMock: vi.fn(),
@@ -67,6 +68,7 @@ vi.mock("../../../src/keyboard/manager.js", () => ({
     updateModel: mocked.keyboardUpdateModelMock,
     updateVariant: mocked.keyboardUpdateVariantMock,
     updateContext: mocked.keyboardUpdateContextMock,
+    sendKeyboardUpdate: mocked.keyboardSendKeyboardUpdateMock,
     getKeyboard: mocked.createMainKeyboardMock,
   },
 }));
@@ -125,6 +127,7 @@ function createForumMainThreadCallbackContext(data: string): Context {
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
     deleteMessage: vi.fn().mockResolvedValue(undefined),
     editMessageText: vi.fn().mockResolvedValue(undefined),
+    editMessageReplyMarkup: vi.fn().mockResolvedValue(undefined),
     reply: vi.fn().mockResolvedValue({ message_id: 700 }),
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 999 }),
@@ -169,6 +172,8 @@ describe("bot/handlers/variant", () => {
     mocked.keyboardUpdateModelMock.mockReset();
     mocked.keyboardUpdateVariantMock.mockReset();
     mocked.keyboardUpdateContextMock.mockReset();
+    mocked.keyboardSendKeyboardUpdateMock.mockReset();
+    mocked.keyboardSendKeyboardUpdateMock.mockResolvedValue(undefined);
     mocked.bindModelToActiveContextMock.mockReset();
     mocked.loggerDebugMock.mockReset();
     mocked.loggerInfoMock.mockReset();
@@ -225,7 +230,26 @@ describe("bot/handlers/variant", () => {
     expect(text).toBe(t("variant.changed_message", { name: "Fast" }));
     expect(options).toHaveProperty("reply_markup");
     expect(options).not.toHaveProperty("message_thread_id");
-    expect(ctx.deleteMessage).toHaveBeenCalledTimes(1);
+
+    // Task B: the host keyboard must be force-refreshed immediately after applying.
+    expect(mocked.keyboardSendKeyboardUpdateMock).toHaveBeenCalledWith(111, undefined, {
+      force: true,
+    });
+
+    // Task C: the inline menu is re-rendered in place with the checkmark on the new
+    // variant and is NOT deleted.
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(ctx.editMessageReplyMarkup).toHaveBeenCalledTimes(1);
+
+    const [editArgs] = (ctx.editMessageReplyMarkup as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      { reply_markup: InlineKeyboard },
+    ];
+    const rebuiltRows = getInlineKeyboardRows(editArgs.reply_markup);
+    const fastRow = rebuiltRows.find((row) => row[0]?.callback_data === "variant:fast");
+    const defaultRow = rebuiltRows.find((row) => row[0]?.callback_data === "variant:default");
+    expect(fastRow?.[0]?.text.startsWith("✅")).toBe(true);
+    expect(defaultRow?.[0]?.text.startsWith("✅")).toBe(false);
+
     expect(interactionManager.getSnapshot()).toBeNull();
   });
 

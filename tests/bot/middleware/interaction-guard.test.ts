@@ -252,7 +252,7 @@ describe("interactionGuardMiddleware", () => {
     expect(ctx.reply).toHaveBeenCalledWith(t("task.blocked.command_not_allowed"));
   });
 
-  it("blocks disallowed command while busy with generic blocked message", async () => {
+  it("allows any command while busy (guard no longer blocks)", async () => {
     foregroundSessionState.markBusy("session-1", "test");
 
     const ctx = createTextContext("/new");
@@ -260,8 +260,8 @@ describe("interactionGuardMiddleware", () => {
 
     await interactionGuardMiddleware(ctx, next);
 
-    expect(next).not.toHaveBeenCalled();
-    expect(ctx.reply).toHaveBeenCalledWith(t("interaction.blocked.finish_current"));
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(ctx.reply).not.toHaveBeenCalled();
   });
 
   it("allows plain text while busy without interaction (handlers defer to batch mechanism)", async () => {
@@ -310,6 +310,22 @@ describe("interactionGuardMiddleware", () => {
     });
 
     const ctx = createCallbackContext("question:select:0:1");
+    const next: NextFunction = vi.fn().mockResolvedValue(undefined);
+
+    await interactionGuardMiddleware(ctx, next);
+
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(ctx.answerCallbackQuery).not.toHaveBeenCalled();
+  });
+
+  it("allows active inline callback while busy", async () => {
+    foregroundSessionState.markBusy("session-1", "test");
+    interactionManager.start({
+      kind: "inline",
+      expectedInput: "callback",
+    });
+
+    const ctx = createCallbackContext("select:model:1");
     const next: NextFunction = vi.fn().mockResolvedValue(undefined);
 
     await interactionGuardMiddleware(ctx, next);

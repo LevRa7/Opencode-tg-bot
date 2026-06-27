@@ -23,6 +23,7 @@ const mocked = vi.hoisted(() => ({
     getPID: vi.fn(() => null),
     stop: vi.fn(),
   },
+  abortThenRunMock: vi.fn(async (_ctx: unknown, action: () => Promise<void>) => action()),
 }));
 
 vi.mock("../../../src/config.js", () => ({
@@ -49,6 +50,10 @@ vi.mock("../../../src/process/manager.js", () => ({
 
 vi.mock("../../../src/bot/utils/telegram-text.js", () => ({
   editBotText: mocked.editBotTextMock,
+}));
+
+vi.mock("../../../src/bot/utils/abort-then-run.js", () => ({
+  abortThenRun: mocked.abortThenRunMock,
 }));
 
 vi.mock("../../../src/utils/logger.js", () => ({
@@ -83,11 +88,23 @@ describe("bot/commands/opencode-stop", () => {
     mocked.processManagerMock.isRunning.mockReset();
     mocked.processManagerMock.getPID.mockReset();
     mocked.processManagerMock.stop.mockReset();
+    mocked.abortThenRunMock.mockClear();
 
     mocked.config.opencode.apiUrl = "http://localhost:4096";
     mocked.resolveLocalOpencodeTargetMock.mockReturnValue({ host: "localhost", port: 4096 });
     mocked.editBotTextMock.mockResolvedValue(undefined);
     mocked.processManagerMock.isRunning.mockReturnValue(false);
+  });
+
+  it("delegates to abortThenRun before stopping", async () => {
+    const ctx = createContext();
+    mocked.config.opencode.apiUrl = "https://example.com";
+    mocked.resolveLocalOpencodeTargetMock.mockReturnValue(null);
+
+    await opencodeStopCommand(ctx as never);
+
+    expect(mocked.abortThenRunMock).toHaveBeenCalledTimes(1);
+    expect(ctx.reply).toHaveBeenCalledWith(t("opencode_stop.remote_configured"), expect.anything());
   });
 
   it("warns when OPENCODE_API_URL points to a remote server", async () => {

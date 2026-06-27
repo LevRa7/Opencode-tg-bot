@@ -7,6 +7,7 @@ import { getLastRestartRequest, setLastRestartRequest } from "../../settings/man
 import { processManager } from "../../process/manager.js";
 import { logger } from "../../utils/logger.js";
 import { config } from "../../config.js";
+import { abortThenRun } from "../utils/abort-then-run.js";
 
 let restartInProgress = false;
 const RESTART_TRIGGER_DELAY_MS = 1500;
@@ -36,51 +37,53 @@ export async function restartCommand(ctx: CommandContext<Context>): Promise<void
     return;
   }
 
-  try {
-    restartInProgress = true;
-    logger.info(`[Bot] Restart requested by user=${ctx.from?.id ?? "unknown"}`);
+  await abortThenRun(ctx, async () => {
+    try {
+      restartInProgress = true;
+      logger.info(`[Bot] Restart requested by user=${ctx.from?.id ?? "unknown"}`);
 
-    const sentMessage = await ctx.reply(t("restart.restarting"), withMessageThreadId(undefined, messageThreadId));
+      const sentMessage = await ctx.reply(t("restart.restarting"), withMessageThreadId(undefined, messageThreadId));
 
-    const timer = setTimeout(() => {
-      void (async () => {
-        try {
-          await setLastRestartRequest({
-            updateId,
-            requestedAt: new Date().toISOString(),
-            chatId: sentMessage.chat.id,
-            messageId: sentMessage.message_id,
-            locale: getLocale(),
-          });
+      const timer = setTimeout(() => {
+        void (async () => {
+          try {
+            await setLastRestartRequest({
+              updateId,
+              requestedAt: new Date().toISOString(),
+              chatId: sentMessage.chat.id,
+              messageId: sentMessage.message_id,
+              locale: getLocale(),
+            });
 
-          const tenantRestartResult = await processManager.restartTenantRuntimes();
-          if (!tenantRestartResult.success) {
+            const tenantRestartResult = await processManager.restartTenantRuntimes();
+            if (!tenantRestartResult.success) {
+              restartInProgress = false;
+
+              const errorMessage = tenantRestartResult.error || t("common.unknown_error");
+              logger.error("[Bot] Deferred /restart tenant cascade failed:", errorMessage);
+              await ctx.reply(t("restart.error", { error: errorMessage }), withMessageThreadId(undefined, messageThreadId));
+              return;
+            }
+
+            await stopBotContainers();
+            restartCurrentProcess();
+          } catch (error) {
             restartInProgress = false;
 
-            const errorMessage = tenantRestartResult.error || t("common.unknown_error");
-            logger.error("[Bot] Deferred /restart tenant cascade failed:", errorMessage);
-            await ctx.reply(t("restart.error", { error: errorMessage }), withMessageThreadId(undefined, messageThreadId));
-            return;
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger.error("[Bot] Deferred /restart failed:", error);
+            void ctx.reply(t("restart.error", { error: errorMessage || t("common.unknown_error") }), withMessageThreadId(undefined, messageThreadId));
           }
+        })();
+      }, RESTART_TRIGGER_DELAY_MS);
 
-          await stopBotContainers();
-          restartCurrentProcess();
-        } catch (error) {
-          restartInProgress = false;
+      timer.unref?.();
+    } catch (error) {
+      restartInProgress = false;
 
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          logger.error("[Bot] Deferred /restart failed:", error);
-          void ctx.reply(t("restart.error", { error: errorMessage || t("common.unknown_error") }), withMessageThreadId(undefined, messageThreadId));
-        }
-      })();
-    }, RESTART_TRIGGER_DELAY_MS);
-
-    timer.unref?.();
-  } catch (error) {
-    restartInProgress = false;
-
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error("[Bot] Error in /restart command:", error);
-    await ctx.reply(t("restart.error", { error: errorMessage || t("common.unknown_error") }), withMessageThreadId(undefined, messageThreadId));
-  }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error("[Bot] Error in /restart command:", error);
+      await ctx.reply(t("restart.error", { error: errorMessage || t("common.unknown_error") }), withMessageThreadId(undefined, messageThreadId));
+    }
+  });
 }

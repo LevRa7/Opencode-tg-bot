@@ -12,11 +12,13 @@ import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { editBotText } from "../utils/telegram-text.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import { abortThenRun } from "../utils/abort-then-run.js";
 
 export async function opencodeStopCommand(ctx: CommandContext<Context>) {
   const messageThreadId = extractMessageThreadIdFromContext(ctx);
 
-  try {
+  await abortThenRun(ctx, async () => {
+    try {
     // If SSH is active, disconnect SSH (which stops the remote OpenCode server)
     const userId = ctx.from?.id;
     if (userId && sshManager.isSshActive(userId)) {
@@ -120,4 +122,5 @@ export async function opencodeStopCommand(ctx: CommandContext<Context>) {
     logger.error("[Bot] Error in /opencode-stop command:", err);
     await ctx.reply(t("opencode_stop.error"), withMessageThreadId(undefined, messageThreadId));
   }
+  });
 }

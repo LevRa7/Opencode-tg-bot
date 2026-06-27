@@ -23,6 +23,10 @@ import { t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { interactionManager } from "../../interaction/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import {
+  extractTelegramConversationScopeFromContext,
+  runWithTelegramConversationScope,
+} from "../../telegram/scope.js";
 import type { I18nKey } from "../../i18n/en.js";
 
 const MODELS_PER_PAGE = 10;
@@ -326,6 +330,17 @@ export async function applySelectedModel(
     keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
   }
 
+  // Force an immediate refresh of the scope-keyed host keyboard so the model label and
+  // token counter reflect the new model right away instead of waiting for the auto tick.
+  // The forced update is wrapped in the ctx's conversation scope because the keyboard host
+  // (pinned message) is scope-keyed; grammY handlers must target the same scope explicitly.
+  if (ctx.chat) {
+    const scope = extractTelegramConversationScopeFromContext(ctx);
+    await runWithTelegramConversationScope(scope, () =>
+      keyboardManager.sendKeyboardUpdate(ctx.chat!.id, undefined, { force: true }),
+    ).catch(() => {});
+  }
+
   const keyboard = keyboardManager.getKeyboard();
   const displayName = formatModelForDisplay(modelInfo.providerID, modelInfo.modelID);
 
@@ -457,9 +472,18 @@ export async function handleModelSelect(ctx: Context): Promise<boolean> {
     clearActiveInlineMenu("model_selected");
 
     await ctx.answerCallbackQuery({ text: t("model.changed_callback", { name: displayName }) });
-    await ctx.deleteMessage().catch(() => {});
 
-    const variants = await getAvailableVariants(parsedModel.providerID, parsedModel.modelID);
+    // Re-render the provider's model list in place with the checkmark moved to the newly
+    // selected model, instead of deleting the menu, so the selection stays visible. The
+    // page is derived from the model's position so the correct page keeps the checkmark.
+    const selectedIndex = provider.models.findIndex(
+      (model) => model.modelID === resolvedModelID,
+    );
+    const selectedPage = selectedIndex >= 0 ? Math.floor(selectedIndex / MODELS_PER_PAGE) : 0;
+    const rebuiltMenu = buildProviderModelsKeyboard(provider, modelInfo, selectedPage);
+    await ctx.editMessageReplyMarkup({ reply_markup: rebuiltMenu }).catch(() => {});
+
+    const variants = await getAvailableVariants(parsedModel.providerID, resolvedModelID);
     const enabledVariants = variants.filter((variant) => !variant.disabled);
     if (enabledVariants.length > 1) {
       await showVariantSelectionMenu(ctx);

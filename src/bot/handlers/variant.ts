@@ -10,6 +10,7 @@ import { logger } from "../../utils/logger.js";
 import { keyboardManager } from "../../keyboard/manager.js";
 import { pinnedMessageManager } from "../../pinned/manager.js";
 import {
+  appendInlineMenuCancelButton,
   clearActiveInlineMenu,
   ensureActiveInlineMenu,
   replyWithInlineMenu,
@@ -18,6 +19,10 @@ import { t } from "../../i18n/index.js";
 import type { I18nKey } from "../../i18n/en.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
+import {
+  extractTelegramConversationScopeFromContext,
+  runWithTelegramConversationScope,
+} from "../../telegram/scope.js";
 
 type ApplySelectedVariantResult =
   | { applied: true; displayName: string }
@@ -66,6 +71,17 @@ export async function applySelectedVariant(
 
   if (contextInfo) {
     keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
+  }
+
+  // Force an immediate refresh of the scope-keyed host keyboard so the model label and
+  // token counter reflect the new variant right away instead of waiting for the auto tick.
+  // The forced update is wrapped in the ctx's conversation scope because the keyboard host
+  // (pinned message) is scope-keyed; grammY handlers must target the same scope explicitly.
+  if (ctx.chat) {
+    const scope = extractTelegramConversationScopeFromContext(ctx);
+    await runWithTelegramConversationScope(scope, () =>
+      keyboardManager.sendKeyboardUpdate(ctx.chat!.id, undefined, { force: true }),
+    ).catch(() => {});
   }
 
   const keyboard = keyboardManager.getKeyboard();
@@ -125,8 +141,16 @@ export async function handleVariantSelect(ctx: Context): Promise<boolean> {
       text: t("variant.changed_callback", { name: result.displayName }),
     });
 
-    // Delete the inline menu message
-    await ctx.deleteMessage().catch(() => {});
+    // Re-render the menu in place with the checkmark moved to the newly selected variant,
+    // instead of deleting it, so the user keeps visual context of what is now active.
+    const currentModel = getStoredModel();
+    const rebuiltMenu = await buildVariantSelectionMenu(
+      variantId,
+      currentModel.providerID,
+      currentModel.modelID,
+    );
+    appendInlineMenuCancelButton(rebuiltMenu, "variant");
+    await ctx.editMessageReplyMarkup({ reply_markup: rebuiltMenu }).catch(() => {});
 
     return true;
   } catch (err) {

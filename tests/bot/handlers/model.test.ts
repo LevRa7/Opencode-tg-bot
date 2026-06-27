@@ -19,6 +19,7 @@ const mocked = vi.hoisted(() => ({
   keyboardInitializeMock: vi.fn(),
   keyboardUpdateModelMock: vi.fn(),
   keyboardUpdateContextMock: vi.fn(),
+  keyboardSendKeyboardUpdateMock: vi.fn().mockResolvedValue(undefined),
   appendInlineMenuCancelButtonMock: vi.fn((keyboard: InlineKeyboard) => keyboard),
   ensureActiveInlineMenuMock: vi.fn().mockResolvedValue(true),
   replyWithInlineMenuMock: vi.fn().mockResolvedValue(500),
@@ -67,6 +68,7 @@ vi.mock("../../../src/keyboard/manager.js", () => ({
     initialize: mocked.keyboardInitializeMock,
     updateModel: mocked.keyboardUpdateModelMock,
     updateContext: mocked.keyboardUpdateContextMock,
+    sendKeyboardUpdate: mocked.keyboardSendKeyboardUpdateMock,
     getKeyboard: mocked.createMainKeyboardMock,
   },
 }));
@@ -76,6 +78,7 @@ vi.mock("../../../src/bot/handlers/inline-menu.js", () => ({
   ensureActiveInlineMenu: mocked.ensureActiveInlineMenuMock,
   replyWithInlineMenu: mocked.replyWithInlineMenuMock,
   clearActiveInlineMenu: mocked.clearActiveInlineMenuMock,
+  INLINE_MENU_TTL_MS: 300_000,
 }));
 
 vi.mock("../../../src/thread/manager.js", () => ({
@@ -172,6 +175,7 @@ function createCallbackContext(data: string): Context {
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
     deleteMessage: vi.fn().mockResolvedValue(undefined),
     editMessageText: vi.fn().mockResolvedValue(undefined),
+    editMessageReplyMarkup: vi.fn().mockResolvedValue(undefined),
     reply: vi.fn().mockResolvedValue({ message_id: 700 }),
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 999 }),
@@ -194,6 +198,7 @@ function createForumMainThreadCallbackContext(data: string): Context {
     answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
     deleteMessage: vi.fn().mockResolvedValue(undefined),
     editMessageText: vi.fn().mockResolvedValue(undefined),
+    editMessageReplyMarkup: vi.fn().mockResolvedValue(undefined),
     reply: vi.fn().mockResolvedValue({ message_id: 700 }),
     api: {
       sendMessage: vi.fn().mockResolvedValue({ message_id: 999 }),
@@ -232,6 +237,8 @@ describe("bot/handlers/model", () => {
     mocked.keyboardInitializeMock.mockReset();
     mocked.keyboardUpdateModelMock.mockReset();
     mocked.keyboardUpdateContextMock.mockReset();
+    mocked.keyboardSendKeyboardUpdateMock.mockReset();
+    mocked.keyboardSendKeyboardUpdateMock.mockResolvedValue(undefined);
     mocked.appendInlineMenuCancelButtonMock.mockClear();
     mocked.ensureActiveInlineMenuMock.mockReset();
     mocked.ensureActiveInlineMenuMock.mockResolvedValue(true);
@@ -284,8 +291,8 @@ describe("bot/handlers/model", () => {
     expect(text).toContain("Provider: openai");
     const rows = getInlineKeyboardRows(options.reply_markup);
     expect(rows).toHaveLength(13);
-    expect(rows[0]?.[0]?.callback_data).toBe("model:openai:gpt-4.01");
-    expect(rows[9]?.[0]?.callback_data).toBe("model:openai:gpt-4.10");
+    expect(rows[0]?.[0]?.callback_data).toBe("model:openai:0");
+    expect(rows[9]?.[0]?.callback_data).toBe("model:openai:9");
     expect(rows[10]?.[0]?.callback_data).toBe("model_provider_page:openai:1");
     expect(rows[11]?.[0]?.callback_data).toBe("model_back");
   });
@@ -304,8 +311,8 @@ describe("bot/handlers/model", () => {
 
     expect(text).toContain("Provider: openai");
     const rows = getInlineKeyboardRows(options.reply_markup);
-    expect(rows[0]?.[0]?.callback_data).toBe("model:openai:gpt-4.11");
-    expect(rows[1]?.[0]?.callback_data).toBe("model:openai:gpt-4.12");
+    expect(rows[0]?.[0]?.callback_data).toBe("model:openai:10");
+    expect(rows[1]?.[0]?.callback_data).toBe("model:openai:11");
     expect(rows[2]?.[0]?.callback_data).toBe("model_provider_page:openai:0");
     expect(rows[3]?.[0]?.callback_data).toBe("model_back");
   });
@@ -323,8 +330,8 @@ describe("bot/handlers/model", () => {
     ];
 
     const rows = getInlineKeyboardRows(options.reply_markup);
-    expect(rows[0]?.[0]?.callback_data).toBe("model:openai:gpt-4.11");
-    expect(rows[1]?.[0]?.callback_data).toBe("model:openai:gpt-4.12");
+    expect(rows[0]?.[0]?.callback_data).toBe("model:openai:10");
+    expect(rows[1]?.[0]?.callback_data).toBe("model:openai:11");
   });
 
   it("shows an empty provider state with a back button", async () => {
@@ -346,7 +353,7 @@ describe("bot/handlers/model", () => {
   });
 
   it("preserves model selection side effects when a model is chosen", async () => {
-    const ctx = createCallbackContext("model:openai:gpt-4.11");
+    const ctx = createCallbackContext("model:openai:10");
     mocked.getContextInfoMock.mockReturnValue({ tokensUsed: 120, tokensLimit: 1000 });
 
     const handled = await handleModelSelect(ctx);
@@ -379,11 +386,29 @@ describe("bot/handlers/model", () => {
       { reply_markup: { keyboard: "main" } },
     );
     expect(mocked.clearActiveInlineMenuMock).toHaveBeenCalledWith("model_selected");
-    expect(ctx.deleteMessage).toHaveBeenCalledTimes(1);
+
+    // Task B: the host keyboard must be force-refreshed immediately after applying.
+    expect(mocked.keyboardSendKeyboardUpdateMock).toHaveBeenCalledWith(111, undefined, {
+      force: true,
+    });
+
+    // Task C: the model list is re-rendered in place with the checkmark on the new model
+    // and the menu is NOT deleted.
+    expect(ctx.deleteMessage).not.toHaveBeenCalled();
+    expect(ctx.editMessageReplyMarkup).toHaveBeenCalledTimes(1);
+
+    const [editArgs] = (ctx.editMessageReplyMarkup as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      { reply_markup: InlineKeyboard },
+    ];
+    const rebuiltRows = getInlineKeyboardRows(editArgs.reply_markup);
+    const selectedRow = rebuiltRows.find((row) => row[0]?.callback_data === "model:openai:10");
+    const otherRow = rebuiltRows.find((row) => row[0]?.callback_data === "model:openai:11");
+    expect(selectedRow?.[0]?.text.startsWith("✅")).toBe(true);
+    expect(otherRow?.[0]?.text.startsWith("✅")).toBe(false);
   });
 
   it("opens variant selection after choosing a model with multiple enabled variants", async () => {
-    const ctx = createCallbackContext("model:openai:gpt-4.11");
+    const ctx = createCallbackContext("model:openai:10");
     mocked.getAvailableVariantsMock.mockResolvedValue([
       { id: "default" },
       { id: "high" },
@@ -398,7 +423,7 @@ describe("bot/handlers/model", () => {
   });
 
   it("confirms model change in forum main thread without message_thread_id", async () => {
-    const ctx = createForumMainThreadCallbackContext("model:openai:gpt-4.11");
+    const ctx = createForumMainThreadCallbackContext("model:openai:10");
     mocked.getContextInfoMock.mockReturnValue({ tokensUsed: 120, tokensLimit: 1000 });
 
     const handled = await handleModelSelect(ctx);
@@ -469,7 +494,7 @@ describe("bot/handlers/model", () => {
   });
 
   it("answers stale model callbacks safely", async () => {
-    const ctx = createCallbackContext("model:openai:gpt-4.99");
+    const ctx = createCallbackContext("model:openai:999");
 
     const handled = await handleModelSelect(ctx);
 

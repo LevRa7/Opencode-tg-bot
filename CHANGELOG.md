@@ -10,11 +10,30 @@ Documentation rule:
 
 ## [Unreleased]
 
+### Added
+
+- **New `/opencode_restart` command** — restarts the current user's active OpenCode runtime (SSH path: reconnect remote server; managed/tenant path: `processManager.stop()` then `ensureRuntime()` + wait-for-ready). Per-user/scope-aware automatically via the scope middleware and tenant-aware `processManager`/`opencodeClient` — non-admin users restart only their own tenant runtime. Wrapped in `abortThenRun` so it stops the in-flight run first. Affects: `src/bot/commands/opencode-restart.ts`, `src/bot/commands/definitions.ts`, `src/bot/index.ts`, `src/interaction/busy.ts`.
+
+### Removed
+
+- **Removed `/opencode_start` and `/opencode_stop`** — consolidated into the single `/opencode_restart` (see Added). Handler files and tests deleted; the reply-keyboard "Stop" button keeps its own inline stop logic and `opencode_stop.*` i18n strings.
+
 ### Changed
+
+- **All commands and inline menus are now usable while a model response is streaming.** Previously, during the busy state only `/abort`, `/detach`, `/status`, `/help` were allowed and inline model/variant/settings menu selections (and Cancel) were rejected with a misleading "finish the current interaction" message. The busy interaction guard (`src/interaction/busy.ts`, `src/interaction/guard.ts`) now allows every command and the `inline` interaction kind while busy. Session-mutating commands (`/new`, `/compact`, `/restart`, `/opencode_restart`) first abort the in-flight run and wait for it to stop, then perform their action, via the new `abortThenRun` helper (`src/bot/utils/abort-then-run.ts`); non-mutating commands (`/model`, `/variant`, `/settings`, …) apply immediately and take effect on the next prompt.
+  - Why: users could not change model/variant/settings or start a new session while the model was responding (the "stream busy" rejection).
+- **Selecting a model/variant now moves the ✅ checkmark in place and refreshes the reply keyboard immediately.** The inline menu is re-rendered (no longer deleted) with the checkmark on the new selection, and the reply keyboard's model label + token counter update without waiting for the ~3s auto-refresh — via a forced, scope-correct `keyboardManager.sendKeyboardUpdate(..., { force: true })`. Affects: `src/keyboard/manager.ts`, `src/bot/handlers/model.ts`, `src/bot/handlers/variant.ts`.
 
 - **Settings persistence migrated from JSON file to SQLite.** `settings.json` replaced with `settings.db` (SQLite, WAL mode, better-sqlite3). All ~45 callers unchanged — only `src/settings/manager.ts` internals refactored. One-time auto-migration on first start. Marker file `.migrated-to-sqlite` prevents repeated migration. DDD: value objects (`ProjectInfo`, `SessionInfo`, `ModelInfo`) stored as JSON columns in bounded-context tables. See `docs/superpowers/specs/2026-05-31-settings-db-refactor-design.md`.
 
 ### Fixed
+
+- **Pinned status message now finalizes on abort and on session error.** The normal completion path already updated the pinned message (tokens/cost), but aborting a run or a session error left it in a stale/in-progress state. Added a scope-correct `pinnedMessageManager.refresh()` on the abort success path (`src/bot/commands/abort.ts`) and in the session-error handler (`src/bot/index.ts`).
+- **Fixed i18n locale consistency.** `es.ts` contained `review.*`, `file_server.*`, and `maps.*` keys missing from the `en.ts` type source, breaking `tsc`. Added the missing keys to all locales (`en`, `de`, `fr`, `ru`, `zh`).
+
+- **Fixed the final assistant answer being duplicated in Telegram (one full message plus a leftover streaming draft).** Busy-state reconciliation (`reconcileBusyStateNow`, triggered on every `server.heartbeat`) cleared `assistantRunState` as soon as the OpenCode server reported the session `idle`, even though the bot's completion/finalization pipeline (completion queue, durable delivery, thinking finalize, translate) runs asynchronously for several more seconds. Clearing the run mid-finalization turned `markFinalResponsePublished` into a no-op, so `isFinalResponsePublished` stayed `false` and the partial-stream guard in `setOnPartial` (`src/bot/index.ts:1740`) no longer suppressed trailing `message.part.delta` events — a late delta re-created a streaming draft next to the already-sent final message. Added `assistantRunState.isFinalizationInFlight()` (completion recorded but final not yet published) and made `reconcileBusyStateNow` skip clearing such sessions; the next reconcile pass clears them once the final is published (or the run is cleared on finalize failure).
+  - Why: confirmed from the running bot's log (session `ses_0fef1083…`): `Cleared run … status_reconcile_idle` landed between `markResponseCompleted` and `FinalizeResponse`, followed by `markVisibleFinalResponse no run` / `markFinalResponsePublished no run`; this pattern occurred in ~6% of finalizations and matches the reported duplicate.
+  - Affects: `src/bot/assistant-run-state.ts`, `src/bot/utils/busy-reconciliation.ts`, `tests/bot/assistant-run-state.test.ts`, `tests/bot/utils/busy-reconciliation.test.ts`
 
 - **Fixed tool call notifications being dropped after the first assistant message.** When OpenCode produces multiple assistant messages in response to a single prompt (each with tool calls), only the first message's tool notifications were displayed. The `isFinalResponsePublished` guard in `setOnTool` (`src/bot/index.ts:2167`) blocked all subsequent tool callbacks because `markFinalResponsePublished` was called on every message completion, not just the final one. Removed the guard — `isSessionCurrent` already prevents stale notifications after session cleanup.
   - Why: users could only see the first `bash`/`read`/etc. command executed by the agent; all subsequent tool activity was invisible.

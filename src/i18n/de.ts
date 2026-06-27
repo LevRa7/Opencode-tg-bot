@@ -23,8 +23,7 @@ export const de: I18nDictionary = {
   "cmd.description.stream": "Nachrichten-Streaming umschalten",
   "cmd.description.ssh": "Remote-SSH-Server verwalten",
   "cmd.description.restart": "Bot-Prozess neu starten",
-  "cmd.description.opencode_start": "OpenCode-Server starten",
-  "cmd.description.opencode_stop": "OpenCode-Server stoppen",
+  "cmd.description.opencode_restart": "OpenCode-Server neu starten",
   "cmd.description.terminal": "Open terminal window",
   "cmd.description.help": "Hilfe",
 
@@ -192,7 +191,7 @@ export const de: I18nDictionary = {
   "status.session_not_selected": "Aktuelle Sitzung: nicht ausgewählt",
   "status.session_hint": "Nutze /sessions zur Auswahl oder /new zum Erstellen",
   "status.server_unavailable":
-    "🔴 OpenCode-Server ist nicht verfügbar\n\nNutze /opencode_start, um den Server zu starten.",
+    "🔴 OpenCode-Server ist nicht verfügbar\n\nNutze /opencode_restart, um den Server neu zu starten.",
 
   "tts.enabled": "🔊 Audioantworten global aktiviert.",
   "tts.not_configured":
@@ -272,6 +271,22 @@ export const de: I18nDictionary = {
     "⚠️ Event-Stream lokal gestoppt, aber serverseitiger Abbruch ist fehlgeschlagen.",
   "stop.error":
     "🔴 Aktion konnte nicht gestoppt werden.\n\nEvent-Stream ist gestoppt, versuche /abort erneut.",
+
+  "opencode_restart.restarting": "🔄 Starte OpenCode-Server neu...",
+  "opencode_restart.remote_configured":
+    "⚠️ /opencode_restart funktioniert nur mit einem lokalen OpenCode-Server.",
+  "opencode_restart.stop_error":
+    "🔴 OpenCode-Server konnte nicht gestoppt werden\n\nFehler: {error}",
+  "opencode_restart.start_error":
+    "🔴 OpenCode-Server konnte nicht gestartet werden\n\nFehler: {error}",
+  "opencode_restart.not_ready":
+    "⚠️ OpenCode-Server gestartet, aber reagiert nicht\n\nPID: {pid}",
+  "opencode_restart.success":
+    "✅ OpenCode-Server erfolgreich neu gestartet\n\nPID: {pid}\nVersion: {version}",
+  "opencode_restart.success_ssh": "✅ SSH getrennt und wieder verbunden",
+  "opencode_restart.ssh_reconnect_error": "Nutze /ssh zur Wiederverbindung.",
+  "opencode_restart.error":
+    "🔴 Beim Neustart des Servers ist ein Fehler aufgetreten.\n\nSiehe Anwendungslogs für Details.",
 
   "opencode_start.already_running_managed":
     "⚠️ OpenCode-Server läuft bereits\n\nPID: {pid}\nBetriebszeit: {seconds} Sekunden",

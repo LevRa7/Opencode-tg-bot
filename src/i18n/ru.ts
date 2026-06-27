@@ -23,8 +23,7 @@ export const ru: I18nDictionary = {
   "cmd.description.stream": "Переключить стриминг сообщений",
   "cmd.description.ssh": "Управление удаленными SSH-серверами",
   "cmd.description.restart": "Перезапустить процесс бота",
-  "cmd.description.opencode_start": "Запустить OpenCode сервер",
-  "cmd.description.opencode_stop": "Остановить OpenCode сервер",
+  "cmd.description.opencode_restart": "Перезапустить OpenCode сервер",
   "cmd.description.terminal": "Открыть окно терминала",
   "cmd.description.help": "Справка",
 
@@ -184,7 +183,7 @@ export const ru: I18nDictionary = {
   "status.session_not_selected": "Текущая сессия: не выбрана",
   "status.session_hint": "Используйте /sessions для выбора или /new для создания",
   "status.server_unavailable":
-    "🔴 OpenCode Server недоступен\n\nИспользуйте /opencode_start для запуска сервера.",
+    "🔴 OpenCode Server недоступен\n\nИспользуйте /opencode_restart для перезапуска сервера.",
 
   "tts.enabled": "🔊 Аудиоответы включены глобально.",
   "tts.not_configured": "⚠️ Аудиоответы недоступны. Сначала укажите `TTS_API_URL` и `TTS_API_KEY`.",
@@ -261,6 +260,22 @@ export const ru: I18nDictionary = {
     "⚠️ Поток событий остановлен локально, но при прерывании на сервере произошла ошибка.",
   "stop.error":
     "🔴 Ошибка при прерывании действия.\n\nПоток событий остановлен, попробуйте /abort еще раз.",
+
+  "opencode_restart.restarting": "🔄 Перезапускаю OpenCode Server...",
+  "opencode_restart.remote_configured":
+    "⚠️ /opencode_restart работает только с локальным OpenCode Server.",
+  "opencode_restart.stop_error":
+    "🔴 Не удалось остановить OpenCode Server\n\nОшибка: {error}",
+  "opencode_restart.start_error":
+    "🔴 Не удалось запустить OpenCode Server\n\nОшибка: {error}",
+  "opencode_restart.not_ready":
+    "⚠️ OpenCode Server запущен, но не отвечает\n\nPID: {pid}",
+  "opencode_restart.success":
+    "✅ OpenCode Server успешно перезапущен\n\nPID: {pid}\nВерсия: {version}",
+  "opencode_restart.success_ssh": "✅ SSH отключён и переподключён успешно",
+  "opencode_restart.ssh_reconnect_error": "Используйте /ssh для переподключения.",
+  "opencode_restart.error":
+    "🔴 Произошла ошибка при перезапуске сервера.\n\nПроверьте логи приложения для подробностей.",
 
   "opencode_start.already_running_managed":
     "⚠️ OpenCode Server уже запущен\n\nPID: {pid}\nUptime: {seconds} секунд",

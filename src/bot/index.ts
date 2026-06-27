@@ -34,8 +34,7 @@ import { handleOnboardingCallback, showWebPanelOnboarding } from "../server/star
 import { connectCommand, handleProviderAuth, handleProviderInput, isProviderApiKeyPrompt, isAnyProviderPrompt, startProviderAuth } from "./commands/connect.js";
 import { shareCommand, unshareCommand } from "./commands/share.js";
 import { detachCommand } from "./commands/detach.js";
-import { opencodeStartCommand } from "./commands/opencode-start.js";
-import { opencodeStopCommand } from "./commands/opencode-stop.js";
+import { opencodeRestartCommand } from "./commands/opencode-restart.js";
 import { renameCommand, handleRenameCancel, handleRenameTextAnswer } from "./commands/rename.js";
 import { handleTaskCallback, handleTaskTextInput, taskCommand } from "./commands/task.js";
 import { handleTaskListCallback, taskListCommand } from "./commands/tasklist.js";
@@ -134,6 +133,7 @@ import { handlePhotoMessage } from "./handlers/photo.js";
 import { reconcileBusyState } from "./utils/busy-reconciliation.js";
 import { shouldSuppressUserAbortSessionError } from "./utils/abort-error-suppression.js";
 import { finalizeAssistantResponse } from "./utils/finalize-assistant-response.js";
+import { RichStreamer } from "./streaming/rich-streamer.js";
 import { sendTtsResponseForSession } from "./utils/send-tts-response.js";
 import { MessageDraftStreamManager } from "./utils/message-draft-stream.js";
 import { SequentialMessageDraftIdAllocator } from "./utils/message-draft-id.js";
@@ -1933,12 +1933,18 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             eventTimeMs: completionEventTimeMs,
             logicalMessageId: completionLogicalMessageId,
             deliver: async () => {
+              const isRichStream = finalParseMode === "html";
+              const richStreamer = isRichStream ? new RichStreamer() : undefined;
+
               await finalizeAssistantResponse({
                 sessionId,
                 messageId: `${messageId}:assistant`,
                 messageText: finalText,
                 sourceCommand: undefined,
                 responseStreamer,
+                richStreamer,
+                richStreamChatId: isRichStream ? chatId : undefined,
+                richStreamThreadId: isRichStream ? target.messageThreadId : undefined,
                 flushPendingServiceMessages: () =>
                   Promise.all([
                     messageDraftStreamManager.flushSession(sessionId),
@@ -3760,8 +3766,7 @@ export function createBot(): Bot<Context> {
   bot.command("restart", restartCommand);
   bot.command("tts", ttsCommand);
   bot.command("terminal", terminalCommand);
-  bot.command("opencode_start", opencodeStartCommand);
-  bot.command("opencode_stop", opencodeStopCommand);
+  bot.command("opencode_restart", opencodeRestartCommand);
   bot.command("projects", projectsCommand);
   bot.command("sessions", sessionsCommand);
   bot.command("model", modelCommand);
@@ -4057,7 +4062,8 @@ export function createBot(): Bot<Context> {
     canFlushNow: async () => {
       const session = getCurrentSession();
       if (!session) return true;
-      return !(await isSessionBusy(session.id, session.directory));
+      const busy = await isSessionBusy(session.id, session.directory);
+      return !busy;
     },
     sendDirectPrompt: async () => {},
     resolveDeferredItems: async ({ deferredItems }) => {

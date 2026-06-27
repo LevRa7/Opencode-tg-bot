@@ -21,8 +21,7 @@ export const en = {
   "cmd.description.stream": "Toggle message streaming",
   "cmd.description.ssh": "Manage remote SSH servers",
   "cmd.description.restart": "Restart bot process",
-  "cmd.description.opencode_start": "Start OpenCode server",
-  "cmd.description.opencode_stop": "Stop OpenCode server",
+  "cmd.description.opencode_restart": "Restart OpenCode server",
   "cmd.description.terminal": "Open terminal window",
   "cmd.description.help": "Help",
 
@@ -184,7 +183,7 @@ export const en = {
   "status.session_not_selected": "Current session: not selected",
   "status.session_hint": "Use /sessions to select one or /new to create one",
   "status.server_unavailable":
-    "🔴 OpenCode Server is unavailable\n\nUse /opencode_start to start the server.",
+    "🔴 OpenCode Server is unavailable\n\nUse /opencode_restart to restart the server.",
 
   "tts.enabled": "🔊 Audio replies enabled globally.",
   "tts.not_configured":
@@ -259,6 +258,22 @@ export const en = {
     "⚠️ Abort request timeout.\n\nEvent stream is already disabled, retry /abort in a few seconds.",
   "stop.warn_local_only": "⚠️ Event stream stopped locally, but server-side abort failed.",
   "stop.error": "🔴 Failed to stop action.\n\nEvent stream is stopped, try /abort again.",
+
+  "opencode_restart.restarting": "🔄 Restarting OpenCode Server...",
+  "opencode_restart.remote_configured":
+    "⚠️ /opencode_restart works only with a local OpenCode Server.",
+  "opencode_restart.stop_error":
+    "🔴 Failed to stop OpenCode Server\n\nError: {error}",
+  "opencode_restart.start_error":
+    "🔴 Failed to start OpenCode Server\n\nError: {error}",
+  "opencode_restart.not_ready":
+    "⚠️ OpenCode Server started, but is not responding\n\nPID: {pid}",
+  "opencode_restart.success":
+    "✅ OpenCode Server restarted successfully\n\nPID: {pid}\nVersion: {version}",
+  "opencode_restart.success_ssh": "✅ SSH disconnected and reconnected successfully",
+  "opencode_restart.ssh_reconnect_error": "Use /ssh to reconnect.",
+  "opencode_restart.error":
+    "🔴 An error occurred while restarting server.\n\nCheck application logs for details.",
 
   "opencode_start.already_running_managed":
     "⚠️ OpenCode Server is already running\n\nPID: {pid}\nUptime: {seconds} seconds",

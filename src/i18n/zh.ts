@@ -23,8 +23,7 @@ export const zh: I18nDictionary = {
   "cmd.description.stream": "切换消息流式输出",
   "cmd.description.ssh": "管理远程 SSH 服务器",
   "cmd.description.restart": "重启机器人进程",
-  "cmd.description.opencode_start": "启动 OpenCode 服务器",
-  "cmd.description.opencode_stop": "停止 OpenCode 服务器",
+  "cmd.description.opencode_restart": "重启 OpenCode 服务器",
   "cmd.description.terminal": "Open terminal window",
   "cmd.description.help": "帮助",
 
@@ -170,7 +169,7 @@ export const zh: I18nDictionary = {
   "status.session_selected": "当前会话：{title}",
   "status.session_not_selected": "当前会话：未选择",
   "status.session_hint": "使用 /sessions 选择一个会话，或 /new 创建",
-  "status.server_unavailable": "🔴 OpenCode 服务器不可用\n\n使用 /opencode_start 启动服务器。",
+  "status.server_unavailable": "🔴 OpenCode 服务器不可用\n\n使用 /opencode_restart 重启服务器。",
 
   "tts.enabled": "🔊 已全局启用语音回复。",
   "tts.not_configured": "⚠️ 语音回复暂不可用。请先设置 `TTS_API_URL` 和 `TTS_API_KEY`。",
@@ -235,6 +234,22 @@ export const zh: I18nDictionary = {
   "stop.warn_timeout": "⚠️ 中止请求超时。\n\n事件流已禁用，请在几秒后重试 /abort。",
   "stop.warn_local_only": "⚠️ 已在本地停止事件流，但服务器端中止失败。",
   "stop.error": "🔴 停止操作失败。\n\n事件流已停止，请再次尝试 /abort。",
+
+  "opencode_restart.restarting": "🔄 正在重启 OpenCode 服务器...",
+  "opencode_restart.remote_configured":
+    "⚠️ /opencode_restart 仅适用于本地 OpenCode 服务器。",
+  "opencode_restart.stop_error":
+    "🔴 停止 OpenCode 服务器失败\n\n错误：{error}",
+  "opencode_restart.start_error":
+    "🔴 启动 OpenCode 服务器失败\n\n错误：{error}",
+  "opencode_restart.not_ready":
+    "⚠️ OpenCode 服务器已启动，但未响应\n\nPID：{pid}",
+  "opencode_restart.success":
+    "✅ OpenCode 服务器重启成功\n\nPID：{pid}\n版本：{version}",
+  "opencode_restart.success_ssh": "✅ SSH 断开并重新连接成功",
+  "opencode_restart.ssh_reconnect_error": "使用 /ssh 重新连接。",
+  "opencode_restart.error":
+    "🔴 重启服务器时发生错误。\n\n请查看应用日志了解详情。",
 
   "opencode_start.already_running_managed":
     "⚠️ OpenCode 服务器已在运行\n\nPID：{pid}\n运行时间：{seconds} 秒",

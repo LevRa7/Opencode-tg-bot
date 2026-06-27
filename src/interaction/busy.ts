@@ -7,8 +7,7 @@ export const SESSION_MUTATING_COMMANDS = [
   "/new",
   "/compact",
   "/restart",
-  "/opencode_start",
-  "/opencode_stop",
+  "/opencode_restart",
 ] as const;
 
 const SESSION_MUTATING_COMMAND_SET = new Set<string>(SESSION_MUTATING_COMMANDS);

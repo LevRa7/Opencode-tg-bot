@@ -23,8 +23,7 @@ export const es: I18nDictionary = {
   "cmd.description.stream": "Alternar streaming de mensajes",
   "cmd.description.ssh": "Administrar servidores SSH remotos",
   "cmd.description.restart": "Reiniciar proceso del bot",
-  "cmd.description.opencode_start": "Iniciar servidor OpenCode",
-  "cmd.description.opencode_stop": "Detener el servidor OpenCode",
+  "cmd.description.opencode_restart": "Reiniciar servidor OpenCode",
   "cmd.description.terminal": "Open terminal window",
   "cmd.description.help": "Ayuda",
 
@@ -192,7 +191,7 @@ export const es: I18nDictionary = {
   "status.session_not_selected": "Sesión actual: no seleccionada",
   "status.session_hint": "Usa /sessions para elegir una o /new para crear una",
   "status.server_unavailable":
-    "🔴 OpenCode Server no está disponible\n\nUsa /opencode_start para iniciar el servidor.",
+    "🔴 OpenCode Server no está disponible\n\nUsa /opencode_restart para reiniciar el servidor.",
 
   "tts.enabled": "🔊 Respuestas de audio activadas globalmente.",
   "tts.not_configured":
@@ -271,6 +270,22 @@ export const es: I18nDictionary = {
     "⚠️ Flujo de eventos detenido localmente, pero el aborto en el servidor falló.",
   "stop.error":
     "🔴 No se pudo detener la acción.\n\nEl flujo de eventos está detenido; prueba /abort otra vez.",
+
+  "opencode_restart.restarting": "🔄 Reiniciando OpenCode Server...",
+  "opencode_restart.remote_configured":
+    "⚠️ /opencode_restart solo funciona con un OpenCode Server local.",
+  "opencode_restart.stop_error":
+    "🔴 No se pudo detener OpenCode Server\n\nError: {error}",
+  "opencode_restart.start_error":
+    "🔴 No se pudo iniciar OpenCode Server\n\nError: {error}",
+  "opencode_restart.not_ready":
+    "⚠️ OpenCode Server se inició, pero no responde\n\nPID: {pid}",
+  "opencode_restart.success":
+    "✅ OpenCode Server reiniciado correctamente\n\nPID: {pid}\nVersión: {version}",
+  "opencode_restart.success_ssh": "✅ SSH desconectado y reconectado correctamente",
+  "opencode_restart.ssh_reconnect_error": "Usa /ssh para reconectar.",
+  "opencode_restart.error":
+    "🔴 Ocurrió un error al reiniciar el servidor.\n\nRevisa los logs de la aplicación para más detalles.",
 
   "opencode_start.already_running_managed":
     "⚠️ OpenCode Server ya está en ejecución\n\nPID: {pid}\nTiempo activo: {seconds} segundos",
@@ -946,4 +961,18 @@ export const es: I18nDictionary = {
   "connect.empty": "No AI providers configured.",
   "connect.error": "Failed to list providers.",
   "cmd.description.connect": "Connect AI providers",
+
+  "review.memory_updated": "🧠 Memoria actualizada",
+  "review.memory_updated_user": "🧠 Memoria actualizada por el usuario",
+  "review.memory_removed": "🧠 Memoria eliminada",
+  "review.skill_patched": "🔧 Skill parcheada",
+  "review.skill_saved": "💾 Skill guardada",
+  "review.skill_created": "✨ Skill creada",
+  "review.title": "📋 Revisión",
+  "review.nothing_to_save": "📭 Nada que guardar",
+
+  "file_server.not_running": "⚠️ El servidor de archivos no está en ejecución",
+  "file_server.delivered": "📁 Archivo entregado",
+
+  "maps.skill_name": "Mapas",
 };

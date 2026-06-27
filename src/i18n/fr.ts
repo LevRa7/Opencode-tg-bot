@@ -23,8 +23,7 @@ export const fr: I18nDictionary = {
   "cmd.description.stream": "Activer ou désactiver le streaming",
   "cmd.description.ssh": "Gérer les serveurs SSH distants",
   "cmd.description.restart": "Redémarrer le processus du bot",
-  "cmd.description.opencode_start": "Démarrer le serveur OpenCode",
-  "cmd.description.opencode_stop": "Arrêter le serveur OpenCode",
+  "cmd.description.opencode_restart": "Redémarrer le serveur OpenCode",
   "cmd.description.terminal": "Open terminal window",
   "cmd.description.help": "Aide",
 
@@ -194,7 +193,7 @@ export const fr: I18nDictionary = {
   "status.session_not_selected": "Session actuelle : non sélectionnée",
   "status.session_hint": "Utilisez /sessions pour en sélectionner une ou /new pour en créer une",
   "status.server_unavailable":
-    "🔴 Le serveur OpenCode est indisponible\n\nUtilisez /opencode_start pour démarrer le serveur.",
+    "🔴 Le serveur OpenCode est indisponible\n\nUtilisez /opencode_restart pour redémarrer le serveur.",
 
   "tts.enabled": "🔊 Réponses audio activées globalement.",
   "tts.not_configured":
@@ -273,6 +272,22 @@ export const fr: I18nDictionary = {
     "⚠️ Le flux d'événements a été arrêté localement, mais l'abandon côté serveur a échoué.",
   "stop.error":
     "🔴 Impossible d'arrêter l'action.\n\nLe flux d'événements est arrêté, essayez /abort à nouveau.",
+
+  "opencode_restart.restarting": "🔄 Redémarrage du serveur OpenCode...",
+  "opencode_restart.remote_configured":
+    "⚠️ /opencode_restart fonctionne uniquement avec un serveur OpenCode local.",
+  "opencode_restart.stop_error":
+    "🔴 Impossible d'arrêter le serveur OpenCode\n\nErreur : {error}",
+  "opencode_restart.start_error":
+    "🔴 Impossible de démarrer le serveur OpenCode\n\nErreur : {error}",
+  "opencode_restart.not_ready":
+    "⚠️ Le serveur OpenCode a démarré, mais ne répond pas encore\n\nPID : {pid}",
+  "opencode_restart.success":
+    "✅ Serveur OpenCode redémarré avec succès\n\nPID : {pid}\nVersion : {version}",
+  "opencode_restart.success_ssh": "✅ SSH déconnecté et reconnecté avec succès",
+  "opencode_restart.ssh_reconnect_error": "Utilisez /ssh pour vous reconnecter.",
+  "opencode_restart.error":
+    "🔴 Une erreur s'est produite lors du redémarrage du serveur.\n\nConsultez les logs de l'application pour plus de détails.",
 
   "opencode_start.already_running_managed":
     "⚠️ Le serveur OpenCode est déjà en cours d'exécution\n\nPID : {pid}\nTemps de fonctionnement : {seconds} secondes",

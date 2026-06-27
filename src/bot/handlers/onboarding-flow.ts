@@ -10,6 +10,7 @@ import { generateIpv6ForUser } from "../../vm/manager.js";
 import { processManager } from "../../process/manager.js";
 import { getLocaleOptions, type Locale } from "../../i18n/index.js";
 import { t } from "../../i18n/index.js";
+import type { I18nKey } from "../../i18n/en.js";
 import { config } from "../../config.js";
 
 // Pending VM deployments waiting for admin approval
@@ -70,7 +71,7 @@ export async function showDeployTargetSelection(ctx: Context): Promise<void> {
   const tiers = Object.entries(VM_TIERS);
   const keyboard = tiers.map(([key, spec]) => [
     {
-      text: t("vm.tier.format", { label: t(`vm.tier.${key}`), ram: String(spec.ramMb / 1024), vcpus: String(spec.vcpus), disk: String(spec.diskGb) }),
+      text: t("vm.tier.format", { label: t(`vm.tier.${key}` as I18nKey), ram: String(spec.ramMb / 1024), vcpus: String(spec.vcpus), disk: String(spec.diskGb) }),
       callback_data: `onboarding:vm:${key}`,
     },
   ]);

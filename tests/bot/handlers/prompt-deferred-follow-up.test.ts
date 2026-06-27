@@ -21,6 +21,8 @@ const mocked = vi.hoisted(() => ({
   withMessageThreadIdMock: vi.fn(),
   keyboardInitializeMock: vi.fn(),
   keyboardClearContextMock: vi.fn(),
+  keyboardSetSessionModeMock: vi.fn(),
+  keyboardGetKeyboardMock: vi.fn(),
   pinnedIsInitializedMock: vi.fn(),
   pinnedInitializeMock: vi.fn(),
   pinnedOnSessionChangeMock: vi.fn(),
@@ -117,6 +119,8 @@ vi.mock("../../../src/keyboard/manager.js", () => ({
   keyboardManager: {
     initialize: mocked.keyboardInitializeMock,
     clearContext: mocked.keyboardClearContextMock,
+    setSessionMode: mocked.keyboardSetSessionModeMock,
+    getKeyboard: mocked.keyboardGetKeyboardMock,
   },
 }));
 
@@ -294,6 +298,8 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     mocked.withMessageThreadIdMock.mockReset();
     mocked.keyboardInitializeMock.mockReset();
     mocked.keyboardClearContextMock.mockReset();
+    mocked.keyboardSetSessionModeMock.mockReset();
+    mocked.keyboardGetKeyboardMock.mockReset();
     mocked.pinnedIsInitializedMock.mockReset();
     mocked.pinnedInitializeMock.mockReset();
     mocked.pinnedOnSessionChangeMock.mockReset();
@@ -361,6 +367,8 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     mocked.pinnedIsInitializedMock.mockReturnValue(true);
     mocked.pinnedGetStateMock.mockReturnValue({ messageId: 55 });
     mocked.pinnedGetContextInfoMock.mockReturnValue(null);
+    mocked.keyboardSetSessionModeMock.mockReturnValue(undefined);
+    mocked.keyboardGetKeyboardMock.mockReturnValue({ inline_keyboard: [] });
     mocked.sessionStatusMock.mockResolvedValue({ data: { s1: { type: "busy" } }, error: null });
     mocked.sessionPromptMock.mockResolvedValue({ error: null });
     mocked.sessionPromptAsyncMock.mockResolvedValue({ error: null });
@@ -404,7 +412,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     externalInputSuppression.__resetForTests();
   });
 
-  it("keeps the normal busy-session guard for suppressed-send-error prompts", async () => {
+  it("dispatches HITL prompt instead of blocking for a busy session with suppressSendErrorMessage", async () => {
     const { ctx, replyMock } = createContext();
     const deps = createDeps();
 
@@ -412,23 +420,31 @@ describe("bot/handlers/prompt deferred follow-up", () => {
       suppressSendErrorMessage: true,
     });
 
-    expect(dispatched).toBe(false);
-    expect(replyMock).toHaveBeenCalledWith("bot.session_busy");
-    expect(mocked.sessionPromptMock).not.toHaveBeenCalled();
+    // HITL: sends prompt directly, no blocking
+    expect(dispatched).toBe(true);
+    expect(replyMock).not.toHaveBeenCalledWith("bot.session_busy");
+    expect(mocked.sessionPromptAsyncMock).toHaveBeenCalledTimes(1);
+    expect(mocked.sessionPromptAsyncMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionID: "s1" }),
+    );
   });
 
-  it("does not suppress busy warning for normal prompts", async () => {
+  it("dispatches HITL prompt instead of blocking for a busy session with normal prompt", async () => {
     const { ctx, replyMock } = createContext();
     const deps = createDeps();
 
     const dispatched = await processUserPrompt(ctx, "normal prompt", deps);
 
-    expect(dispatched).toBe(false);
-    expect(replyMock).toHaveBeenCalledWith("bot.session_busy");
-    expect(mocked.sessionPromptMock).not.toHaveBeenCalled();
+    // HITL: sends prompt directly, no blocking
+    expect(dispatched).toBe(true);
+    expect(replyMock).not.toHaveBeenCalledWith("bot.session_busy");
+    expect(mocked.sessionPromptAsyncMock).toHaveBeenCalledTimes(1);
+    expect(mocked.sessionPromptAsyncMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionID: "s1" }),
+    );
   });
 
-  it("does not refresh attachment when prompt is blocked by a busy session", async () => {
+  it("dispatches HITL prompt when session is busy without calling attachSessionForScope", async () => {
     mocked.threadGetActiveScopeMock.mockReturnValue({
       userId: 10,
       chatId: 777,
@@ -440,10 +456,14 @@ describe("bot/handlers/prompt deferred follow-up", () => {
 
     const dispatched = await processUserPrompt(ctx, "blocked prompt", deps);
 
-    expect(dispatched).toBe(false);
-    expect(replyMock).toHaveBeenCalledWith("bot.session_busy");
+    // HITL: sends prompt directly, no attach
+    expect(dispatched).toBe(true);
+    expect(replyMock).not.toHaveBeenCalledWith("bot.session_busy");
     expect(mocked.attachSessionForScopeMock).not.toHaveBeenCalled();
-    expect(mocked.sessionPromptMock).not.toHaveBeenCalled();
+    expect(mocked.sessionPromptAsyncMock).toHaveBeenCalledTimes(1);
+    expect(mocked.sessionPromptAsyncMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionID: "s1" }),
+    );
   });
 
   it("marks prompt-start busy state for the current request topic instead of a previous attachment", async () => {
@@ -490,7 +510,7 @@ describe("bot/handlers/prompt deferred follow-up", () => {
     expect(mocked.sessionPromptMock).not.toHaveBeenCalled();
   });
 
-  it("blocks a new prompt while a local assistant run is still active", async () => {
+  it("dispatches HITL prompt when local assistant run is active instead of blocking", async () => {
     mocked.sessionStatusMock.mockResolvedValueOnce({ data: { s1: { type: "idle" } }, error: null });
     mocked.assistantIsRunActiveMock.mockReturnValue(true);
 
@@ -499,9 +519,10 @@ describe("bot/handlers/prompt deferred follow-up", () => {
 
     const dispatched = await processUserPrompt(ctx, "second prompt", deps);
 
-    expect(dispatched).toBe(false);
-    expect(replyMock).toHaveBeenCalledWith("bot.session_busy");
-    expect(mocked.sessionPromptAsyncMock).not.toHaveBeenCalled();
+    // HITL: dispatches prompt directly instead of blocking
+    expect(dispatched).toBe(true);
+    expect(replyMock).not.toHaveBeenCalledWith("bot.session_busy");
+    expect(mocked.sessionPromptAsyncMock).toHaveBeenCalledTimes(1);
   });
 
   it("clears busy state for the actual mismatched session instead of using a broad reset", async () => {

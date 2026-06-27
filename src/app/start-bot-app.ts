@@ -179,7 +179,11 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
       logger.info("[Bot] Webhook removed, switching to long polling");
     }
 
-    await startHttpServer();
+    try {
+      await startHttpServer();
+    } catch (err) {
+      logger.warn("[App] HTTP server failed to start, continuing without it:", err);
+    }
 
     if (!shutdownRequested) {
       // Retry on 409 Conflict (stale long-polling connection from previous instance)

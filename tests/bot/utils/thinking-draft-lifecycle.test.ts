@@ -181,7 +181,7 @@ describe("bot/utils/thinking-draft-lifecycle", () => {
     const transport = createTransport({ sendMessageDraft, sendMessage });
     const oversizedText =
       "<b>Thinking</b>\n\n<blockquote expandable><i>" +
-      "Body section ".repeat(900) +
+      "Body section ".repeat(5000) +
       "</i></blockquote>";
 
     await lifecycle.renderActiveDraft("s1", oversizedText, transport);
@@ -189,7 +189,7 @@ describe("bot/utils/thinking-draft-lifecycle", () => {
     expect(sendMessageDraft).toHaveBeenCalledTimes(1);
 
     const draftText = sendMessageDraft.mock.calls[0][2] as string;
-    expect(draftText.length).toBeLessThanOrEqual(4096);
+    expect(draftText.length).toBeLessThanOrEqual(32000);
     expect(draftText).toContain("<blockquote expandable>");
     expect(draftText).toContain("</blockquote>");
     expect(draftText).toContain("</i>");
@@ -199,7 +199,7 @@ describe("bot/utils/thinking-draft-lifecycle", () => {
     expect(sendMessage.mock.calls.length).toBeGreaterThan(1);
     for (const call of sendMessage.mock.calls) {
       const publishedText = call[1] as string;
-      expect(publishedText.length).toBeLessThanOrEqual(4096);
+      expect(publishedText.length).toBeLessThanOrEqual(32000);
       expect(publishedText).toContain("</blockquote>");
     }
   });
@@ -215,7 +215,7 @@ describe("bot/utils/thinking-draft-lifecycle", () => {
     const transport = createTransport({ sendMessageDraft, sendMessage });
     const oversizedText =
       "<b>Thinking</b>\n\n<blockquote expandable><i>" +
-      "Body section ".repeat(900) +
+      "Body section ".repeat(5000) +
       "</i></blockquote>";
 
     await lifecycle.renderActiveDraft("s1", oversizedText, transport);

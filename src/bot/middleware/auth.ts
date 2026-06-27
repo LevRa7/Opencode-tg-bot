@@ -10,6 +10,7 @@ import {
   type AccessApprovalRequest,
 } from "../../settings/manager.js";
 import { logger } from "../../utils/logger.js";
+import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { t } from "../../i18n/index.js";
 import { syncAuthorizedChatCommands } from "../utils/command-sync.js";
 
@@ -310,34 +311,17 @@ export async function handleAccessApprovalCallback(ctx: Context): Promise<boolea
 
   if (action === "approve") {
     await approveTelegramUser(userId);
-    // Trigger pending VM deployment if user was onboarding
-    try {
-      const { getPendingVmDeployment, deployPendingVm, removePendingVmDeployment } = await import("../handlers/onboarding-flow.js");
-      const pending = getPendingVmDeployment(userId);
-      if (pending) {
-        const result = await deployPendingVm(userId);
-        const ipv6 = pending.ipv6 ?? "TBD";
-        const vmMsg = result.success
-          ? t("vm.onboarding.vm_ready", { ipv6 })
-          : t("vm.onboarding.vm_failed", { error: result.error || "unknown error" });
-        // Edit the requester's pending approval message if we have its id
-        if (request.requesterMessageId && request.chatId) {
-          await ctx.api.editMessageText(request.chatId, request.requesterMessageId, vmMsg).catch(() => {});
-        } else if (request.chatId) {
-          await ctx.api.sendMessage(request.chatId, vmMsg).catch(() => {});
-        }
-        removePendingVmDeployment(userId);
-      }
-    } catch (err) {
-      logger.warn("[Auth] Failed to deploy VM after approval:", err);
-    }
   }
 
-  await removePendingApprovalRequest(userId);
-
+  // Answer the callback immediately — do NOT await VM deployment inside the
+  // callback handler. Telegram requires answerCallbackQuery within ~30s;
+  // VM provisioning + health check takes 30–300s and would cause the button
+  // to hang with a spinning indicator.
   await ctx.answerCallbackQuery({
     text: action === "approve" ? t("auth.decision.approved") : t("auth.decision.denied"),
   });
+
+  await removePendingApprovalRequest(userId);
 
   const decisionText = buildAccessDecisionText(action, request, ctx.from?.id);
   await ctx.editMessageText(decisionText, { reply_markup: undefined }).catch(async () => {
@@ -364,6 +348,36 @@ export async function handleAccessApprovalCallback(ctx: Context): Promise<boolea
     if (request.chatId) {
       await ctx.api.sendMessage(request.chatId, requesterMessage).catch(() => {});
     }
+  }
+
+  // VM deployment is a long-running operation (provisioning 30–90s + health check up to 300s).
+  // Offload to a background task so the callback returns immediately.
+  if (action === "approve") {
+    safeBackgroundTask({
+      taskName: `vm-deploy-after-approval.${userId}`,
+      task: async () => {
+        try {
+          const { getPendingVmDeployment, deployPendingVm, removePendingVmDeployment } =
+            await import("../handlers/onboarding-flow.js");
+          const pending = getPendingVmDeployment(userId);
+          if (pending) {
+            const result = await deployPendingVm(userId);
+            const ipv6 = pending.ipv6 ?? "TBD";
+            const vmMsg = result.success
+              ? t("vm.onboarding.vm_ready", { ipv6 })
+              : t("vm.onboarding.vm_failed", { error: result.error || "unknown error" });
+            if (request.requesterMessageId && request.chatId) {
+              await ctx.api.editMessageText(request.chatId, request.requesterMessageId, vmMsg).catch(() => {});
+            } else if (request.chatId) {
+              await ctx.api.sendMessage(request.chatId, vmMsg).catch(() => {});
+            }
+            removePendingVmDeployment(userId);
+          }
+        } catch (err) {
+          logger.warn("[Auth] Failed to deploy VM after approval:", err);
+        }
+      },
+    });
   }
 
   return true;

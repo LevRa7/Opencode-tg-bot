@@ -46,7 +46,7 @@ describe("summary/formatter", () => {
   });
 
   it("does not wrap long markdown summaries in code blocks", () => {
-    const parts = formatSummaryWithMode("a".repeat(4500), "markdown");
+    const parts = formatSummaryWithMode("a".repeat(33000), "markdown");
 
     expect(parts.length).toBeGreaterThan(1);
     expect(parts[0].startsWith("```\n")).toBe(false);

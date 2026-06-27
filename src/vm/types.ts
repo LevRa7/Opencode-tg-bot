@@ -21,11 +21,11 @@ export const VM_DEFAULTS = {
   baseImageName: "opencode-golden.qcow2",
   bridgeInterface: "macvtap0", // unused with default NAT network
   networkName: "vm-net",
-  networkBridge: "virbr1",
-  networkSubnetCidr: "10.100.0.0/24",
-  networkHostIp: "10.100.0.1",
-  networkDhcpStart: "10.100.0.10",
-  networkDhcpEnd: "10.100.0.250",
+  networkBridge: "vm-br1",
+  networkSubnetCidr: "192.168.123.0/24",
+  networkHostIp: "192.168.123.1",
+  networkDhcpStart: "192.168.123.10",
+  networkDhcpEnd: "192.168.123.250",
   opencodePort: 4096,
   healthTimeoutMs: 900_000,
   healthPollMs: 2000,
@@ -46,6 +46,7 @@ export interface VmInfo {
   startTime: string;
   pid: number | null;
   sudoPassword?: string;
+  serverPassword?: string;
   ipv6?: string;
 }
 

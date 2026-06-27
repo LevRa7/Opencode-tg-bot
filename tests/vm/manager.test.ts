@@ -119,8 +119,8 @@ describe("VmManager", () => {
     it("returns deterministic IP for user", async () => {
       const mgr = new VmManager(vi.fn());
       const result = await mgr.getBridgeIp(1, 0);
-      // Deterministic IP: 10.100.0.(knuthHash(1) % 241 + 10)
-      expect(result).toMatch(/^10\.100\.0\.\d{1,3}$/);
+      // Deterministic IP: 192.168.123.(knuthHash(1) % 241 + 10)
+      expect(result).toMatch(/^192\.168\.123\.\d{1,3}$/);
     });
 
     it("returns deterministic IP even when virsh fails", async () => {
@@ -129,7 +129,7 @@ describe("VmManager", () => {
       });
       const mgr = new VmManager(mockExec);
       const result = await mgr.getBridgeIp(1, 0);
-      expect(result).toMatch(/^10\.100\.0\.\d{1,3}$/);
+      expect(result).toMatch(/^192\.168\.123\.\d{1,3}$/);
     });
   });
 
@@ -350,7 +350,7 @@ describe("VmManager", () => {
       expect(result.qcow2Path).toBe(`${imagesDir}/opencode-tg-1.qcow2`);
       expect(result.cloudInitIsoPath).toBe(`${imagesDir}/cloud-init-1.iso`);
       expect(result.sudoPassword).toBe("sudo-secret");
-      expect(result.bridgeIp).toMatch(/^10\.100\.0\.\d{1,3}$/);
+      expect(result.bridgeIp).toMatch(/^192\.168\.123\.\d{1,3}$/);
       expect(result.baseUrl).toContain("4096");
       expect(result.startTime).toBeTruthy();
       expect(result.ipv6).toMatch(/^2607:9d00:2000:1f6:/);

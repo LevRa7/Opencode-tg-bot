@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatReasoningBlock,
   formatReasoningForTelegramHtml,
   formatToolCallAsSpoiler,
   markdownToHtml,
+  splitTextIntoChunks,
 } from "../../../src/bot/utils/reasoning-format.js";
 
 function extractExpandableBlockquoteInnerHtml(text: string): string {
@@ -223,24 +225,24 @@ describe("bot/utils/reasoning-format", () => {
 
     describe("message splitting for long content", () => {
       it("splits long reasoning text into multiple chunks", () => {
-        const longReasoning = "a".repeat(5000);
+        const longReasoning = "a".repeat(33000);
         const chunks = formatReasoningForTelegramHtml(1, longReasoning, [], "");
 
         expect(chunks.length).toBeGreaterThan(1);
         expect(chunks[0]).not.toContain("...");
       });
 
-      it("each chunk respects message limit of 4096 chars", () => {
-        const longReasoning = "b".repeat(8000);
+      it("each chunk respects the rich message limit", () => {
+        const longReasoning = "b".repeat(33000);
         const chunks = formatReasoningForTelegramHtml(1, longReasoning, [], "");
 
         for (const chunk of chunks) {
-          expect(chunk.length).toBeLessThanOrEqual(4096);
+          expect(chunk.length).toBeLessThanOrEqual(32000);
         }
       });
 
       it("does not truncate when content exceeds limit", () => {
-        const longReasoning = "c".repeat(5000);
+        const longReasoning = "c".repeat(33000);
         const chunks = formatReasoningForTelegramHtml(1, longReasoning, [], "");
 
         // Should NOT contain truncation marker
@@ -250,7 +252,7 @@ describe("bot/utils/reasoning-format", () => {
       });
 
       it("splits at word boundaries when possible", () => {
-        const textWithWords = "word ".repeat(2000);
+        const textWithWords = "word ".repeat(7000);
         const chunks = formatReasoningForTelegramHtml(1, textWithWords, [], "");
 
         // Should split cleanly at spaces
@@ -258,7 +260,7 @@ describe("bot/utils/reasoning-format", () => {
       });
 
       it("preserves expandable blockquote on every reasoning chunk after splitting", () => {
-        const longReasoning = "reasoning ".repeat(2000);
+        const longReasoning = "reasoning ".repeat(7000);
         const chunks = formatReasoningForTelegramHtml(1, longReasoning, [], "");
 
         expect(chunks.length).toBeGreaterThan(1);
@@ -270,7 +272,7 @@ describe("bot/utils/reasoning-format", () => {
       });
 
       it("emits an oversized prefix as its own sanitized chunk before wrapped reasoning chunks", () => {
-        const textPrefix = `${"Thinking aloud about tool traces and reasoning details. ".repeat(80)}done`;
+        const textPrefix = `${"Thinking aloud about tool traces and reasoning details. ".repeat(600)}done`;
         const chunks = formatReasoningForTelegramHtml(
           2,
           "Reasoning section\n\nDetailed follow-up for the expandable block.",
@@ -290,7 +292,7 @@ describe("bot/utils/reasoning-format", () => {
 
       it("emits a narrow-band long prefix separately when only headroom-sized content budget remains", () => {
         const wrapperLength = "<blockquote expandable>".length + "</blockquote>".length;
-        const textPrefix = "p".repeat(4096 - wrapperLength - 2 - 64);
+        const textPrefix = "p".repeat(32000 - wrapperLength - 2 - 64);
         const chunks = formatReasoningForTelegramHtml(
           1,
           "Reasoning details ".repeat(20).trim(),
@@ -418,6 +420,87 @@ describe("bot/utils/reasoning-format", () => {
         expect(iOpens, `i mismatch for "${input}"`).toBe(iCloses);
         expect(sOpens, `s mismatch for "${input}"`).toBe(sCloses);
       }
+    });
+  });
+
+  describe("splitTextIntoChunks — 4096 maxLength", () => {
+    it("splits HTML text > 4096 chars into multiple chunks each ≤ 4096", () => {
+      const parts: string[] = [];
+      let total = 0;
+      while (total <= 5000) {
+        const part = `<b>chunk ${parts.length + 1}</b> `;
+        parts.push(part);
+        total += part.length;
+      }
+      const html = parts.join("");
+
+      expect(html.length).toBeGreaterThan(4096);
+
+      const chunks = splitTextIntoChunks(html, 4096);
+
+      expect(chunks.length).toBeGreaterThanOrEqual(2);
+      for (const chunk of chunks) {
+        expect(chunk.length).toBeLessThanOrEqual(4096);
+      }
+    });
+
+    it("splits when input is exactly 4097 chars", () => {
+      const html = `a<pre>${"x".repeat(4097 - 12)}</pre>`;
+
+      expect(html.length).toBe(4097);
+
+      const chunks = splitTextIntoChunks(html, 4096);
+
+      expect(chunks.length).toBe(2);
+      for (const chunk of chunks) {
+        expect(chunk.length).toBeLessThanOrEqual(4096);
+      }
+    });
+
+    it("integration: formatReasoningBlock + splitTextIntoChunks at 4096 keeps all chunks ≤ 4096", () => {
+      const reasoning = "line ".repeat(1200);
+      expect(reasoning.length).toBeGreaterThan(5000);
+
+      const formatted = formatReasoningBlock(reasoning);
+      const chunks = splitTextIntoChunks(formatted, 4096);
+
+      expect(chunks.length).toBeGreaterThanOrEqual(2);
+      for (const chunk of chunks) {
+        expect(chunk.length).toBeLessThanOrEqual(4096);
+      }
+    });
+  });
+
+  describe("formatReasoningForTelegramHtml — 4096 sendMessage limit", () => {
+    it("splits reasoning > 4096 chars into chunks ≤ 4096", () => {
+      const reasoning = "line ".repeat(1200);
+      const chunks = formatReasoningForTelegramHtml(1, reasoning, [], "");
+
+      expect(reasoning.length).toBeGreaterThan(4096);
+      expect(chunks.length).toBeGreaterThanOrEqual(2);
+
+      for (const chunk of chunks) {
+        expect(chunk.length).toBeLessThanOrEqual(4096);
+      }
+    });
+
+    it("splits reasoning + answer text > 4096 into chunks ≤ 4096", () => {
+      const reasoning = "reason ".repeat(550);
+      const answer = "answer ".repeat(550);
+      const chunks = formatReasoningForTelegramHtml(1, reasoning, [], answer);
+
+      expect(chunks.length).toBeGreaterThanOrEqual(2);
+
+      for (const chunk of chunks) {
+        expect(chunk.length).toBeLessThanOrEqual(4096);
+      }
+    });
+
+    it("returns single chunk when content is under 4096", () => {
+      const chunks = formatReasoningForTelegramHtml(1, "Short reasoning", [], "Short answer");
+
+      expect(chunks.length).toBe(1);
+      expect(chunks[0].length).toBeLessThanOrEqual(4096);
     });
   });
 });

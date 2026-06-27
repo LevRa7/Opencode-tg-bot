@@ -1,10 +1,11 @@
 import type { MessageEntity } from "grammy/types";
 import type { TelegramRenderedBlock, TelegramRenderedPart } from "./types.js";
 import { logger } from "../../utils/logger.js";
+import { TELEGRAM_PLAIN_MAX_LENGTH, TELEGRAM_RICH_MAX_LENGTH } from "../constants.js";
 import { sortTelegramEntities } from "./entity-order.js";
 import { validateTelegramEntities } from "./validator.js";
 
-const DEFAULT_MAX_PART_LENGTH = 4096;
+const DEFAULT_MAX_PART_LENGTH = TELEGRAM_PLAIN_MAX_LENGTH;
 const DEFAULT_BLOCK_SEPARATOR = "\n\n";
 
 export interface TelegramChunkerOptions {
@@ -251,7 +252,13 @@ function splitBlockToParts(
     return [];
   }
 
-  if (block.text.length <= maxLength) {
+  // When maxLength is explicitly set below the standard plain limit (e.g. in tests),
+  // respect it for all blocks. Otherwise, rich blocks can use the higher Telegram limit.
+  const isTightLimit = maxLength < TELEGRAM_PLAIN_MAX_LENGTH;
+  const effectiveMaxLength =
+    !isTightLimit && block.entities?.length ? TELEGRAM_RICH_MAX_LENGTH : maxLength;
+
+  if (block.text.length <= effectiveMaxLength) {
     return [createRenderedPart(block.text, block.fallbackText, block.entities)];
   }
 
@@ -259,13 +266,13 @@ function splitBlockToParts(
   if (preEntity) {
     return splitPreformattedBlock(
       block,
-      maxLength,
+      effectiveMaxLength,
       preEntity as Extract<MessageEntity, { type: "pre" }>,
     );
   }
 
   if (block.entities?.length) {
-    const richParts = splitRichBlock(block, maxLength);
+    const richParts = splitRichBlock(block, effectiveMaxLength);
     if (richParts) {
       return richParts;
     }
@@ -278,6 +285,7 @@ function splitBlockToParts(
     });
   }
 
+  // Downgraded to plain — use the standard plain limit
   return splitPlainText(block.fallbackText, maxLength).map((text) =>
     createRenderedPart(text, text),
   );
@@ -323,6 +331,9 @@ export function chunkTelegramRenderedBlocks(
   options?: TelegramChunkerOptions,
 ): TelegramRenderedPart[] {
   const { maxPartLength, blockSeparator } = normalizeOptions(options);
+  // When maxPartLength is explicitly set below the standard plain limit (e.g. in tests),
+  // use it directly for all blocks. Otherwise, apply smart limits per builder type.
+  const isTightLimit = maxPartLength < TELEGRAM_PLAIN_MAX_LENGTH;
   const blockGroups = blocks
     .map((block) => splitBlockToParts(block, maxPartLength))
     .filter((group) => group.length > 0);
@@ -334,10 +345,16 @@ export function chunkTelegramRenderedBlocks(
       const chunk = blockParts[index];
       const needsSeparator = index === 0 && current.text.length > 0;
       const prefix = needsSeparator ? blockSeparator : "";
+      // Rich builders (with entities) can use the higher Telegram limit,
+      // unless an explicit tight limit is set.
+      const builderMaxLength =
+        !isTightLimit && current.entities.length > 0
+          ? TELEGRAM_RICH_MAX_LENGTH
+          : maxPartLength;
 
       if (
         current.text.length > 0 &&
-        current.text.length + prefix.length + chunk.text.length > maxPartLength
+        current.text.length + prefix.length + chunk.text.length > builderMaxLength
       ) {
         const finalized = finalizeBuilder(current);
         if (finalized) {

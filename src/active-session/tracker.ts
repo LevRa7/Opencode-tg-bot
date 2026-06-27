@@ -159,3 +159,22 @@ function cleanupStale(store: Record<string, ActiveSessionEntry>): void {
     }
   }
 }
+
+/**
+ * Finds the active session entry matching the given sessionId across all directories.
+ * Returns the first non-stale match. Used after bot restart to recover routing state
+ * for a session that was active before the restart.
+ */
+export function findActiveSessionById(sessionId: string): ActiveSessionEntry | null {
+  try {
+    const store = readStore();
+    for (const [, entry] of Object.entries(store)) {
+      if (entry.sessionId === sessionId && Date.now() - entry.timestamp <= ACTIVE_TTL_MS) {
+        return entry;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}

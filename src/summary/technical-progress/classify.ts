@@ -10,6 +10,7 @@ const toolCategories = new Map<string, TechnicalProgressCategory>([
   ["edit", "file_edit"],
   ["apply_patch", "patch"],
   ["bash", "command"],
+  ["ls", "file_read"],
   ["grep", "project_search"],
   ["glob", "project_search"],
   ["web-search_tavily_search", "web_search"],

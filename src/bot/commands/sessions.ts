@@ -1,6 +1,7 @@
 import { CommandContext, Context } from "grammy";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { InlineKeyboard } from "grammy";
+import { sendBotText, type TelegramTextFormat } from "../utils/telegram-text.js";
 import { opencodeClient } from "../../opencode/client.js";
 import { setCurrentSession, getCurrentSession, SessionInfo } from "../../session/manager.js";
 import { getCurrentProject } from "../../settings/manager.js";
@@ -18,6 +19,7 @@ import { isForegroundBusy, replyBusyBlocked } from "../utils/busy-guard.js";
 import { logger } from "../../utils/logger.js";
 import { safeBackgroundTask } from "../../utils/safe-background-task.js";
 import { config } from "../../config.js";
+import { TELEGRAM_PLAIN_MAX_LENGTH } from "../../telegram/constants.js";
 import { getDateLocale, t } from "../../i18n/index.js";
 import { threadContextManager } from "../../thread/manager.js";
 import { attachSessionForScope } from "../../attach/service.js";
@@ -278,26 +280,32 @@ export async function handleBackgroundSessionOpen(ctx: Context): Promise<boolean
       });
 
       if (messages) {
-        const undeliveredSet = new Set(undeliveredIds);
-        const undeliveredMessages = (messages as Array<{ info: { id: string; time?: { created?: number } }; parts: Array<{ type: string; text?: string }> }>)
-          .filter((msg) => undeliveredSet.has(msg.info.id))
-          .sort((a, b) => (a.info.time?.created ?? 0) - (b.info.time?.created ?? 0));
+        // 2026-06-27: Background-session switch replays messages that arrived
+        // while the session was out of focus. Previously these went out as a raw
+        // one-shot `sendMessage` and were hard-truncated at the Telegram limit,
+        // which both bypassed the rich rendering pipeline and silently dropped any
+        // overflowing text. Route them through the rich `sendBotText` transport
+        // (HTML/MarkdownV2 with safe fallback) and chunk long content so nothing
+        // is lost.
+        const undeliveredFormat: TelegramTextFormat =
+          config.bot.messageFormatMode === "markdown" ? "markdown_v2" : "raw";
+        const chunks = buildUndeliveredBackgroundMessageChunks(
+          messages as Array<{
+            info: { id: string; time?: { created?: number } };
+            parts: Array<{ type: string; text?: string }>;
+          }>,
+          undeliveredIds,
+        );
 
-        for (const msg of undeliveredMessages) {
-          const textParts = msg.parts
-            .filter((part) => part.type === "text" && typeof part.text === "string")
-            .map((part) => part.text as string);
-
-          const text = textParts.join("").trim();
-          if (text) {
-            const truncated =
-              text.length > TELEGRAM_MESSAGE_LIMIT
-                ? text.slice(0, TELEGRAM_MESSAGE_LIMIT - 3) + "..."
-                : text;
-            await ctx.api.sendMessage(forumChatId, truncated, {
-              message_thread_id: messageThreadId,
-            });
-          }
+        for (const chunk of chunks) {
+          await sendBotText({
+            api: ctx.api,
+            chatId: forumChatId,
+            text: chunk,
+            format: undeliveredFormat,
+            messageThreadId,
+            useHtmlFallback: true,
+          });
         }
       }
     }
@@ -595,7 +603,65 @@ type SessionPreviewItem = {
 
 const PREVIEW_MESSAGES_LIMIT = 6;
 const PREVIEW_ITEM_MAX_LENGTH = 420;
-const TELEGRAM_MESSAGE_LIMIT = 4096;
+const TELEGRAM_MESSAGE_LIMIT = TELEGRAM_PLAIN_MAX_LENGTH;
+
+/**
+ * Split plain text into fixed-length chunks without dropping any content.
+ *
+ * Unlike the HTML-aware chunker used for reasoning blocks, this performs a pure
+ * length-based split so it is safe for raw/MarkdownV2 payloads (the transport
+ * applies its own parse-mode fallback per chunk).
+ */
+function splitPlainTextIntoLengthChunks(text: string, maxLength: number): string[] {
+  if (text.length <= maxLength) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  for (let index = 0; index < text.length; index += maxLength) {
+    chunks.push(text.slice(index, index + maxLength));
+  }
+  return chunks;
+}
+
+/**
+ * Build the ordered list of message chunks to replay when switching to a
+ * background session.
+ *
+ * Selects the undelivered messages, orders them by creation time, concatenates
+ * their text parts, and chunks any over-length content so the full message is
+ * preserved across multiple Telegram sends instead of being truncated.
+ *
+ * Exported for unit testing of the pure selection/ordering/chunking logic.
+ */
+export function buildUndeliveredBackgroundMessageChunks(
+  messages: Array<{
+    info: { id: string; time?: { created?: number } };
+    parts: Array<{ type: string; text?: string }>;
+  }>,
+  undeliveredIds: string[],
+  maxChunkLength: number = TELEGRAM_MESSAGE_LIMIT,
+): string[] {
+  const undeliveredSet = new Set(undeliveredIds);
+  const ordered = messages
+    .filter((msg) => undeliveredSet.has(msg.info.id))
+    .sort((a, b) => (a.info.time?.created ?? 0) - (b.info.time?.created ?? 0));
+
+  const chunks: string[] = [];
+  for (const msg of ordered) {
+    const text = msg.parts
+      .filter((part) => part.type === "text" && typeof part.text === "string")
+      .map((part) => part.text as string)
+      .join("")
+      .trim();
+
+    if (text) {
+      chunks.push(...splitPlainTextIntoLengthChunks(text, maxChunkLength));
+    }
+  }
+
+  return chunks;
+}
 
 function extractTextParts(parts: Array<{ type: string; text?: string }>): string | null {
   const textParts = parts

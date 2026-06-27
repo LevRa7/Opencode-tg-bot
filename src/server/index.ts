@@ -8,13 +8,18 @@ import { handleProxyRequest, resolveProxyTarget } from "./proxy.js";
 import { rewriteApiUrl, rewriteWsPath } from "./api-url-rewrite.js";
 import { logger } from "../utils/logger.js";
 import { randomBytes } from "node:crypto";
+import { getActiveBotInstance } from "../bot/index.js";
+import { handleControlApiRequest, getControlApiKey } from "./control-api.js";
 
 const PORT = parseInt(process.env.HTTP_PORT || "8080", 10);
 const OPENCHAMBER_SERVER = "http://127.0.0.1:8081";
 
 // In-memory token store for MiniApp URL tokens (OpenChamber-compatible).
 // Keyed by token string, value contains user credentials and expiry.
-const urlTokenStore = new Map<string, { userId: number; username: string; password: string; expiresAt: number }>();
+const urlTokenStore = new Map<
+  string,
+  { userId: number; username: string; password: string; expiresAt: number }
+>();
 
 function generateUrlToken(): string {
   return "oc_url_" + randomBytes(24).toString("base64url");
@@ -181,6 +186,13 @@ function createServer(): http.Server {
       return;
     }
 
+    // ── Control API (/api/control/*) — programmatic bot management ──
+    const bot = getActiveBotInstance();
+    if (bot) {
+      const handled = await handleControlApiRequest(req, res, bot);
+      if (handled) return;
+    }
+
     // POST /api/auth — Telegram MiniApp authentication
     if (req.method === "POST" && req.url === "/api/auth") {
       const chunks: Buffer[] = [];
@@ -223,7 +235,10 @@ function createServer(): http.Server {
           const host = req.headers.host || "";
           const target = resolveProxyTarget(host);
           if (target) {
-            const credentials = Buffer.from(target.authHeader.split(" ")[1] || "", "base64").toString();
+            const credentials = Buffer.from(
+              target.authHeader.split(" ")[1] || "",
+              "base64",
+            ).toString();
             const [, expectedPassword] = credentials.split(":");
             if (password === expectedPassword) {
               const cookie = "oc_auth=1; Path=/; Max-Age=86400; SameSite=Lax; HttpOnly";
@@ -272,7 +287,9 @@ function createServer(): http.Server {
       if (req.method === "GET") {
         if (req.url === "/health" || req.url === "/health/") {
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ status: "ok", runtime: "web", compatibility: { capabilities: [] } }));
+          res.end(
+            JSON.stringify({ status: "ok", runtime: "web", compatibility: { capabilities: [] } }),
+          );
           return;
         }
         if (req.url === "/auth/session" || req.url === "/auth/session/") {
@@ -282,13 +299,22 @@ function createServer(): http.Server {
         }
         if (req.url === "/auth/passkey/status" || req.url === "/auth/passkey/status/") {
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ enabled: false, hasPasskeys: false, passkeyCount: 0, rpID: null }));
+          res.end(
+            JSON.stringify({ enabled: false, hasPasskeys: false, passkeyCount: 0, rpID: null }),
+          );
           return;
         }
         // /api/config/settings — OpenChamber-only settings (theme, projects)
         if (req.url === "/api/config/settings" || req.url === "/api/config/settings/") {
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ themeId: "jetbrains-dark", themeVariant: "dark", useSystemTheme: false, projects: [] }));
+          res.end(
+            JSON.stringify({
+              themeId: "jetbrains-dark",
+              themeVariant: "dark",
+              useSystemTheme: false,
+              projects: [],
+            }),
+          );
           return;
         }
         // /api/config/themes — OpenChamber-only theme definitions
@@ -312,7 +338,10 @@ function createServer(): http.Server {
       }
 
       // PUT /api/config/settings — MiniApp saves settings; accept and ack
-      if ((req.method === "PUT" || req.method === "PATCH") && (req.url === "/api/config/settings" || req.url === "/api/config/settings/")) {
+      if (
+        (req.method === "PUT" || req.method === "PATCH") &&
+        (req.url === "/api/config/settings" || req.url === "/api/config/settings/")
+      ) {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
         return;
@@ -465,15 +494,17 @@ export function startHttpServer(): Promise<void> {
       const proxySocket = net.connect(targetPort, targetHost, () => {
         proxySocket.write(
           `${req.method} ${targetUrl.pathname}${targetUrl.search ? "?" + targetUrl.search : ""} HTTP/1.1\r\n` +
-          Object.entries(headers)
-            .filter(([, v]) => v !== undefined)
-            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
-            .join("\r\n") +
-          "\r\n\r\n"
+            Object.entries(headers)
+              .filter(([, v]) => v !== undefined)
+              .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : v}`)
+              .join("\r\n") +
+            "\r\n\r\n",
         );
         proxySocket.write(head);
 
-        socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+        );
         proxySocket.pipe(socket);
         socket.pipe(proxySocket);
       });
@@ -511,6 +542,7 @@ export function startHttpServer(): Promise<void> {
     });
     serverInstance.listen(PORT, () => {
       logger.info(`[HTTP] Server started on port ${PORT}`);
+      logger.info(`[HTTP] Control API key: ${getControlApiKey()}`);
       resolve();
     });
   });

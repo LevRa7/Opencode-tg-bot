@@ -94,7 +94,7 @@ echo "Python packages installed"
 const INSTALL_NODE_PKGS = `#!/bin/bash
 set -e
 npm install -g \\
-  better-sqlite3 dotenv express qrcode tsx
+  better-sqlite3 dotenv express qrcode tsx node-pty
 
 echo "Node.js global packages installed"
 `;

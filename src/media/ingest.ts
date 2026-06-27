@@ -2,6 +2,7 @@ import type { Model } from "@opencode-ai/sdk/v2";
 import type { Context } from "grammy";
 import path from "node:path";
 import { toDataUri } from "../bot/utils/file-download.js";
+import fs from "node:fs";
 import { getCurrentOpencodeRoute } from "../opencode/client.js";
 import { config } from "../config.js";
 import { isSttConfigured, transcribeAudio, type SttResult } from "../stt/client.js";
@@ -101,16 +102,54 @@ export function resolveMediaStorageOwner(ctx: Context): MediaStorageOwner {
     };
   }
 
+  if (route.kind === "vm") {
+    return { userId, runtimeKind: "vm" };
+  }
+
   return {
     userId,
     runtimeKind: "host",
   };
 }
 
+/**
+ * Serve a stored media file via the host's file-server for VM access.
+ * Copies the file to the served directory and returns an HTTP URL
+ * that the VM-based OpenCode server can fetch.
+ */
+export function uploadStoredMediaToVm(
+  sourceFile: StoredMediaFile,
+): StoredMediaFile {
+  const servedDir = process.env.FILE_SERVER_DIR || "/tmp/served-files";
+  const baseUrl = (process.env.FILE_SERVER_BASE_URL || "http://localhost:8890").replace(/\/+$/, "");
+  const safeName = path.posix.basename(sourceFile.fileName.replace(/[\\/]+/g, "_"));
+  const destPath = path.join(servedDir, safeName);
+  const publicUrl = `${baseUrl}/${safeName}`;
+
+  try {
+    fs.mkdirSync(servedDir, { recursive: true });
+    fs.copyFileSync(sourceFile.hostAbsolutePath, destPath);
+
+    logger.debug("[Media] Served file for VM via HTTP", {
+      hostPath: sourceFile.hostAbsolutePath,
+      url: publicUrl,
+    });
+    return { ...sourceFile, runtimeVisiblePath: publicUrl };
+  } catch (error) {
+    logger.error("[Media] Failed to serve file for VM, using host path as fallback", error);
+    return sourceFile;
+  }
+}
+
 async function uploadStoredMediaToRemoteIfNeeded(
   owner: MediaStorageOwner,
   sourceFile: StoredMediaFile,
 ): Promise<StoredMediaFile> {
+  // VM branch: copy file to host's served directory, return HTTP URL
+  if (owner.runtimeKind === "vm") {
+    return uploadStoredMediaToVm(sourceFile);
+  }
+
   if (owner.runtimeKind !== "tenant" || !owner.sshUploadToRemote) {
     return sourceFile;
   }

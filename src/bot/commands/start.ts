@@ -70,6 +70,7 @@ export async function startCommand(ctx: Context): Promise<void> {
     currentModel,
     contextInfo ?? undefined,
     variantName,
+    { isTerminalTopic: false },
   );
 
   await ctx.reply(

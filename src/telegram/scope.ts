@@ -36,8 +36,26 @@ export function extractTelegramConversationScopeFromContext(
   }
 
   let messageThreadId = extractMessageThreadIdFromContext(ctx);
-  if (messageThreadId === undefined && isForumChat(ctx)) {
-    messageThreadId = 0;
+  if (isForumChat(ctx)) {
+    if (messageThreadId === undefined) {
+      messageThreadId = 0; // main thread
+    }
+  } else if (ctx.chat?.type === "private") {
+    // Private chats with Direct Messages topics (bot `has_topics_enabled`)
+    // carry a real per-topic message_thread_id. Keep it so each topic gets its
+    // own conversation scope; plain private chats simply have no thread id.
+    //
+    // Fixed 2026-06-25: a previous blanket strip set messageThreadId=undefined
+    // for every non-forum chat, collapsing all private-chat topics into the
+    // single scope key `userId:chatId:0`. That broke topic isolation —
+    // getCurrentSession() then resolved every topic to the last-created session
+    // and foregroundSessionState marked all topics busy together. Delivery
+    // targeting is sanitized separately by extractThreadTargetFromContext, so
+    // preserving the real topic id here is safe.
+  } else {
+    // Non-forum groups/channels should never use a stray message_thread_id as a
+    // scope discriminator — strip it even if Telegram provides one.
+    messageThreadId = undefined;
   }
 
   return {

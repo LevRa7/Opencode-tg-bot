@@ -1,5 +1,5 @@
 import { logger } from "../utils/logger.js";
-import type { TelegraphKeyPool } from "./key-pool.js";
+import type { TelegraphClient } from "./telegraph-client.js";
 import type { createFileArchiveRepository } from "../settings/repositories/file-archive.js";
 import { createHash } from "crypto";
 
@@ -159,7 +159,7 @@ export class FileDiffLogger {
   private readonly maxMutexEntries = 500;
 
   constructor(
-    private readonly keyPool: TelegraphKeyPool,
+    private readonly client: TelegraphClient,
     private readonly archiveRepo: FileArchiveRepo,
   ) {}
 
@@ -236,27 +236,12 @@ export class FileDiffLogger {
       const title = `📄 ${filePath}`;
 
       try {
-        const key = this.keyPool.selectKey();
-        if (!key) {
-          logger.warn(`[FileDiffLogger] No available Telegraph key for ${filePath}`);
-          return null;
-        }
-
         if (archive?.telegraph_path) {
-          const archiveKeyId = archive.key_id;
-          const client = archiveKeyId ? this.keyPool.getClient(archiveKeyId) : null;
-          if (client) {
-            await client.editPage(archive.telegraph_path, title, body);
-          } else {
-            const result = await key.client.createPage(title, body);
-            if (result) {
-              this.archiveRepo.updateTelegraphInfo(filePath, result.url, result.path, key.keyId);
-            }
-          }
+          await this.client.editPage(archive.telegraph_path, title, body);
         } else {
-          const result = await key.client.createPage(title, body);
+          const result = await this.client.createPage(title, body);
           if (result) {
-            this.archiveRepo.updateTelegraphInfo(filePath, result.url, result.path, key.keyId);
+            this.archiveRepo.updateTelegraphInfo(filePath, result.url, result.path);
           }
         }
         return archive?.telegraph_url ?? this.archiveRepo.get(filePath)?.telegraph_url ?? null;

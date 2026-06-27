@@ -1010,14 +1010,16 @@ export const en = {
   "vm.progress.define_vm": "🖥 Defining VM...",
   "vm.progress.start_vm": "🚀 Starting VM...",
   "vm.progress.wait_ip": "🌐 Waiting for IP (DHCP)...",
-  "vm.progress.setup_access": "🔐 Setting up access...",
-  "vm.progress.setup_network": "🌐 Setting up network...",
-  "vm.progress.cleanup_vm": "🧹 Cleaning up previous VM...",
-  "vm.progress.clone_image": "📦 Cloning image...",
-  "vm.progress.cloud_init": "⚙️ Generating cloud-init...",
-  "vm.progress.define_vm": "🖥 Defining VM...",
-  "vm.progress.start_vm": "🚀 Starting VM...",
-  "vm.progress.wait_ip": "🌐 Waiting for IP (DHCP)...",
+
+  "pinned.file_action.read": "Read",
+  "pinned.file_action.write": "Write",
+  "pinned.file_action.edit": "Edit",
+  "pinned.file_action.patch": "Patch",
+  "pinned.file_action.command": "Command",
+
+  "review.self_improvement_review": "Self-improvement review",
+  "bot.session_sse_timeout_retry": "SSE timeout, retrying...",
+  "tool.diff.truncated": "...truncated ({shown}/{total} lines)",
 
 } as const;
 

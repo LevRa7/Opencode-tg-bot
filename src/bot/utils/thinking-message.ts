@@ -49,18 +49,14 @@ export function getVisibleReasoningText(reasoningText?: string): string | undefi
 /**
  * Extracts a clean title from the reasoning text.
  * Strips ordered-list markers (e.g. "1. ", "2) "), takes the first line
- * only (never bleeds into sub-lists), extracts the first sentence if
- * punctuation is present, and removes trailing colons / semicolons.
+ * only (never bleeds into sub-lists), and removes trailing colons / semicolons.
  */
 export function extractReasoningTitle(reasoningText: string): string {
   const stripped = reasoningText.trimStart().replace(/^\s*\d+[.)]\s+/u, "");
   const firstLine = stripped.split(/\r?\n/)[0]?.trim() || "";
   if (!firstLine) return t("bot.thinking");
 
-  const firstSentence = firstLine.match(/^[^.!?]*[.!?]/)?.[0]?.trim();
-  const raw = firstSentence || firstLine;
-
-  const cleaned = raw.replace(/\s*[;:]\s*$/, "");
+  const cleaned = firstLine.replace(/\s*[;:]\s*$/, "");
   if (cleaned) return cleaned;
   return t("bot.thinking");
 }
@@ -70,6 +66,16 @@ function buildReasoningToolInfo(
   reasoningText: string,
   status: "running" | "completed",
 ): TechnicalProgressToolInfo {
+  // Strip the title from the beginning of reasoning text if it's duplicated.
+  // The model often echoes the title as the first line of its reasoning,
+  // and the formatter will prepend the title again — causing double title.
+  let bodyText = reasoningText.trim();
+  const normalizedTitle = title.trim();
+  if (normalizedTitle && bodyText.startsWith(normalizedTitle)) {
+    bodyText = bodyText.slice(normalizedTitle.length).trim();
+    // Also strip a following newline or colon separator
+    bodyText = bodyText.replace(/^[\n:：\s]+/, "");
+  }
   return {
     sessionId: "thinking",
     messageId: "thinking",
@@ -77,7 +83,7 @@ function buildReasoningToolInfo(
     tool: "reasoning",
     title,
     state: { status },
-    metadata: reasoningText.trim() ? { reasoningText } : undefined,
+    metadata: bodyText ? { reasoningText: bodyText } : undefined,
   } as TechnicalProgressToolInfo;
 }
 

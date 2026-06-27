@@ -104,12 +104,14 @@ describe("Active Session Tracker", () => {
     });
 
     it("overwrites previous entry for the same directory", async () => {
+      vi.useFakeTimers();
       const { recordActiveSession, getActiveSessionForDirectory } = await loadTracker();
 
       const worktree = path.join(tmpDir, "project-overwrite");
       fs.mkdirSync(worktree, { recursive: true });
 
       recordActiveSession(worktree, "session-1", -1001, 10);
+      vi.advanceTimersByTime(10);
       recordActiveSession(worktree, "session-2", -2002, 20);
 
       const entry = getActiveSessionForDirectory(worktree);
@@ -152,7 +154,7 @@ describe("Active Session Tracker", () => {
       expect(entry!.messageThreadId).toBeNull();
     });
 
-    it("normalizes directory path to absolute", async () => {
+    it(    "normalizes directory path to absolute", async () => {
       const { recordActiveSession, getActiveSessionForDirectory } = await loadTracker();
 
       const worktree = path.join(tmpDir, "project-norm");
@@ -166,6 +168,97 @@ describe("Active Session Tracker", () => {
       const entry = getActiveSessionForDirectory(resolved);
       expect(entry).not.toBeNull();
       expect(entry!.sessionId).toBe("session-norm");
+    });
+  });
+
+  describe("findActiveSessionById", () => {
+    it("returns null when store is empty", async () => {
+      const { findActiveSessionById } = await loadTracker();
+      expect(findActiveSessionById("any-session")).toBeNull();
+    });
+
+    it("returns entry when sessionId matches", async () => {
+      const { recordActiveSession, findActiveSessionById } = await loadTracker();
+
+      const worktree = path.join(tmpDir, "project-find");
+      fs.mkdirSync(worktree, { recursive: true });
+
+      recordActiveSession(worktree, "session-find", -100123, 42);
+
+      const entry = findActiveSessionById("session-find");
+      expect(entry).not.toBeNull();
+      expect(entry!.sessionId).toBe("session-find");
+      expect(entry!.chatId).toBe(-100123);
+      expect(entry!.messageThreadId).toBe(42);
+    });
+
+    it("returns null when sessionId does not exist", async () => {
+      const { recordActiveSession, findActiveSessionById } = await loadTracker();
+
+      const worktree = path.join(tmpDir, "project-miss");
+      fs.mkdirSync(worktree, { recursive: true });
+
+      recordActiveSession(worktree, "session-exists", -1001, 1);
+
+      expect(findActiveSessionById("session-other")).toBeNull();
+    });
+
+    it("finds session across any directory", async () => {
+      const { recordActiveSession, findActiveSessionById } = await loadTracker();
+
+      const dirA = path.join(tmpDir, "project-a");
+      const dirB = path.join(tmpDir, "project-b");
+      fs.mkdirSync(dirA, { recursive: true });
+      fs.mkdirSync(dirB, { recursive: true });
+
+      recordActiveSession(dirA, "session-a", -1000, 10);
+      recordActiveSession(dirB, "session-b", -2000, 20);
+
+      const entry = findActiveSessionById("session-a");
+      expect(entry).not.toBeNull();
+      expect(entry!.chatId).toBe(-1000);
+    });
+
+    it("returns null for stale entries (> 5 min)", async () => {
+      vi.useFakeTimers();
+      const { recordActiveSession, findActiveSessionById } = await loadTracker();
+
+      const worktree = path.join(tmpDir, "project-stale-find");
+      fs.mkdirSync(worktree, { recursive: true });
+
+      recordActiveSession(worktree, "session-stale", -1001, 1);
+
+      // Fresh entry is found
+      expect(findActiveSessionById("session-stale")).not.toBeNull();
+
+      // Advance past TTL
+      vi.advanceTimersByTime(6 * 60 * 1000);
+
+      expect(findActiveSessionById("session-stale")).toBeNull();
+    });
+
+    it("prefers fresh entry over stale one for same sessionId", async () => {
+      vi.useFakeTimers();
+      const { recordActiveSession, findActiveSessionById } = await loadTracker();
+
+      const dirA = path.join(tmpDir, "project-old");
+      const dirB = path.join(tmpDir, "project-fresh");
+      fs.mkdirSync(dirA, { recursive: true });
+      fs.mkdirSync(dirB, { recursive: true });
+
+      // Record old entry
+      recordActiveSession(dirA, "session-shared", -1001, 10);
+
+      // Advance past TTL for old entry
+      vi.advanceTimersByTime(6 * 60 * 1000);
+
+      // Record fresh entry with same sessionId
+      recordActiveSession(dirB, "session-shared", -2002, 20);
+
+      const entry = findActiveSessionById("session-shared");
+      expect(entry).not.toBeNull();
+      expect(entry!.chatId).toBe(-2002);
+      expect(entry!.messageThreadId).toBe(20);
     });
   });
 });

@@ -245,8 +245,8 @@ export const config = {
       modelId: getEnvVar("OPENCODE_MODEL_ID", true),
     },
     fallbackModel: {
-      provider: getEnvVar("OPENCODE_FALLBACK_MODEL_PROVIDER", false) || "opencode",
-      modelId: getEnvVar("OPENCODE_FALLBACK_MODEL_ID", false) || "big-pickle",
+      provider: getEnvVar("OPENCODE_FALLBACK_MODEL_PROVIDER", false) || "godmode",
+      modelId: getEnvVar("OPENCODE_FALLBACK_MODEL_ID", false) || "DeepSeek-v4-Pro",
     },
   },
   server: {
@@ -269,7 +269,7 @@ export const config = {
     commandsListLimit: getOptionalPositiveIntEnvVar("COMMANDS_LIST_LIMIT", 10),
     taskLimit: getOptionalPositiveIntEnvVar("TASK_LIMIT", 10),
     responseStreaming: getOptionalBooleanEnvVar("RESPONSE_STREAMING", true),
-    responseStreamThrottleMs: getOptionalPositiveIntEnvVar("RESPONSE_STREAM_THROTTLE_MS", 500),
+    responseStreamThrottleMs: getOptionalPositiveIntEnvVar("RESPONSE_STREAM_THROTTLE_MS", 200),
     bashToolDisplayMaxLength: getOptionalPositiveIntEnvVar("BASH_TOOL_DISPLAY_MAX_LENGTH", 128),
     serviceMessagesIntervalSec: getOptionalNonNegativeIntEnvVarFromKeys(
       ["SERVICE_MESSAGES_INTERVAL_SEC", "TOOL_MESSAGES_INTERVAL_SEC"],

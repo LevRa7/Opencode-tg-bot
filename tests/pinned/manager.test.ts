@@ -157,20 +157,20 @@ describe("pinned/manager", () => {
         await pinnedMessageManager.refresh();
 
         expect(fakeApi.editMessageText).toHaveBeenCalledTimes(1);
-        // editMessageText must NOT receive message_thread_id — Telegram's
-        // editMessageText has no such parameter and rejects it with
-        // "400: message can't be edited". The message is identified by chat+id.
-        expect(fakeApi.editMessageText).toHaveBeenCalledWith(123, 777, expect.any(String));
+        // message_thread_id must NOT be passed to editMessageText. Only
+        // 3 positional args: chatId, messageId, text.
+        const callArgs = fakeApi.editMessageText.mock.calls[0];
+        expect(callArgs).toHaveLength(3);
+        expect(callArgs[3]).toBeUndefined();
         expect(fakeApi.pinChatMessage).not.toHaveBeenCalled();
         expect(pinnedMessageManager.getState().createdInCurrentProcess).toBe(false);
       });
     });
 
-    it("creates the pinned message in the topic but does NOT pass message_thread_id to editMessageText", async () => {
+    it("creates and pins a message in a topic, then successfully edits it", async () => {
       await runWithTelegramConversationScope(scopeA, async () => {
+        // 1. Create — sendMessage carries thread_id so the message lands in the topic.
         await pinnedMessageManager.onSessionChange("ses-1", "Test Session");
-
-        // sendMessage carries the thread id so the message lands in the topic.
         expect(fakeApi.sendMessage).toHaveBeenCalledWith(123, expect.any(String), {
           message_thread_id: 10,
         });
@@ -180,13 +180,35 @@ describe("pinned/manager", () => {
 
         fakeApi.editMessageText.mockClear();
 
+        // 2. Edit — must NOT pass message_thread_id; it's already in the topic via sendMessage.
+        await pinnedMessageManager.refresh();
+        let callArgs = fakeApi.editMessageText.mock.calls[0];
+        expect(callArgs).toHaveLength(3);
+        expect(callArgs[3]).toBeUndefined();
+
+        // 3. Subsequent edits (e.g. token updates) also exclude thread_id.
+        fakeApi.editMessageText.mockClear();
+        pinnedMessageManager.updateTokensSilent({ input: 100, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 });
+        await pinnedMessageManager.refresh();
+        callArgs = fakeApi.editMessageText.mock.calls[0];
+        expect(callArgs).toHaveLength(3);
+        expect(callArgs[3]).toBeUndefined();
+      });
+    });
+
+    it("does NOT pass message_thread_id to editMessageText when not in a topic", async () => {
+      const noTopicScope: TelegramConversationScope = { userId: 1, chatId: 100, messageThreadId: 0 };
+      await runWithTelegramConversationScope(noTopicScope, async () => {
+        pinnedMessageManager.initialize(fakeApi as never, 123);
+        await pinnedMessageManager.onSessionChange("ses-1", "Test Session");
+
+        fakeApi.editMessageText.mockClear();
         await pinnedMessageManager.refresh();
 
-        // editMessageText must be called WITHOUT message_thread_id. Passing it
-        // (the old bug) made Telegram reject every edit with
-        // "400: message can't be edited", which spammed the log and (with the
-        // recreate fix) duplicated the pinned message on every update.
-        expect(fakeApi.editMessageText).toHaveBeenCalledWith(123, 999, expect.any(String));
+        // No thread → only 3 positional args, no 4th param at all.
+        const callArgs = fakeApi.editMessageText.mock.calls[0];
+        expect(callArgs).toHaveLength(3);
+        expect(callArgs[3]).toBeUndefined();
       });
     });
   });
@@ -256,6 +278,24 @@ describe("pinned/manager", () => {
 
       expect(fakeApi.unpinAllChatMessages).not.toHaveBeenCalled();
       expect(fakeApi.sendMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("editMessageText params", () => {
+    it("does NOT include message_thread_id in editMessageText params even in a forum topic", async () => {
+      const topicScope: TelegramConversationScope = { userId: 1, chatId: 100, messageThreadId: 42 };
+      await runWithTelegramConversationScope(topicScope, async () => {
+        pinnedMessageManager.initialize(fakeApi as never, 123);
+        await pinnedMessageManager.onSessionChange("ses-topic", "Topic Session");
+
+        fakeApi.editMessageText.mockClear();
+        await pinnedMessageManager.refresh();
+
+        expect(fakeApi.editMessageText).toHaveBeenCalledTimes(1);
+        const callArgs = fakeApi.editMessageText.mock.calls[0];
+        // Fourth argument must be undefined (not { message_thread_id: ... })
+        expect(callArgs[3]).toBeUndefined();
+      });
     });
   });
 
@@ -334,6 +374,140 @@ describe("pinned/manager", () => {
         await pinnedMessageManager.refresh();
         expect(fakeApi.editMessageText).toHaveBeenCalledTimes(1);
       });
+    });
+  });
+
+  describe("error recovery", () => {
+    const fullTokens = (input: number) => ({
+      input,
+      output: 0,
+      reasoning: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    });
+
+    it('recreates pinned message when stale message fails with "message can\'t be edited"', async () => {
+      // Simulate stale messageId loaded from SQLite — a message that was
+      // already deleted/unpinned by a prior process.
+      __resetPinnedMessageManagersForTests();
+      mocked.getPinnedMessageId.mockReturnValue(33041); // stale id
+
+      // Make editMessageText throw "message can't be edited".
+      fakeApi.editMessageText = vi
+        .fn()
+        .mockRejectedValue(new Error("400: Bad Request: message can't be edited"));
+
+      await runWithTelegramConversationScope(scopeA, async () => {
+        pinnedMessageManager.initialize(fakeApi as never, 123);
+
+        expect(pinnedMessageManager.getState().messageId).toBe(33041);
+        expect(pinnedMessageManager.getState().createdInCurrentProcess).toBe(false);
+
+        // Direct edit attempt on the stale ID (simulates an SSE event arriving
+        // before onSessionChange, e.g. session.diff).
+        await pinnedMessageManager.onCostUpdate(0.42);
+      });
+
+      // Old message was cleaned up so we don't leave duplicates.
+      expect(fakeApi.deleteMessage).toHaveBeenCalledWith(123, 33041);
+      // A new message was created+pinned to replace the stale one.
+      expect(fakeApi.sendMessage).toHaveBeenCalledTimes(1);
+      expect(fakeApi.pinChatMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('recreates when current-process message fails with "message can\'t be edited" (with circuit breaker)', async () => {
+      vi.useFakeTimers();
+      try {
+        // Message was created by THIS process — "can't be edited" means
+        // something is wrong (e.g. API quirk). Recreate rather than log-spam.
+        // Circuit breaker: stop recreating after 3 consecutive failures.
+        // Use refresh() which bypasses the edit throttle for deterministic
+        // immediate flushes.
+        await runWithTelegramConversationScope(scopeA, async () => {
+          // sendMessage returns incrementing IDs so each recreate produces a
+          // distinct messageId (real Telegram API always returns unique IDs).
+          let nextMessageId = 1001;
+          fakeApi.sendMessage = vi
+            .fn()
+            .mockImplementation(async () => ({ message_id: nextMessageId++ }));
+
+          await pinnedMessageManager.onSessionChange("ses-1", "Test Session");
+          expect(pinnedMessageManager.getState().createdInCurrentProcess).toBe(true);
+
+          const originalMessageId = pinnedMessageManager.getState().messageId;
+
+          // Make every subsequent edit throw.
+          fakeApi.editMessageText = vi
+            .fn()
+            .mockRejectedValue(new Error("400: Bad Request: message can't be edited"));
+
+          // First failure — should recreate with a new messageId.
+          fakeApi.sendMessage.mockClear();
+          await pinnedMessageManager.refresh();
+          expect(fakeApi.sendMessage).toHaveBeenCalledTimes(1);
+          const newMessageId = pinnedMessageManager.getState().messageId;
+          expect(newMessageId).not.toBe(originalMessageId);
+
+          // Second failure — still recreates (counter: 1 → 2).
+          fakeApi.sendMessage.mockClear();
+          await pinnedMessageManager.refresh();
+          expect(fakeApi.sendMessage).toHaveBeenCalledTimes(1);
+
+          // Third failure — still recreates (counter: 2 → 3, NOT yet >= 3).
+          fakeApi.sendMessage.mockClear();
+          await pinnedMessageManager.refresh();
+          expect(fakeApi.sendMessage).toHaveBeenCalledTimes(1);
+
+          const messageIdAfterThreshold = pinnedMessageManager.getState().messageId;
+
+          // Fourth attempt — circuit breaker open (counter = 3 >= 3).
+          fakeApi.editMessageText.mockClear();
+          fakeApi.sendMessage.mockClear();
+          await pinnedMessageManager.refresh();
+
+          // No edit attempt (circuit breaker blocks flush entirely).
+          expect(fakeApi.editMessageText).not.toHaveBeenCalled();
+          expect(fakeApi.sendMessage).not.toHaveBeenCalled();
+          expect(pinnedMessageManager.getState().messageId).toBe(messageIdAfterThreshold);
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("throttles even on unknown errors to prevent edit avalanches", async () => {
+      vi.useFakeTimers();
+      try {
+        await runWithTelegramConversationScope(scopeA, async () => {
+          await pinnedMessageManager.onSessionChange("ses-1", "Test Session");
+
+          // Make every edit throw a transient network error.
+          fakeApi.editMessageText = vi
+            .fn()
+            .mockRejectedValue(new Error("ETIMEDOUT: connect"));
+
+          // First update triggers the leading-edge edit (5s throttle window
+          // starts), which fails. Without the fix, lastUpdated stays at 0 and
+          // the next event would trigger another immediate edit + error.
+          await pinnedMessageManager.onCostUpdate(0.5);
+
+          // Second cost update inside the same throttle window must NOT trigger
+          // another editMessageText call — the failed edit already ran, and
+          // lastUpdated was set to now, so the throttle should coalesce.
+          fakeApi.editMessageText.mockClear();
+          await pinnedMessageManager.onCostUpdate(0.7);
+
+          // No additional edit call inside the window.
+          expect(fakeApi.editMessageText).not.toHaveBeenCalled();
+
+          // After the window, the coalesced trailing update fires.
+          await vi.advanceTimersByTimeAsync(5000);
+          // A trailing edit fires (and fails again, but doesn't crash).
+          expect(fakeApi.editMessageText).toHaveBeenCalledTimes(1);
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

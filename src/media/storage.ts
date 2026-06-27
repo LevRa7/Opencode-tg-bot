@@ -80,6 +80,9 @@ function resolveHostMediaRoot(owner: MediaStorageOwner): { hostRoot: string; run
     };
   }
 
+  // host and vm: both save to appHome/media on the host.
+  // For vm, runtimeVisiblePath is later replaced with an HTTP URL
+  // by uploadStoredMediaToVm().
   const runtimePaths = getRuntimePaths();
   const mediaRoot = path.join(runtimePaths.appHome, "media");
   return {

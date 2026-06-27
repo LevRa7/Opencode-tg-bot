@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "grammy";
-import { sessionsCommand, handleSessionSelect } from "../../../src/bot/commands/sessions.js";
+import { sessionsCommand, handleSessionSelect, buildUndeliveredBackgroundMessageChunks } from "../../../src/bot/commands/sessions.js";
 import { interactionManager } from "../../../src/interaction/manager.js";
 import { foregroundSessionState } from "../../../src/scheduled-task/foreground-state.js";
 import { t } from "../../../src/i18n/index.js";
@@ -534,5 +534,73 @@ describe("bot/commands/sessions", () => {
     );
     expect(mocked.clearScopedSessionRuntimeMock).toHaveBeenCalledWith("session-0", "session_switched");
     expect(mocked.clearSummaryMock).not.toHaveBeenCalled();
+  });
+});
+
+type UndeliveredMessageStub = {
+  info: { id: string; time?: { created?: number } };
+  parts: Array<{ type: string; text?: string }>;
+};
+
+describe("bot/commands/sessions buildUndeliveredBackgroundMessageChunks", () => {
+  // Background-session switch replays messages that arrived while the session was
+  // not in focus. They must be rendered through the rich delivery pipeline and,
+  // crucially, long content must be split into multiple chunks instead of being
+  // truncated (which previously dropped any text beyond the Telegram limit).
+  it("filters to undelivered ids, sorts by created time, and joins text parts", () => {
+    const messages: UndeliveredMessageStub[] = [
+      {
+        info: { id: "m-late", time: { created: 200 } },
+        parts: [{ type: "text", text: "second" }],
+      },
+      {
+        info: { id: "m-early", time: { created: 100 } },
+        parts: [
+          { type: "text", text: "first-a" },
+          { type: "reasoning", text: "ignored" },
+          { type: "text", text: "first-b" },
+        ],
+      },
+      {
+        info: { id: "m-delivered", time: { created: 150 } },
+        parts: [{ type: "text", text: "should not appear" }],
+      },
+    ];
+
+    const chunks = buildUndeliveredBackgroundMessageChunks(messages, ["m-early", "m-late"]);
+
+    expect(chunks).toEqual(["first-afirst-b", "second"]);
+  });
+
+  it("splits long messages into multiple chunks instead of truncating", () => {
+    const longText = "a".repeat(25);
+    const messages: UndeliveredMessageStub[] = [
+      {
+        info: { id: "m-long", time: { created: 1 } },
+        parts: [{ type: "text", text: longText }],
+      },
+    ];
+
+    const chunks = buildUndeliveredBackgroundMessageChunks(messages, ["m-long"], 10);
+
+    expect(chunks).toEqual(["aaaaaaaaaa", "aaaaaaaaaa", "aaaaa"]);
+    expect(chunks.join("")).toBe(longText);
+  });
+
+  it("skips undelivered messages that contain no text", () => {
+    const messages: UndeliveredMessageStub[] = [
+      {
+        info: { id: "m-empty", time: { created: 1 } },
+        parts: [{ type: "reasoning", text: "thinking" }, { type: "text", text: "   " }],
+      },
+      {
+        info: { id: "m-real", time: { created: 2 } },
+        parts: [{ type: "text", text: "hello" }],
+      },
+    ];
+
+    const chunks = buildUndeliveredBackgroundMessageChunks(messages, ["m-empty", "m-real"]);
+
+    expect(chunks).toEqual(["hello"]);
   });
 });

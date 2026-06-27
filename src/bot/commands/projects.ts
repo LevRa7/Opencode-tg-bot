@@ -313,7 +313,7 @@ export async function handleProjectSelect(
     const currentModel = getStoredModel();
     const contextInfo = { tokensUsed: 0, tokensLimit: contextLimit };
     const variantName = formatVariantForButton(currentModel.variant || "default");
-    const keyboard = createMainKeyboard(currentAgent, currentModel, contextInfo, variantName);
+    const keyboard = createMainKeyboard(currentAgent, currentModel, contextInfo, variantName, { isTerminalTopic: false });
 
     const projectName = selectedProject.name || selectedProject.worktree;
 

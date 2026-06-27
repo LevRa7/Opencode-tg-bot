@@ -665,7 +665,16 @@
     },
     "red-teaming": {
       "description": "LLM jailbreak testing (authorized)",
-      "skills": {}
+      "skills": {
+        "godmode": {
+          "description": "Jailbreak LLMs: GODMODE CLASSIC (5 templates), Parseltongue (33 obfuscation techniques), ULTRAPLINIAN (55-model racing)",
+          "dependencies": [],
+          "env_vars": [
+            "OPENROUTER_API_KEY"
+          ],
+          "setup": "Python 3.8+ stdlib only. Set OPENROUTER_API_KEY env var for model racing. Cliproxy-served models work without OpenRouter via CLIPROXYAPI_BASE_URL."
+        }
+      }
     },
     "domain": {
       "description": "Passive domain recon (stdlib, no API keys)",

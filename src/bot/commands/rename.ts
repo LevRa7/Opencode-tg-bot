@@ -8,6 +8,7 @@ import { pinnedMessageManager } from "../../pinned/manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
 import { stripMessageTags } from "../utils/strip-message-tags.js";
+import { setChildTopicLastSetName } from "../index.js";
 
 function getCallbackMessageId(ctx: Context): number | null {
   const message = ctx.callbackQuery?.message;
@@ -133,6 +134,13 @@ export async function handleRenameTextAnswer(ctx: Context): Promise<boolean> {
 
   logger.info(`[RenameHandler] Renaming session ${sessionInfo.sessionId} to: ${newTitle}`);
 
+  // Set the rename guard BEFORE calling session.update() so the
+  // SSE session.updated event (which may arrive before the HTTP
+  // response) skips its own editForumTopic. Otherwise the topic
+  // gets renamed twice within a few seconds.
+  const truncatedTitle = newTitle.length > 128 ? newTitle.slice(0, 125) + "..." : newTitle;
+  setChildTopicLastSetName(sessionInfo.sessionId, truncatedTitle);
+
   try {
     const { data: updatedSession, error } = await opencodeClient.session.update({
       sessionID: sessionInfo.sessionId,
@@ -164,12 +172,12 @@ export async function handleRenameTextAnswer(ctx: Context): Promise<boolean> {
     // Rename the forum topic to reflect the new session title
     const messageThreadId = extractMessageThreadIdFromContext(ctx);
     if (messageThreadId && ctx.chat) {
-      const truncated = newTitle.length > 128 ? newTitle.slice(0, 125) + "..." : newTitle;
-      await ctx.api.editForumTopic(ctx.chat.id, messageThreadId, { name: truncated }).catch(() => {});
+      await ctx.api.editForumTopic(ctx.chat.id, messageThreadId, { name: truncatedTitle }).catch(() => {});
     }
 
     logger.info(`[RenameHandler] Session renamed successfully: ${newTitle}`);
   } catch (error) {
+    // Clear the guard on failure so a future rename can succeed
     logger.error("[RenameHandler] Error renaming session:", error);
     await ctx.reply(t("rename.error"));
   }

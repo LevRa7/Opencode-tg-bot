@@ -78,5 +78,7 @@ export async function switchToProject(
     await options.ensureEventSubscription(project.worktree);
   }
 
-  return createMainKeyboard(currentAgent, currentModel, contextInfo, variantName);
+  return createMainKeyboard(currentAgent, currentModel, contextInfo, variantName, {
+    isTerminalTopic: false,
+  });
 }

@@ -56,6 +56,23 @@ class AssistantRunState {
     return run?.hasPublishedFinalResponse === true;
   }
 
+  // 2026-06-26: the OpenCode server reports a session as idle the moment the model stops
+  // generating, but the bot's completion/finalization pipeline (completion queue, durable
+  // delivery, thinking finalize, translate) runs asynchronously for a few more seconds.
+  // This predicate marks that in-flight window: completion was recorded but the final
+  // response has not been published yet. Busy reconciliation uses it to avoid clearing the
+  // run mid-finalization, which would turn markFinalResponsePublished into a no-op, break
+  // the isFinalResponsePublished guard, and leave a duplicate streaming draft next to the
+  // final message.
+  isFinalizationInFlight(sessionId: string): boolean {
+    const run = this.runs.get(sessionId);
+    if (!run) {
+      return false;
+    }
+
+    return run.completionRecorded === true && run.hasPublishedFinalResponse !== true;
+  }
+
   markResponseCompleted(sessionId: string, info?: AssistantRunResolvedInfo): void {
     const run = this.runs.get(sessionId);
     if (!run) {
@@ -74,6 +91,18 @@ class AssistantRunState {
       run.actualModelID = info.modelID;
     }
     if (info?.logicalMessageId) {
+      // 2026-06-26: a run can complete more than one assistant message (multi-step turns,
+      // multiple message.updated(completed) events). hasPublishedFinalResponse is set once
+      // on the first published response and was never reset, so isFinalizationInFlight()
+      // reported false for the 2nd+ completion. Busy reconciliation then cleared the run
+      // mid-finalization (status_reconcile_idle), turning markFinalResponsePublished into a
+      // no-op and dropping the final answer (thinking block delivered, answer text missing).
+      // Reopen the finalization window only when this completion targets a message that has
+      // not been published yet, so a repeated completion for the already-published message
+      // does not keep the run busy forever.
+      if (info.logicalMessageId !== run.publishedFinalLogicalMessageId) {
+        run.hasPublishedFinalResponse = false;
+      }
       run.completedLogicalMessageId = info.logicalMessageId;
     }
     if (typeof info?.completedAt === "number") {

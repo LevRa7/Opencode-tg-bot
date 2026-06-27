@@ -10,6 +10,10 @@ const mocked = vi.hoisted(() => ({
   formatThinkingCompletionWithDetailsMock: vi.fn(),
   formatThinkingCompletionMessageMock: vi.fn(),
   sendMessageWithoutDraftEffectMock: vi.fn(),
+  formatThinkingForRichDraftMock: vi.fn().mockReturnValue(""),
+  formatThinkingForRichFinalMock: vi.fn().mockReturnValue(""),
+  trySendRichMessageDraftMock: vi.fn().mockResolvedValue(null),
+  trySendRichMessageUncheckedMock: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("../../../src/bot/utils/thinking-draft-lifecycle.js", () => ({
@@ -30,6 +34,13 @@ vi.mock("../../../src/bot/utils/thinking-message.js", () => ({
 
 vi.mock("../../../src/bot/utils/send-message-draft-effect-context.js", () => ({
   sendMessageWithoutDraftEffect: mocked.sendMessageWithoutDraftEffectMock,
+}));
+
+vi.mock("../../../src/bot/utils/rich-message.js", () => ({
+  formatThinkingForRichDraft: mocked.formatThinkingForRichDraftMock,
+  formatThinkingForRichFinal: mocked.formatThinkingForRichFinalMock,
+  trySendRichMessageDraft: mocked.trySendRichMessageDraftMock,
+  trySendRichMessageUnchecked: mocked.trySendRichMessageUncheckedMock,
 }));
 
 import {
@@ -73,6 +84,10 @@ describe("bot/utils/thinking-block-stream", () => {
       .mockImplementation((title: string) => ({
         text: `💭 ${title}`,
       }));
+    mocked.formatThinkingForRichDraftMock.mockReset().mockReturnValue("");
+    mocked.formatThinkingForRichFinalMock.mockReset().mockReturnValue("");
+    mocked.trySendRichMessageDraftMock.mockReset().mockResolvedValue(null);
+    mocked.trySendRichMessageUncheckedMock.mockReset().mockResolvedValue(null);
     clearAllThinkingBlockStreams();
     configureThinkingBlockDeliveryOrchestratorForTests(null);
     configureThinkingBlockDraftIdAllocator({
@@ -991,5 +1006,97 @@ describe("bot/utils/thinking-block-stream", () => {
     await clearThinkingBlockStream("missing-session", false);
 
     expect(mocked.clearSessionMock).toHaveBeenCalledWith("missing-session");
+  });
+});
+
+// ── Rich finalize uses useHtml: true ──────────────────────────────────
+
+describe("rich finalize thinking with useHtml", () => {
+  beforeEach(() => {
+    mocked.renderActiveDraftMock.mockReset().mockResolvedValue(undefined);
+    mocked.finalizeDraftMock.mockReset().mockResolvedValue(undefined);
+    mocked.clearActiveDraftMock.mockReset().mockResolvedValue(undefined);
+    mocked.clearSessionMock.mockReset();
+    mocked.clearAllMock.mockReset();
+    mocked.sendMessageWithoutDraftEffectMock.mockReset().mockResolvedValue({ message_id: 101 });
+    mocked.formatThinkingMessageWithReasoningMock
+      .mockReset()
+      .mockImplementation((title: string) => ({ text: `💭 ${title}` }));
+    mocked.formatThinkingCompletionWithDetailsMock
+      .mockReset()
+      .mockImplementation(async (title: string) => ({ text: `💭 ${title}` }));
+    mocked.formatThinkingCompletionMessageMock
+      .mockReset()
+      .mockImplementation((title: string) => ({ text: `💭 ${title}` }));
+    mocked.formatThinkingForRichDraftMock.mockReset().mockReturnValue("");
+    mocked.trySendRichMessageDraftMock.mockReset().mockResolvedValue(null);
+    // Enable rich finalize:
+    mocked.formatThinkingForRichFinalMock.mockReset().mockReturnValue(
+      "<details><summary>💭 Plan</summary>\n\n<b>Bold</b> text\n\n</details>",
+    );
+    mocked.trySendRichMessageUncheckedMock.mockReset().mockResolvedValue({ success: true, messageId: 200 });
+    clearAllThinkingBlockStreams();
+    configureThinkingBlockDeliveryOrchestratorForTests(null);
+    configureThinkingBlockDraftIdAllocator({ next: () => 99 });
+  });
+
+  it("passes useHtml: true to trySendRichMessageUnchecked", async () => {
+    const sendApi = createSendApi();
+
+    const outcome = await finalizeThinkingBlockStream({
+      sessionId: "s1",
+      sendApi,
+      target: { chatId: 1 },
+      title: "Plan",
+      reasoningText: "**Bold** text",
+    });
+
+    expect(outcome).toBe("finalized");
+    expect(mocked.formatThinkingForRichFinalMock).toHaveBeenCalledWith(
+      "Plan",
+      "**Bold** text",
+    );
+    expect(mocked.trySendRichMessageUncheckedMock).toHaveBeenCalledWith(
+      expect.anything(),
+      1,
+      expect.stringContaining("<details>"),
+      expect.objectContaining({
+        useHtml: true,
+        disableNotification: true,
+        messageThreadId: undefined,
+      }),
+    );
+  });
+
+  it("falls back to legacy when rich finalize is empty", async () => {
+    mocked.formatThinkingForRichFinalMock.mockReturnValue("");
+
+    const outcome = await finalizeThinkingBlockStream({
+      sessionId: "s1",
+      sendApi: createSendApi(),
+      target: { chatId: 1 },
+      title: "Plan",
+      reasoningText: "text",
+    });
+
+    expect(outcome).toBe("finalized"); // legacy path succeeds
+    expect(mocked.trySendRichMessageUncheckedMock).not.toHaveBeenCalled();
+    expect(mocked.formatThinkingCompletionWithDetailsMock).toHaveBeenCalled();
+  });
+
+  it("falls back to legacy when rich send fails", async () => {
+    mocked.trySendRichMessageUncheckedMock.mockResolvedValue(null);
+
+    const outcome = await finalizeThinkingBlockStream({
+      sessionId: "s1",
+      sendApi: createSendApi(),
+      target: { chatId: 1 },
+      title: "Plan",
+      reasoningText: "text",
+    });
+
+    expect(outcome).toBe("finalized"); // legacy path succeeds
+    expect(mocked.trySendRichMessageUncheckedMock).toHaveBeenCalled();
+    expect(mocked.formatThinkingCompletionWithDetailsMock).toHaveBeenCalled();
   });
 });

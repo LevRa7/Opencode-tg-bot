@@ -17,6 +17,7 @@ import {
   formatThinkingCompletionWithDetails,
   formatThinkingMessageWithReasoning,
 } from "./thinking-message.js";
+import { formatThinkingForRichDraft, formatThinkingForRichFinal, trySendRichMessageDraft, trySendRichMessageUnchecked } from "./rich-message.js";
 
 type SendApi = Pick<Api<RawApi>, "sendMessageDraft" | "sendMessage" | "deleteMessage">;
 
@@ -35,6 +36,14 @@ interface ActiveThinkingBlockState {
   sendApi: SendApi;
   target: TelegramThreadTarget;
   requiresReplay?: true;
+}
+
+/** Rich message thinking state for sendRichMessageDraft / sendRichMessage path. */
+interface RichThinkingState {
+  draftId: number;
+  lastTitle: string;
+  lastReasoningText: string;
+  target: TelegramThreadTarget;
 }
 
 interface SessionStreamTaskState {
@@ -83,6 +92,7 @@ const lifecycleManager = new ThinkingDraftLifecycle();
 const fallbackDetailsPublisher = new NoopDetailsPublisher();
 let deliveryOrchestrator: ThinkingBlockDeliveryOrchestrator = createDeliveryOrchestrator();
 const activeThinkingBlocks = new Map<string, ActiveThinkingBlockState>();
+const richThinkingStates = new Map<string, RichThinkingState>();
 const sessionTasks = new Map<string, SessionStreamTaskState>();
 
 let thinkingBlockDraftIdAllocator: MessageDraftIdAllocator | null = null;
@@ -143,6 +153,142 @@ function createTransport(
 
 function resolveThinkingLogicalMessageId(sessionId: string, logicalMessageId?: string): string {
   return logicalMessageId?.trim() || `thinking:${sessionId}`;
+}
+
+async function tryRichStreamThinking(options: StreamThinkingBlocksOptions): Promise<boolean> {
+  const existingRich = richThinkingStates.get(options.sessionId);
+
+  // If we already have a rich draft animating for this session, skip updates.
+  // Subsequent sendRichMessageDraft calls can cause display issues or loss of
+  // the animated <tg-thinking> block. Only the finalization sends the <details>.
+  if (existingRich) {
+    logger.debug("[ThinkingBlockStream] Rich stream — skip update (existing rich draft animating)", {
+      sessionId: options.sessionId,
+      existingDraftId: existingRich.draftId,
+      existingTitle: existingRich.lastTitle,
+      newTitle: options.title,
+    });
+    return true;
+  }
+
+  logger.debug("[ThinkingBlockStream] Rich stream — sending first rich draft", {
+    sessionId: options.sessionId,
+    title: options.title,
+  });
+
+  const html = formatThinkingForRichDraft(options.title, options.reasoningText);
+  if (!html) return false;
+
+  // Always allocate fresh draft ID — sendRichMessageDraft treats draft_id
+  // as one-shot, same as sendMessageDraft (see line 369-370).
+  const draftId = reserveThinkingDraftId();
+
+  try {
+    const result = await trySendRichMessageDraft(
+      options.sendApi as unknown as import("grammy").Api,
+      options.target.chatId,
+      draftId,
+      html,
+      { messageThreadId: options.target.messageThreadId, useHtml: true },
+    );
+
+    if (result?.success) {
+      richThinkingStates.set(options.sessionId, {
+        draftId,
+        lastTitle: options.title,
+        lastReasoningText: options.reasoningText,
+        target: options.target,
+      });
+      return true;
+    }
+
+    // Rich draft not available or failed, fall back to HTML
+    logger.warn("[ThinkingBlockStream] Rich thinking draft not available/failed, falling back to HTML", {
+      sessionId: options.sessionId,
+      draftId,
+      resultType: result === null ? "null" : typeof result,
+      htmlLength: html.length,
+    });
+    richThinkingStates.delete(options.sessionId);
+    return false;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.warn("[ThinkingBlockStream] Rich thinking draft failed, falling back to HTML", {
+      sessionId: options.sessionId,
+      draftId,
+      error: msg,
+    });
+    richThinkingStates.delete(options.sessionId);
+    return false;
+  }
+}
+
+async function tryRichFinalizeThinking(
+  options: FinalizeThinkingBlockStreamOptions,
+): Promise<boolean> {
+  const richState = richThinkingStates.get(options.sessionId);
+
+  const completionReasoningText =
+    options.reasoningText?.trim() ||
+    richState?.lastReasoningText ||
+    "";
+  const title = options.reasoningText?.trim()
+    ? options.title
+    : (richState?.lastTitle ?? options.title);
+
+  // If no reasoning text is available but we have a rich draft showing,
+  // finalize with a title-only <details> block so the animation resolves.
+  if (!completionReasoningText) {
+    if (!richState) {
+      logger.debug("[ThinkingBlockStream] Rich finalize — empty completion reasoning, no richState", {
+        sessionId: options.sessionId,
+        hasOptionsText: !!options.reasoningText?.trim(),
+      });
+      return false;
+    }
+    logger.debug("[ThinkingBlockStream] Rich finalize — empty reasoning body, finalizing title-only", {
+      sessionId: options.sessionId,
+      title,
+    });
+  }
+
+  const html = formatThinkingForRichFinal(title, completionReasoningText);
+  if (!html) {
+    logger.debug("[ThinkingBlockStream] Rich finalize — empty final html", {
+      sessionId: options.sessionId,
+      title,
+      reasoningLen: completionReasoningText.length,
+    });
+    return false;
+  }
+
+  try {
+    const result = await trySendRichMessageUnchecked(
+      options.sendApi as unknown as import("grammy").Api,
+      options.target.chatId,
+      html,
+      { messageThreadId: options.target.messageThreadId, disableNotification: true, useHtml: true },
+    );
+
+    if (result?.success) {
+      richThinkingStates.delete(options.sessionId);
+      return true;
+    }
+
+    logger.debug("[ThinkingBlockStream] Rich finalize — sendRichMessageUnchecked returned null/false", {
+      sessionId: options.sessionId,
+    });
+    richThinkingStates.delete(options.sessionId);
+    return false;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.debug("[ThinkingBlockStream] Rich thinking finalize failed, falling back", {
+      sessionId: options.sessionId,
+      error: msg,
+    });
+    richThinkingStates.delete(options.sessionId);
+    return false;
+  }
 }
 
 function createCleanupTransport(
@@ -231,6 +377,11 @@ export async function streamThinkingBlocks(options: StreamThinkingBlocksOptions)
   }
 
   await runSessionTask(options.sessionId, async () => {
+    // Try rich message draft path first (Bot API 10.1)
+    if (await tryRichStreamThinking(options)) {
+      return;
+    }
+
     const rendered = formatThinkingMessageWithReasoning(options.title, options.reasoningText);
     const routingIdentity = buildRoutingIdentity(options.target);
     const existing = activeThinkingBlocks.get(options.sessionId);
@@ -305,6 +456,12 @@ export async function finalizeThinkingBlockStream(
   options: FinalizeThinkingBlockStreamOptions,
 ): Promise<ThinkingBlockFinalizeOutcome> {
   return await runSessionTask(options.sessionId, async () => {
+    // Try rich message finalize path first (Bot API 10.1)
+    if (await tryRichFinalizeThinking(options)) {
+      activeThinkingBlocks.delete(options.sessionId);
+      return "finalized";
+    }
+
     const activeState = activeThinkingBlocks.get(options.sessionId);
     const currentRoutingIdentity = buildRoutingIdentity(options.target);
     if (activeState && activeState.routingIdentity !== currentRoutingIdentity) {
@@ -405,8 +562,6 @@ export async function clearThinkingBlockStream(
         activeThinkingBlocks.delete(sessionId);
       }
     } else {
-      // 2026-04-23: once routing is gone there is no retryable delete path left,
-      // so stale coordinator state must be dropped even if forced clear was requested.
       lifecycleManager.clearSession(sessionId);
       activeThinkingBlocks.delete(sessionId);
     }
@@ -415,6 +570,7 @@ export async function clearThinkingBlockStream(
 
 export function clearAllThinkingBlockStreams(): void {
   activeThinkingBlocks.clear();
+  richThinkingStates.clear();
   sessionTasks.clear();
   deliveryOrchestrator.clearAll();
   lifecycleManager.clearAll();

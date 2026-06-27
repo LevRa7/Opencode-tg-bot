@@ -108,6 +108,12 @@ unset GPT_IMAGE_UPSTREAM_BASE_URL
 unset GPT_IMAGE_UPSTREAM_API_KEY
 unset GPT_IMAGE_MODEL
 
+# ── Start file-server for agent file delivery ──
+if command -v file-server.py >/dev/null 2>&1; then
+  nohup python3 /usr/local/bin/file-server.py start > /dev/null 2>&1 &
+  echo "file-server started"
+fi
+
 # Rootless Docker bind mounts expose the host user as container root, not uid 1000.
 # Keep uid/gid 0 for writable /workspace and /state, but drop all capabilities and
 # move the proxy config to a different owner so the tenant runtime still cannot read it.

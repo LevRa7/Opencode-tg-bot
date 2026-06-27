@@ -280,6 +280,52 @@ async function saveLocal(
   };
 }
 
+async function saveToVm(
+  buffer: Buffer,
+  filename: string,
+): Promise<SavedAttachment> {
+  const servedDir = process.env.FILE_SERVER_DIR || "/tmp/served-files";
+  const baseUrl = (process.env.FILE_SERVER_BASE_URL || "http://localhost:8890").replace(/\/+$/, "");
+  const safeName = path.posix.basename(filename.replace(/[\\/]+/g, "_"));
+  const destPath = path.join(servedDir, safeName);
+  const publicUrl = `${baseUrl}/${safeName}`;
+
+  try {
+    const { mkdirSync, copyFileSync, writeFileSync } = await import("node:fs");
+
+    // Write buffer to served directory directly
+    mkdirSync(servedDir, { recursive: true });
+    writeFileSync(destPath, buffer);
+
+    logger.debug("[Downloads] Served attachment for VM via HTTP", {
+      url: publicUrl,
+    });
+    return {
+      absolutePath: publicUrl,
+      filename,
+      sizeBytes: buffer.length,
+      mimeType: "",
+      typeLabel: "",
+      sizeLabel: "",
+    };
+  } catch (error) {
+    logger.error("[Downloads] Failed to serve attachment for VM, using local path", error);
+    // Fallback to local save
+    const downloadDir = resolveDownloadPath();
+    await fs.mkdir(downloadDir, { recursive: true });
+    const destPath = path.join(downloadDir, filename);
+    await fs.writeFile(destPath, buffer);
+    return {
+      absolutePath: destPath,
+      filename,
+      sizeBytes: buffer.length,
+      mimeType: "",
+      typeLabel: "",
+      sizeLabel: "",
+    };
+  }
+}
+
 async function saveToTenantWorkspace(
   buffer: Buffer,
   filename: string,
@@ -316,6 +362,8 @@ export async function saveAttachment(
     saved = await uploadViaSsh(userId, buffer, filename);
   } else if (route.kind === "tenant" && route.tenantId) {
     saved = await saveToTenantWorkspace(buffer, filename, route.tenantId);
+  } else if (route.kind === "vm" && userId) {
+    saved = await saveToVm(buffer, filename);
   } else {
     saved = await saveLocal(buffer, filename);
   }

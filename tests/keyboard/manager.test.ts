@@ -18,6 +18,31 @@ vi.mock("../../src/variant/manager.js", () => ({
   formatVariantForButton: vi.fn(() => "Default"),
 }));
 
+// Mock system-info to avoid real system calls
+vi.mock("../../src/utils/system-info.js", () => ({
+  getSystemInfo: vi.fn(() => ({ cpu: "CPU", ram: "RAM" })),
+}));
+
+// Mock processManager
+vi.mock("../../src/process/manager.js", () => ({
+  processManager: {
+    isRunning: vi.fn(() => true),
+  },
+}));
+
+// Mock foreground session state
+vi.mock("../../src/scheduled-task/foreground-state.js", () => ({
+  foregroundSessionState: {
+    isBusy: vi.fn(() => false),
+  },
+}));
+
+// Mock terminal commands
+vi.mock("../../src/bot/commands/terminal.js", () => ({
+  isTerminalTopic: vi.fn(() => false),
+  isTerminalRunning: vi.fn(() => false),
+}));
+
 import { __resetKeyboardManagersForTests, keyboardManager } from "../../src/keyboard/manager.js";
 
 describe("keyboard/manager scoped state", () => {
@@ -53,3 +78,4 @@ describe("keyboard/manager scoped state", () => {
     });
   });
 });
+

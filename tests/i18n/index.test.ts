@@ -176,3 +176,13 @@ describe("i18n/index locale helpers", () => {
     }
   });
 });
+
+describe("tool.diff.truncated", () => {
+  it("interpolates shown/total in every locale", () => {
+    for (const locale of ["en", "ru", "de", "es", "fr", "zh"] as const) {
+      const result = t("tool.diff.truncated", { shown: 800, total: 3200 }, locale);
+      expect(result).toContain("800");
+      expect(result).toContain("3200");
+    }
+  });
+});

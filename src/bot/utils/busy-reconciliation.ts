@@ -115,6 +115,21 @@ export async function reconcileBusyStateNow(directory: string, now: number = Dat
       continue;
     }
 
+    // 2026-06-26: the server flips a session to idle as soon as the model stops
+    // generating, but the bot's completion/finalization pipeline runs asynchronously
+    // for a few more seconds. Clearing the run mid-finalization turns
+    // markFinalResponsePublished into a no-op, which breaks the isFinalResponsePublished
+    // guard that suppresses trailing partial deltas and leaves a duplicate streaming
+    // draft next to the final message. Skip while finalization is in flight; the next
+    // reconcile pass clears it once the final response has been published (or the run is
+    // cleared on finalize failure).
+    if (assistantRunState.isFinalizationInFlight(session.sessionId)) {
+      logger.debug(
+        `[BusyReconciliation] Skipping clear, finalization in flight: session=${session.sessionId}, directory=${session.directory}, status=${status?.type ?? "not-found"}`,
+      );
+      continue;
+    }
+
     logger.info(
       `[BusyReconciliation] Clearing stale foreground busy state: session=${session.sessionId}, directory=${session.directory}, status=${status?.type ?? "not-found"}`,
     );

@@ -116,6 +116,7 @@ export async function abortCurrentOperation(
 
       if (!chatId) {
         logger.warn("[Abort] Chat context is missing while aborting active session");
+        await releaseAbortBusyState(currentSession.id, "abort_no_chat", currentScope);
         return;
       }
     }
@@ -165,6 +166,8 @@ export async function abortCurrentOperation(
           await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.success"));
         }
       } else {
+        // Session still busy — release local state anyway
+        await releaseAbortBusyState(currentSession.id, "abort_still_busy", currentScope);
         if (notifyUser && chatId !== null && waitingMessageId !== null) {
           await ctx.api.editMessageText(chatId, waitingMessageId, t("stop.warn_still_busy"));
         }

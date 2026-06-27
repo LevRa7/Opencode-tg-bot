@@ -395,8 +395,16 @@ let _lastSetSession: SessionInfo | undefined;
 export function getCurrentSession(): SessionInfo | undefined {
   const scopeKey = getActiveConversationScopeKey();
   if (scopeKey) {
-    const row = convBindings.get(scopeKey);
-    if (row?.session) return JSON.parse(row.session) as SessionInfo;
+    try {
+      const row = convBindings.get(scopeKey);
+      if (row?.session) return JSON.parse(row.session) as SessionInfo;
+    } catch {
+      // DB unavailable — fall back to in-memory cache
+    }
+    // A conversation scope is active but has no bound session.
+    // Do NOT fall back to the global _lastSetSession — that would leak
+    // the last /new session into every other forum topic.
+    return undefined;
   }
   return _lastSetSession;
 }

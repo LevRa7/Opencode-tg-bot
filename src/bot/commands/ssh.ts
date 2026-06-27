@@ -5,6 +5,7 @@ import { interactionManager } from "../../interaction/manager.js";
 import { extractMessageThreadIdFromContext, withMessageThreadId } from "../utils/message-thread.js";
 import { logger } from "../../utils/logger.js";
 import { stopEventListening } from "../../opencode/events.js";
+import { getCurrentProject } from "../../settings/manager.js";
 import { t } from "../../i18n/index.js";
 import { clearSessionDirectoryCacheForScope } from "../../session/cache-manager.js";
 import { SubdomainManager } from "../../server/subdomain-manager.js";

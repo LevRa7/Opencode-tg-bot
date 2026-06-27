@@ -2,8 +2,9 @@ import { CommandContext, Context } from "grammy";
 import { getRuntimeModelCatalog } from "../../model/manager.js";
 import { logger } from "../../utils/logger.js";
 import { t } from "../../i18n/index.js";
+import { TELEGRAM_PLAIN_MAX_LENGTH } from "../../telegram/constants.js";
 
-const TELEGRAM_MESSAGE_LIMIT = 4096;
+const TELEGRAM_MESSAGE_LIMIT = TELEGRAM_PLAIN_MAX_LENGTH;
 
 function buildProviderPrefix(providerID: string): string {
   return `🔹 ${providerID}\n`;

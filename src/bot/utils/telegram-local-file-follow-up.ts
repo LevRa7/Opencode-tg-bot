@@ -11,6 +11,9 @@ const AUDIO_EXTENSIONS = new Set([".mp3", ".m4a", ".wav", ".flac", ".ogg"]);
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".mkv", ".webm"]);
 const LOCAL_FILE_REFERENCE_PATTERN = /(?:file:\/\/\/[^\s'"`<>]+|sandbox:\/[^\s'"`<>]+|(?:(?<=^)|(?<=[\s'"`(\[]))\/(?:[^\s'"`<>]+(?:\.[^\s'"`<>./]+)?)(?=$|[\s'"`)\]]|[.,;!?]))/gm;
 
+/** Pattern for file-server URLs: http://localhost:8890/filename.ext */
+const LOCALHOST_FILE_URL_PATTERN = /https?:\/\/localhost:8890\/([^\s'"`<>)\]]+)/gi;
+
 // Что делает этот модуль:
 // - находит в ответе ассистента абсолютные локальные пути,
 // - фильтрует только реальные файлы размером до 2048 МБ,
@@ -303,4 +306,70 @@ class InMemoryLocalFileFollowUpTracker implements LocalFileFollowUpTracker {
 
 export function createLocalFileFollowUpTracker(): LocalFileFollowUpTracker {
   return new InMemoryLocalFileFollowUpTracker();
+}
+
+// ── File-server localhost:8890 integration ──
+
+const FILE_SERVER_SERVE_DIR = "/tmp/served-files";
+
+/**
+ * Extract file-server URLs from agent response text.
+ * Matches: http://localhost:8890/filename.ext
+ * Returns: array of { url, filename } objects
+ */
+export function extractLocalhostFileUrls(text: string): Array<{ url: string; filename: string }> {
+  const matches: Array<{ url: string; filename: string }> = [];
+  const seen = new Set<string>();
+  const regex = new RegExp(LOCALHOST_FILE_URL_PATTERN.source, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(text)) !== null) {
+    const url = m[0];
+    const filename = m[1];
+    if (!seen.has(url)) {
+      seen.add(url);
+      matches.push({ url, filename });
+    }
+  }
+  return matches;
+}
+
+/**
+ * Map localhost:8890 URL to local filesystem path.
+ * File-server stores files in /tmp/served-files/ by basename.
+ */
+export function localhostUrlToPath(url: string): string | null {
+  const match = url.match(/localhost:8890\/(.+)$/);
+  if (!match) return null;
+  const filename = match[1];
+  return `${FILE_SERVER_SERVE_DIR}/${filename}`;
+}
+
+/**
+ * Prepare follow-up file deliveries from localhost:8890 URLs found in text.
+ * Downloads files from file-server, resolves to local paths, prepares for Telegram send.
+ */
+export async function prepareLocalhostFileFollowUps(
+  text: string,
+): Promise<PreparedLocalFileFollowUp[]> {
+  const urls = extractLocalhostFileUrls(text);
+  if (urls.length === 0) return [];
+
+  const prepared: PreparedLocalFileFollowUp[] = [];
+  for (const { filename } of urls) {
+    const filePath = `${FILE_SERVER_SERVE_DIR}/${filename}`;
+    try {
+      const fileStat = await stat(filePath);
+      if (!fileStat.isFile() || fileStat.size > MAX_FOLLOW_UP_FILE_SIZE_BYTES) continue;
+      prepared.push({
+        path: filePath,
+        resolvedPath: filePath,
+        kind: resolveTelegramFileKind(filePath),
+        size: fileStat.size,
+        caption: buildLocalFileFollowUpCaption(filePath),
+      });
+    } catch {
+      continue;
+    }
+  }
+  return prepared;
 }

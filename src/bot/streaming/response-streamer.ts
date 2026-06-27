@@ -227,18 +227,54 @@ export class ResponseStreamer {
     return { streamed: synced, telegramMessageIds: messageIds };
   }
 
-  clearMessage(sessionId: string, messageId: string, reason: string): void {
+  clearMessage(
+    sessionId: string,
+    messageId: string,
+    reason: string,
+    opts?: { deleteMessages?: boolean },
+  ): void {
     const key = buildStateKey(sessionId, messageId);
     const state = this.states.get(key);
     if (!state) {
       return;
     }
 
+    const idsToDelete =
+      opts?.deleteMessages && state.telegramMessageIds.length > 0
+        ? [...state.telegramMessageIds]
+        : null;
+
     this.cancelState(state);
     this.states.delete(key);
+
+    // Fire-and-forget: delete already-sent Telegram messages displaced by a rich message.
+    if (idsToDelete) {
+      for (const telegramId of idsToDelete) {
+        this.deleteText(sessionId, telegramId).catch((error) => {
+          logger.warn(
+            `[ResponseStreamer] Failed to delete displaced stream message: session=${sessionId}, telegramId=${telegramId}, reason=${reason}`,
+            error,
+          );
+        });
+      }
+    }
+
     logger.debug(
       `[ResponseStreamer] Cleared message stream: session=${sessionId}, message=${messageId}, reason=${reason}`,
     );
+  }
+
+  async flushSessionBeforeClear(sessionId: string): Promise<void> {
+    const sessionStates = Array.from(this.states.values()).filter(
+      (s) => s.sessionId === sessionId && !s.isBroken && s.telegramMessageIds.length > 0,
+    );
+    for (const state of sessionStates) {
+      this.clearTimer(state);
+      await state.task.catch(() => {});
+      if (!state.isBroken) {
+        await this.enqueueTask(state, () => this.flushState(state, "session_error_flush"));
+      }
+    }
   }
 
   clearSession(sessionId: string, reason: string): void {

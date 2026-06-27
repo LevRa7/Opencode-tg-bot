@@ -19,8 +19,10 @@ import {
   type TelegramDeliveryTarget,
 } from "../utils/message-thread.js";
 
+import { TELEGRAM_PLAIN_MAX_LENGTH, TELEGRAM_RICH_MAX_LENGTH } from "../../telegram/constants.js";
+
 const MAX_BUTTON_LENGTH = 60;
-const TELEGRAM_MESSAGE_LIMIT = 4096;
+const TELEGRAM_MESSAGE_LIMIT = TELEGRAM_PLAIN_MAX_LENGTH;
 const TRUNCATION_SUFFIX = "…";
 const QUESTION_EMOJI = "❓";
 
@@ -609,11 +611,14 @@ function truncateQuestionPart(
   text: string,
   entities: MessageEntity[],
 ): { text: string; entities: MessageEntity[] } {
-  if (text.length <= TELEGRAM_MESSAGE_LIMIT) {
+  // Rich questions (with entities) can use the higher limit
+  const effectiveLimit = entities.length > 0 ? TELEGRAM_RICH_MAX_LENGTH : TELEGRAM_MESSAGE_LIMIT;
+
+  if (text.length <= effectiveLimit) {
     return { text, entities };
   }
 
-  const maxBaseLength = TELEGRAM_MESSAGE_LIMIT - TRUNCATION_SUFFIX.length;
+  const maxBaseLength = effectiveLimit - TRUNCATION_SUFFIX.length;
   let endIndex = maxBaseLength;
 
   if (endIndex > 0 && isHighSurrogate(text.charCodeAt(endIndex - 1))) {

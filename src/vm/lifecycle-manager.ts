@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { logger } from "../utils/logger.js";
-import type { VmHandle, VmSpec, VmOperationResult, VmInfo } from "./types.js";
+import { type VmHandle, type VmSpec, type VmOperationResult, type VmInfo, type VmSpecTier, VM_TIERS } from "./types.js";
 import type { VmStatePersistence, VmStateRecord } from "./state-persistence.js";
 import type { HealthProxy, HealthStatus } from "./health-proxy.js";
 import type { VmManager } from "./manager.js";
+import { setVmRuntimeInfo } from "../settings/manager.js";
 
 export interface AcquireOptions {
   spec?: VmSpec;
@@ -43,6 +44,21 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
         if (healthy.healthy) {
           persistence.updateIfCurrent(existing.vmId, existing.version, { status: "healthy" });
           persistence.resetFailureCount(existing.vmId);
+          // Restore routing info from persisted state (survives bot restart)
+          setVmRuntimeInfo(userId, {
+            userId,
+            tier: existing.specTier as VmSpec["tier"],
+            domainName: existing.domainName,
+            qcow2Path: "",
+            cloudInitIsoPath: "",
+            bridgeIp: existing.assignedIpv4,
+            baseUrl: `http://${existing.assignedIpv4}:4096`,
+            startTime: existing.createdAt,
+            pid: null,
+            sudoPassword: existing.passwordHash,
+            serverPassword: handle.password,
+            ipv6: "",
+          });
           return handle;
         }
         persistence.incrementFailureCount(existing.vmId);
@@ -85,6 +101,14 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
       status: "provisioning",
       failureCount: 0,
     };
+    // Fix (2026-06-24): clear any leftover row for this user before inserting the fresh record.
+    // markDestroyed()/release()/health-timeout rollback only set status='destroyed' but keep the
+    // row, and acquire() always generates a new randomUUID() vm_id. save()'s upsert only resolves
+    // ON CONFLICT(vm_id), so a new vm_id never matched the stale row and the INSERT violated
+    // UNIQUE(user_id) ("UNIQUE constraint failed: vm_states.user_id"), aborting every re-deploy.
+    // deleteByUserId is idempotent (no-op when absent) and keeps record.vmId authoritative for the
+    // subsequent updateIfCurrent() calls below.
+    persistence.deleteByUserId(userId);
     persistence.save(record);
 
     const handle: VmHandle = {
@@ -94,9 +118,13 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
       ipv4: vmInfo.bridgeIp ?? "",
       mac: "",
       baseUrl: vmInfo.baseUrl,
-      password: vmInfo.sudoPassword ?? "",
+      password: vmInfo.serverPassword ?? vmInfo.sudoPassword ?? "",
       specTier: spec.tier,
     };
+
+    // Persist VM routing info so getCurrentOpencodeRoute() returns the VM URL,
+    // not the fallback vm-pending route (config.opencode.apiUrl = host server).
+    setVmRuntimeInfo(userId, vmInfo);
 
     const saved = persistence.getByUserId(userId)!;
     const savedVersion = saved.version;
@@ -132,9 +160,38 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
     }
   }
 
+  // (2026-06-26): after marking a VM as destroyed/dead, auto-recreate it via acquire()
+  // to close the gap where a destroyed VM would stay dead until the user sends
+  // another message. Degraded VMs (failureCount ≥ 5) are NOT auto-recreated —
+  // they require manual intervention.
+  async function tryAutoRecreate(userId: number, record: VmStateRecord, persistence: VmStatePersistence): Promise<void> {
+    const spec = VM_TIERS[record.specTier as VmSpecTier];
+    if (!spec) {
+      logger.error("[Lifecycle] Unknown spec tier %s for userId=%d, cannot auto-recreate", record.specTier, userId);
+      return;
+    }
+    try {
+      logger.info("[Lifecycle] Auto-recreating VM for userId=%d (tier=%s)", userId, spec.tier);
+      await acquire(userId, persistence, { spec, timeoutMs: 300_000 });
+      logger.info("[Lifecycle] Auto-recreation succeeded for userId=%d", userId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error("[Lifecycle] Auto-recreation failed for userId=%d: %s", userId, msg);
+    }
+  }
+
   async function recover(userId: number, persistence: VmStatePersistence): Promise<void> {
     const record = persistence.getByUserId(userId);
-    if (!record || record.status === "destroyed") return;
+    if (!record) return;
+    // (2026-06-26): removed "status === destroyed" skip. Destroyed VMs (from previous
+    // health-timeout rollbacks) are now auto-recreated via acquire() instead of being
+    // skipped forever. vm.attach() will return null for destroyed VMs (domain doesn't
+    // exist), which triggers the same auto-recreation path as dead VMs.
+    // Fix (2026-06-25): skip VMs still provisioning — cloud-init can take 2-3 min
+    // and the initial acquire() health check already runs in parallel with a 5-min timeout.
+    // Recovering a provisioning VM with a 30s health check would race with acquire()
+    // and destroy the VM before cloud-init finishes.
+    if (record.status === "provisioning") return;
     if (record.status === "degraded") {
       logger.warn("[Lifecycle] Recovery skipped: VM %s is degraded (failures=%d)", userId, record.failureCount);
       return;
@@ -144,15 +201,31 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
     if (!handle) {
       logger.warn("[Lifecycle] Recovery: VM %s not running, marking destroyed", userId);
       persistence.markDestroyed(record.vmId);
+      await tryAutoRecreate(userId, record, persistence);
       return;
     }
 
     const healthy = await hp.check(handle, { timeoutMs: 30_000, pollMs: 2000 });
     if (!healthy.healthy) {
       persistence.incrementFailureCount(record.vmId);
+      const updated = persistence.getByUserId(userId);
       logger.warn("[Lifecycle] Recovery: VM %s unhealthy, destroying", userId);
       await vm.destroyHandle(handle).catch(() => {});
+
+      // incrementFailureCount already promotes status to "degraded" when
+      // failure_count reaches MAX_RETRIES (5). Keep that status — do not
+      // overwrite with markDestroyed or auto-recreate.
+      if (updated && updated.status === "degraded") {
+        logger.error(
+          "[Lifecycle] VM %s reached failure threshold (%d), degraded — manual intervention required",
+          userId,
+          updated.failureCount,
+        );
+        return;
+      }
+
       persistence.markDestroyed(record.vmId);
+      await tryAutoRecreate(userId, record, persistence);
       return;
     }
 

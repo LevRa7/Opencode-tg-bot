@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { deliverChildTopicMessage } from "../../../src/bot/subagent-topics/child-delivery.js";
+import {
+  createStreamedChildTopicSendText,
+  deliverChildTopicMessage,
+} from "../../../src/bot/subagent-topics/child-delivery.js";
 
 describe("bot/subagent-topics/child-delivery", () => {
   it("routes child-topic sends through injected reopen and sendText dependencies", async () => {
@@ -262,5 +265,47 @@ describe("bot/subagent-topics/child-delivery", () => {
       ),
     ).rejects.toThrow("Unsupported child topic delivery kind: unsupported_kind");
     expect(sendText).not.toHaveBeenCalled();
+  });
+
+  describe("createStreamedChildTopicSendText", () => {
+    // The factory adapts the streaming transport into the child-topic sendText
+    // dependency. It must enable HTML fallback so child-topic deliveries use the
+    // same rich rendering path as the main assistant streaming pipeline.
+    it("forwards params to the streamed transport and enables HTML fallback", async () => {
+      const streamedSend = vi.fn().mockResolvedValue(555);
+
+      const sendText = createStreamedChildTopicSendText(streamedSend);
+      const result = await sendText({
+        api: { sendMessage: vi.fn() } as never,
+        chatId: 42,
+        text: "Child final answer",
+        format: "html",
+        messageThreadId: 7,
+      });
+
+      expect(streamedSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatId: 42,
+          text: "Child final answer",
+          format: "html",
+          messageThreadId: 7,
+          useHtmlFallback: true,
+        }),
+      );
+      expect(result).toBe(555);
+    });
+
+    it("returns null when the streamed transport returns null", async () => {
+      const streamedSend = vi.fn().mockResolvedValue(null);
+
+      const sendText = createStreamedChildTopicSendText(streamedSend);
+      const result = await sendText({
+        api: { sendMessage: vi.fn() } as never,
+        chatId: 1,
+        text: "x",
+      });
+
+      expect(result).toBeNull();
+    });
   });
 });

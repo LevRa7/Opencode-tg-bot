@@ -15,6 +15,49 @@ import { foregroundSessionState } from "../../../src/scheduled-task/foreground-s
 import { attachManager } from "../../../src/attach/manager.js";
 import { runWithTelegramConversationScope } from "../../../src/telegram/scope.js";
 
+// Mock system-info to avoid real system calls during keyboard build
+vi.mock("../../../src/utils/system-info.js", () => ({
+  getSystemInfo: vi.fn(() => ({ cpu: "CPU", ram: "RAM" })),
+}));
+
+// Mock terminal commands
+vi.mock("../../../src/bot/commands/terminal.js", () => ({
+  isTerminalTopic: vi.fn(() => false),
+  isTerminalRunning: vi.fn(() => false),
+}));
+
+// Mock processManager
+vi.mock("../../../src/process/manager.js", () => ({
+  processManager: {
+    isRunning: vi.fn(() => true),
+  },
+}));
+
+// Mock agent/model/variant managers for keyboard build
+vi.mock("../../../src/agent/manager.js", () => ({
+  getStoredAgent: vi.fn(() => "build"),
+}));
+
+vi.mock("../../../src/model/manager.js", () => ({
+  getStoredModel: vi.fn(() => ({
+    providerID: "openai",
+    modelID: "gpt-5",
+    variant: "default",
+  })),
+}));
+
+vi.mock("../../../src/variant/manager.js", () => ({
+  formatVariantForButton: vi.fn(() => "Default"),
+}));
+
+vi.mock("../../../src/scheduled-task/foreground-state.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../src/scheduled-task/foreground-state.js")>();
+  return {
+    ...actual,
+    isBusy: vi.fn(() => false),
+  };
+});
+
 const mocked = vi.hoisted(() => ({
   resolveScopedSession: vi
     .fn<() => { session: SessionInfo; scope: TelegramConversationScope } | null>(),
@@ -390,4 +433,6 @@ describe("bot/commands/abort", () => {
       false,
     );
   });
+
+
 });

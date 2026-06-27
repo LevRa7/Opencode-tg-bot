@@ -58,14 +58,17 @@ export function createVmOrchestrator(lifecycle: VmLifecycleManager): VmOrchestra
 
   async function recoverAll(persistence: VmStatePersistence): Promise<void> {
     const active = persistence.listActive();
+    const destroyed = persistence.listDestroyed();
     const degraded = persistence.listDegraded();
 
-    logger.info("[Orchestrator] Recovering %d active, %d degraded VMs", active.length, degraded.length);
+    const allToProcess = [...active, ...destroyed];
+    logger.info("[Orchestrator] Recovering %d active, %d destroyed, %d degraded VMs",
+      active.length, destroyed.length, degraded.length);
 
     const recovered: number[] = [];
     const failed: number[] = [];
 
-    for (const record of active) {
+    for (const record of allToProcess) {
       try {
         await lifecycle.recover(record.userId, persistence);
         recovered.push(record.userId);

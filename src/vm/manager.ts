@@ -27,7 +27,7 @@ function generateMacForUser(userId: number): string {
 function generateIpForUser(userId: number): string {
   const h = knuthHash(userId);
   const octet = (h % 241) + 10; // 10..250
-  return `10.100.0.${octet}`;
+  return `192.168.123.${octet}`;
 }
 
 /** Knuth's multiplicative hash — good distribution for integer keys */
@@ -246,9 +246,9 @@ export class VmManager {
     const host = bridgeIp;
 
     // Verify VM actually boots (cloud-init completes). Non-blocking — warn if stuck.
-    this.verifyVmBoot(domainName, 120_000).then(booted => {
+    this.verifyVmBoot(domainName, 300_000).then(booted => {
       if (!booted) {
-        logger.warn(`[VmManager] VM ${domainName} did not complete cloud-init within 2min`);
+        logger.warn(`[VmManager] VM ${domainName} did not complete cloud-init within 5min`);
       }
     });
 
@@ -263,6 +263,7 @@ export class VmManager {
       startTime: new Date().toISOString(),
       pid: null,
       sudoPassword: sudoPw,
+      serverPassword: opencodePw,
       ipv6: generateIpv6ForUser(userId),
     };
   }
@@ -282,11 +283,13 @@ export class VmManager {
         if (log.includes("Cloud-init v.") && log.includes("finished")) {
           return true;
         }
-        // Detect kernel hang: if log has lines but isn't growing for 15 checks (30s)
+        // Detect kernel hang: if log has lines but isn't growing for 60 checks (120s).
+        // Cloud-init runcmd steps (npm install, apt-get) can produce zero serial
+        // console output for 60-130s, so 30s was too aggressive (false positives).
         const lines = log.split("\n").filter(Boolean).length;
         if (lines > 10 && lines === lastLineCount) {
           stallCount++;
-          if (stallCount >= 15) {
+          if (stallCount >= 60) {
             logger.warn(`[VmManager] VM ${domainName} console stalled at ${lines} lines`);
             return false;
           }
@@ -474,7 +477,7 @@ export class VmManager {
     return this.toVmHandle(vmId, info);
   }
 
-  async attach(existing: VmStateRecord): Promise<VmHandle | null> {
+   async attach(existing: VmStateRecord): Promise<VmHandle | null> {
     const running = await this.isRunning(existing.userId);
     if (!running) return null;
     return {
@@ -484,7 +487,7 @@ export class VmManager {
       ipv4: existing.assignedIpv4,
       mac: existing.assignedMac,
       baseUrl: `http://${existing.assignedIpv4}:${VM_DEFAULTS.opencodePort}`,
-      password: existing.passwordHash,
+      password: getOrCreateServerPassword(existing.userId),
       specTier: existing.specTier,
     };
   }
@@ -506,7 +509,7 @@ export class VmManager {
       ipv4: info.bridgeIp ?? "",
       mac: generateMacForUser(info.userId),
       baseUrl: info.baseUrl,
-      password: info.sudoPassword ?? "",
+      password: info.serverPassword ?? info.sudoPassword ?? "",
       specTier: info.tier,
     };
   }

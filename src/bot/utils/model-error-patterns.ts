@@ -36,3 +36,9 @@ export function isModelUnavailableError(message: string): boolean {
   }
   return MODEL_UNAVAILABLE_PATTERNS.some((p) => p.test(message));
 }
+
+const SSE_READ_TIMEOUT_PATTERN = /SSE read timed out/i;
+
+export function isSseReadTimeoutError(message: string): boolean {
+  return SSE_READ_TIMEOUT_PATTERN.test(message);
+}

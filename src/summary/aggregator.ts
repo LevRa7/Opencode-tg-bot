@@ -5,7 +5,6 @@ import {
   countDiffChangesFromText,
   extractFirstUpdatedFileFromTitle,
   normalizePathForDisplay,
-  prepareCodeFile,
 } from "./formatter.js";
 import type { Question } from "../question/types.js";
 import type { PermissionRequest } from "../permission/types.js";
@@ -1314,7 +1313,7 @@ class SummaryAggregator {
           "status" in state && (state.status === "completed" || state.status === "error");
 
         if (isTerminalToolState) {
-          if (state.status === "completed") {
+          if (state.status === "completed" || state.status === "error") {
             const completedKey = `completed-${part.callID}`;
             this.lastRunningToolOutputHashes.delete(`running-${part.callID}`);
 
@@ -1520,7 +1519,9 @@ class SummaryAggregator {
         const completedKey = `completed-${part.callID}`;
         this.lastRunningToolOutputHashes.delete(`running-${part.callID}`);
 
-        if (state.status === "completed" && !this.processedToolStates.has(completedKey)) {
+        const isTerminalRootState =
+          state.status === "completed" || state.status === "error";
+        if (isTerminalRootState && !this.processedToolStates.has(completedKey)) {
           this.processedToolStates.add(completedKey);
 
           const preparedFileContext = this.prepareToolFileContext(
@@ -1544,7 +1545,7 @@ class SummaryAggregator {
           };
 
           logger.debug(
-            `[Aggregator] Sending tool notification to Telegram: tool=${part.tool}, title=${title || "N/A"}`,
+            `[Aggregator] Sending tool notification to Telegram: tool=${part.tool}, title=${title || "N/A"}, status=${state.status}`,
           );
 
           if (this.onToolCallback) {
@@ -1836,8 +1837,10 @@ class SummaryAggregator {
         return { fileData: null, fileChange: null };
       }
 
+      // fileData intentionally null: write/edit/apply_patch outputs are delivered as
+      // inline rich <details> blocks (see formatToolOutputForRichMessage), not as files.
       return {
-        fileData: prepareCodeFile(content, filePath, "write"),
+        fileData: null,
         fileChange: {
           file: filePath,
           additions: content.split("\n").length,
@@ -1860,8 +1863,10 @@ class SummaryAggregator {
         return { fileData: null, fileChange: null };
       }
 
+      // fileData intentionally null: write/edit/apply_patch outputs are delivered as
+      // inline rich <details> blocks (see formatToolOutputForRichMessage), not as files.
       return {
-        fileData: prepareCodeFile(diffText, filePath, "edit"),
+        fileData: null,
         fileChange: {
           file: filePath,
           additions: editMetadata.filediff?.additions || 0,
@@ -1918,8 +1923,10 @@ class SummaryAggregator {
             })()
           : null;
 
+      // fileData intentionally null: write/edit/apply_patch outputs are delivered as
+      // inline rich <details> blocks (see formatToolOutputForRichMessage), not as files.
       return {
-        fileData: diffText ? prepareCodeFile(diffText, filePath, "edit") : null,
+        fileData: null,
         fileChange,
       };
     }
@@ -2078,8 +2085,9 @@ class SummaryAggregator {
       };
     };
 
-    const message =
+    const rawMessage =
       error?.data?.message || error?.message || error?.name || "Unknown session error";
+    const message = rawMessage.split("\n")[0]!.trim();
 
     if (sessionID && this.isTrackedChildSession(sessionID)) {
       logger.warn(`[Aggregator] Subagent session error: ${sessionID}: ${message}`);

@@ -8,6 +8,7 @@ import { t } from "../i18n/index.js";
 import { logger } from "../utils/logger.js";
 import { safeBackgroundTask } from "../utils/safe-background-task.js";
 import { sendBotText } from "../bot/utils/telegram-text.js";
+import { TELEGRAM_PLAIN_MAX_LENGTH, TELEGRAM_RICH_MAX_LENGTH } from "../telegram/constants.js";
 import { formatAssistantRunFooter } from "../bot/utils/assistant-run-footer.js";
 import { executeScheduledTask, SCHEDULED_TASK_AGENT } from "./executor.js";
 import { foregroundSessionState } from "./foreground-state.js";
@@ -23,7 +24,7 @@ import {
 import type { QueuedScheduledTaskDelivery, ScheduledTask } from "./types.js";
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
-const TELEGRAM_MESSAGE_LIMIT = 4096;
+const TELEGRAM_MESSAGE_LIMIT = TELEGRAM_PLAIN_MAX_LENGTH;
 const TASK_DESCRIPTION_PREVIEW_LENGTH = 64;
 const RESTART_INTERRUPTED_ERROR = "Interrupted by bot restart during scheduled task execution.";
 
@@ -50,7 +51,9 @@ function buildScheduledTaskSuccessMessageParts(delivery: QueuedScheduledTaskDeli
   }
 
   const firstPart = `${header}\n\n${resultParts[0]}`;
-  if (firstPart.length <= TELEGRAM_MESSAGE_LIMIT) {
+  const deliveryLimit =
+    config.bot.messageFormatMode === "markdown" ? TELEGRAM_RICH_MAX_LENGTH : TELEGRAM_MESSAGE_LIMIT;
+  if (firstPart.length <= deliveryLimit) {
     return [firstPart, ...resultParts.slice(1)];
   }
 

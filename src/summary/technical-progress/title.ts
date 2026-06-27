@@ -7,6 +7,7 @@ function basename(p: string): string {
 }
 
 const TITLE_LIMIT = 96;
+const BASH_COMMAND_LIMIT = 60;
 
 function truncate(text: string, limit = TITLE_LIMIT): string {
   return text.length <= limit ? text : `${text.slice(0, limit - 1).trimEnd()}…`;
@@ -87,6 +88,8 @@ export function buildProgressTitle(toolInfo: Pick<TechnicalProgressToolInfo, "to
     title = title ? basename(normalizePathForDisplay(title) || title) : "patch";
   } else if (toolInfo.tool === "bash") {
     title = firstStringField(input, ["command", "description"]);
+    title = truncate(redactSecrets(stripMarkdownEmphasis(title)), BASH_COMMAND_LIMIT);
+    return title || toolInfo.tool;
   } else if (["grep", "glob", "web-search_tavily_search"].includes(toolInfo.tool)) {
     title = firstStringField(input, ["pattern", "query"]);
   } else if (["webfetch", "web-search_tavily_extract"].includes(toolInfo.tool)) {

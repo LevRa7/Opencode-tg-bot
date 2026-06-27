@@ -17,6 +17,8 @@ import {
   DEFAULT_CONTEXT_LIMIT,
   formatContextLine,
   formatCostLine,
+  formatDiffStats,
+  formatLineRange,
   formatModelDisplayName,
 } from "./format.js";
 import {
@@ -60,6 +62,8 @@ function createInitialPinnedMessageState(): PinnedMessageState {
     lastUpdated: 0,
     changedFiles: [],
     cost: 0,
+    cantEditFailCount: 0,
+    cantEditFailMessageId: null,
   };
 }
 
@@ -343,8 +347,12 @@ class PinnedMessageManager {
     if (existing) {
       existing.additions += change.additions;
       existing.deletions += change.deletions;
+      // Preserve the latest tool context
+      if (change.tool) existing.tool = change.tool;
+      if (change.readOffset) existing.readOffset = change.readOffset;
+      if (change.readLimit) existing.readLimit = change.readLimit;
     } else {
-      runtime.state.changedFiles.push(change);
+      runtime.state.changedFiles.push({ ...change });
     }
     logger.debug(
       `[PinnedManager] File change added: ${change.file} (+${change.additions} -${change.deletions}), total: ${runtime.state.changedFiles.length}`,
@@ -470,11 +478,13 @@ class PinnedMessageManager {
               if (existing) {
                 existing.additions += filediff.additions || 0;
                 existing.deletions += filediff.deletions || 0;
+                existing.tool = toolPart.tool;
               } else {
                 filesMap.set(filediff.file, {
                   file: filediff.file,
                   additions: filediff.additions || 0,
                   deletions: filediff.deletions || 0,
+                  tool: toolPart.tool,
                 });
               }
             }
@@ -490,11 +500,36 @@ class PinnedMessageManager {
             const existing = filesMap.get(filePath);
             if (existing) {
               existing.additions += lines;
+              existing.tool = "write";
             } else {
               filesMap.set(filePath, {
                 file: filePath,
                 additions: lines,
                 deletions: 0,
+                tool: "write",
+              });
+            }
+          } else if (
+            toolPart.tool === "read" &&
+            toolPart.state.input &&
+            "filePath" in toolPart.state.input
+          ) {
+            const filePath = toolPart.state.input.filePath as string;
+            const offset = typeof toolPart.state.input.offset === "number" ? toolPart.state.input.offset : undefined;
+            const limit = typeof toolPart.state.input.limit === "number" ? toolPart.state.input.limit : undefined;
+            const existing = filesMap.get(filePath);
+            if (existing) {
+              existing.tool = "read";
+              if (offset) existing.readOffset = offset;
+              if (limit) existing.readLimit = limit;
+            } else {
+              filesMap.set(filePath, {
+                file: filePath,
+                additions: 0,
+                deletions: 0,
+                tool: "read",
+                readOffset: offset,
+                readLimit: limit,
               });
             }
           }
@@ -630,11 +665,10 @@ class PinnedMessageManager {
 
       for (const f of filesToShow) {
         const relativePath = this.makeRelativePath(f.file);
-        const parts = [];
-        if (f.additions > 0) parts.push(`+${f.additions}`);
-        if (f.deletions > 0) parts.push(`-${f.deletions}`);
-        const diffStr = parts.length > 0 ? ` (${parts.join(" ")})` : "";
-        lines.push(t("pinned.files.item", { path: relativePath, diff: diffStr }));
+        const { emoji, action } = this.fileActionLabel(f);
+        const stats =
+          f.tool === "read" ? formatLineRange(f) : formatDiffStats(f);
+        lines.push(`${emoji} ${action} — \`${relativePath}\` ${stats}`);
       }
 
       if (total > maxFiles) {
@@ -643,6 +677,35 @@ class PinnedMessageManager {
     }
 
     return lines.join("\n");
+  }
+
+  /**
+   * Returns emoji + localized action label for a file change based on
+   * the tool that produced it. Falls back to generic edit/patch labels
+   * when tool context is unavailable.
+   */
+  private fileActionLabel(change: FileChange): { emoji: string; action: string } {
+    switch (change.tool) {
+      case "read":
+        return { emoji: "📄", action: t("pinned.file_action.read") };
+      case "write":
+        return { emoji: "✍️", action: t("pinned.file_action.write") };
+      case "edit":
+        return { emoji: "✏️", action: t("pinned.file_action.edit") };
+      case "apply_patch":
+        return { emoji: "🧩", action: t("pinned.file_action.patch") };
+      case "bash":
+        return { emoji: "💻", action: t("pinned.file_action.command") };
+      default:
+        // Fallback: use diff stats to guess
+        if (change.additions > 0 && change.deletions > 0) {
+          return { emoji: "✏️", action: t("pinned.file_action.edit") };
+        }
+        if (change.additions > 0) {
+          return { emoji: "✍️", action: t("pinned.file_action.write") };
+        }
+        return { emoji: "📄", action: t("pinned.file_action.read") };
+    }
   }
 
   private async createPinnedMessage(): Promise<void> {
@@ -772,15 +835,28 @@ class PinnedMessageManager {
         continue;
       }
 
+      // Circuit breaker: stop after 3 consecutive "can't be edited" edit
+      // failures. Counter resets on successful edit, NOT on recreate (which
+      // could itself fail again). This prevents infinite retry loops.
+      if (runtime.state.cantEditFailCount >= 3) {
+        logger.debug(
+          `[PinnedManager] Circuit breaker open (${runtime.state.cantEditFailCount} consecutive ` +
+          `failures), skipping edit for message #${runtime.state.messageId}`,
+        );
+        continue;
+      }
+
       try {
-        // editMessageText is identified by chat_id + message_id only. It does NOT
-        // accept message_thread_id; passing it (the old behavior) made Telegram
-        // reject every edit with "400: message can't be edited" in topic-scoped
-        // chats. The thread id is still applied on sendMessage in
+        // editMessageText is identified by chat_id + message_id only. It does
+        // NOT accept message_thread_id; passing it (the old behavior) makes
+        // Telegram reject every edit with "400: message can't be edited" in
+        // topic-scoped chats. The thread id is applied on sendMessage in
         // createPinnedMessage, which is enough to place the message in the topic.
         await runtime.api.editMessageText(runtime.chatId, runtime.state.messageId, text);
         runtime.state.lastUpdated = Date.now();
         runtime.lastRenderedMessageText = text;
+        // Successful edit resets the circuit breaker.
+        runtime.state.cantEditFailCount = 0;
 
         logger.debug(`[PinnedManager] Updated pinned message: ${runtime.state.messageId}`);
 
@@ -809,25 +885,45 @@ class PinnedMessageManager {
           continue;
         }
 
+        if (errorMessage.includes("message can't be edited")) {
+          runtime.state.cantEditFailCount++;
+          await this.recreatePinnedMessage(
+            runtime,
+            `can't be edited (attempt ${runtime.state.cantEditFailCount})`,
+          );
+          runtime.state.lastUpdated = Date.now();
+          continue;
+        }
+
+        // Throttle even on failure so a single persistent error doesn't
+        // re-trigger editMessageText on every subsequent event.
+        runtime.state.lastUpdated = Date.now();
+
         logger.error("[PinnedManager] Error updating pinned message:", err);
       }
     }
   }
 
   /**
-   * Recreates the pinned message after it was actually deleted (the "message to
-   * edit not found" case). Drops the dead message id and creates a fresh one;
-   * because the old message no longer exists this replaces rather than
-   * duplicates. The accumulated state (tokens, cost, diffs) carries over through
-   * createPinnedMessage()'s formatMessage(). The old id is logged for analysis.
+   * Recreates the pinned message after the previous one became invalid (deleted
+   * or uneditable). Deletes the old message via Telegram API (best-effort),
+   * then creates a fresh one. The accumulated state (tokens, cost, diffs)
+   * carries over through createPinnedMessage()'s formatMessage().
    */
   private async recreatePinnedMessage(
     runtime: ScopedPinnedRuntime,
     reason: string,
   ): Promise<void> {
+    const oldMessageId = runtime.state.messageId;
     logger.warn(
-      `[PinnedManager] Pinned message #${runtime.state.messageId} ${reason}, recreating...`,
+      `[PinnedManager] Pinned message #${oldMessageId} ${reason}, recreating...`,
     );
+
+    // Best-effort cleanup of the old message so we don't leave duplicates.
+    if (oldMessageId && runtime.api && runtime.chatId) {
+      await runtime.api.deleteMessage?.(runtime.chatId, oldMessageId).catch(() => {});
+    }
+
     runtime.state.messageId = null;
     runtime.state.createdInCurrentProcess = false;
     runtime.lastRenderedMessageText = null;

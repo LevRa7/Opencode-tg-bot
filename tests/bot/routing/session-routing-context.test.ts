@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { __routingTest, routingBySessionId } from "../../../src/bot/index.js";
 import { createFakeBot, createFakeBotApi } from "./_mocks/fake-bot.js";
 import { makeScope, uniqueSessionId } from "./_mocks/test-utils.js";
+import type { ActiveSessionEntry } from "../../../src/active-session/tracker.js";
 
 const {
   syncSessionRoutingContext,
@@ -52,6 +53,18 @@ vi.mock("../../../src/bot/handlers/prompt.js", () => {
   return {
     getPromptRoutingContext: vi.fn((sessionId: string) => map.get(sessionId) ?? null),
     clearPromptRouting: vi.fn((sessionId: string) => map.delete(sessionId)),
+  };
+});
+
+const activeSessionRecoveryMocks = vi.hoisted(() => ({
+  findActiveSessionById: vi.fn<[string], ActiveSessionEntry | null>(),
+}));
+
+vi.mock("../../../src/active-session/tracker.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../src/active-session/tracker.js")>();
+  return {
+    ...actual,
+    findActiveSessionById: activeSessionRecoveryMocks.findActiveSessionById,
   };
 });
 
@@ -106,6 +119,7 @@ function mockThreadTarget(
 beforeEach(() => {
   routingBySessionId.clear();
   vi.clearAllMocks();
+  activeSessionRecoveryMocks.findActiveSessionById.mockReset().mockReturnValue(null);
 });
 
 // ================================================================================
@@ -776,5 +790,98 @@ describe("getSessionRoutingScope", () => {
     vi.mocked(threadContextManager.getSessionScope).mockReturnValue(null);
 
     expect(getSessionRoutingScope(sessionId)).toBeNull();
+  });
+});
+
+// ================================================================================
+// syncSessionRoutingContext — recovery after restart
+// ================================================================================
+
+describe("syncSessionRoutingContext — recovery after restart", () => {
+  it("должен восстановить routing из active-session tracker, когда promptRouting и attach пусты", () => {
+    const sessionId = uniqueSessionId();
+    __routingTest.activeBotInstance = createFakeBot();
+
+    activeSessionRecoveryMocks.findActiveSessionById.mockReturnValue({
+      sessionId,
+      chatId: -1001234567890,
+      messageThreadId: 42,
+      timestamp: Date.now(),
+    });
+
+    const routing = syncSessionRoutingContext(sessionId);
+
+    expect(routing).not.toBeNull();
+    expect(routing!.target).toEqual({ chatId: -1001234567890, messageThreadId: 42 });
+    expect(routing!.targetSource).toBe("recovery");
+    expect(routing!.deliveryTarget).toEqual({ chatId: -1001234567890, messageThreadId: 42 });
+
+    __routingTest.activeBotInstance = null;
+  });
+
+  it("должен восстановить routing без messageThreadId, если active-session entry имеет null thread", () => {
+    const sessionId = uniqueSessionId();
+    __routingTest.activeBotInstance = createFakeBot();
+
+    activeSessionRecoveryMocks.findActiveSessionById.mockReturnValue({
+      sessionId,
+      chatId: -1009876543210,
+      messageThreadId: null,
+      timestamp: Date.now(),
+    });
+
+    const routing = syncSessionRoutingContext(sessionId);
+
+    expect(routing).not.toBeNull();
+    expect(routing!.target).toEqual({ chatId: -1009876543210 });
+    expect(routing!.targetSource).toBe("recovery");
+
+    __routingTest.activeBotInstance = null;
+  });
+
+  it("должен вернуть null, когда recovery tracker тоже ничего не нашёл", () => {
+    const sessionId = uniqueSessionId();
+    activeSessionRecoveryMocks.findActiveSessionById.mockReturnValue(null);
+
+    const routing = syncSessionRoutingContext(sessionId);
+
+    expect(routing).toBeNull();
+  });
+
+  it("должен предпочесть promptRouting восстановлению из recovery tracker", () => {
+    const sessionId = uniqueSessionId();
+    seedPromptRouting(sessionId, { target: { chatId: 1, messageThreadId: 10 } });
+    activeSessionRecoveryMocks.findActiveSessionById.mockReturnValue({
+      sessionId,
+      chatId: -100555,
+      messageThreadId: 99,
+      timestamp: Date.now(),
+    });
+
+    const routing = syncSessionRoutingContext(sessionId);
+
+    expect(routing).not.toBeNull();
+    expect(routing!.target).toEqual({ chatId: 1, messageThreadId: 10 });
+    expect(routing!.targetSource).toBe("prompt");
+  });
+
+  it("должен предпочесть attached target восстановлению из recovery tracker", () => {
+    const sessionId = uniqueSessionId();
+    __routingTest.activeBotInstance = createFakeBot();
+    mockAttachTarget(sessionId, { chatId: 3, messageThreadId: 30 });
+    activeSessionRecoveryMocks.findActiveSessionById.mockReturnValue({
+      sessionId,
+      chatId: -100555,
+      messageThreadId: 99,
+      timestamp: Date.now(),
+    });
+
+    const routing = syncSessionRoutingContext(sessionId);
+
+    expect(routing).not.toBeNull();
+    expect(routing!.target).toEqual({ chatId: 3, messageThreadId: 30 });
+    expect(routing!.targetSource).toBe("attached");
+
+    __routingTest.activeBotInstance = null;
   });
 });

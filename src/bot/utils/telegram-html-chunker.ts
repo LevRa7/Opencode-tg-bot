@@ -1,6 +1,7 @@
 import { sanitizeHtmlForTelegram } from "./html-sanitize.js";
+import { TELEGRAM_RICH_MAX_LENGTH } from "../../telegram/constants.js";
 
-const DEFAULT_TELEGRAM_HTML_LIMIT = 4096;
+const DEFAULT_TELEGRAM_HTML_LIMIT = TELEGRAM_RICH_MAX_LENGTH;
 const TAG_REGEX = /<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
 const VOID_TAGS = new Set(["br"]);
 

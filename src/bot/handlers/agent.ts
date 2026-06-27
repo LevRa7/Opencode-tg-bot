@@ -63,7 +63,9 @@ export async function handleAgentSelect(ctx: Context): Promise<boolean> {
       keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
     }
 
-    const keyboard = createMainKeyboard(agentName, currentModel, contextInfo ?? undefined);
+    const keyboard = createMainKeyboard(agentName, currentModel, contextInfo ?? undefined, undefined, {
+      isTerminalTopic: false,
+    });
     const displayName = getAgentDisplayName(agentName);
 
     clearActiveInlineMenu("agent_selected");
@@ -195,7 +197,9 @@ export async function cycleAgentMode(ctx: Context): Promise<void> {
       keyboardManager.updateContext(contextInfo.tokensUsed, contextInfo.tokensLimit);
     }
 
-    const keyboard = createMainKeyboard(nextAgent, currentModel, contextInfo ?? undefined);
+    const keyboard = createMainKeyboard(nextAgent, currentModel, contextInfo ?? undefined, undefined, {
+      isTerminalTopic: false,
+    });
     const displayName = getAgentDisplayName(nextAgent);
     const description = getAgentModeDescription(nextAgent, nextAgentInfo.description);
 

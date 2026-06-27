@@ -64,6 +64,7 @@
     "https-proxy-agent": "^7.0.6",
     "lru-cache": "^11.5.1",
     "mdast-util-to-string": "^4.0.0",
+    "node-pty": "^1.1.0",
     "playwright": "^1.60.0",
     "pptxgenjs": "^4.0.1",
     "qrcode": "^1.5.4",

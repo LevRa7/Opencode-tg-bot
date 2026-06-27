@@ -50,6 +50,10 @@ import { attachSessionForScope } from "../../attach/service.js";
 import { showPermissionRequest } from "./permission.js";
 import { showCurrentQuestion } from "./question.js";
 import { externalInputSuppression } from "../../external-input/suppression.js";
+import { injectMemoryContext } from "../../memory/inject.js";
+import { syncTurn, queuePrefetch } from "../../memory/sync.js";
+import { maybeGetMemoryNudge, getTurnCount } from "../../memory/nudge.js";
+import { spawnBackgroundReview, setBackgroundReviewCallback } from "../../memory/background-review.js";
 
 const PROMPT_TIMEOUT_MS = 60_000;
 
@@ -260,6 +264,32 @@ function releaseSessionClaim(sessionId: string, runId: number): void {
   }
 }
 
+// Session creation deduplication: prevents concurrent calls from creating
+// duplicate sessions for the same conversation scope.  The deferred batch
+// window normally serializes rapid-fire messages, but this lock is a safety
+// net for edge cases (e.g. exact event-loop-tick boundary races).
+const sessionCreationLockByScope = new Map<string, Promise<void>>();
+
+function tryAcquireSessionCreationLock(scopeKey: string): (() => void) | null {
+  if (sessionCreationLockByScope.has(scopeKey)) {
+    return null;
+  }
+
+  let release: () => void;
+  const lockPromise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  sessionCreationLockByScope.set(scopeKey, lockPromise);
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    sessionCreationLockByScope.delete(scopeKey);
+    release!();
+  };
+}
+
 export type PromptResponseMode = "text_only" | "text_and_tts";
 
 export type ProcessPromptOptions = {
@@ -282,6 +312,18 @@ function clearPromptRoutingContext(sessionId: string): void {
 
 export function clearPromptRouting(sessionId: string): void {
   clearPromptRoutingContext(sessionId);
+}
+
+/**
+ * Resets module-level state for tests (session claim map, routing context).
+ * Not exposed in production, used only by Vitest.
+ */
+export function __resetPromptStateForTests(): void {
+  sessionClaimMap.clear();
+  sessionCreationLockByScope.clear();
+  promptRoutingBySessionId.clear();
+  promptResponseModes.clear();
+  sshActiveByScope.clear();
 }
 
 export function setPromptResponseMode(sessionId: string, responseMode: PromptResponseMode): void {
@@ -425,6 +467,116 @@ export async function maybeAutoCompactBeforePrompt(options: {
 }
 
 /**
+ * Ensures a routing context and run state exist for HITL response delivery.
+ * When the server is busy but no local run is tracking the session, the
+ * SSE response would otherwise have no delivery target and be silently lost.
+ * Only sets up context when none exists yet.
+ */
+function ensureHiltRoutingContext(
+  sessionId: string,
+  routing: {
+    bot: Bot<Context>;
+    target: TelegramThreadTarget;
+    scope: TelegramConversationScope | null;
+    isForumChat: boolean;
+    sourceMessageId?: number;
+    suppressSendErrorMessage: boolean;
+    responseMode: PromptResponseMode;
+  },
+): void {
+  if (assistantRunState.isRunActive(sessionId) || getPromptRoutingContext(sessionId)) {
+    return;
+  }
+
+  const currentAgent = getStoredAgent();
+  const storedModel = getStoredModel();
+  assistantRunState.startRun(sessionId, {
+    startedAt: Date.now(),
+    configuredAgent: currentAgent,
+    configuredProviderID: storedModel.providerID,
+    configuredModelID: storedModel.modelID,
+  });
+  setPromptResponseMode(sessionId, routing.responseMode);
+  setPromptRoutingContext(sessionId, {
+    bot: routing.bot,
+    target: routing.target,
+    scope: routing.scope,
+    isForumChat: routing.isForumChat,
+    sourceMessageId: routing.sourceMessageId,
+    suppressSendErrorMessage: routing.suppressSendErrorMessage,
+  });
+}
+
+/**
+ * Sends a human-in-the-loop prompt to the OpenCode server without modifying
+ * any bot-side state (run state, foreground state, routing context).
+ *
+ * Used when the session is already busy — the server accepts concurrent
+ * promptAsync calls and injects the message into the running turn.
+ */
+async function fireHumanInTheLoopPrompt(
+  currentSession: { id: string; directory: string } | null,
+  text: string,
+  fileParts: FilePartInput[],
+): Promise<void> {
+  if (!currentSession) {
+    logger.warn("[Bot] HITL prompt skipped: no current session");
+    return;
+  }
+
+  const parts: Array<TextPartInput | FilePartInput> = [];
+  if (text.trim().length > 0) {
+    parts.push({ type: "text", text });
+  }
+  parts.push(...fileParts);
+
+  if (parts.length === 0) return;
+
+  const currentAgent = getStoredAgent();
+  const storedModel = getStoredModel();
+
+  const promptOptions: {
+    sessionID: string;
+    directory: string;
+    parts: Array<TextPartInput | FilePartInput>;
+    model?: { providerID: string; modelID: string };
+    agent?: string;
+    variant?: string;
+  } = {
+    sessionID: currentSession.id,
+    directory: currentSession.directory,
+    parts,
+    agent: currentAgent,
+  };
+
+  if (storedModel.providerID && storedModel.modelID) {
+    promptOptions.model = {
+      providerID: storedModel.providerID,
+      modelID: storedModel.modelID,
+    };
+    if (storedModel.variant) {
+      promptOptions.variant = storedModel.variant;
+    }
+  }
+
+  logger.info(
+    `[Bot] Firing HITL prompt: session=${currentSession.id}, textLen=${text.length}, fileCount=${fileParts.length}, agent=${currentAgent}, model=${storedModel.providerID}/${storedModel.modelID}`,
+  );
+
+  try {
+    await wrapPromptDispatchWithTimeout(
+      opencodeClient.session.promptAsync(promptOptions),
+    );
+    logger.info(`[Bot] HITL prompt accepted: session=${currentSession.id}`);
+  } catch (err) {
+    logger.error(
+      `[Bot] HITL prompt failed: session=${currentSession.id}`,
+      err,
+    );
+  }
+}
+
+/**
  * Processes a user prompt: ensures project/session, subscribes to events, and sends
  * the prompt to OpenCode. Used by text, voice, and photo message handlers.
  *
@@ -447,13 +599,16 @@ export async function processUserPrompt(
 
   // New unauthorized user — show onboarding first
   const userId = ctx.from?.id;
-  if (userId) {
-    const locale = getUserLocale();
-    const deployTarget = getUserDeployTarget(userId);
-    if (!locale || !deployTarget) {
-      await showLanguageSelection(ctx);
-      return true;
-    }
+  if (!userId) {
+    logger.warn("[Prompt] No userId in context, cannot process");
+    return false;
+  }
+
+  const locale = getUserLocale();
+  const deployTarget = getUserDeployTarget(userId);
+  if (!locale || !deployTarget) {
+    await showLanguageSelection(ctx);
+    return true;
   }
 
   // Prepend reply/quote tag if the message is a reply
@@ -487,10 +642,13 @@ export async function processUserPrompt(
       return true;
     }
 
-    // First message in this batch — open window with 1 second initial expiry
+    // First message in this batch — open window with a short initial expiry
+    // Must be > 0 so that other messages processed in the same getUpdates
+    // response can find the window before the timer fires.
+    // 300 ms is enough for grammY to process all updates in one poll batch.
     await deferredBatch.deferItem({
       scopeKey,
-      initialExpiresMs: 1000,
+      initialExpiresMs: 300,
       deferredItem: {
         correlationId: `prompt:${ctx.message?.message_id ?? Date.now()}`,
         kind: "text",
@@ -585,7 +743,7 @@ export async function processUserPrompt(
     pinnedMessageManager.initialize(bot.api, ctx.chat!.id);
   }
 
-  // Initialize keyboard manager if not already
+  // Initialize keyboard manager if not already.
   keyboardManager.initialize(bot.api, ctx.chat!.id);
 
   let currentSession = getCurrentSession();
@@ -627,78 +785,133 @@ export async function processUserPrompt(
   }
 
   if (!currentSession) {
-    const progressMsg = await ctx.reply(t("bot.creating_session"));
-    const progressChatId = progressMsg.chat.id;
-    const progressMessageId = progressMsg.message_id;
+    // Session creation deduplication: prevent concurrent calls from creating
+    // duplicate sessions for the same conversation scope.  The deferred batch
+    // window (above) normally serializes rapid-fire messages, but acquired
+    // here as a safety net for edge-case event-loop boundary races.
+    const lockScopeKey = scope
+      ? buildTelegramConversationScopeKey(scope)
+      : `chat:${ctx.chat!.id}`;
+    const releaseLock = tryAcquireSessionCreationLock(lockScopeKey);
+    if (!releaseLock) {
+      logger.info(
+        `[Bot] Session creation already in progress for scope=${lockScopeKey}, deferring to in-progress call`,
+      );
+      // Another call is already creating a session — wait for it and then
+      // use the newly-created session.  When the deferred batch flushes
+      // isFollowUpBatch, the batch window above already serialises; this
+      // path is only hit when two calls race past the batch window.
+      await sessionCreationLockByScope.get(lockScopeKey);
+      // Re-read currentSession — the winner should have set it
+      currentSession = getCurrentSession();
+      if (currentSession) {
+        // Jump to the existing-session path below without releasing the
+        // lock (the winner owns it).
+      } else {
+        // Edge case: winner failed — fall through and acquire ourselves
+        // (unlikely but safe).
+        logger.warn(
+          `[Bot] Session creation lock released but no session found for scope=${lockScopeKey}, retrying`,
+        );
+      }
+    }
 
-    processManager.setGlobalProgressReporter((step: string) => {
-      ctx.api.editMessageText(
+    if (!currentSession) {
+      const progressMsg = await ctx.reply(t("bot.creating_session"));
+      const progressChatId = progressMsg.chat.id;
+      const progressMessageId = progressMsg.message_id;
+
+      processManager.setGlobalProgressReporter((step: string) => {
+        ctx.api.editMessageText(
+          progressChatId,
+          progressMessageId,
+          `🔄 ${step}`,
+        ).catch(() => {});
+      });
+
+      let session;
+      let sessionError;
+      try {
+        const result = await opencodeClient.session.create({
+          directory: currentProject.worktree,
+        });
+        session = result.data;
+        sessionError = result.error;
+      } finally {
+        processManager.setGlobalProgressReporter(undefined);
+      }
+
+      if (sessionError || !session) {
+        // Edit the progress message to show the error instead of sending a new one
+        await ctx.api.editMessageText(
+          progressChatId,
+          progressMessageId,
+          t("bot.create_session_error"),
+        ).catch(() => {
+          // Fallback: if edit fails (e.g. message deleted), send a new message
+          return ctx.reply(t("bot.create_session_error"));
+        });
+        if (releaseLock) releaseLock();
+        return false;
+      }
+
+      logger.info(
+        `[Bot] Created new session: id=${session.id}, title="${session.title}", project=${currentProject.worktree}`,
+      );
+
+      currentSession = {
+        id: session.id,
+        title: session.title,
+        directory: currentProject.worktree,
+      };
+
+      setCurrentSession(currentSession);
+      if (scope) {
+        await attachSessionForScope({
+          scope,
+          session: currentSession,
+          reason: "new_session",
+          restoreQuestion: () =>
+            showCurrentQuestion(ctx.api, scope.chatId, scope.messageThreadId),
+          restorePermission: (request) =>
+            showPermissionRequest(
+              ctx.api,
+              scope.chatId,
+              request,
+              scope.messageThreadId,
+            ),
+        });
+      }
+      await ingestSessionInfoForCache(session);
+
+      // Create pinned message for new session
+      try {
+        await pinnedMessageManager.onSessionChange(session.id, session.title);
+      } catch (err) {
+        logger.error("[Bot] Error creating pinned message for new session:", err);
+      }
+
+      keyboardManager.setSessionMode(SessionType.AGENT);
+      const keyboard = keyboardManager.getKeyboard();
+
+      // Edit the progress message in-place instead of sending a new one.
+      // reply_markup is omitted here because editMessageText only accepts
+      // InlineKeyboardMarkup, but our keyboard is a reply Keyboard — it is
+      // managed separately via sendKeyboardUpdate.
+      await ctx.api.editMessageText(
         progressChatId,
         progressMessageId,
-        `🔄 ${step}`,
-      ).catch(() => {});
-    });
-
-    let session;
-    let sessionError;
-    try {
-      const result = await opencodeClient.session.create({
-        directory: currentProject.worktree,
-      });
-      session = result.data;
-      sessionError = result.error;
-    } finally {
-      processManager.setGlobalProgressReporter(undefined);
-    }
-
-    if (sessionError || !session) {
-      await ctx.reply(t("bot.create_session_error"));
-      return false;
-    }
-
-    logger.info(
-      `[Bot] Created new session: id=${session.id}, title="${session.title}", project=${currentProject.worktree}`,
-    );
-
-    currentSession = {
-      id: session.id,
-      title: session.title,
-      directory: currentProject.worktree,
-    };
-
-    setCurrentSession(currentSession);
-    if (scope) {
-      await attachSessionForScope({
-        scope,
-        session: currentSession,
-        reason: "new_session",
-        restoreQuestion: () =>
-          showCurrentQuestion(ctx.api, scope.chatId, scope.messageThreadId),
-        restorePermission: (request) =>
-          showPermissionRequest(
-            ctx.api,
-            scope.chatId,
-            request,
-            scope.messageThreadId,
-          ),
+        t("bot.session_created", { title: session.title }),
+      ).catch(() => {
+        // Fallback: if edit fails (e.g. message deleted), send a new message
+        return ctx.reply(
+          t("bot.session_created", { title: session.title }),
+          withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
+        );
       });
     }
-    await ingestSessionInfoForCache(session);
 
-    // Create pinned message for new session
-    try {
-      await pinnedMessageManager.onSessionChange(session.id, session.title);
-    } catch (err) {
-      logger.error("[Bot] Error creating pinned message for new session:", err);
-    }
-
-    keyboardManager.setSessionMode(SessionType.AGENT);
-    const keyboard = keyboardManager.getKeyboard();
-
-    await ctx.reply(
-      t("bot.session_created", { title: session.title }),
-      withMessageThreadId({ reply_markup: keyboard }, extractMessageThreadIdFromContext(ctx)),
-    );
+    if (releaseLock) releaseLock();
   } else {
     logger.info(
       `[Bot] Using existing session: id=${currentSession.id}, title="${currentSession.title}"`,
@@ -718,12 +931,24 @@ export async function processUserPrompt(
 
   void ensureEventSubscription(currentSession.directory);
 
-  // Atomic session claim: only one call proceeds past the busy check
+  // Atomic session claim: only one call proceeds past the busy check.
+  // When the session is already claimed, send the message as human-in-the-loop
+  // input directly to the OpenCode server.
   const claimRunId = tryClaimSession(currentSession.id);
   if (claimRunId === false) {
-    logger.info(`[Bot] Session ${currentSession.id} already claimed, ignoring`);
-    await ctx.reply(t("bot.session_busy"));
-    return false;
+    logger.info(`[Bot] Session ${currentSession.id} already claimed, sending HITL prompt`);
+    ensureHiltRoutingContext(currentSession.id, {
+      bot,
+      target,
+      scope,
+      isForumChat: isForumChat(ctx),
+      sourceMessageId:
+        typeof ctx.message?.message_id === "number" ? ctx.message.message_id : undefined,
+      suppressSendErrorMessage,
+      responseMode,
+    });
+    await fireHumanInTheLoopPrompt(currentSession, text, fileParts);
+    return true;
   }
 
   const busyScope = scope ?? threadContextManager.getActiveScope();
@@ -732,18 +957,23 @@ export async function processUserPrompt(
 
   releaseSessionClaim(currentSession.id, claimRunId);
 
-  if (sessionIsBusy) {
+  // Human-in-the-loop: when the server is already processing, send the user's
+  // message immediately as input to the running turn instead of blocking.
+    if (sessionIsBusy || assistantRunState.isRunActive(currentSession.id)) {
     foregroundSessionState.markIdle(currentSession.id, resolveBusyScopeForSession(currentSession.id, busyScope));
-    logger.info(`[Bot] Ignoring new prompt: session ${currentSession.id} is busy`);
-    await ctx.reply(t("bot.session_busy"));
-    return false;
-  }
-
-  if (assistantRunState.isRunActive(currentSession.id)) {
-    foregroundSessionState.markIdle(currentSession.id, resolveBusyScopeForSession(currentSession.id, busyScope));
-    logger.info(`[Bot] Ignoring new prompt: session ${currentSession.id} has an active local run`);
-    await ctx.reply(t("bot.session_busy"));
-    return false;
+    logger.info(`[Bot] Session ${currentSession.id} is busy (server=${sessionIsBusy}, local=${assistantRunState.isRunActive(currentSession.id)}), sending HITL prompt`);
+    ensureHiltRoutingContext(currentSession.id, {
+      bot,
+      target,
+      scope,
+      isForumChat: isForumChat(ctx),
+      sourceMessageId:
+        typeof ctx.message?.message_id === "number" ? ctx.message.message_id : undefined,
+      suppressSendErrorMessage,
+      responseMode,
+    });
+    await fireHumanInTheLoopPrompt(currentSession, text, fileParts);
+    return true;
   }
 
   if (scope) {
@@ -775,7 +1005,22 @@ export async function processUserPrompt(
 
     // Add text part if present
     if (text.trim().length > 0) {
-      parts.push({ type: "text", text });
+      // Inject memory nudge (every N turns)
+      const nudgeText = maybeGetMemoryNudge(userId);
+      let enrichedText = text;
+      if (nudgeText) {
+        enrichedText += nudgeText;
+      }
+
+      // Inject memory context from kaeru (best-effort, non-blocking)
+      // Wrapped in its own try/catch so nudge still applies if kaeru fails
+      try {
+        enrichedText = await injectMemoryContext(userId, enrichedText);
+      } catch {
+        // injectMemoryContext already logs internally; proceed with unenriched text
+      }
+
+      parts.push({ type: "text", text: enrichedText });
     }
 
     // Add file parts
@@ -869,6 +1114,63 @@ export async function processUserPrompt(
     } catch (error) {
       promptDispatchPromise = Promise.reject(error);
     }
+
+    // Post-turn memory sync: after dispatch completes, sync to kaeru
+    // and (on nudge intervals) spawn background review.
+    // Fire-and-forget — never blocks the user's response.
+    promptDispatchPromise
+      .then((result) => {
+        if (result?.data) {
+          const turnCount = getTurnCount(userId);
+          syncTurn({
+            userId,
+            sessionId: currentSession.id,
+            userPrompt: text,
+            assistantResponse: "",
+          });
+          queuePrefetch(userId, text);
+
+          // Background review on nudge intervals
+          if (turnCount > 0 && turnCount % 10 === 0) {
+            // Use the local ctx to deliver review notifications
+            setBackgroundReviewCallback(async (summaryLines, _sid) => {
+              // summaryLines are i18n keys like "review.memory_updated"
+              const { t } = await import("../../i18n/index.js");
+              const title = t("review.self_improvement_review");
+              const lines = summaryLines
+                .map((key) => `  💾 ${t(key as any)}`)
+                .join("\n");
+              try {
+                await ctx.api.sendMessage(
+                  ctx.chat!.id,
+                  `💾 **${title}:**\n${lines}`,
+                  {
+                    parse_mode: "MarkdownV2",
+                    message_thread_id: ctx.message?.message_thread_id,
+                  },
+                );
+              } catch {
+                // Fallback without markdown
+                const fallback = summaryLines.join(", ");
+                await ctx.api.sendMessage(
+                  ctx.chat!.id,
+                  `💾 ${title}: ${fallback}`,
+                  { message_thread_id: ctx.message?.message_thread_id },
+                ).catch(() => {});
+              }
+            });
+
+            spawnBackgroundReview(
+              currentSession.id,
+              currentSession.directory,
+              [], // messages are extracted from session by the review process
+            );
+          }
+        }
+      })
+      .catch(() => {
+        // sync is best-effort; failures are silent
+      });
 
     safeBackgroundTask({
       taskName: "session.promptAsync",

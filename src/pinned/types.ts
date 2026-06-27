@@ -10,12 +10,18 @@ export interface TokensInfo {
 }
 
 /**
- * File change info from OpenCode session diff
+ * File change info from OpenCode — enriched with tool context for rich formatting
  */
 export interface FileChange {
   file: string;
   additions: number;
   deletions: number;
+  /** Tool that produced this change (edit, write, apply_patch, read, bash, etc.) */
+  tool?: string;
+  /** For read operations: the starting line number (1-indexed) */
+  readOffset?: number;
+  /** For read operations: the ending line number (inclusive) */
+  readLimit?: number;
 }
 
 /**
@@ -34,4 +40,8 @@ export interface PinnedMessageState {
   lastUpdated: number;
   changedFiles: FileChange[];
   cost?: number;
+  /** Circuit breaker: consecutive "can't be edited" failures counter */
+  cantEditFailCount: number;
+  /** messageId that failures were counted against (reset on id change) */
+  cantEditFailMessageId: number | null;
 }

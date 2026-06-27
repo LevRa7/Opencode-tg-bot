@@ -1007,4 +1007,21 @@ export const ru: I18nDictionary = {
   "vm.progress.checking": "\u23F3 \u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u044E\u0449\u0435\u0439 VM...",
   "vm.progress.installing": "\u23F3 \u0423\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0430 \u0441\u043E\u0444\u0442\u0430 \u0438 \u0437\u0430\u043F\u0443\u0441\u043A OpenCode (\u0434\u043E 10 \u043C\u0438\u043D)...",
 
+  "vm.progress.setup_access": "🔐 Setting up access...",
+  "vm.progress.setup_network": "🌐 Setting up network...",
+  "vm.progress.cleanup_vm": "🧹 Cleaning up previous VM...",
+  "vm.progress.clone_image": "📦 Cloning image...",
+  "vm.progress.cloud_init": "⚙️ Generating cloud-init...",
+  "vm.progress.define_vm": "🖥 Defining VM...",
+  "vm.progress.start_vm": "🚀 Starting VM...",
+  "vm.progress.wait_ip": "🌐 Waiting for IP (DHCP)...",
+  "pinned.file_action.read": "Read",
+  "pinned.file_action.write": "Write",
+  "pinned.file_action.edit": "Edit",
+  "pinned.file_action.patch": "Patch",
+  "pinned.file_action.command": "Command",
+
+  "review.self_improvement_review": "Self-improvement review",
+  "bot.session_sse_timeout_retry": "SSE timeout, retrying...",
+  "tool.diff.truncated": "...truncated ({shown}/{total} lines)",
 };

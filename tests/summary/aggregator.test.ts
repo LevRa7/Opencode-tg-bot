@@ -2018,20 +2018,19 @@ describe("summary/aggregator", () => {
     });
   });
 
-  it("sends apply_patch payload as tool file", () => {
+  it("does NOT send apply_patch as a tool file; emits inline + fileChange", () => {
+    const onTool = vi.fn();
     const onToolFile = vi.fn();
+    const onFileChange = vi.fn();
+    summaryAggregator.setOnTool(onTool);
     summaryAggregator.setOnToolFile(onToolFile);
+    summaryAggregator.setOnFileChange(onFileChange);
     summaryAggregator.setSession("session-1");
 
     summaryAggregator.processEvent({
       type: "message.updated",
       properties: {
-        info: {
-          id: "message-1",
-          sessionID: "session-1",
-          role: "assistant",
-          time: { created: Date.now() },
-        },
+        info: { id: "message-1", sessionID: "session-1", role: "assistant", time: { created: Date.now() } },
       },
     } as unknown as Event);
 
@@ -2047,63 +2046,40 @@ describe("summary/aggregator", () => {
           tool: "apply_patch",
           state: {
             status: "completed",
-            input: {
-              patchText: "irrelevant for formatter in this path",
-            },
+            input: { patchText: "irrelevant" },
             metadata: {
-              filediff: {
-                file: "D:/repo/src/one.ts",
-                additions: 2,
-                deletions: 1,
-              },
-              diff: [
-                "@@ -1,2 +1,3 @@",
-                "--- a/src/one.ts",
-                "+++ b/src/one.ts",
-                " old",
-                "-before",
-                "+after",
-                "+extra",
-              ].join("\n"),
+              filediff: { file: "D:/repo/src/one.ts", additions: 2, deletions: 1 },
+              diff: ["@@ -1,2 +1,3 @@", "-before", "+after"].join("\n"),
             },
           },
         },
       },
     } as unknown as Event);
 
-    expect(onToolFile).toHaveBeenCalledTimes(1);
+    expect(onToolFile).not.toHaveBeenCalled();
 
-    const filePayload = onToolFile.mock.calls[0][0] as {
-      sessionId: string;
-      tool: string;
-      hasFileAttachment: boolean;
-      fileData: {
-        filename: string;
-        buffer: Buffer;
-      };
-    };
+    const toolPayload = onTool.mock.calls.at(-1)![0] as { tool: string; hasFileAttachment: boolean };
+    expect(toolPayload.tool).toBe("apply_patch");
+    expect(toolPayload.hasFileAttachment).toBe(false);
 
-    expect(filePayload.sessionId).toBe("session-1");
-    expect(filePayload.tool).toBe("apply_patch");
-    expect(filePayload.hasFileAttachment).toBe(true);
-    expect(filePayload.fileData.filename).toBe("edit_one.ts.txt");
-    expect(filePayload.fileData.buffer.toString("utf8")).toContain("Edit File/Path: src/one.ts");
+    expect(onFileChange).toHaveBeenCalledWith("session-1", {
+      file: "src/one.ts",
+      additions: 2,
+      deletions: 1,
+    });
   });
 
-  it("sends apply_patch file using title and patchText fallback", () => {
+  it("does NOT send apply_patch file in the title/patchText fallback path", () => {
     const onToolFile = vi.fn();
+    const onFileChange = vi.fn();
     summaryAggregator.setOnToolFile(onToolFile);
+    summaryAggregator.setOnFileChange(onFileChange);
     summaryAggregator.setSession("session-1");
 
     summaryAggregator.processEvent({
       type: "message.updated",
       properties: {
-        info: {
-          id: "message-2",
-          sessionID: "session-1",
-          role: "assistant",
-          time: { created: Date.now() },
-        },
+        info: { id: "message-2", sessionID: "session-1", role: "assistant", time: { created: Date.now() } },
       },
     } as unknown as Event);
 
@@ -2121,13 +2097,7 @@ describe("summary/aggregator", () => {
             status: "completed",
             title: "Success. Updated the following files:\nM README.md",
             input: {
-              patchText: [
-                "--- a/README.md",
-                "+++ b/README.md",
-                "@@ -1,1 +1,2 @@",
-                " old",
-                "+new",
-              ].join("\n"),
+              patchText: ["--- a/README.md", "+++ b/README.md", "@@ -1,1 +1,2 @@", " old", "+new"].join("\n"),
             },
             metadata: {},
           },
@@ -2135,19 +2105,51 @@ describe("summary/aggregator", () => {
       },
     } as unknown as Event);
 
-    expect(onToolFile).toHaveBeenCalledTimes(1);
+    expect(onToolFile).not.toHaveBeenCalled();
+  });
 
-    const filePayload = onToolFile.mock.calls[0][0] as {
-      hasFileAttachment: boolean;
-      fileData: {
-        filename: string;
-        buffer: Buffer;
-      };
-    };
+  it("routes edit inline (no tool file) and still emits fileChange", () => {
+    const onTool = vi.fn();
+    const onToolFile = vi.fn();
+    const onFileChange = vi.fn();
+    summaryAggregator.setOnTool(onTool);
+    summaryAggregator.setOnToolFile(onToolFile);
+    summaryAggregator.setOnFileChange(onFileChange);
+    summaryAggregator.setSession("session-1");
 
-    expect(filePayload.hasFileAttachment).toBe(true);
-    expect(filePayload.fileData.filename).toBe("edit_README.md.txt");
-    expect(filePayload.fileData.buffer.toString("utf8")).toContain("Edit File/Path: README.md");
+    summaryAggregator.processEvent({
+      type: "message.updated",
+      properties: {
+        info: { id: "message-edit", sessionID: "session-1", role: "assistant", time: { created: Date.now() } },
+      },
+    } as unknown as Event);
+
+    summaryAggregator.processEvent({
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "part-edit",
+          sessionID: "session-1",
+          messageID: "message-edit",
+          type: "tool",
+          callID: "call-edit",
+          tool: "edit",
+          state: {
+            status: "completed",
+            input: { filePath: "D:/repo/src/two.ts" },
+            metadata: {
+              filediff: { file: "D:/repo/src/two.ts", additions: 3, deletions: 0 },
+              diff: ["@@ -1 +1,4 @@", "+a", "+b", "+c"].join("\n"),
+            },
+          },
+        },
+      },
+    } as unknown as Event);
+
+    expect(onToolFile).not.toHaveBeenCalled();
+    const toolPayload = onTool.mock.calls.at(-1)![0] as { tool: string; hasFileAttachment: boolean };
+    expect(toolPayload.hasFileAttachment).toBe(false);
+    expect(onFileChange).toHaveBeenCalledWith("session-1", { file: "src/two.ts", additions: 3, deletions: 0 });
   });
 
   it("fires onTokens with isCompleted=true when message has completed timestamp", () => {

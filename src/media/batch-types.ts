@@ -30,6 +30,7 @@ export interface MessageMetadata {
   forwardFromName?: string;
   forwardFromId?: number;
   forwardFromUsername?: string;
+  languageCode?: string;
 }
 
 export interface CorrelatedIncomingItem {
@@ -117,6 +118,10 @@ export function formatMetadataLine(m: MessageMetadata | undefined, label: string
     tags.push(formatTimestampTag(m.timestamp, m.timezoneOffset));
   }
 
+  if (m.languageCode) {
+    tags.push(`[${m.languageCode.toUpperCase()}]`);
+  }
+
   if (m.forwardFromName) {
     tags.push(`[forwarded_at_name=${quoted(m.forwardFromName)}]`);
   }
@@ -175,5 +180,6 @@ export function extractMessageMetadata(ctx: Context): MessageMetadata | undefine
     forwardFromName,
     forwardFromId,
     forwardFromUsername,
+    languageCode: from?.language_code,
   };
 }

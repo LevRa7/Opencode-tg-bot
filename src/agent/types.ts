@@ -14,6 +14,7 @@ export interface AgentInfo {
  * Agent emoji mapping for visual distinction
  */
 export const AGENT_EMOJI: Record<string, string> = {
+  "tg-agent": "📨",
   plan: "📋",
   build: "🛠️",
   general: "💬",

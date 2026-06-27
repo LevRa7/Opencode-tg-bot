@@ -1,5 +1,20 @@
 import { logger } from "../utils/logger.js";
 import { encryptToken } from "./token-encryption.js";
+import type { TelegraphConfig } from "./types.js";
+
+// Minimal structural type for the Telegraph keys repository: only the methods
+// ensureUserKeys actually uses. Avoids importing the concrete repo factory here
+// and keeps this module decoupled from the settings layer.
+interface TelegraphKeysRepo {
+  countByUser(userId: number): number;
+  insert(params: { user_id: number; token_encrypted: string; author_name?: string; created_at: number }): number;
+}
+
+// Shape of the telegra.ph createAccount JSON response we rely on.
+interface TelegraphResponse {
+  ok: boolean;
+  result?: { access_token?: string };
+}
 
 const CREATE_ACCOUNT_URL = "https://api.telegra.ph/createAccount";
 const COOLDOWN_MS = 30 * 60 * 1000;

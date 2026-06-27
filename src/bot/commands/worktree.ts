@@ -1,3 +1,4 @@
+import path from "node:path";
 import { CommandContext, Context, InlineKeyboard } from "grammy";
 import { config } from "../../config.js";
 import { getGitWorktreeContext, getGitWorktreeContextRemote, type GitWorktreeEntry } from "../../git/worktree.js";
@@ -155,6 +156,9 @@ async function loadCurrentWorktreeContext(userId?: number) {
   try {
     const projects = await getProjects({ includeLinkedWorktrees: true });
     const knownPaths = new Set(projects.map((p) => p.worktree));
+    // Always keep the current project's own worktree visible,
+    // even if not yet registered as an OpenCode project.
+    knownPaths.add(path.resolve(currentProject.worktree));
     context.worktrees = context.worktrees.filter((w) => knownPaths.has(w.path));
   } catch {
     // preserve full list on error

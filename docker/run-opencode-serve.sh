@@ -195,6 +195,15 @@ printf '%s\n' node_modules package.json package-lock.json bun.lock .gitignore > 
 
 cp "$HOST_AUTH_FILE" "$OPENCODE_DATA_DIR/auth.json"
 
+# Copy OpenCode agent modes (tg-agent.md, etc.) from host to tenant config
+HOST_AGENTS_DIR="${CONFIG_DIR}/agents"
+TENANT_AGENTS_DIR="${XDG_CONFIG_DIR}/agents"
+if [[ -d "$HOST_AGENTS_DIR" ]]; then
+  mkdir -p "$TENANT_AGENTS_DIR"
+  cp "${HOST_AGENTS_DIR}/"*.md "$TENANT_AGENTS_DIR/" 2>/dev/null || true
+  echo "Copied agent modes to tenant config"
+fi
+
 # Copy cliproxyapi.key to workspace if it exists
 HOST_CLIPROXYAPI_KEY="${CONFIG_DIR}/cliproxyapi.key"
 if [[ -f "$HOST_CLIPROXYAPI_KEY" ]]; then
@@ -210,7 +219,9 @@ if [[ -f "$HOST_CLIPROXYAPI_KEY" ]]; then
 fi
 
 HOST_OPENCODE_JSON="${CONFIG_DIR}/opencode.json"
+HOST_AGENTS_DIR="${CONFIG_DIR}/agents"
 TENANT_OPENCODE_JSON="${XDG_CONFIG_DIR}/opencode.json"
+TENANT_AGENTS_DIR="${XDG_CONFIG_DIR}/agents"
 TENANT_CLIPROXYAPI_KEY_REF=""
 
 if [[ -f "$HOST_CLIPROXYAPI_KEY" ]]; then
@@ -304,13 +315,24 @@ if (!config.provider.local) {
   };
 }
 
+// Ensure godmode provider exists (prefill proxy at host.docker.internal:8318 inside container, 127.0.0.1:8318 on host)
+if (!config.provider.godmode) {
+  config.provider.godmode = {
+    npm: "@ai-sdk/openai-compatible",
+    name: "Godmode (Prefill Proxy)",
+    options: {
+      baseURL: "http://host.docker.internal:8318/v1",
+    },
+  };
+}
+
 // Preserve model if it starts with cliproxyapi/ (already in host config)
 // No need to change model field.
 
 fs.writeFileSync(dst, JSON.stringify(config, null, 2) + "\n", "utf8");
  ' "$HOST_OPENCODE_JSON" "$TENANT_OPENCODE_JSON" "$CLIPROXYAPI_BASE_URL" "$TENANT_CLIPROXYAPI_KEY_REF"
 
-# Install base skills (tg-cli, openai-media-transcriber, gpt-image-api, tg-uploader, yandex-rasp, install-vpn, gui-automation)
+# Install base skills (tg-cli, openai-media-transcriber, gpt-image-api, tg-uploader, yandex-rasp, install-vpn, gui-automation, maps)
 if [ -f "$SCRIPT_DIR/vendor/python-tg-cli/SKILL.md" ]; then
   cp "$SCRIPT_DIR/vendor/python-tg-cli/SKILL.md" "$STATE_SKILLS_DIR/tg-cli/SKILL.md"
 fi
@@ -339,6 +361,30 @@ if [ -f "$SCRIPT_DIR/skills/gui-automation/SKILL.md" ]; then
   if [ -f "$SCRIPT_DIR/skills/gui-automation/gui_automation.py" ]; then
     cp "$SCRIPT_DIR/skills/gui-automation/gui_automation.py" "$STATE_SKILLS_DIR/gui-automation/gui_automation.py"
   fi
+fi
+if [ -f "$SCRIPT_DIR/opencode-skills-pkg/maps/SKILL.md" ]; then
+  mkdir -p "$STATE_SKILLS_DIR/maps/scripts"
+  cp "$SCRIPT_DIR/opencode-skills-pkg/maps/SKILL.md" "$STATE_SKILLS_DIR/maps/SKILL.md"
+  cp "$SCRIPT_DIR/opencode-skills-pkg/maps/scripts/maps_client.py" "$STATE_SKILLS_DIR/maps/scripts/maps_client.py"
+  echo "Installed maps skill"
+fi
+# Install godmode skill (GODMODE CLASSIC + Parseltongue + ULTRAPLINIAN)
+if [ -f "$SCRIPT_DIR/opencode-skills-pkg/godmode/SKILL.md" ]; then
+  mkdir -p "$STATE_SKILLS_DIR/godmode/"{references,templates,scripts}
+  cp "$SCRIPT_DIR/opencode-skills-pkg/godmode/SKILL.md" "$STATE_SKILLS_DIR/godmode/SKILL.md"
+  cp "$SCRIPT_DIR/opencode-skills-pkg/godmode/references/"*.md "$STATE_SKILLS_DIR/godmode/references/" 2>/dev/null || true
+  cp "$SCRIPT_DIR/opencode-skills-pkg/godmode/templates/"*.json "$STATE_SKILLS_DIR/godmode/templates/" 2>/dev/null || true
+  cp "$SCRIPT_DIR/opencode-skills-pkg/godmode/scripts/"*.py "$STATE_SKILLS_DIR/godmode/scripts/" 2>/dev/null || true
+  cp "$SCRIPT_DIR/opencode-skills-pkg/godmode/scripts/"*.md "$STATE_SKILLS_DIR/godmode/scripts/" 2>/dev/null || true
+  echo "Installed godmode skill"
+fi
+# Install file-server (Hermes-ported file delivery)
+if [ -f "$SCRIPT_DIR/skills/file-server/file-server.py" ]; then
+  mkdir -p "$STATE_SKILLS_DIR/file-server"
+  cp "$SCRIPT_DIR/skills/file-server/file-server.py" "$STATE_SKILLS_DIR/file-server/file-server.py"
+  # Also symlink to /usr/local/bin for easy access
+  ln -sf "$STATE_SKILLS_DIR/file-server/file-server.py" /usr/local/bin/file-server.py 2>/dev/null || true
+  echo "Installed file-server"
 fi
 
 # Install all skills from the baked-in package (opencode-skills-pkg).
@@ -398,6 +444,8 @@ Skills installed in `/state/skills`:
 - `yandex-rasp` — Yandex Rasp API: train/suburban schedules, MiniApp ticket links
 - `install-vpn` — VPN setup: Tailscale, AmneziaWG, 3x-ui (VLESS+XHTTP+REALITY)
 - `gui-automation` — GUI automation: Bezier mouse, CAPTCHA solving, anti-detection patterns
+- `maps` — Geocoding, POI search, routing, timezones via OpenStreetMap/Nominatim/OSRM. Commands: search, reverse, nearby, distance, directions, timezone, area, bbox. Zero API keys. Script at /state/skills/maps/scripts/maps_client.py
+- `godmode` — Jailbreak LLMs via GODMODE CLASSIC (5 templates), Parseltongue (33 obfuscation techniques), and ULTRAPLINIAN (55-model racing). Requires OPENROUTER_API_KEY env var. References at /state/skills/godmode/references/. Templates at /state/skills/godmode/templates/.
 
 Full catalog at `/usr/local/lib/opencode-skills-pkg/registry/catalog.json` (inside container).
 
@@ -528,8 +576,9 @@ docker run "${TTY_FLAGS[@]}" \
   -v "${GPT_IMAGE_ENV_FILE}:/run/opencode-secrets/gpt-image.env:ro" \
   -v "${WORKSPACE}:/workspace" \
   -v "${STATE_DIR}:/state" \
-  -v "${GLOBAL_AGENTS_FILE}:/etc/opencode/AGENTS.md:ro" \
-  -v "${CONFIG_DIR}/plugin/cliproxy-api:/opencode-plugins/cliproxy-api" \
+  -v "${GLOBAL_AGENTS_FILE}:/etc/opencode/AGENTS.md:ro" \\
+  -v "${HOST_AGENTS_DIR}:/bootstrap/opencode-config/agents:ro" \\
+  -v "${CONFIG_DIR}/plugin/cliproxy-api:/opencode-plugins/cliproxy-api" \\
   -w /workspace \
   --name "$CONTAINER_NAME" \
   "$IMAGE" \

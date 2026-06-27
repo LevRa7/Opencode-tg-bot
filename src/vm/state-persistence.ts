@@ -24,6 +24,7 @@ export interface VmStatePersistence {
   getByVmId(vmId: string): VmStateRecord | undefined;
   listActive(): VmStateRecord[];
   listDegraded(): VmStateRecord[];
+  listDestroyed(): VmStateRecord[];
   markDestroyed(vmId: string): boolean;
   updateIfCurrent(vmId: string, expectedVersion: number, patch: Partial<VmStateRecord>): boolean;
   deleteByUserId(userId: number): boolean;
@@ -71,6 +72,7 @@ export function createVmStatePersistence(db: Database.Database): VmStatePersiste
   const getByVmIdStmt = db.prepare("SELECT * FROM vm_states WHERE vm_id = ?");
   const listActiveStmt = db.prepare("SELECT * FROM vm_states WHERE status != 'destroyed' AND status != 'degraded'");
   const listDegradedStmt = db.prepare("SELECT * FROM vm_states WHERE status = 'degraded'");
+  const listDestroyedStmt = db.prepare("SELECT * FROM vm_states WHERE status = 'destroyed'");
   const upsertStmt = db.prepare(`
     INSERT INTO vm_states (vm_id, user_id, environment_type, spec_tier, assigned_ipv4, assigned_mac, domain_name, password_hash, version, created_at, updated_at, status, failure_count)
     VALUES (@vmId, @userId, @environmentType, @specTier, @assignedIpv4, @assignedMac, @domainName, @passwordHash, @version, @createdAt, @updatedAt, @status, @failureCount)
@@ -143,6 +145,10 @@ export function createVmStatePersistence(db: Database.Database): VmStatePersiste
 
     listDegraded(): VmStateRecord[] {
       return (listDegradedStmt.all() as VmStateDbRow[]).map(toRecord);
+    },
+
+    listDestroyed(): VmStateRecord[] {
+      return (listDestroyedStmt.all() as VmStateDbRow[]).map(toRecord);
     },
 
     markDestroyed(vmId: string): boolean {

@@ -7,8 +7,9 @@ import { logger } from "../utils/logger.js";
 import { t } from "../i18n/index.js";
 import { getCurrentProject } from "../settings/manager.js";
 import { convertMarkdownToTelegramV2 } from "./markdown-to-telegram-v2.js";
+import { TELEGRAM_PLAIN_MAX_LENGTH, TELEGRAM_RICH_MAX_LENGTH } from "../telegram/constants.js";
 
-const TELEGRAM_MESSAGE_LIMIT = 4096;
+const TELEGRAM_MESSAGE_LIMIT = TELEGRAM_PLAIN_MAX_LENGTH;
 const MARKDOWN_V2_RESERVED_CHARS = /([_\*\[\]\(\)~`>#+\-=|{}.!\\])/g;
 
 interface SplitTextOptions {
@@ -177,7 +178,13 @@ export function formatSummaryWithMode(
     return [];
   }
 
-  const normalizedMaxLength = Math.max(1, Math.floor(maxLength));
+  // Rich (markdown) messages can use the higher Telegram limit,
+  // unless an explicit tight limit is set (e.g. in tests).
+  const isTightLimit = maxLength < TELEGRAM_PLAIN_MAX_LENGTH;
+  const effectiveMaxLength =
+    !isTightLimit && mode === "markdown" ? TELEGRAM_RICH_MAX_LENGTH : maxLength;
+
+  const normalizedMaxLength = Math.max(1, Math.floor(effectiveMaxLength));
   const rawTextLimit =
     mode === "raw" ? Math.max(1, normalizedMaxLength - "```\n\n```".length) : normalizedMaxLength;
   const parts = splitText(text, rawTextLimit);

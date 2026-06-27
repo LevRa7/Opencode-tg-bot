@@ -38,7 +38,7 @@ export async function getAvailableAgents(): Promise<AgentInfo[]> {
   }
 }
 
-const DEFAULT_AGENT = "build";
+const DEFAULT_AGENT = "tg-agent";
 
 function pickFallbackAgent(agents: AgentInfo[]): string {
   const defaultAgent = agents.find((agent) => agent.name === DEFAULT_AGENT);

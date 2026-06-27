@@ -10,6 +10,7 @@ import { setCurrentSession, getCurrentSession, type SessionInfo } from "../../se
 import { getCurrentProject, setConversationCurrentProject, getVmRuntimeInfo, getUserDeployTarget } from "../../settings/manager.js";
 import { clearScopedSessionRuntime } from "../runtime/scoped-runtime-reset.js";
 import { keyboardManager } from "../../keyboard/manager.js";
+import { runWithTelegramConversationScope } from "../../telegram/scope.js";
 import { SessionType } from "../../keyboard/types.js";
 import { getStoredAgent } from "../../agent/manager.js";
 import { getStoredModel } from "../../model/manager.js";
@@ -125,24 +126,10 @@ async function getTerminalCmd(userId: number, sessionId: string, cols: number, r
   }
 
   if (deployTarget === "docker") {
-    const { getActiveTenantContainerId } = await import("../../process/manager.js");
-    const containerId = getActiveTenantContainerId(userId);
-    if (containerId) {
-      return ["docker", "exec", "-i", containerId, "sh", "-c", agentCmd];
-    }
-    return null;
-  }
-
-  if (deployTarget === "ssh") {
-    try {
-      const { sshManager } = await import("../../utils/ssh-manager.js");
-      const connInfo = sshManager.getConnectionInfo(userId);
-      if (connInfo) {
-        return ["ssh", "-q", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",
-          `${connInfo.username}@${connInfo.host}`, agentCmd];
-      }
-    } catch { /* SSH not available */ }
-    return null;
+    // Tenant docker container follows the project-wide naming convention used by
+    // download-path-upload.ts / connect.ts: opencode-serve-tg-<userId>.
+    const containerId = `opencode-serve-tg-${userId}`;
+    return ["docker", "exec", "-i", containerId, "sh", "-c", agentCmd];
   }
 
   // Local: spawn directly, use the host's npm global path
@@ -214,7 +201,7 @@ export async function startPtySession(
           </script>
           </html>
         `);
-        await page.waitForFunction(() => document.title === 'READY', { timeout: 5000 });
+        await page.waitForFunction("document.title === 'READY'", { timeout: 5000 });
         const buf = await page.screenshot({ type: "png" });
         // Delete old keyboard message if any
         const oldKeyboardMsg = terminalLastKeyboardMsgs.get(messageThreadId);
@@ -366,7 +353,7 @@ export async function openTerminalTopic(
     },
   );
 
-  // keyboard init removed — handled by middleware and buildKeyboard fallback
+  runWithTelegramConversationScope(newScope, () => { keyboardManager.initialize(api, forumChatId); });
 
   await api.sendMessage(
     forumChatId,
@@ -618,7 +605,7 @@ export async function takeTerminalScreenshot(
           </script>
           </html>
         `);
-        await page.waitForFunction(() => document.title === 'READY', { timeout: 5000 });
+        await page.waitForFunction("document.title === 'READY'", { timeout: 5000 });
     const buf = await page.screenshot({ type: "png" });
     const oldKeyboardMsg = terminalLastKeyboardMsgs.get(messageThreadId);
     if (oldKeyboardMsg) {

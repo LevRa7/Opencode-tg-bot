@@ -19,6 +19,14 @@ export type MediaStorageOwner =
        * the remote-accessible path.
        */
       sshUploadToRemote: boolean;
+    }
+  | {
+      userId: number;
+      runtimeKind: "vm";
+      /**
+       * File is served from the host's file-server via HTTP.
+       * runtimeVisiblePath will be a URL accessible from the VM.
+       */
     };
 
 export interface StoredMediaFile {

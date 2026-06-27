@@ -28,6 +28,29 @@ export interface ChildTopicDeliveryDependencies {
   sendText(params: SendBotTextParams): Promise<number | null>;
 }
 
+/**
+ * Transport used by the child-topic delivery dependency.
+ *
+ * Mirrors {@link ChildTopicDeliveryDependencies.sendText}: takes Telegram send
+ * params and returns the created message id (or null when nothing was sent).
+ */
+export type ChildTopicSendText = (params: SendBotTextParams) => Promise<number | null>;
+
+/**
+ * Adapts the streaming Telegram transport into the child-topic `sendText`
+ * dependency.
+ *
+ * Why: child-session final answers and topic notices previously went out through
+ * a plain one-shot send that did not opt into HTML fallback, so they bypassed the
+ * rich rendering used by the main assistant streaming pipeline. Wiring the
+ * dependency through the streaming transport with `useHtmlFallback` enabled gives
+ * child-topic messages the same rich/edit-capable delivery path, while keeping the
+ * dispatcher (`deliverChildTopicMessage`) free of transport details.
+ */
+export function createStreamedChildTopicSendText(send: ChildTopicSendText): ChildTopicSendText {
+  return (params) => send({ ...params, useHtmlFallback: true });
+}
+
 export async function deliverChildTopicMessage(
   dependencies: ChildTopicDeliveryDependencies,
   request: ChildTopicDeliveryRequest,

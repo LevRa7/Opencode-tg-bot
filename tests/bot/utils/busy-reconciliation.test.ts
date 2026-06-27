@@ -5,6 +5,7 @@ const mocked = vi.hoisted(() => ({
   markAttachedSessionBusyMock: vi.fn(),
   markAttachedSessionIdleMock: vi.fn(),
   clearRunMock: vi.fn(),
+  isFinalizationInFlightMock: vi.fn(),
   clearPromptResponseModeMock: vi.fn(),
   flushDeferredDeliveriesMock: vi.fn(),
 }));
@@ -25,6 +26,7 @@ vi.mock("../../../src/attach/service.js", () => ({
 vi.mock("../../../src/bot/assistant-run-state.js", () => ({
   assistantRunState: {
     clearRun: mocked.clearRunMock,
+    isFinalizationInFlight: mocked.isFinalizationInFlightMock,
   },
 }));
 
@@ -70,6 +72,8 @@ describe("busy reconciliation", () => {
     mocked.markAttachedSessionIdleMock.mockReset();
     mocked.markAttachedSessionIdleMock.mockResolvedValue(undefined);
     mocked.clearRunMock.mockReset();
+    mocked.isFinalizationInFlightMock.mockReset();
+    mocked.isFinalizationInFlightMock.mockReturnValue(false);
     mocked.clearPromptResponseModeMock.mockReset();
     mocked.flushDeferredDeliveriesMock.mockReset();
     mocked.flushDeferredDeliveriesMock.mockResolvedValue(undefined);
@@ -93,6 +97,31 @@ describe("busy reconciliation", () => {
     expect(mocked.clearRunMock).toHaveBeenCalledWith("session-1", "status_reconcile_idle");
     expect(mocked.clearPromptResponseModeMock).toHaveBeenCalledWith("session-1");
     expect(mocked.flushDeferredDeliveriesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not clear the run while finalization is still in flight", async () => {
+    // 2026-06-26 regression guard: the OpenCode server reports the session idle as soon
+    // as the model stops generating, but the bot's completion/finalization pipeline runs
+    // asynchronously for a few more seconds. Clearing assistantRunState mid-finalization
+    // turns markFinalResponsePublished into a no-op, breaks the isFinalResponsePublished
+    // guard that suppresses trailing partial deltas, and leaves a duplicate streaming
+    // draft next to the final message. The reconciler must skip such sessions and let the
+    // next pass clear them once the final response is published.
+    markForegroundBusyAt("session-1", "D:/repo");
+    mocked.isFinalizationInFlightMock.mockReturnValue(true);
+    mocked.sessionStatusMock.mockResolvedValue({
+      data: { "session-1": { type: "idle" } },
+      error: null,
+    });
+
+    await reconcileBusyStateNow("D:/repo");
+
+    expect(mocked.isFinalizationInFlightMock).toHaveBeenCalledWith("session-1");
+    expect(mocked.clearRunMock).not.toHaveBeenCalled();
+    expect(mocked.clearPromptResponseModeMock).not.toHaveBeenCalled();
+    expect(mocked.markAttachedSessionIdleMock).not.toHaveBeenCalled();
+    expect(foregroundSessionState.isBusy()).toBe(true);
+    expect(mocked.flushDeferredDeliveriesMock).not.toHaveBeenCalled();
   });
 
   it("keeps newly marked foreground busy state during the grace period", async () => {

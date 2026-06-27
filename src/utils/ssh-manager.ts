@@ -1242,6 +1242,53 @@ class SshManager {
           await this.sftpPutWithTimeout(sftp, localAgentsFile, `.config/opencode/AGENTS.md`);
 
           logger.info(`[SSHManager] Skills and helper files successfully uploaded to remote server`);
+
+          // Upload godmode skill (lives outside the skills/ package tree)
+          const godmodeRoot = "docker/opencode-skills-pkg/godmode";
+          try {
+            await fs.access(`${godmodeRoot}/SKILL.md`);
+            await mkdirp(`${remoteSkillsDir}/godmode/references`);
+            await mkdirp(`${remoteSkillsDir}/godmode/templates`);
+            await mkdirp(`${remoteSkillsDir}/godmode/scripts`);
+            await this.sftpPutWithTimeout(sftp, `${godmodeRoot}/SKILL.md`, `${remoteSkillsDir}/godmode/SKILL.md`);
+
+            // Upload references
+            const refDir = `${godmodeRoot}/references`;
+            try {
+              const refs = await fs.readdir(refDir);
+              for (const ref of refs) {
+                if (ref.endsWith(".md")) {
+                  await this.sftpPutWithTimeout(sftp, `${refDir}/${ref}`, `${remoteSkillsDir}/godmode/references/${ref}`);
+                }
+              }
+            } catch {}
+
+            // Upload templates
+            const tmplDir = `${godmodeRoot}/templates`;
+            try {
+              const tmpls = await fs.readdir(tmplDir);
+              for (const tmpl of tmpls) {
+                if (tmpl.endsWith(".json")) {
+                  await this.sftpPutWithTimeout(sftp, `${tmplDir}/${tmpl}`, `${remoteSkillsDir}/godmode/templates/${tmpl}`);
+                }
+              }
+            } catch {}
+
+            // Upload scripts (Python files)
+            const scriptsDir = `${godmodeRoot}/scripts`;
+            try {
+              const scripts = await fs.readdir(scriptsDir);
+              for (const script of scripts) {
+                if (script.endsWith(".py") || script.endsWith(".md")) {
+                  await this.sftpPutWithTimeout(sftp, `${scriptsDir}/${script}`, `${remoteSkillsDir}/godmode/scripts/${script}`);
+                }
+              }
+            } catch {}
+            logger.info(`[SSHManager] Godmode skill uploaded to remote server`);
+          } catch {
+            // godmode skill not available — non-critical
+          }
+
           resolve();
         } catch (e) {
           reject(e);

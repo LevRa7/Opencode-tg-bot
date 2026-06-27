@@ -320,7 +320,56 @@ export class IncomingMediaBatch<
         : true;
       if (canFlush) {
         await this.flushWindow(batchId);
+      } else {
+        // Session is busy — retry instead of abandoning the window.
+        // promptAsync queues on the server, so the window will eventually flush.
+        this.scheduleRetry(window);
       }
+    }
+  }
+
+  /**
+   * Retry flushing an expired window after a delay, up to a bounded number of attempts.
+   * While retrying, the window remains discoverable by findEnqueueableWindow so
+   * follow-up messages can still be batched into it.
+   */
+  private scheduleRetry(window: BatchWindow<TDeferredItem>, attempt = 1): void {
+    const MAX_RETRIES = 60;
+    if (attempt > MAX_RETRIES) {
+      logger.warn(
+        `[IncomingMediaBatch] Abandoning batch=${window.id} after ${MAX_RETRIES} retries for scope=${window.scopeKey}`,
+      );
+      this.removeWindow(window.id);
+      return;
+    }
+
+    window.phase = "retrying";
+    const delayMs = Math.min(2000, 500 * attempt);
+    window.timer = setTimeout(() => {
+      void this.handleRetry(window.id, attempt).catch((error: unknown) => {
+        logger.error(`[IncomingMediaBatch] Retry failed for batch=${window.id}`, error);
+      });
+    }, delayMs);
+  }
+
+  private async handleRetry(batchId: number, attempt: number): Promise<void> {
+    const window = this.getWindow(batchId);
+    if (!window) return;
+
+    clearTimeout(window.timer);
+
+    if (window.activeProcessingHolds > 0) {
+      // Media still processing — wait for hold release
+      return;
+    }
+
+    const canFlush = this.canFlushNowOperation
+      ? await this.canFlushNowOperation(window.scopeKey)
+      : true;
+    if (canFlush) {
+      await this.flushWindow(batchId);
+    } else {
+      this.scheduleRetry(window, attempt + 1);
     }
   }
 

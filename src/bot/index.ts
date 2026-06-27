@@ -17,10 +17,14 @@ import { restartCommand } from "./commands/restart.js";
 import {
   AGENT_MODE_BUTTON_TEXT_PATTERN,
   MODEL_BUTTON_TEXT_PATTERN,
-  STOP_BUTTON_TEXT_PATTERN,
   NEW_WINDOW_BUTTON_TEXT_PATTERN,
 } from "./message-patterns.js";
-import { sessionsCommand, handleSessionSelect, handleBackgroundSessionOpen, buildBackgroundSessionOpenKeyboard } from "./commands/sessions.js";
+import {
+  sessionsCommand,
+  handleSessionSelect,
+  handleBackgroundSessionOpen,
+  buildBackgroundSessionOpenKeyboard,
+} from "./commands/sessions.js";
 import { newCommand } from "./commands/new.js";
 import { modelCommand } from "./commands/model.js";
 import { variantCommand } from "./commands/variant.js";
@@ -30,9 +34,19 @@ import { projectsCommand, handleProjectSelect } from "./commands/projects.js";
 import { abortCommand, abortCurrentOperation } from "./commands/abort.js";
 import { handleServer } from "./commands/server.js";
 import { serverWebCommand, handleServerCallback } from "./commands/server-web.js";
-import { handleOnboardingCallback as handleWebOnboardingCallback, showWebPanelOnboarding } from "../server/start-flow.js";
+import {
+  handleOnboardingCallback as handleWebOnboardingCallback,
+  showWebPanelOnboarding,
+} from "../server/start-flow.js";
 import { handleOnboardingCallback } from "./handlers/onboarding-flow.js";
-import { connectCommand, handleProviderAuth, handleProviderInput, isProviderApiKeyPrompt, isAnyProviderPrompt, startProviderAuth } from "./commands/connect.js";
+import {
+  connectCommand,
+  handleProviderAuth,
+  handleProviderInput,
+  isProviderApiKeyPrompt,
+  isAnyProviderPrompt,
+  startProviderAuth,
+} from "./commands/connect.js";
 import { shareCommand, unshareCommand } from "./commands/share.js";
 import { forkCommand, isNotFoundError } from "./commands/fork.js";
 import { revertCommand } from "./commands/revert.js";
@@ -49,16 +63,19 @@ import {
   handleCommandsCallback,
   handleCommandTextArguments,
 } from "./commands/commands.js";
-import {
-  sshCommand,
-  handleSshCallback,
-  handleSshTextArguments,
-} from "./commands/ssh.js";
+import { sshCommand, handleSshCallback, handleSshTextArguments } from "./commands/ssh.js";
 import { streamCommand } from "./commands/stream.js";
 import { ttsCommand } from "./commands/tts.js";
 import { terminalCommand } from "./commands/terminal.js";
 import { openTerminalTopic } from "./commands/terminal.js";
-import { isTerminalTopic, executeTerminalCommand, killTerminalProcess, loadTerminalTopics, takeTerminalScreenshot, handleTerminalScrollButton, getPtySession } from "./commands/terminal.js";
+import {
+  isTerminalTopic,
+  executeTerminalCommand,
+  loadTerminalTopics,
+  takeTerminalScreenshot,
+  handleTerminalScrollButton,
+  getPtySession,
+} from "./commands/terminal.js";
 import { handleTerminalTextInput } from "./commands/terminal-text-handler.js";
 import { worktreeCommand, handleWorktreeCallback } from "./commands/worktree.js";
 import { openCommand, handleOpenCallback, clearOpenPathIndex } from "./commands/open.js";
@@ -74,7 +91,12 @@ import {
   showCurrentQuestion,
   handleQuestionTextAnswer,
 } from "./handlers/question.js";
-import { handlePermissionCallback, showPermissionRequest, registerPermissionSendFn, unregisterPermissionSendFn } from "./handlers/permission.js";
+import {
+  handlePermissionCallback,
+  showPermissionRequest,
+  registerPermissionSendFn,
+  unregisterPermissionSendFn,
+} from "./handlers/permission.js";
 import { handleAgentSelect, cycleAgentMode } from "./handlers/agent.js";
 import { handleModelSelect, showModelSelectionMenu } from "./handlers/model.js";
 import { handleVariantSelect } from "./handlers/variant.js";
@@ -97,12 +119,12 @@ import { TelegraphPublishQueue } from "../telegraph/publish-queue.js";
 import { ThinkingTelegraphAccumulator } from "../telegraph/thinking-accumulator.js";
 import { SubagentTelegraphLogger } from "../telegraph/subagent-logger.js";
 import { NoopDetailsPublisher } from "../telegraph/noop-details-publisher.js";
-import { MultiKeyClient } from "../telegraph/multi-key-client.js";
-import { TelegraphKeyPool } from "../telegraph/key-pool.js";
 import { FileDiffLogger } from "../telegraph/diff-logger.js";
-import { getTelegraphKeysRepo, getArticleBindingsRepo, getMessageJournalRepo, getMessageReactionsRepo, getMessageBookmarksRepo } from "../settings/manager.js";
-import { ensureUserKeys } from "../telegraph/auto-register.js";
-import { decryptToken } from "../telegraph/token-encryption.js";
+import {
+  getMessageJournalRepo,
+  getMessageReactionsRepo,
+  getMessageBookmarksRepo,
+} from "../settings/manager.js";
 import {
   createPlainRenderedParts,
   prepareAssistantFinalStreamingPayload,
@@ -127,7 +149,12 @@ import {
   isSessionBusy,
 } from "./handlers/prompt.js";
 import { deletePromptRetryContext, getPromptRetryContext } from "./handlers/prompt-context.js";
-import { switchToFallbackModel, getStoredModel, getFallbackModel, isAlreadyOnFallbackModel } from "../model/manager.js";
+import {
+  switchToFallbackModel,
+  getStoredModel,
+  getFallbackModel,
+  isAlreadyOnFallbackModel,
+} from "../model/manager.js";
 import { isModelUnavailableError, isSseReadTimeoutError } from "./utils/model-error-patterns.js";
 import { stripMessageTags } from "./utils/strip-message-tags.js";
 import type { ModelInfo } from "../model/types.js";
@@ -135,7 +162,12 @@ import { IncomingMediaBatch } from "./incoming-media-batch.js";
 import type { ResolvedDeferredItem } from "../media/batch-types.js";
 import { composeDeferredMediaPrompt } from "../media/prompt-composer.js";
 import { opencodeClient } from "../opencode/client.js";
-import { getCurrentSession, setCurrentSession, type SessionInfo } from "../session/manager.js";
+import {
+  getCurrentSession,
+  setCurrentSession,
+  clearSession,
+  type SessionInfo,
+} from "../session/manager.js";
 import { writeCurrentContext, findActiveSessionById } from "../active-session/tracker.js";
 import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
 import { assistantRunState } from "./assistant-run-state.js";
@@ -171,6 +203,7 @@ import {
   isPathInsideRoot,
   isRealPathInsideRoot,
   prepareLocalFileFollowUpsFromPaths,
+  prepareLocalhostFileFollowUps,
   type PreparedLocalFileFollowUp,
 } from "./utils/telegram-local-file-follow-up.js";
 import { scheduledTaskRuntime } from "../scheduled-task/runtime.js";
@@ -185,7 +218,11 @@ import {
   type TelegramDeliveryTarget,
 } from "./utils/message-thread.js";
 import { SubagentTopicService } from "./subagent-topics/service.js";
-import { deliverChildTopicMessage } from "./subagent-topics/child-delivery.js";
+import { createTopicRenameGuard, truncateTopicName } from "./utils/topic-rename-guard.js";
+import {
+  createStreamedChildTopicSendText,
+  deliverChildTopicMessage,
+} from "./subagent-topics/child-delivery.js";
 import {
   getCurrentProject,
   getApprovedTelegramUserIds,
@@ -212,7 +249,14 @@ import {
   splitTextIntoChunks,
   TELEGRAM_MESSAGE_LIMIT,
 } from "./utils/reasoning-format.js";
-import { extractToolOutput, formatToolOutputForRichMessage, isRichContent, trySendRichMessage } from "./utils/rich-message.js";
+import {
+  extractToolOutput,
+  formatToolOutputForRichMessage,
+  isRichContent,
+  stripHtml,
+  trySendRichMessage,
+  trySendRichMessageUnchecked,
+} from "./utils/rich-message.js";
 import {
   buildTelegramConversationScopeKey,
   extractTelegramConversationScopeFromContext,
@@ -346,14 +390,14 @@ const childTopicPromptSent = new Set<string>();
 const childReasoningBuffer = new Map<string, { messageId: string; text: string }>();
 const childTypingIntervals = new Map<string, ReturnType<typeof setInterval>>();
 const childSessionTitle = new Map<string, string>();
-const childTopicLastSetName = new Map<string, string>();
+const childTopicLastSetName = createTopicRenameGuard();
 
 export function setChildTopicLastSetName(sessionId: string, name: string): void {
-  childTopicLastSetName.set(sessionId, name);
+  childTopicLastSetName.tryAcquire(sessionId, name);
 }
 
 export function getChildTopicLastSetName(sessionId: string): string | undefined {
-  return childTopicLastSetName.get(sessionId);
+  return childTopicLastSetName.getLastAcquired(sessionId);
 }
 
 interface ChildSessionMeta {
@@ -377,8 +421,8 @@ const childTopicPinnedMessageId = new Map<string, number>();
 // 2026-05-01: Tracks the maternal session's own token usage from completionInfo,
 // used in the maternal idle footer to show maternal + sum(child) tokens.
 const maternalTokenUsage = new Map<string, { input: number; output: number }>();
-const publishedToolDetailCallIds = new Set<string>();
 
+const publishedToolDetailCallIds = new Set<string>();
 interface ChildAssistantMessageState {
   orderedPartIds: string[];
   partTexts: Map<string, string>;
@@ -405,7 +449,7 @@ function clearChildAssistantSession(sessionId: string): void {
   childTopicPromptSent.delete(sessionId);
   childSessionMeta.delete(sessionId);
   childSessionTitle.delete(sessionId);
-  childTopicLastSetName.delete(sessionId);
+  childTopicLastSetName.clear(sessionId);
   childReasoningBuffer.delete(sessionId);
   const typingInterval = childTypingIntervals.get(sessionId);
   if (typingInterval) {
@@ -619,11 +663,11 @@ function syncSessionRoutingContext(sessionId: string): SessionRoutingContext | n
   // When attachedTarget lacks messageThreadId but promptRouting.target has one,
   // merge the thread ID so replies land in the correct topic.
   const effectiveTarget = attachedTarget
-    ? (attachedTarget.messageThreadId !== undefined
-        ? attachedTarget
-        : (promptRouting.target.messageThreadId !== undefined
-            ? { ...attachedTarget, messageThreadId: promptRouting.target.messageThreadId }
-            : attachedTarget))
+    ? attachedTarget.messageThreadId !== undefined
+      ? attachedTarget
+      : promptRouting.target.messageThreadId !== undefined
+        ? { ...attachedTarget, messageThreadId: promptRouting.target.messageThreadId }
+        : attachedTarget
     : promptRouting.target;
 
   const routing: SessionRoutingContext = {
@@ -637,10 +681,10 @@ function syncSessionRoutingContext(sessionId: string): SessionRoutingContext | n
 
   logger.info(
     `[Routing] syncSessionRoutingContext: session=${sessionId.slice(0, 8)} ` +
-    `target.chatId=${routing.target.chatId} target.threadId=${routing.target.messageThreadId ?? "none"} ` +
-    `deliveryTarget.threadId=${routing.deliveryTarget?.messageThreadId ?? "none"} ` +
-    `source=${routing.targetSource} ` +
-    `isForum=${promptRouting.isForumChat}`,
+      `target.chatId=${routing.target.chatId} target.threadId=${routing.target.messageThreadId ?? "none"} ` +
+      `deliveryTarget.threadId=${routing.deliveryTarget?.messageThreadId ?? "none"} ` +
+      `source=${routing.targetSource} ` +
+      `isForum=${promptRouting.isForumChat}`,
   );
 
   setSessionRoutingContext(sessionId, routing);
@@ -694,8 +738,8 @@ function tryRecoverRoutingFromActiveSession(sessionId: string): SessionRoutingCo
 
   logger.info(
     `[Routing] recovery after restart: session=${sessionId.slice(0, 8)} ` +
-    `chatId=${entry.chatId} threadId=${entry.messageThreadId ?? "none"} ` +
-    `source=recovery`,
+      `chatId=${entry.chatId} threadId=${entry.messageThreadId ?? "none"} ` +
+      `source=recovery`,
   );
 
   return commitSyncedRouting(sessionId, {
@@ -728,6 +772,10 @@ async function tryAutoCreateSessionTopic(
     const topicName = session.title.trim() || "Session";
     const createResult = await activeBotInstance.api.createForumTopic(forumChatId, topicName);
 
+    // Seed rename guard with the initial topic name so SSE session.updated
+    // events skip editForumTopic when the name hasn't actually changed.
+    setChildTopicLastSetName(sessionId, truncateTopicName(topicName));
+
     const messageThreadId =
       (createResult as { message_thread_id?: number }).message_thread_id ??
       (createResult as { messageThreadId?: number }).messageThreadId ??
@@ -755,12 +803,15 @@ async function tryAutoCreateSessionTopic(
 
     logger.info(
       `[Routing] auto-created forum topic for web session: session=${sessionId.slice(0, 8)} ` +
-      `chatId=${forumChatId} threadId=${messageThreadId}`,
+        `chatId=${forumChatId} threadId=${messageThreadId}`,
     );
 
     return true;
   } catch (err) {
-    logger.warn(`[Routing] failed to auto-create topic for web session ${sessionId.slice(0, 8)}`, err);
+    logger.warn(
+      `[Routing] failed to auto-create topic for web session ${sessionId.slice(0, 8)}`,
+      err,
+    );
     return false;
   }
 }
@@ -858,7 +909,11 @@ const childTopicDeliveryDependencies = {
   getDeliveryTarget: getSessionDeliveryTarget,
   withTopicReopenClose: async <T>(_sessionId: string, fn: () => Promise<T>): Promise<T> =>
     await fn(),
-  sendText: sendBotText,
+  // Deliver child-topic messages through the streaming transport with HTML
+  // fallback so child-session final answers and notices use the same rich
+  // rendering path as the main assistant streaming pipeline (instead of a plain
+  // one-shot send).
+  sendText: createStreamedChildTopicSendText((params) => sendStreamedBotText(params)),
 };
 
 function cloneRoutingContextForChildSession(options: {
@@ -1431,17 +1486,33 @@ async function enqueueLocalFileFollowUpsFromText(sessionId: string, text: string
     routingIdentity: buildThinkingRoutingIdentity(target),
   };
 
-  const reservedPaths = localFileFollowUpTracker.reserve(sessionId, extractLocalFilePaths(text));
+  // Collect local file paths from agent response
+  const localPaths = extractLocalFilePaths(text);
+
+  // Also collect file-server URLs (http://localhost:8890/...)
+  const localhostFollowUps = await prepareLocalhostFileFollowUps(text);
+  const localhostPaths = localhostFollowUps.map((f) => f.path);
+
+  // Merge both sources
+  const allPaths = [...new Set([...localPaths, ...localhostPaths])];
+
+  const reservedPaths = localFileFollowUpTracker.reserve(sessionId, allPaths);
   if (reservedPaths.length === 0) {
     return;
   }
 
+  // Separate localhost-hosted follow-ups (already resolved) from regular paths
+  const localhostPrepared = localhostFollowUps.filter((f) => reservedPaths.includes(f.path));
+  const regularPaths = reservedPaths.filter((p) => !localhostPaths.includes(p));
+
   const localFilePathAccess = getSessionLocalFilePathResolver(sessionId);
-  const preparedFollowUps = await prepareLocalFileFollowUpsFromPaths(
-    reservedPaths,
+  const regularFollowUps = await prepareLocalFileFollowUpsFromPaths(
+    regularPaths,
     localFilePathAccess?.resolvePath,
     localFilePathAccess?.isAllowed,
   );
+
+  const preparedFollowUps = [...localhostPrepared, ...regularFollowUps];
   if (preparedFollowUps.length === 0) {
     localFileFollowUpTracker.release(sessionId, reservedPaths);
     return;
@@ -1580,9 +1651,9 @@ const responseStreamer = new ResponseStreamer({
     const effectiveThreadId = deliveryTarget?.messageThreadId ?? target.messageThreadId;
     logger.info(
       `[Routing] responseStreamer.sendText: session=${sessionId.slice(0, 8)} ` +
-      `chatId=${target.chatId} threadId=${effectiveThreadId ?? "none"} ` +
-      `deliveryTarget.threadId=${deliveryTarget?.messageThreadId ?? "none"} ` +
-      `target.threadId=${target.messageThreadId ?? "none"}`,
+        `chatId=${target.chatId} threadId=${effectiveThreadId ?? "none"} ` +
+        `deliveryTarget.threadId=${deliveryTarget?.messageThreadId ?? "none"} ` +
+        `target.threadId=${target.messageThreadId ?? "none"}`,
     );
 
     const messageId = await sendStreamedBotText({
@@ -1669,54 +1740,13 @@ const messageDraftStreamManager = new MessageDraftStreamManager(
 configureThinkingBlockDraftIdAllocator(sharedMessageDraftIdAllocator);
 export { messageDraftStreamManager };
 
-let telegraphKeyPool: TelegraphKeyPool | null = null;
-
-const telegraphClient: MultiKeyClient | null = (() => {
+const telegraphClient: TelegraphClient | null = (() => {
   if (!config.telegraph?.enabled) return null;
-
-  const keysRepo = getTelegraphKeysRepo();
-  const bindingsRepo = getArticleBindingsRepo();
-  const userId = config.telegram.adminUserId;
-  const encryptionKeySource = config.telegraph.tokenEncryptionKey
-    ? Buffer.from(config.telegraph.tokenEncryptionKey, "hex")
-    : Buffer.from(String(config.telegram.adminUserId).padStart(64, "0").slice(0, 32));
-
-  void ensureUserKeys(keysRepo, userId, config.telegraph, encryptionKeySource, config.telegraph.maxKeysPerUser);
-
-  const pool = new TelegraphKeyPool();
-  const keys = keysRepo.getAllByUser(userId);
-  for (const key of keys) {
-    try {
-      const token = decryptToken(key.token_encrypted, encryptionKeySource);
-      const client = new TelegraphClient({
-        enabled: true,
-        accessToken: token,
-        authorName: config.telegraph.authorName,
-        timeoutMs: config.telegraph.timeoutMs,
-        maxChars: config.telegraph.maxChars,
-        translateEnabled: config.telegraph.translateEnabled,
-        translateApiUrl: config.telegraph.translateApiUrl,
-        maxKeysPerUser: config.telegraph.maxKeysPerUser,
-        tokenEncryptionKey: config.telegraph.tokenEncryptionKey,
-      });
-      pool.addKey(client, key.id);
-    } catch (error) {
-      logger.warn("[Bot] Failed to decrypt Telegraph key, skipping", { keyId: key.id, error });
-    }
+  if (!config.telegraph.accessToken) {
+    logger.warn("[Bot] No Telegraph access token configured");
+    return null;
   }
-
-  if (pool.size === 0) {
-    if (config.telegraph.accessToken) {
-      const fallbackClient = new TelegraphClient(config.telegraph);
-      pool.addKey(fallbackClient, 0);
-    } else {
-      logger.warn("[Bot] No Telegraph keys available");
-      return null;
-    }
-  }
-
-  telegraphKeyPool = pool;
-  return new MultiKeyClient(pool, bindingsRepo, config.telegraph, userId);
+  return new TelegraphClient(config.telegraph);
 })();
 const technicalDetailsPublisher = telegraphClient
   ? new TelegraphPublishQueue(telegraphClient)
@@ -1727,8 +1757,8 @@ const thinkingDetailsPublisher = telegraphClient
 const subagentTelegraphLogger = telegraphClient
   ? new SubagentTelegraphLogger(telegraphClient)
   : null;
-const fileDiffLogger = telegraphKeyPool
-  ? new FileDiffLogger(telegraphKeyPool, getFileArchiveRepo())
+const fileDiffLogger = telegraphClient
+  ? new FileDiffLogger(telegraphClient, getFileArchiveRepo())
   : null;
 
 const toolCallStreamer = new ToolCallStreamer({
@@ -1742,6 +1772,17 @@ const toolCallStreamer = new ToolCallStreamer({
 
     if (!isSessionCurrent(sessionId)) {
       throw new Error(`Tool stream session mismatch for send: ${sessionId}`);
+    }
+
+    // Bot API 10.1: try rich message for code-block content
+    if (isRichContent(text)) {
+      const richResult = await trySendRichMessage(botApi, target.chatId, text, {
+        messageThreadId: target.messageThreadId,
+        disableNotification: true,
+      });
+      if (richResult?.success) {
+        return richResult.messageId ?? 0;
+      }
     }
 
     const sentMessage = await botApi.sendMessage(
@@ -1894,8 +1935,8 @@ export function createSendRenderedPart({
     const effectiveThreadId = deliveryTarget?.messageThreadId ?? messageThreadId;
     logger.info(
       `[Routing] createSendRenderedPart: session=${sessionId.slice(0, 8)} ` +
-      `chatId=${chatId} effectiveThreadId=${effectiveThreadId ?? "none"} ` +
-      `deliveryTarget.threadId=${deliveryTarget?.messageThreadId ?? "none"} messageThreadId=${messageThreadId ?? "none"}`,
+        `chatId=${chatId} effectiveThreadId=${effectiveThreadId ?? "none"} ` +
+        `deliveryTarget.threadId=${deliveryTarget?.messageThreadId ?? "none"} messageThreadId=${messageThreadId ?? "none"}`,
     );
 
     await sendBotText({
@@ -1975,12 +2016,6 @@ async function deliverBackgroundSessionNotification(
  * Uses session.messages() to find the latest completed assistant message.
  */
 
-
-
-
-
-
-
 async function ensureEventSubscription(directory: string): Promise<void> {
   if (!directory) {
     logger.error("No directory found for event subscription");
@@ -2048,16 +2083,22 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         try {
           const reasoningTitle = extractReasoningTitle(visibleReasoningText);
           const userLocalePartial = getTelegraphTranslateEnabled() ? getLocale() : undefined;
-          const translatedTitlePartial = userLocalePartial && userLocalePartial !== "en"
-            ? (await translateText(reasoningTitle, userLocalePartial).catch(() => null)) ?? reasoningTitle
+          const translateBody = userLocalePartial && userLocalePartial !== "en";
+          const translatedTitlePartial = translateBody
+            ? ((await translateText(reasoningTitle, userLocalePartial).catch(() => null)) ??
+              reasoningTitle)
             : reasoningTitle;
+          const translatedBody = translateBody
+            ? ((await translateText(visibleReasoningText, userLocalePartial).catch(() => null)) ??
+              visibleReasoningText)
+            : visibleReasoningText;
           await streamThinkingBlocks({
             sessionId,
             logicalMessageId: messageId,
             sendApi: botApi,
             target,
             title: translatedTitlePartial,
-            reasoningText: visibleReasoningText,
+            reasoningText: translatedBody,
           });
         } catch (error) {
           logger.warn(
@@ -2091,7 +2132,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         messageDraftStreamManager.enqueue(
           sessionId,
           botApi,
-          deliveryTarget ?? target,
+          target,
           messageText,
           assistantFormat,
         );
@@ -2173,16 +2214,32 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
             toolCallStreamer.breakSession(sessionId, "assistant_message_completed"),
           ]);
+          // Send fallback so user knows task completed even if no visible content
+          if (botApi && chatId) {
+            botApi
+              .sendMessage(chatId, "✅ Задача завершена", {
+                message_thread_id: target.messageThreadId ?? undefined,
+              })
+              .catch((err: unknown) =>
+                logger.warn("[Bot] Empty-completion fallback send failed", err),
+              );
+          }
           return;
         }
 
         if (mode > 0 && visibleReasoningText) {
+          // Reasoning is already embedded inline in the response message.
+          // Only publish to Telegraph for archival; skip separate Telegram thinking draft.
           const finalReasoningText = visibleReasoningText;
           const finalReasoningTitle = extractReasoningTitle(finalReasoningText);
           const translateEnabled = getTelegraphTranslateEnabled();
           const userLocale = translateEnabled ? getLocale() : undefined;
-          const translatedTitle = userLocale && userLocale !== "en"
-            ? (await translateText(finalReasoningTitle, userLocale)) ?? finalReasoningTitle
+          const shouldTranslate = userLocale && userLocale !== "en";
+          const translatedBody = shouldTranslate
+            ? ((await translateText(finalReasoningText, userLocale)) ?? finalReasoningText)
+            : finalReasoningText;
+          const translatedTitle = shouldTranslate
+            ? ((await translateText(finalReasoningTitle, userLocale)) ?? finalReasoningTitle)
             : finalReasoningTitle;
           logger.debug("[ThinkingFlow] Locale for translation", {
             translateEnabled,
@@ -2195,7 +2252,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             sendApi: botApi,
             target,
             title: translatedTitle,
-            reasoningText: visibleReasoningText,
+            reasoningText: translatedBody,
             publisher: thinkingDetailsPublisher,
             locale: userLocale,
           });
@@ -2215,19 +2272,29 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         let finalParseMode: "html" | "raw" | "markdown_v2" = finalFormat;
         let richMessageDelivered = false;
 
-        // Bot API 10.1: native rich message for structured markdown content
-        if (isRichContent(messageText)) {
+        // Bot API 10.1: native rich message for structured markdown content.
+        // Always try rich delivery for assistant messages with any formatting
+        // (headings, lists, code blocks, tables, bold, etc.) — the API handles
+        // plain text gracefully. Use unchecked fallback if standard path rejects.
+        {
           const deliveryTarget = getSessionDeliveryTarget(sessionId);
-          const richResult = await trySendRichMessage(botApi, chatId, messageText, {
-            messageThreadId: deliveryTarget?.messageThreadId ?? target.messageThreadId,
+          const threadId = deliveryTarget?.messageThreadId ?? target.messageThreadId;
+          let richResult = await trySendRichMessage(botApi, chatId, messageText, {
+            messageThreadId: threadId,
           });
+          if (!richResult?.success && isRichContent(messageText)) {
+            richResult = await trySendRichMessageUnchecked(botApi, chatId, messageText, {
+              messageThreadId: threadId,
+            });
+          }
           if (richResult?.success) {
             richMessageDelivered = true;
           }
         }
 
         if (!richMessageDelivered && mode > 0) {
-          finalText = (finalFormat as string) === "html" ? messageText : markdownToHtml(messageText);
+          finalText =
+            (finalFormat as string) === "html" ? messageText : markdownToHtml(messageText);
           finalParseMode = "html";
         }
 
@@ -2237,6 +2304,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               logicalMessageId: completionLogicalMessageId,
             });
             await clearThinkingBlockStream(sessionId, false);
+            // Delete streamed legacy messages displaced by the rich message
+            responseStreamer.clearMessage(sessionId, `${messageId}:assistant`, "rich_final_delivery", {
+              deleteMessages: true,
+            });
             await Promise.all([
               messageDraftStreamManager.flushSession(sessionId),
               toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
@@ -2250,96 +2321,96 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               messageThreadId: target.messageThreadId,
             });
           } else {
-          const finalizeAssistantDelivery = finalAssistantDeliveryOrchestrator.enqueue({
-            sessionId,
-            channel: "durable",
-            eventTimeMs: completionEventTimeMs,
-            logicalMessageId: completionLogicalMessageId,
-            deliver: async () => {
-              const { telegramMessageIds } = await finalizeAssistantResponse({
-                sessionId,
-                messageId: `${messageId}:assistant`,
-                messageText: finalText,
-                sourceCommand: undefined,
-                responseStreamer,
-                flushPendingServiceMessages: () =>
-                  Promise.all([
-                    messageDraftStreamManager.flushSession(sessionId),
-                    toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
-                    toolCallStreamer.breakSession(sessionId, "assistant_message_completed"),
-                  ]).then(() => undefined),
-                prepareStreamingPayload: () => {
-                  if (finalParseMode === "markdown_v2") {
-                    const payload = prepareFinalStreamingPayload(finalText);
-                    if (payload) return payload;
-                  }
-                  if (finalParseMode === "html") {
+            const finalizeAssistantDelivery = finalAssistantDeliveryOrchestrator.enqueue({
+              sessionId,
+              channel: "durable",
+              eventTimeMs: completionEventTimeMs,
+              logicalMessageId: completionLogicalMessageId,
+              deliver: async () => {
+                const { telegramMessageIds } = await finalizeAssistantResponse({
+                  sessionId,
+                  messageId: `${messageId}:assistant`,
+                  messageText: finalText,
+                  sourceCommand: undefined,
+                  responseStreamer,
+                  flushPendingServiceMessages: () =>
+                    Promise.all([
+                      messageDraftStreamManager.flushSession(sessionId),
+                      toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
+                      toolCallStreamer.breakSession(sessionId, "assistant_message_completed"),
+                    ]).then(() => undefined),
+                  prepareStreamingPayload: () => {
+                    if (finalParseMode === "markdown_v2") {
+                      const payload = prepareFinalStreamingPayload(finalText);
+                      if (payload) return payload;
+                    }
+                    if (finalParseMode === "html") {
+                      return {
+                        parts: [{ text: finalText }],
+                        format: "html" as const,
+                      };
+                    }
                     return {
                       parts: [{ text: finalText }],
-                      format: "html" as const,
+                      format: finalParseMode === "markdown_v2" ? "markdown_v2" : "raw",
                     };
-                  }
-                  return {
-                    parts: [{ text: finalText }],
-                    format: finalParseMode === "markdown_v2" ? "markdown_v2" : "raw",
-                  };
-                },
-                renderFinalParts: (text) => {
-                  const summaryMode: MessageFormatMode =
-                    finalParseMode === "markdown_v2"
-                      ? "markdown"
-                      : finalParseMode === "html"
-                        ? "raw"
-                        : finalParseMode;
-                  if (summaryMode === "markdown" && config.bot.messageFormatMode === "markdown") {
-                    return renderAssistantFinalPartsSafe(text, RESPONSE_STREAM_TEXT_LIMIT);
-                  }
-                  return createPlainRenderedParts(text, RESPONSE_STREAM_TEXT_LIMIT);
-                },
-                getReplyKeyboard: async () => await getReplyKeyboardForSession(sessionId),
-                sendRenderedPart: createSendRenderedPart({
-                  botApi,
-                  chatId,
-                  sessionId,
-                  finalParseMode,
-                  messageThreadId: target.messageThreadId,
-                  deliveryTarget: getSessionDeliveryTarget(sessionId),
-                }),
-              });
+                  },
+                  renderFinalParts: (text) => {
+                    const summaryMode: MessageFormatMode =
+                      finalParseMode === "markdown_v2"
+                        ? "markdown"
+                        : finalParseMode === "html"
+                          ? "raw"
+                          : finalParseMode;
+                    if (summaryMode === "markdown" && config.bot.messageFormatMode === "markdown") {
+                      return renderAssistantFinalPartsSafe(text, RESPONSE_STREAM_TEXT_LIMIT);
+                    }
+                    return createPlainRenderedParts(text, RESPONSE_STREAM_TEXT_LIMIT);
+                  },
+                  getReplyKeyboard: async () => await getReplyKeyboardForSession(sessionId),
+                  sendRenderedPart: createSendRenderedPart({
+                    botApi,
+                    chatId,
+                    sessionId,
+                    finalParseMode,
+                    messageThreadId: target.messageThreadId,
+                    deliveryTarget: getSessionDeliveryTarget(sessionId),
+                  }),
+                });
 
-              // Record message journal entries for delivered assistant messages
-              if (telegramMessageIds.length > 0) {
-                const journalRepo = getMessageJournalRepo();
-                const project = getCurrentProject()?.worktree ?? "";
-                for (const tgMsgId of telegramMessageIds) {
-                  journalRepo.insert({
-                    tg_chat_id: chatId,
-                    tg_topic_id: target.messageThreadId ?? null,
-                    tg_message_id: tgMsgId,
-                    oc_server: "",
-                    oc_project: project,
-                    oc_session_id: sessionId,
-                    oc_message_id: messageId,
-                  });
+                // Record message journal entries for delivered assistant messages
+                if (telegramMessageIds.length > 0) {
+                  const journalRepo = getMessageJournalRepo();
+                  const project = getCurrentProject()?.worktree ?? "";
+                  for (const tgMsgId of telegramMessageIds) {
+                    journalRepo.insert({
+                      tg_chat_id: chatId,
+                      tg_topic_id: target.messageThreadId ?? null,
+                      tg_message_id: tgMsgId,
+                      oc_server: "",
+                      oc_project: project,
+                      oc_session_id: sessionId,
+                      oc_message_id: messageId,
+                    });
+                  }
                 }
-              }
 
-              assistantRunState.markFinalResponsePublished(sessionId, {
-                logicalMessageId: completionLogicalMessageId,
-              });
-            },
-          });
+                assistantRunState.markFinalResponsePublished(sessionId, {
+                  logicalMessageId: completionLogicalMessageId,
+                });
+              },
+            });
 
-          await finalAssistantDeliveryOrchestrator.flushSession(sessionId);
-          await finalizeAssistantDelivery;
+            await finalAssistantDeliveryOrchestrator.flushSession(sessionId);
+            await finalizeAssistantDelivery;
 
-          await sendTtsResponseForSession({
-            api: botApi,
-            sessionId,
-            chatId,
-            text: messageText,
-            messageThreadId: target.messageThreadId,
-          });
+            await sendTtsResponseForSession({
+              api: botApi,
+              sessionId,
+              chatId,
+              text: messageText,
+              messageThreadId: target.messageThreadId,
+            });
           }
         } catch (err) {
           finalAssistantDeliveryOrchestrator.clearSession(sessionId);
@@ -2444,17 +2515,17 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       if (!managedChildSessionIds.has(sessionId) && target?.messageThreadId) {
         const sessionTitle = childSessionTitle.get(sessionId);
         if (sessionTitle) {
-          const truncated = sessionTitle.length > 128 ? sessionTitle.slice(0, 125) + "..." : sessionTitle;
-          const lastSetName = childTopicLastSetName.get(sessionId);
-          if (truncated !== lastSetName) {
+          const truncated = truncateTopicName(sessionTitle);
+          if (childTopicLastSetName.tryAcquire(sessionId, truncated)) {
             safeBackgroundTask({
               taskName: `topic-sync.${sessionId}`,
               task: async () => {
                 try {
-                  await botApi.editForumTopic(target.chatId, target.messageThreadId!, { name: truncated });
-                  childTopicLastSetName.set(sessionId, truncated);
+                  await botApi.editForumTopic(target.chatId, target.messageThreadId!, {
+                    name: truncated,
+                  });
                 } catch {
-                  // ignore rename failures
+                  childTopicLastSetName.clear(sessionId);
                 }
               },
             });
@@ -2506,8 +2577,31 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         }
       }
 
-      const idleScopeKey = getSessionRoutingScopeKey(sessionId);
-      await deferredBatch.flushExpiredWindowsForScope(idleScopeKey);
+      // Restore the session's conversation scope before flushing deferred
+      // windows. handleSessionIdle runs from an SSE callback with no ambient
+      // AsyncLocalStorage scope; without this wrap, processUserPrompt's
+      // getCurrentSession() would fall back to the global _lastSetSession and
+      // route a buffered message into the newest session in another topic
+      // (fixed 2026-06-25; mirrors the getSessionRoutingScope wrapping used
+      //  for the other SSE-driven routing in this file).
+      //
+      // Resolve the scope once (avoids a double getSessionRoutingScope read)
+      // and skip the flush entirely when the scope can no longer be resolved
+      // (e.g. a racing session.error cleared the routing context). Flushing
+      // scope-less would re-introduce the global _lastSetSession fallback, so
+      // we'd rather strand the buffered window than dispatch it to the wrong
+      // session; it can still flush on a later idle once the scope resolves.
+      const idleScope = getSessionRoutingScope(sessionId);
+      if (idleScope) {
+        const idleScopeKey = buildTelegramConversationScopeKey(idleScope);
+        await runWithTelegramConversationScope(idleScope, () =>
+          deferredBatch.flushExpiredWindowsForScope(idleScopeKey),
+        );
+      } else {
+        logger.warn(
+          `[Bot] handleSessionIdle: no routing scope for session=${sessionId}; skipping deferred flush to avoid scope-less dispatch`,
+        );
+      }
     } catch (err) {
       logger.error("[Bot] Failed to send session idle footer:", err);
     } finally {
@@ -2578,17 +2672,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
         const prefix = `tool:${toolInfo.callId}`;
         orderedPublication.resolve(async () => {
-          toolCallStreamer.replaceByPrefix(toolInfo.sessionId, prefix, formattedProgress.text);
-          await enqueueLocalFileFollowUpsFromText(
-            toolInfo.sessionId,
-            joinFollowUpCandidateTexts(
-              formattedProgress.text,
-              toolInfo.title,
-              typeof toolInfo.input?.description === "string" ? toolInfo.input.description : undefined,
-              typeof toolInfo.input?.command === "string" ? toolInfo.input.command : undefined,
-            ),
-          );
-
           safeBackgroundTask({
             taskName: `technical-progress-details.${toolInfo.sessionId}.${toolInfo.callId}`,
             task: async () => {
@@ -2606,7 +2689,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                 toolInfo,
                 technicalDetailsPublisher,
               );
-              if (linkedProgress.format !== "html" || !linkedProgress.text) {
+              if (!linkedProgress.text) {
                 return;
               }
 
@@ -2616,47 +2699,47 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                 return;
               }
 
-              if (!toolCallStreamer.hasPrefix(toolInfo.sessionId, prefix)) {
-                return;
-              }
-
-              toolCallStreamer.replaceByPrefix(
-                toolInfo.sessionId,
-                prefix,
-                linkedProgress.text,
-              );
-
-              // Send tool output as native rich message with code formatting
-              void (async () => {
-                try {
-                  const rawOutput = extractToolOutput(
-                    toolInfo.tool,
-                    toolInfo.input as Record<string, unknown> | undefined,
-                    toolInfo.metadata as Record<string, unknown> | undefined,
-                    (toolInfo.state as Record<string, unknown>)?.output,
-                  );
-                  if (!rawOutput) return;
-                  const richMarkdown = formatToolOutputForRichMessage(
-                    toolInfo.tool,
-                    toolInfo.input as Record<string, unknown> | undefined,
-                    rawOutput,
-                  );
-                  if (richMarkdown) {
-                    const toolApi = getSessionRoutingApi(toolInfo.sessionId);
-                    const toolTarget = getSessionRoutingTarget(toolInfo.sessionId);
-                    if (toolApi && toolTarget) {
-                      await trySendRichMessage(
-                        toolApi,
-                        toolTarget.chatId,
-                        richMarkdown,
-                        { messageThreadId: toolTarget.messageThreadId },
-                      );
+              const rawOutput =
+                extractToolOutput(
+                  toolInfo.tool,
+                  toolInfo.input as Record<string, unknown> | undefined,
+                  toolInfo.metadata as Record<string, unknown> | undefined,
+                  (toolInfo.state as Record<string, unknown>)?.output,
+                ) ?? stripHtml(linkedProgress.text);
+              if (rawOutput) {
+                let translatedTitle = toolInfo.title;
+                if (translatedTitle && getTelegraphTranslateEnabled()) {
+                  const locale = getLocale();
+                  if (locale && locale !== "en") {
+                    translatedTitle =
+                      (await translateText(translatedTitle, locale).catch(() => null)) ??
+                      toolInfo.title;
+                  }
+                }
+                const richMarkdown = formatToolOutputForRichMessage(
+                  toolInfo.tool,
+                  translatedTitle,
+                  toolInfo.input as Record<string, unknown> | undefined,
+                  rawOutput,
+                  toolInfo.metadata as Record<string, unknown> | undefined,
+                  (toolInfo.state as Record<string, unknown>)?.output,
+                  getLocale(),
+                );
+                if (richMarkdown) {
+                  const toolApi = getSessionRoutingApi(toolInfo.sessionId);
+                  const toolTarget = getSessionRoutingTarget(toolInfo.sessionId);
+                  if (toolApi && toolTarget) {
+                    try {
+                      await trySendRichMessageUnchecked(toolApi, toolTarget.chatId, richMarkdown, {
+                        messageThreadId: toolTarget.messageThreadId,
+                        disableNotification: true,
+                      });
+                    } catch {
+                      // rich failed, silently skip
                     }
                   }
-                } catch {
-                  // ignore rich message errors for tool outputs
                 }
-              })();
+              }
             },
           });
         });
@@ -2758,7 +2841,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               title: subagent.description || "Subagent",
               tool: subagent.currentToolTitle,
               detail: subagent.currentTool,
-              status: subagent.status === "completed" || subagent.status === "error" ? subagent.status : undefined,
+              status:
+                subagent.status === "completed" || subagent.status === "error"
+                  ? subagent.status
+                  : undefined,
             });
           }
         }
@@ -2823,6 +2909,9 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     }
   });
 
+  // Dormant for tools: prepareToolFileContext no longer emits fileData for
+  // write/edit/apply_patch (they render inline rich). Kept as an extension point
+  // coordinated with ToolMessageBatcher flush/ordering.
   summaryAggregator.setOnToolFile(async (fileInfo) => {
     // 2026-05-29: Wait for child topic routing to be established before sending files.
     // Without this, files could route to the parent topic during the seeding window
@@ -2958,14 +3047,28 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     const sendFn = async (queuedRequest: typeof request) => {
       const dTarget = getSessionDeliveryTarget(effectiveSessionId);
       await runWithSessionRoutingScope(effectiveSessionId, () =>
-        showPermissionRequest(botApi, target.chatId, queuedRequest, target.messageThreadId, effectiveScopeKey, dTarget),
+        showPermissionRequest(
+          botApi,
+          target.chatId,
+          queuedRequest,
+          target.messageThreadId,
+          effectiveScopeKey,
+          dTarget,
+        ),
       );
     };
     registerPermissionSendFn(effectiveScopeKey, sendFn);
 
     const deliveryTarget = getSessionDeliveryTarget(effectiveSessionId);
     await runWithSessionRoutingScope(effectiveSessionId, () =>
-      showPermissionRequest(botApi, target.chatId, request, target.messageThreadId, effectiveScopeKey, deliveryTarget),
+      showPermissionRequest(
+        botApi,
+        target.chatId,
+        request,
+        target.messageThreadId,
+        effectiveScopeKey,
+        deliveryTarget,
+      ),
     );
   });
 
@@ -3168,10 +3271,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         );
 
         const sdkError =
-          typeof retryResult === "object" &&
-          retryResult !== null &&
-          "error" in retryResult
-            ? (retryResult as { error?: unknown }).error ?? null
+          typeof retryResult === "object" && retryResult !== null && "error" in retryResult
+            ? ((retryResult as { error?: unknown }).error ?? null)
             : null;
         if (sdkError) {
           logger.error(
@@ -3216,9 +3317,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               );
             },
             deleteText: async (messageId: number) => {
-              await routing.bot.api
-                .deleteMessage(target.chatId, messageId)
-                .catch(() => undefined);
+              await routing.bot.api.deleteMessage(target.chatId, messageId).catch(() => undefined);
             },
             routingIdentity: buildThinkingRoutingIdentity(target),
           });
@@ -3305,6 +3404,13 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       return;
     }
 
+    // Flush accumulated streamer content before clearing, so partial
+    // answer text is not silently lost on session error.
+    await Promise.allSettled([
+      responseStreamer.flushSessionBeforeClear(sessionId),
+      messageDraftStreamManager.flushSession(sessionId),
+    ]);
+
     messageDraftStreamManager.clearSession(sessionId);
     responseStreamer.clearSession(sessionId, "session_error");
     finalAssistantDeliveryOrchestrator.clearSession(sessionId);
@@ -3381,9 +3487,9 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     clearSessionRoutingContext(sessionId);
     clearChildAssistantSession(sessionId);
     localFileFollowUpTracker.clearSession(sessionId);
-      foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
-      summaryAggregator.stopTypingIndicator();
-      await scheduledTaskRuntime.flushDeferredDeliveries();
+    foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
+    summaryAggregator.stopTypingIndicator();
+    await scheduledTaskRuntime.flushDeferredDeliveries();
   });
 
   summaryAggregator.setOnSessionRetry(async ({ sessionId, message }) => {
@@ -3480,7 +3586,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           logger.info(`[Bot] Aborted session after model-unavailable retry: ${sessionId}`);
         }
       } catch (abortErr) {
-        logger.warn(`[Bot] Failed to abort session ${sessionId} after model-unavailable retry:`, abortErr);
+        logger.warn(
+          `[Bot] Failed to abort session ${sessionId} after model-unavailable retry:`,
+          abortErr,
+        );
       }
 
       const retryCtx = getPromptRetryContext(sessionId);
@@ -3509,10 +3618,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         );
 
         const sdkError =
-          typeof retryResult === "object" &&
-          retryResult !== null &&
-          "error" in retryResult
-            ? (retryResult as { error?: unknown }).error ?? null
+          typeof retryResult === "object" && retryResult !== null && "error" in retryResult
+            ? ((retryResult as { error?: unknown }).error ?? null)
             : null;
         if (sdkError) {
           logger.error(
@@ -3557,9 +3664,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               );
             },
             deleteText: async (messageId: number) => {
-              await routing.bot.api
-                .deleteMessage(target.chatId, messageId)
-                .catch(() => undefined);
+              await routing.bot.api.deleteMessage(target.chatId, messageId).catch(() => undefined);
             },
             routingIdentity: buildThinkingRoutingIdentity(target),
           });
@@ -3592,9 +3697,17 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       if (fileDiffLogger) {
         const userId = config.telegram.adminUserId;
         for (const diff of diffs) {
-          const diffText = `@@ -0,0 +1,${diff.additions + diff.deletions} @@\n` +
-            Array(diff.deletions).fill(0).map(() => "-").join("\n") + "\n" +
-            Array(diff.additions).fill(0).map(() => "+").join("\n");
+          const diffText =
+            `@@ -0,0 +1,${diff.additions + diff.deletions} @@\n` +
+            Array(diff.deletions)
+              .fill(0)
+              .map(() => "-")
+              .join("\n") +
+            "\n" +
+            Array(diff.additions)
+              .fill(0)
+              .map(() => "+")
+              .join("\n");
           void fileDiffLogger.logDiff(userId, sessionId, diff.file, diffText);
         }
       }
@@ -3635,8 +3748,13 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
   logger.warn(`[Bot] ensureEventSubscription: directory=${directory}`);
   subscribeToEvents(directory, (event) => {
-    if (!((event as { type: string }).type === "server.heartbeat" || (event as { type: string }).type === "server.connected")) {
-      logger.debug(`[Bot] SSE event: type=${(event as {type:string}).type}`, event);
+    if (
+      !(
+        (event as { type: string }).type === "server.heartbeat" ||
+        (event as { type: string }).type === "server.connected"
+      )
+    ) {
+      logger.debug(`[Bot] SSE event: type=${(event as { type: string }).type}`, event);
     }
     if ((event as { type: string }).type === "server.heartbeat") {
       void reconcileBusyState(directory);
@@ -3826,15 +3944,35 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                     // Typing is best-effort
                   }
 
-                  for (const part of renderChildAssistantFinalParts(childText, childFormat)) {
-                    await deliverChildTopicMessage(childTopicDeliveryDependencies, {
-                      sessionId: childSessionId,
-                      kind: "live_text",
-                      text: part.text,
-                      rawFallbackText: part.fallbackText,
-                      format: childFormat,
-                      options: part.entities?.length ? { entities: part.entities } : undefined,
-                    });
+                  // Bot API 10.1: try rich message for child assistant replies
+                  let childRichDelivered = false;
+                  {
+                    const childApi = getSessionRoutingApi(childSessionId);
+                    const childTarget = getSessionDeliveryTarget(childSessionId);
+                    if (childApi && childTarget) {
+                      const richResult = await trySendRichMessageUnchecked(
+                        childApi,
+                        childTarget.chatId,
+                        childText,
+                        { messageThreadId: childTarget.messageThreadId },
+                      );
+                      if (richResult?.success) {
+                        childRichDelivered = true;
+                      }
+                    }
+                  }
+
+                  if (!childRichDelivered) {
+                    for (const part of renderChildAssistantFinalParts(childText, childFormat)) {
+                      await deliverChildTopicMessage(childTopicDeliveryDependencies, {
+                        sessionId: childSessionId,
+                        kind: "live_text",
+                        text: part.text,
+                        rawFallbackText: part.fallbackText,
+                        format: childFormat,
+                        options: part.entities?.length ? { entities: part.entities } : undefined,
+                      });
+                    }
                   }
                 },
               });
@@ -3882,6 +4020,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                       const derivedName = deriveSubagentTopicNameFromSessionTitle(sessionTitle);
                       if (derivedName && derivedName !== childScope.topicName) {
                         const currentScope = childScope;
+                        const previousName = currentScope.topicName;
+                        currentScope.topicName = derivedName;
                         safeBackgroundTask({
                           taskName: `child-topic-sync-name.${childSessionId}`,
                           task: async () => {
@@ -3893,8 +4033,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                                 currentScope.messageThreadId,
                                 { name: derivedName },
                               );
-                              currentScope.topicName = derivedName;
                             } catch (error) {
+                              currentScope.topicName = previousName;
                               logger.warn("[Bot] Failed to sync subagent topic name", {
                                 childSessionId,
                                 error,
@@ -3997,28 +4137,27 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         // thread id is what tells us this root session lives in a renamable topic.
         const topicThreadId = deliveryTarget?.messageThreadId;
         if (deliveryTarget && typeof topicThreadId === "number") {
-          const truncated = info.title.length > 128 ? info.title.slice(0, 125) + "..." : info.title;
-          // Skip SSE-driven rename if command handler already renamed to this value
-          const lastSet = childTopicLastSetName.get(info.id);
-          if (lastSet === truncated) return;
-          safeBackgroundTask({
-            taskName: `root-topic-rename.${info.id}`,
-            task: async () => {
-              const botApi = getSessionRoutingApi(info.id!);
-              if (!botApi) return;
-              try {
-                await botApi.editForumTopic(deliveryTarget.chatId, topicThreadId, {
-                  name: truncated,
-                });
-                childTopicLastSetName.set(info.id!, truncated);
-              } catch (error) {
-                logger.warn("[Bot] Failed to sync root session topic name", {
-                  sessionId: info.id,
-                  error,
-                });
-              }
-            },
-          });
+          const truncated = truncateTopicName(info.title);
+          if (childTopicLastSetName.tryAcquire(info.id, truncated)) {
+            safeBackgroundTask({
+              taskName: `root-topic-rename.${info.id}`,
+              task: async () => {
+                const botApi = getSessionRoutingApi(info.id!);
+                if (!botApi) return;
+                try {
+                  await botApi.editForumTopic(deliveryTarget.chatId, topicThreadId, {
+                    name: truncated,
+                  });
+                } catch (error) {
+                  childTopicLastSetName.clear(info.id!);
+                  logger.warn("[Bot] Failed to sync root session topic name", {
+                    sessionId: info.id,
+                    error,
+                  });
+                }
+              },
+            });
+          }
         }
       }
 
@@ -4032,9 +4171,10 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
         if (childScope?.kind === "topic" && topicName && info.id) {
           const existingTopicName = childScope.topicName;
-          if (existingTopicName && existingTopicName !== topicName) {
+          if (existingTopicName !== topicName) {
             const currentScope = childScope;
             const childId = info.id;
+            currentScope.topicName = topicName;
 
             safeBackgroundTask({
               taskName: `child-topic-rename.${childId}`,
@@ -4045,8 +4185,8 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                   await botApi.editForumTopic(currentScope.chatId, currentScope.messageThreadId, {
                     name: topicName,
                   });
-                  currentScope.topicName = topicName;
                 } catch (error) {
+                  currentScope.topicName = existingTopicName;
                   logger.warn("[Bot] Failed to sync subagent topic name", {
                     childSessionId: childId,
                     error,
@@ -4245,7 +4385,9 @@ export function createBot(): Bot<Context> {
 
     if (method === "sendMessage") {
       const mtid = (payload as { message_thread_id?: number }).message_thread_id;
-      logger.debug(`[Bot API] sendMessage to chat ${(payload as { chat_id?: number }).chat_id} threadId=${mtid ?? "none"}`);
+      logger.debug(
+        `[Bot API] sendMessage to chat ${(payload as { chat_id?: number }).chat_id} threadId=${mtid ?? "none"}`,
+      );
     }
 
     return withTelegramRateLimitRetry(() => prev(method, payload, signal), {
@@ -4498,8 +4640,13 @@ export function createBot(): Bot<Context> {
           const session = getPtySession(mtId);
           if (session) {
             const keyMap: Record<string, string> = {
-              up: "\x1b[A", down: "\x1b[B", right: "\x1b[C", left: "\x1b[D",
-              enter: "\r", tab: "\t", esc: "\x1b",
+              up: "\x1b[A",
+              down: "\x1b[B",
+              right: "\x1b[C",
+              left: "\x1b[D",
+              enter: "\r",
+              tab: "\t",
+              esc: "\x1b",
             };
             session.write(keyMap[key] ?? "\r");
           }
@@ -4542,7 +4689,8 @@ export function createBot(): Bot<Context> {
       const handledSkills = await handleSkillsCallback(ctx, { bot, ensureEventSubscription });
       const handledMcps = await handleMcpsCallback(ctx);
       const handledServerCb = await handleServerCallback(ctx);
-      const handledOnboarding = await handleWebOnboardingCallback(ctx) || await handleOnboardingCallback(ctx);
+      const handledOnboarding =
+        (await handleWebOnboardingCallback(ctx)) || (await handleOnboardingCallback(ctx));
       const callbackData = ctx.callbackQuery?.data ?? "";
 
       let handledMjFork = false;
@@ -4655,55 +4803,6 @@ export function createBot(): Bot<Context> {
     } catch (err) {
       logger.error("[Bot] Error showing model menu:", err);
       await ctx.reply(t("error.load_models"));
-    }
-  });
-
-  // Handle Reply Keyboard button "Stop"
-  bot.hears(STOP_BUTTON_TEXT_PATTERN, async (ctx) => {
-    logger.debug(`[Bot] Stop button pressed: ${ctx.message?.text}`);
-
-    try {
-      // If in a terminal topic, abort the session and kill any local process
-      const mtId = ctx.message?.message_thread_id;
-      if (mtId !== undefined && isTerminalTopic(mtId)) {
-        killTerminalProcess(mtId);
-        await abortCurrentOperation(ctx, { notifyUser: false }).catch(() => {});
-        await keyboardManager.sendKeyboardUpdate().catch(() => {});
-        await ctx.reply("⏹ Stopped.");
-        return;
-      }
-
-      if (!processManager.isRunning()) {
-        await ctx.reply(t("opencode_stop.not_running"));
-        return;
-      }
-
-      const pid = processManager.getPID();
-      const statusMsg = await ctx.reply(
-        t("opencode_stop.stopping", { pid: pid ?? "-" }),
-      );
-
-      const { success, error } = await processManager.stop(5000);
-
-      if (!success) {
-        await ctx.api.editMessageText(
-          ctx.chat.id,
-          statusMsg.message_id,
-          t("opencode_stop.stop_error", { error: error || t("common.unknown_error") }),
-        );
-        return;
-      }
-
-      await ctx.api.editMessageText(
-        ctx.chat.id,
-        statusMsg.message_id,
-        t("opencode_stop.success"),
-      );
-
-      keyboardManager.updateRunningStatus(false);
-    } catch (err) {
-      logger.error("[Bot] Error on stop button:", err);
-      await ctx.reply(t("opencode_stop.error"));
     }
   });
 
@@ -5011,11 +5110,16 @@ export function createBot(): Bot<Context> {
     // Terminal topic: execute as shell command, not LLM
     const mtId = ctx.message?.message_thread_id;
     if (isTerminalTopic(mtId)) {
-      const handled = await handleTerminalTextInput(stripMessageTags(text), mtId!, ctx.from?.id ?? 0, {
-        reply: (txt: string, opts?: any) => ctx.reply(txt, opts),
-        api: ctx.api,
-        chat: ctx.chat,
-      });
+      const handled = await handleTerminalTextInput(
+        stripMessageTags(text),
+        mtId!,
+        ctx.from?.id ?? 0,
+        {
+          reply: (txt: string, opts?: any) => ctx.reply(txt, opts),
+          api: ctx.api,
+          chat: ctx.chat,
+        },
+      );
       if (handled) return;
     }
 
@@ -5038,10 +5142,11 @@ export function createBot(): Bot<Context> {
     const rawUpdate = ctx.update as { message_reaction?: { message_thread_id?: number } };
     const rawThreadId = rawUpdate.message_reaction?.message_thread_id;
     // Fallback: look up the reacted message in the journal to find its topic
-    const journalRow = rawThreadId === undefined
-      ? getMessageJournalRepo().findByTgChatAndMessage(chatId, messageId)
-      : null;
-    const topicId = (rawThreadId ?? journalRow?.tg_topic_id ?? null);
+    const journalRow =
+      rawThreadId === undefined
+        ? getMessageJournalRepo().findByTgChatAndMessage(chatId, messageId)
+        : null;
+    const topicId = rawThreadId ?? journalRow?.tg_topic_id ?? null;
 
     // Normalize emoji: strip variation selector FE0F for comparison
     const norm = (e: string) => e.replace(/\uFE0F/g, "");
@@ -5074,7 +5179,9 @@ export function createBot(): Bot<Context> {
         emoji,
       });
 
-      logger.debug(`[Reaction] User ${userId} reacted ${emoji} (norm=${normalized}) on msg ${messageId}`);
+      logger.debug(
+        `[Reaction] User ${userId} reacted ${emoji} (norm=${normalized}) on msg ${messageId}`,
+      );
 
       // Bookmark reactions: ❤️ or ❤ (U+2764 with/without FE0F)
       if (normalized === "❤" || normalized === "✍") {
@@ -5102,25 +5209,28 @@ export function createBot(): Bot<Context> {
               s.scope.chatId === chatId &&
               (mtId === undefined || s.scope.messageThreadId === mtId),
           );
-          let session = matchingState?.session
-            ?? runWithTelegramConversationScope(
-                { userId, chatId, messageThreadId: mtId },
-                () => getCurrentSession(),
-              );
+          let session =
+            matchingState?.session ??
+            runWithTelegramConversationScope({ userId, chatId, messageThreadId: mtId }, () =>
+              getCurrentSession(),
+            );
 
           // Fallback: look up the session from the message journal
           if (!session) {
-            const row = journalRow ?? getMessageJournalRepo().findByTgChatAndMessage(chatId, messageId);
+            const row =
+              journalRow ?? getMessageJournalRepo().findByTgChatAndMessage(chatId, messageId);
             if (row?.oc_session_id && row.oc_project) {
               session = { id: row.oc_session_id, title: "", directory: row.oc_project };
             }
           }
 
           if (session) {
-            await opencodeClient.session.abort({
-              sessionID: session.id,
-              directory: session.directory,
-            }).catch(() => {});
+            await opencodeClient.session
+              .abort({
+                sessionID: session.id,
+                directory: session.directory,
+              })
+              .catch(() => {});
             logger.info(`[Reaction] Admin ${userId} aborted session ${session.id} via 💔`);
           } else {
             logger.warn(`[Reaction] No session found to abort for 💔 on msg ${messageId}`);
@@ -5129,16 +5239,29 @@ export function createBot(): Bot<Context> {
           logger.warn(`[Reaction] Abort via 💔 failed:`, err);
         }
       }
-
     }
   });
 
-  // Forum topic deletion → delete associated OpenCode sessions
-  bot.on("message:forum_topic_edited", async (ctx) => {
+  // Forum topic closed/deleted → delete associated OpenCode sessions
+  // Uses message:forum_topic_closed (not _edited) because _edited fires on
+  // rename/emoji changes, not deletions.  Also gates on admin user to prevent
+  // unauthorized users from triggering session deletion.
+  bot.on("message:forum_topic_closed", async (ctx) => {
     const topicId = ctx.message?.message_thread_id;
     if (!topicId) return;
 
-    logger.info(`[TopicDeleted] Forum topic deleted: chatId=${ctx.chat!.id}, topicId=${topicId}`);
+    // Only the admin can trigger session cleanup on topic close.
+    // Without this check, an unauthorized user closing a topic would
+    // delete sessions that still belong to an approved user.
+    const userId = ctx.from?.id;
+    if (userId !== config.telegram.adminUserId) {
+      logger.info(
+        `[TopicDeleted] Ignoring topic close from non-admin user: userId=${userId}, chatId=${ctx.chat!.id}, topicId=${topicId}`,
+      );
+      return;
+    }
+
+    logger.info(`[TopicDeleted] Forum topic closed: chatId=${ctx.chat!.id}, topicId=${topicId}`);
 
     const repo = getMessageJournalRepo();
     const rows = repo.findByTgTopic(ctx.chat!.id, topicId);
@@ -5157,6 +5280,10 @@ export function createBot(): Bot<Context> {
         logger.error(`[TopicDeleted] Failed to delete session ${sessionId}:`, err);
       }
     }
+
+    // Clear in-memory session state so a next /new or prompt in the
+    // same (re-created) topic does not reuse the now-deleted session.
+    clearSession();
   });
 
   bot.catch((err) => {
@@ -5173,6 +5300,11 @@ export function createBot(): Bot<Context> {
     }
   });
   return bot;
+}
+
+/** The active bot instance, set during createBot(). Null before bot starts. */
+export function getActiveBotInstance(): Bot<Context> | null {
+  return activeBotInstance;
 }
 
 // Exported for testing only — exposes private routing functions for unit tests.

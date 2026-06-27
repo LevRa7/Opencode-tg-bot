@@ -9,7 +9,10 @@ import { getSystemInfo } from "../utils/system-info.js";
 import { processManager } from "../process/manager.js";
 import { SessionType, type ContextInfo, type KeyboardState } from "./types.js";
 import { t } from "../i18n/index.js";
-import { getCurrentTelegramConversationScope, getCurrentTelegramConversationScopeKey } from "../telegram/scope.js";
+import {
+  getCurrentTelegramConversationScope,
+  getCurrentTelegramConversationScopeKey,
+} from "../telegram/scope.js";
 import { isTerminalTopic, isTerminalRunning } from "../bot/commands/terminal.js";
 import { foregroundSessionState } from "../scheduled-task/foreground-state.js";
 
@@ -210,8 +213,9 @@ class KeyboardManager {
       const scope = getCurrentTelegramConversationScope();
       messageThreadId = scope?.messageThreadId;
     }
-    const isTerminal = scopedState.state.sessionMode === SessionType.TERMINAL
-      || (scopedState.state.sessionMode === SessionType.NONE && isTerminalTopic(messageThreadId));
+    const isTerminal =
+      scopedState.state.sessionMode === SessionType.TERMINAL ||
+      (scopedState.state.sessionMode === SessionType.NONE && isTerminalTopic(messageThreadId));
     return createMainKeyboard(
       scopedState.state.currentAgent,
       scopedState.state.currentModel,
@@ -219,7 +223,10 @@ class KeyboardManager {
       scopedState.state.variantName,
       {
         isRunning,
-        isTerminalRunning: isTerminal ? ((messageThreadId !== undefined && isTerminalRunning(messageThreadId)) || foregroundSessionState.isBusy()) : false,
+        isTerminalRunning: isTerminal
+          ? (messageThreadId !== undefined && isTerminalRunning(messageThreadId)) ||
+            foregroundSessionState.isBusy()
+          : false,
         cpuInfo: scopedState.state.cpuInfo,
         ramInfo: scopedState.state.ramInfo,
         isTerminalTopic: isTerminal,
@@ -227,7 +234,11 @@ class KeyboardManager {
     );
   }
 
-  public async sendKeyboardUpdate(chatId?: number, scopeKey?: string): Promise<void> {
+  public async sendKeyboardUpdate(
+    chatId?: number,
+    scopeKey?: string,
+    opts?: { force?: boolean },
+  ): Promise<void> {
     const resolvedScopeKey = scopeKey ?? this.getScopeKey();
     const scopedState = this.getScopedState(resolvedScopeKey);
     if (!scopedState.api) {
@@ -242,7 +253,7 @@ class KeyboardManager {
     }
 
     const now = Date.now();
-    if (now - scopedState.lastUpdateTime < this.UPDATE_DEBOUNCE_MS) {
+    if (!opts?.force && now - scopedState.lastUpdateTime < this.UPDATE_DEBOUNCE_MS) {
       logger.debug(`[KeyboardManager] Update debounced for scope=${scopeKey}`);
       return;
     }
@@ -250,15 +261,8 @@ class KeyboardManager {
     scopedState.lastUpdateTime = now;
 
     try {
-      const keyboard = this.buildKeyboard(resolvedScopeKey);
-
-      if (scopedState.keyboardMessageId) {
-        await scopedState.api.editMessageReplyMarkup(targetChatId, scopedState.keyboardMessageId, {
-          reply_markup: keyboard,
-        } as any).catch(() => {
-          scopedState.keyboardMessageId = undefined;
-        });
-      }
+      // Build keyboard to verify state (triggers "not initialized" warning if needed)
+      this.buildKeyboard(resolvedScopeKey);
       logger.debug(`[KeyboardManager] Keyboard update sent for scope=${scopeKey}`);
     } catch (err) {
       logger.error("[KeyboardManager] Failed to send keyboard update:", err);
@@ -306,6 +310,11 @@ class KeyboardManager {
       this.autoUpdateInterval = null;
       logger.debug("[KeyboardManager] Auto-update stopped");
     }
+  }
+
+  /** Returns count of initialized scopes (for external monitoring). */
+  public getScopeCount(): number {
+    return this.scopedStates.size;
   }
 }
 

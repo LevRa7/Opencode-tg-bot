@@ -113,6 +113,15 @@ class PinnedMessageManager {
     } as Parameters<Api["sendMessage"]>[2];
   }
 
+  private getDeleteMessageThreadOptions(
+    runtime: ScopedPinnedRuntime,
+  ) {
+    if (!runtime.state.messageThreadId || runtime.state.messageThreadId <= 0) {
+      return undefined;
+    }
+    return { message_thread_id: runtime.state.messageThreadId };
+  }
+
   initialize(api: Api, chatId: number): void {
     const runtime = this.getRuntime();
     const scope = getCurrentTelegramConversationScope();
@@ -734,6 +743,9 @@ class PinnedMessageManager {
       runtime.state.createdInCurrentProcess = true;
       runtime.state.lastUpdated = Date.now();
       runtime.lastRenderedMessageText = text;
+      // Successful recreate also resets the circuit breaker — a fresh message
+      // means the stale "can't be edited" error on the old message is irrelevant.
+      runtime.state.cantEditFailCount = 0;
 
       setPinnedMessageId(sentMessage.message_id);
       keyboardManager.setKeyboardMessageId(sentMessage.message_id);
@@ -921,7 +933,10 @@ class PinnedMessageManager {
 
     // Best-effort cleanup of the old message so we don't leave duplicates.
     if (oldMessageId && runtime.api && runtime.chatId) {
-      await runtime.api.deleteMessage?.(runtime.chatId, oldMessageId).catch(() => {});
+      const delOptions = this.getDeleteMessageThreadOptions(runtime) ?? {};
+      await runtime.api.deleteMessage?.(runtime.chatId, oldMessageId, delOptions as any).catch((err) => {
+        logger.warn(`[PinnedManager] Failed to delete old message #${oldMessageId}:`, err);
+      });
     }
 
     runtime.state.messageId = null;
@@ -943,7 +958,10 @@ class PinnedMessageManager {
       if (runtime.state.messageId && runtime.state.createdInCurrentProcess) {
         // Telegram's available unpin methods in this codebase are chat-global; deleting the
         // pinned status message is the smallest topic-safe cleanup that avoids clearing other pins.
-        await runtime.api.deleteMessage?.(runtime.chatId, runtime.state.messageId).catch(() => {});
+        const delOptions = this.getDeleteMessageThreadOptions(runtime) ?? {};
+        await runtime.api.deleteMessage?.(runtime.chatId, runtime.state.messageId, delOptions as any).catch((err) => {
+          logger.warn("[PinnedManager] Failed to delete message during unpin:", err);
+        });
       }
 
       runtime.state.messageId = null;
@@ -995,7 +1013,10 @@ class PinnedMessageManager {
     try {
       if (runtime.state.messageId && runtime.state.createdInCurrentProcess) {
         // Keep unrelated topic or chat pins intact; only remove the message this runtime created.
-        await runtime.api.deleteMessage?.(runtime.chatId, runtime.state.messageId).catch(() => {});
+        const delOptions = this.getDeleteMessageThreadOptions(runtime) ?? {};
+        await runtime.api.deleteMessage?.(runtime.chatId, runtime.state.messageId, delOptions as any).catch((err) => {
+          logger.warn("[PinnedManager] Failed to delete message during clear:", err);
+        });
       }
 
       runtime.state = createInitialPinnedMessageState();

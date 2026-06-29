@@ -25,7 +25,7 @@ import { sshManager } from "../utils/ssh-manager.js";
 import { vmManager } from "../vm/manager.js";
 import { VM_TIERS, derivePassword, type VmSpec } from "../vm/types.js";
 import { createLibvirtHealthProxy } from "../vm/health-proxy.js";
-import { createVmLifecycleManager } from "../vm/lifecycle-manager.js";
+import { createVmLifecycleManager, type VmLifecycleManager } from "../vm/lifecycle-manager.js";
 import { createVmOrchestrator } from "../vm/orchestrator.js";
 import { t } from "../i18n/index.js";
 import type {
@@ -138,6 +138,9 @@ class ProcessManager implements ProcessManagerInterface {
   }
 
   private vmWatcherTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** In-flight VM lifecycle — aborted during shutdown to stop health-check polling. */
+  private activeLifecycle: VmLifecycleManager | null = null;
 
   /** Periodically checks all VM runtimes. If a VM is dead/unhealthy, triggers recovery. */
   private startVmWatcher(intervalMs: number = 120_000): void {
@@ -518,19 +521,20 @@ class ProcessManager implements ProcessManagerInterface {
     const persistence = getVmStatePersistence();
     const healthProxy = createLibvirtHealthProxy({ pollMs: 2000, timeoutMs: 300_000 });
     const lifecycle = createVmLifecycleManager({ vmManager, healthProxy });
-    const imageResult = await vmManager.ensureBaseImage();
-    if (!imageResult.success) {
-      return imageResult;
-    }
-
-    const tierName = getUserVmSpecTier(userId);
-    if (!tierName) {
-      return { success: false, needsVmSpec: true };
-    }
-
-    const spec: VmSpec = VM_TIERS[tierName];
-
+    this.activeLifecycle = lifecycle;
     try {
+      const imageResult = await vmManager.ensureBaseImage();
+      if (!imageResult.success) {
+        return imageResult;
+      }
+
+      const tierName = getUserVmSpecTier(userId);
+      if (!tierName) {
+        return { success: false, needsVmSpec: true };
+      }
+
+      const spec: VmSpec = VM_TIERS[tierName];
+
       const handle = await lifecycle.acquire(userId, persistence, {
         spec,
         onProgress,
@@ -544,6 +548,10 @@ class ProcessManager implements ProcessManagerInterface {
       const errorMessage = err instanceof Error ? err.message : String(err);
       logger.error("[ProcessManager] VM lifecycle acquire failed for userId=%d: %s", userId, errorMessage);
       return { success: false, error: errorMessage };
+    } finally {
+      if (this.activeLifecycle === lifecycle) {
+        this.activeLifecycle = null;
+      }
     }
   }
 
@@ -959,7 +967,16 @@ class ProcessManager implements ProcessManagerInterface {
   }
 
   private async findFreeTenantPort(): Promise<number> {
+    // 2026-06-28: Skip ports already registered to known tenant runtimes to avoid
+    // unnecessary HTTP probes that could hang on half-open listeners.
+    const occupiedPorts = new Set(
+      Object.values(getTenantRuntimes())
+        .map((rt) => rt.port)
+        .filter((p): p is number => typeof p === "number"),
+    );
+
     for (let port = TENANT_PORT_MIN; port <= TENANT_PORT_MAX; port += 1) {
+      if (occupiedPorts.has(port)) continue;
       if (await this.isPortFree(port)) {
         return port;
       }
@@ -970,7 +987,11 @@ class ProcessManager implements ProcessManagerInterface {
 
   private async isPortFree(port: number): Promise<boolean> {
     try {
-      await fetch(this.buildTenantBaseUrl(port) + "/health");
+      // 2026-06-28: Added timeout — fetch() has no default timeout and hangs on half-open ports.
+      // This was the root cause of infinite session creation loading (/new command).
+      await fetch(this.buildTenantBaseUrl(port) + "/health", {
+        signal: AbortSignal.timeout(2000),
+      });
       return false;
     } catch {
       return true;
@@ -1015,7 +1036,12 @@ class ProcessManager implements ProcessManagerInterface {
       startTime: null,
       isRunning: false,
     };
-    clearServerProcess();
+    try {
+      clearServerProcess();
+    } catch (err) {
+      // DB may already be closed during graceful shutdown — safe to ignore.
+      logger.debug("[ProcessManager] Skipped clearServerProcess (DB already closed):", err);
+    }
   }
 
   /**
@@ -1027,6 +1053,19 @@ class ProcessManager implements ProcessManagerInterface {
       clearInterval(this.tenantWatcherTimer);
       this.tenantWatcherTimer = null;
       logger.debug("[ProcessManager] Tenant health watcher stopped");
+    }
+    // 2026-06-28: Also stop VM watcher — was the root cause of infinite console.log reading loop.
+    if (this.vmWatcherTimer) {
+      clearInterval(this.vmWatcherTimer);
+      this.vmWatcherTimer = null;
+      logger.debug("[ProcessManager] VM health watcher stopped");
+    }
+    // 2026-06-28: Abort in-flight VM health checks so polling doesn't
+    // keep the event loop alive after database is closed.
+    if (this.activeLifecycle) {
+      this.activeLifecycle.shutdown();
+      this.activeLifecycle = null;
+      logger.debug("[ProcessManager] VM lifecycle health check aborted");
     }
   }
 }

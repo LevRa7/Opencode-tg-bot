@@ -228,7 +228,7 @@ if [[ -f "$HOST_CLIPROXYAPI_KEY" ]]; then
   TENANT_CLIPROXYAPI_KEY_REF="{file:/workspace/.config/opencode/cliproxyapi.key}"
 fi
 
-node -e '
+GODMODE_LOCAL_API_KEY=$(node -e '
 const fs = require("fs");
 const [src, dst, cliproxyApiBaseUrl, cliproxyApiKeyRef] = process.argv.slice(1);
 let host = {};
@@ -315,22 +315,83 @@ if (!config.provider.local) {
   };
 }
 
-// Ensure godmode provider exists (prefill proxy at host.docker.internal:8318 inside container, 127.0.0.1:8318 on host)
+// Generate local API key for godmode provider (OpenCode requires apiKey for all providers)
+let godmodeLocalApiKey = "godmode-" +
+  Math.random().toString(36).substring(2, 15) +
+  Math.random().toString(36).substring(2, 15) +
+  Math.random().toString(36).substring(2, 15);
+
+// Ensure godmode provider exists (prefill proxy runs INSIDE container at 127.0.0.1:8318)
 if (!config.provider.godmode) {
   config.provider.godmode = {
     npm: "@ai-sdk/openai-compatible",
     name: "Godmode (Prefill Proxy)",
     options: {
-      baseURL: "http://host.docker.internal:8318/v1",
+      baseURL: "http://127.0.0.1:8318/v1",
+      apiKey: godmodeLocalApiKey,
     },
+    models: {
+      "deepseek-v4-flash-free": {
+        name: "🔬 DeepSeek V4 Flash Free — Zen",
+        reasoning: true,
+        attachment: true,
+        limit: { context: 131072, output: 32768 },
+        modalities: { input: ["text"], output: ["text"] }
+      },
+      "big-pickle": {
+        name: "🔬 Big Pickle — Zen",
+        attachment: true,
+        limit: { context: 131072, output: 32768 },
+        modalities: { input: ["text"], output: ["text"] }
+      }
+    },
+  };
+} else {
+  // Provider already exists — ensure apiKey is set
+  if (!config.provider.godmode.options) config.provider.godmode.options = {};
+  if (!config.provider.godmode.options.apiKey) {
+    config.provider.godmode.options.apiKey = godmodeLocalApiKey;
+  } else {
+    godmodeLocalApiKey = config.provider.godmode.options.apiKey;
+  }
+}
+
+// Ensure baseURL is always the local proxy
+config.provider.godmode.options.baseURL = "http://127.0.0.1:8318/v1";
+
+// Ensure Zen models are in godmode provider
+const gm = config.provider.godmode;
+if (!gm.models) gm.models = {};
+if (!gm.models["deepseek-v4-flash-free"]) {
+  gm.models["deepseek-v4-flash-free"] = {
+    name: "🔬 DeepSeek V4 Flash Free — Zen",
+    reasoning: true,
+    attachment: true,
+    limit: { context: 131072, output: 32768 },
+    modalities: { input: ["text"], output: ["text"] }
+  };
+}
+if (!gm.models["big-pickle"]) {
+  gm.models["big-pickle"] = {
+    name: "🔬 Big Pickle — Zen",
+    attachment: true,
+    limit: { context: 131072, output: 32768 },
+    modalities: { input: ["text"], output: ["text"] }
   };
 }
 
-// Preserve model if it starts with cliproxyapi/ (already in host config)
-// No need to change model field.
+// Set default model to godmode/deepseek-v4-flash-free (Zen free tier)
+if (!config.model || config.model === "cliproxyapi/claude-sonnet-4-20250514") {
+  config.model = "godmode/deepseek-v4-flash-free";
+}
 
 fs.writeFileSync(dst, JSON.stringify(config, null, 2) + "\n", "utf8");
- ' "$HOST_OPENCODE_JSON" "$TENANT_OPENCODE_JSON" "$CLIPROXYAPI_BASE_URL" "$TENANT_CLIPROXYAPI_KEY_REF"
+
+// Output the local API key so bash can pass it to the container
+process.stdout.write(godmodeLocalApiKey);
+ ' "$HOST_OPENCODE_JSON" "$TENANT_OPENCODE_JSON" "$CLIPROXYAPI_BASE_URL" "$TENANT_CLIPROXYAPI_KEY_REF")
+
+echo "Generated godmode local API key: ${GODMODE_LOCAL_API_KEY:0:20}..."
 
 # Install base skills (tg-cli, openai-media-transcriber, gpt-image-api, tg-uploader, yandex-rasp, install-vpn, gui-automation, maps)
 if [ -f "$SCRIPT_DIR/vendor/python-tg-cli/SKILL.md" ]; then
@@ -567,6 +628,7 @@ docker run "${TTY_FLAGS[@]}" \
   -e TG_CONFIG_DIR="/state/tg-cli" \
   -e CLIPROXYAPI_BASE_URL="${CLIPROXYAPI_BASE_URL}" \
   -e CLIPROXYAPI_KEY_FILE="/workspace/.config/opencode/cliproxyapi.key" \
+  -e GODMODE_LOCAL_API_KEY="${GODMODE_LOCAL_API_KEY}" \
   -e TELEGRAPH_ENABLED="${TELEGRAPH_ENABLED}" \
   -e TELEGRAPH_ACCESS_TOKEN="${TELEGRAPH_ACCESS_TOKEN}" \
   -e TELEGRAPH_AUTHOR_NAME="${TELEGRAPH_AUTHOR_NAME}" \

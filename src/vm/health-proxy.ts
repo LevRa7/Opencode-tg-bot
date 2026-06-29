@@ -14,7 +14,7 @@ export interface HealthProxy {
     baseUrl: string;
     password: string;
     vmId: string;
-  }, options?: { timeoutMs?: number; pollMs?: number }): Promise<HealthStatus>;
+  }, options?: { timeoutMs?: number; pollMs?: number; signal?: AbortSignal }): Promise<HealthStatus>;
 }
 
 export interface HealthProxyOptions {
@@ -29,16 +29,20 @@ export function createLibvirtHealthProxy(options?: HealthProxyOptions): HealthPr
 
   async function check(
     handle: { baseUrl: string; password: string; vmId: string },
-    opts?: { timeoutMs?: number; pollMs?: number },
+    opts?: { timeoutMs?: number; pollMs?: number; signal?: AbortSignal },
   ): Promise<HealthStatus> {
     const pw = handle.password;
     const timeout = opts?.timeoutMs ?? defaultTimeoutMs;
     const poll = opts?.pollMs ?? defaultPollMs;
+    const signal = opts?.signal;
     const healthUrl = `${handle.baseUrl}/api/health`;
     const auth = `Basic ${Buffer.from(`opencode:${pw}`).toString("base64")}`;
     const deadline = Date.now() + timeout;
 
     while (Date.now() < deadline) {
+      if (signal?.aborted) {
+        return { healthy: false, services: { opencode: false, network: false }, error: "Aborted" };
+      }
       try {
         const res = await fetch(healthUrl, {
           headers: { Authorization: auth },

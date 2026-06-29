@@ -1,4 +1,5 @@
-import { execSync as nodeExecSync } from "child_process";
+import { execSync as nodeExecSync, exec as nodeExec } from "child_process";
+import { promisify } from "util";
 import { existsSync, unlinkSync, writeFileSync as fsWriteFileSync, mkdirSync as fsMkdirSync } from "fs";
 import path from "path";
 import { randomUUID } from "node:crypto";
@@ -51,6 +52,21 @@ export class VmManager {
 
   constructor(execSyncFn?: typeof nodeExecSync) {
     this.execSyncFn = execSyncFn ?? nodeExecSync;
+  }
+
+  /** Run a command asynchronously — does NOT block the event loop.
+   *  Use for disk I/O (qemu-img) and network I/O (ssh) during VM deployment
+   *  to prevent freezing all other users. */
+  private execAsync(command: string, timeoutMs = 30_000): Promise<{ stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      const child = nodeExec(command, { timeout: timeoutMs }, (error, stdout, stderr) => {
+        if (error) reject(error);
+        else resolve({ stdout, stderr });
+      });
+      // Prevent the child process from keeping the event loop alive after resolve/reject
+      if (child.stdout) child.stdout.destroy();
+      if (child.stderr) child.stderr.destroy();
+    });
   }
 
   async isAvailable(): Promise<boolean> {
@@ -143,9 +159,9 @@ export class VmManager {
 
   async addVpsIpv6Route(ipv6: string): Promise<void> {
     try {
-      this.execSyncFn(
-        `ssh root@192.129.148.93 ip -6 route add ${ipv6}/128 dev wg1`,
-        { stdio: "ignore" },
+      await this.execAsync(
+        `ssh -o ConnectTimeout=5 root@192.129.148.93 ip -6 route add ${ipv6}/128 dev wg1`,
+        10_000,
       );
     } catch { /* non-fatal */ }
   }
@@ -216,9 +232,9 @@ export class VmManager {
     }
 
     report(t("vm.progress.clone_image"));
-    this.execSyncFn(
+    await this.execAsync(
       `sudo qemu-img create -f qcow2 -b ${baseImage} -F qcow2 ${clonePath} ${spec.diskGb}G`,
-      { stdio: "ignore" },
+      60_000,
     );
 
     report(t("vm.progress.cloud_init"));

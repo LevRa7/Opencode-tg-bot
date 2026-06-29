@@ -1,0 +1,14 @@
+[Unit]
+Description=Godmode Bootstrap — auto-deploy on boot
+Before=opencode.service
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/godmode/godmode-bootstrap.sh
+RemainAfterExit=no
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

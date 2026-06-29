@@ -112,11 +112,59 @@ class FileHandler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.do_GET()
 
-    def _error(self, code):
+    def do_PUT(self):
+        """Upload a file — PUT /filename with body as file content."""
+        raw = self.path.lstrip("/")
+        if not raw or ".." in raw or "/" in raw:
+            self._error(400, "Invalid filename")
+            return
+
+        cl = int(self.headers.get("Content-Length", 0))
+        if cl == 0:
+            self._error(400, "Empty body")
+            return
+        if cl > MAX_FILE_SIZE:
+            self._error(413, f"File too large (max {MAX_FILE_SIZE // 1024 // 1024}MiB)")
+            return
+
+        SERVED_DIR.mkdir(parents=True, exist_ok=True)
+        name = _safe_name(raw)
+        dest = SERVED_DIR / name
+
+        data = self.rfile.read(cl)
+        with open(dest, "wb") as f:
+            f.write(data)
+
+        url = f"{BASE_URL}/{name}"
+        self.send_response(201)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps({
+            "url": url,
+            "basename": name,
+            "size": len(data),
+            "uploaded": True,
+        }).encode())
+
+    def do_POST(self):
+        """Alias for PUT — POST /filename also uploads."""
+        self.do_PUT()
+
+    def do_OPTIONS(self):
+        """CORS preflight."""
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, PUT, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Content-Length")
+        self.end_headers()
+
+    def _error(self, code, msg="Error"):
         self.send_response(code)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"Not Found" if code == 404 else b"Error")
+        body = msg.encode() if isinstance(msg, str) else b"Error"
+        self.wfile.write(body)
         return None
 
 

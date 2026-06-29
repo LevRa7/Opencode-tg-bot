@@ -484,6 +484,17 @@ export class IncomingMediaBatch<
       return;
     }
   }
+
+  /** Clear all timers and windows. Call during shutdown to prevent
+   *  deferred batch processing from accessing a closed database. */
+  dispose(): void {
+    for (const windows of this.windowsByScope.values()) {
+      for (const window of windows) {
+        clearTimeout(window.timer);
+      }
+    }
+    this.windowsByScope.clear();
+  }
 }
 
 export type {

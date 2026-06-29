@@ -17,6 +17,8 @@ export interface VmLifecycleManager {
   acquire(userId: number, persistence: VmStatePersistence, options?: AcquireOptions): Promise<VmHandle>;
   release(handle: VmHandle, persistence: VmStatePersistence): Promise<VmOperationResult>;
   recover(userId: number, persistence: VmStatePersistence): Promise<void>;
+  /** Abort all in-flight health checks. Call during shutdown. */
+  shutdown(): void;
 }
 
 export interface LifecycleDeps {
@@ -26,12 +28,18 @@ export interface LifecycleDeps {
 
 export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManager {
   const { vmManager: vm, healthProxy: hp } = deps;
+  let shutdownController: AbortController | null = null;
 
   async function acquire(
     userId: number,
     persistence: VmStatePersistence,
     options?: AcquireOptions,
   ): Promise<VmHandle> {
+    // Create a fresh AbortController for this acquire call so health checks
+    // can be cancelled during shutdown.
+    shutdownController = new AbortController();
+    const signal = shutdownController.signal;
+
     const existing = persistence.getByUserId(userId);
 
     if (existing && existing.status !== "destroyed" && existing.status !== "degraded") {
@@ -40,6 +48,7 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
         const healthy = await hp.check(handle, {
           timeoutMs: options?.timeoutMs ?? 60_000,
           pollMs: options?.pollMs ?? 2000,
+          signal,
         });
         if (healthy.healthy) {
           persistence.updateIfCurrent(existing.vmId, existing.version, { status: "healthy" });
@@ -132,6 +141,7 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
     const healthy = await hp.check(handle, {
       timeoutMs: options?.timeoutMs ?? 300_000,
       pollMs: options?.pollMs ?? 2000,
+      signal,
     });
 
     if (!healthy.healthy) {
@@ -233,7 +243,7 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
     persistence.resetFailureCount(record.vmId);
   }
 
-  return { acquire, release, recover };
+  return { acquire, release, recover, shutdown() { shutdownController?.abort(); } };
 }
 
 export const VmLifecycle = {

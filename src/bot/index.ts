@@ -276,6 +276,19 @@ let deferredBatch: IncomingMediaBatch<
   DeferredPromptBatchResolution
 >;
 let activeBotInstance: Bot<Context> | null = null;
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
+/** Clean up intervals that keep the event loop alive during shutdown. */
+export function disposeBotIntervals(): void {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+  keyboardManager.stopAutoUpdate();
+  // 2026-06-28: Clear deferred media batch timers — they fire handleWindowExpiry()
+  // which calls processUserPrompt() → DB access, crashing after disposeDatabase().
+  deferredBatch?.dispose();
+}
 
 interface DeferredPromptBatchResolution {
   text: string;
@@ -2213,16 +2226,6 @@ async function ensureEventSubscription(directory: string): Promise<void> {
             toolMessageBatcher.flushSession(sessionId, "assistant_message_completed"),
             toolCallStreamer.breakSession(sessionId, "assistant_message_completed"),
           ]);
-          // Send fallback so user knows task completed even if no visible content
-          if (botApi && chatId) {
-            botApi
-              .sendMessage(chatId, "✅ Задача завершена", {
-                message_thread_id: target.messageThreadId ?? undefined,
-              })
-              .catch((err: unknown) =>
-                logger.warn("[Bot] Empty-completion fallback send failed", err),
-              );
-          }
           return;
         }
 
@@ -4352,7 +4355,7 @@ export function createBot(): Bot<Context> {
 
   // Heartbeat for diagnostics: verify the event loop is not blocked
   let heartbeatCounter = 0;
-  setInterval(() => {
+  heartbeatInterval = setInterval(() => {
     heartbeatCounter++;
     if (heartbeatCounter % 6 === 0) {
       // Log every 30 seconds (5 sec * 6)

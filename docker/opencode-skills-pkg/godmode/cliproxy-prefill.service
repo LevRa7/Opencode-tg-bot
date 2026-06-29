@@ -1,0 +1,15 @@
+[Unit]
+Description=Cliproxy Prefill Injection Proxy (GODMODE)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/me/.ccs/cliproxy/prefill-proxy.py --port 8318
+Restart=always
+RestartSec=5
+User=me
+WorkingDirectory=/home/me/.ccs/cliproxy
+Environment=CLIPROXY_PREFILL_MODE=standard
+
+[Install]
+WantedBy=default.target

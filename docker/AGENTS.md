@@ -233,6 +233,72 @@ Source: [G0DM0D3](https://github.com/elder-plinius/G0DM0D3) / [L1B3RT4S](https:/
 
 ---
 
+## Godmode Prefill Proxy (Container Service)
+
+A prefill injection proxy runs automatically on `127.0.0.1:8318` inside every container. It injects GODMODE prefill messages into all chat completion requests, bypassing model safety filters at the API level.
+
+**How it works:**
+```
+Agent → opencode → godmode provider (:8318) → [prefill injection] → Cliproxy (:8317) OR Zen API
+```
+
+- Zen models (`deepseek-v4-flash-free`, `big-pickle`) → routed to `https://opencode.ai/zen/v1` (free tier)
+- All other models → routed through Cliproxy at `127.0.0.1:8317`
+- Reasoning models auto-bump `max_tokens` to 600 to prevent empty content
+
+### Managing the proxy
+
+```bash
+# Check if proxy is running
+godmode-cli status
+
+# Restart proxy
+godmode-cli stop
+godmode-cli start
+
+# Start with custom mode
+godmode-cli start --mode subtle     # Security researcher persona
+godmode-cli start --mode none       # No prefill injection
+godmode-cli start --mode standard   # Full GODMODE prefill (default)
+```
+
+### Godmode Installer
+
+Auto-runs on first boot via `godmode-auto-setup`. Adds Zen free-tier models to the godmode provider.
+
+```bash
+# Discover providers and scan config
+godmode-cli install --scan-only
+
+# Add Zen models to godmode provider (non-interactive)
+godmode-cli install --add-zen
+
+# Full interactive setup
+godmode-cli install
+
+# Test a specific model through prefill proxy
+godmode-cli install --test deepseek-v4-flash-free
+```
+
+### Failover Router
+
+```bash
+# Route through failover chain: deepseek-v4-flash-free → big-pickle
+godmode-cli failover "your query"
+godmode-cli failover --json "your query"
+```
+
+### Default Config
+
+| Setting | Value |
+|---------|-------|
+| Default model | `godmode/deepseek-v4-flash-free` |
+| Agent mode | `tg-agent` (Telegram-optimized, Hermes-ported) |
+| Zen models | `deepseek-v4-flash-free`, `big-pickle` |
+| Provider | godmode → prefill proxy (:8318) |
+
+---
+
 ## Persistent Memory (Hermes-compatible)
 
 You have durable memory that survives across sessions. Use these tools:

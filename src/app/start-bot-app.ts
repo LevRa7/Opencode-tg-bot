@@ -1,7 +1,7 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { createBot } from "../bot/index.js";
+import { createBot, disposeBotIntervals } from "../bot/index.js";
 import { config } from "../config.js";
 import {
   createOpenCodeAutoRestartMonitor,
@@ -245,10 +245,26 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
     process.off("SIGINT", handleSignal);
     process.off("SIGTERM", handleSignal);
     autoRestartMonitor?.stop();
-    processManager.dispose();
     await stopHttpServer();
+    // Kill the host OpenCode server process BEFORE closing the database.
+    // Otherwise, systemd's SIGTERM to the process group causes the child
+    // process to exit AFTER the DB is closed, and the 'exit' handler's
+    // cleanupHostRuntime() -> clearServerProcess() crashes with:
+    //   TypeError: The database connection is not open
+    try {
+      await processManager.stop();
+    } catch (err) {
+      logger.warn("[App] Failed to stop host process during shutdown:", err);
+    }
+    processManager.dispose();
+    disposeBotIntervals();
     await shutdownBotContainers();
     await releaseStartupLock();
     disposeDatabase();
+    // Force process exit after all cleanup is done.
+    // Multiple async sources (Docker execFile, qemu-img, SSH, deferred batch timers,
+    // health proxy polling) can leave lingering handles that keep the event loop alive.
+    // All meaningful cleanup is finished — exit immediately.
+    process.exit(0);
   }
 }

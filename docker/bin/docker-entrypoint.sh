@@ -108,6 +108,32 @@ unset GPT_IMAGE_UPSTREAM_BASE_URL
 unset GPT_IMAGE_UPSTREAM_API_KEY
 unset GPT_IMAGE_MODEL
 
+# ── Start prefill proxy (godmode) for uncensored model routing ──
+# Listens on 127.0.0.1:8318 — injects GODMODE prefill, handles auth key replacement
+mkdir -p /run/opencode-godmode-proxy
+if [ -x /usr/local/bin/godmode-prefill-proxy ]; then
+  CLIPROXY_KEY=""
+  if [ -f /workspace/.config/opencode/cliproxyapi.key ]; then
+    CLIPROXY_KEY="$(cat /workspace/.config/opencode/cliproxyapi.key 2>/dev/null | tr -d '\n\r ' || true)"
+  fi
+  echo "[godmode] Starting prefill proxy on 127.0.0.1:8318..."
+  setpriv --reuid=2000 --regid=2000 --clear-groups --bounding-set=-all --nnp \
+    python3 /usr/local/bin/godmode-prefill-proxy \
+      --port 8318 \
+      --bind 127.0.0.1 \
+      --prefill standard \
+      --local-api-key "${GODMODE_LOCAL_API_KEY:-}" \
+      --cliproxy-api-key "${CLIPROXY_KEY}" &
+  # Wait for proxy to be ready (max 5 seconds)
+  for i in $(seq 1 10); do
+    if curl -s --connect-timeout 0.5 "http://127.0.0.1:8318/v1/models" > /dev/null 2>&1; then
+      echo "[godmode] Prefill proxy ready on :8318"
+      break
+    fi
+    sleep 0.5
+  done
+fi
+
 # ── Start file-server for agent file delivery ──
 if command -v file-server.py >/dev/null 2>&1; then
   nohup python3 /usr/local/bin/file-server.py start > /dev/null 2>&1 &

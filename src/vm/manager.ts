@@ -5,11 +5,17 @@ import path from "path";
 import { randomUUID } from "node:crypto";
 import { logger } from "../utils/logger.js";
 import { t } from "../i18n/index.js";
-import { VM_DEFAULTS, derivePassword, type VmHandle, type VmInfo, type VmOperationResult, type VmSpec } from "./types.js";
+import { VM_DEFAULTS, derivePassword, getDataDiskPath, GOLDEN_VERSION_FILE, type VmHandle, type VmInfo, type VmOperationResult, type VmSpec } from "./types.js";
 import { generateCloudInitIso } from "./cloud-init.js";
 import { getOrCreateServerPassword } from "../settings/manager.js";
 import type { VmStatePersistence, VmStateRecord } from "./state-persistence.js";
 import { createLibvirtHealthProxy, type HealthStatus } from "./health-proxy.js";
+import { deployFullUpdate, type FullUpdatePayload } from "./ssh-inject.js";
+import { injectViaGuestfish, DEFAULT_GUESTFISH_FIXES } from "./guestfish-inject.js";
+import { readGoldenVersion } from "./version-check.js";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, resolve } from "path";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -217,6 +223,13 @@ export class VmManager {
       this.execSyncFn(`sudo rm -f ${isoPath}`, { stdio: "ignore" });
     } catch { /* file didn't exist — ok */ }
 
+    // Create persistent data disk if it doesn't exist (survives VM recreation)
+    // Size matches user's spec tier (thin-provisioned qcow2, physical size grows as needed)
+    const dataDiskPath = getDataDiskPath(userId);
+    if (!existsSync(dataDiskPath)) {
+      await this.execAsync(`sudo qemu-img create -f qcow2 ${dataDiskPath} ${spec.diskGb}G`, 30_000);
+    }
+
     // Reserve deterministic IP for this user to prevent conflicts
     const reservedMac = generateMacForUser(userId);
     const reservedIp = generateIpForUser(userId);
@@ -232,8 +245,10 @@ export class VmManager {
     }
 
     report(t("vm.progress.clone_image"));
+    // OS overlay: fixed size (20 GB — enough for OS + deps + skills)
+    const OS_DISK_GB = 20;
     await this.execAsync(
-      `sudo qemu-img create -f qcow2 -b ${baseImage} -F qcow2 ${clonePath} ${spec.diskGb}G`,
+      `sudo qemu-img create -f qcow2 -b ${baseImage} -F qcow2 ${clonePath} ${OS_DISK_GB}G`,
       60_000,
     );
 
@@ -241,7 +256,7 @@ export class VmManager {
     const ipv6 = generateIpv6ForUser(userId);
     generateCloudInitIso(userId, spec, opencodePw, sudoPw, isoPath, this.execSyncFn, write, mkdir, ipv6);
 
-    const domainXml = this.buildDomainXml(domainName, clonePath, isoPath, spec, userId);
+    const domainXml = this.buildDomainXml(domainName, clonePath, isoPath, spec, userId, dataDiskPath);
     write(xmlPath, domainXml);
 
     report(t("vm.progress.define_vm"));
@@ -336,7 +351,7 @@ export class VmManager {
     }
   }
 
-  private buildDomainXml(name: string, diskPath: string, isoPath: string, spec: VmSpec, userId: number): string {
+  private buildDomainXml(name: string, diskPath: string, isoPath: string, spec: VmSpec, userId: number, dataDiskPath: string): string {
     const mac = generateMacForUser(userId);
     return `<domain type="kvm">
   <name>${name}</name>
@@ -350,6 +365,11 @@ export class VmManager {
       <driver name="qemu" type="qcow2"/>
       <source file="${diskPath}"/>
       <target dev="vda"/>
+    </disk>
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2"/>
+      <source file="${dataDiskPath}"/>
+      <target dev="vdb"/>
     </disk>
     <disk type="file" device="cdrom">
       <source file="${isoPath}"/>
@@ -399,12 +419,20 @@ export class VmManager {
     }
 
     try {
-      this.execSyncFn(`sudo virsh undefine ${domainName} --remove-all-storage`, {
+      this.execSyncFn(`sudo virsh undefine ${domainName}`, {
         stdio: "ignore",
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, error: message };
+    }
+
+    // Remove OS overlay disk (NOT the persistent data disk)
+    try {
+      const clonePath = path.join(VM_DEFAULTS.imagesDir, `${domainName}.qcow2`);
+      unlinkSync(clonePath);
+    } catch {
+      logger.warn(`[VmManager] Could not remove OS overlay for userId=${userId}`);
     }
 
     // Remove DHCP reservation
@@ -436,6 +464,97 @@ export class VmManager {
     } catch {
       return false;
     }
+  }
+
+  /** Attempt to start an existing (but stopped) VM domain.
+   *  Returns true if the domain was started successfully. */
+  async startDomain(userId: number): Promise<boolean> {
+    const domainName = `${VM_DEFAULTS.domainNamePrefix}-${userId}`;
+    try {
+      this.execSyncFn(`sudo virsh start ${domainName}`, { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Update a VM to match current golden image configuration.
+   *  SSH-only for running VMs, guestfish for stopped VMs.
+   *  Does NOT recreate the overlay — all user data is preserved. */
+  async updateVm(userId: number): Promise<{
+    success: boolean;
+    error?: string;
+    method?: "ssh" | "guestfish" | "skipped";
+    versionBefore?: string | null;
+    versionAfter?: string | null;
+  }> {
+    const domainName = `${VM_DEFAULTS.domainNamePrefix}-${userId}`;
+    const qcow2Path = path.join(VM_DEFAULTS.imagesDir, `${domainName}.qcow2`);
+
+    // Check if VM definition exists via virsh dominfo
+    try {
+      this.execSyncFn(`sudo virsh dominfo ${domainName}`, {
+        encoding: "utf-8",
+        stdio: "pipe",
+      });
+    } catch {
+      return { success: false, error: "VM not found" };
+    }
+
+    // Read current golden version before update
+    const versionBefore = await readGoldenVersion(qcow2Path);
+
+    // Check if VM is running via virsh list --name
+    let running = false;
+    try {
+      const listOutput = this.execSyncFn(`sudo virsh list --name`, {
+        encoding: "utf-8",
+        stdio: "pipe",
+      }) as string;
+      running = listOutput.split("\n").some(line => line.trim() === domainName);
+    } catch {
+      running = false;
+    }
+
+    const password = derivePassword(userId, "medium");
+
+    if (running) {
+      // SSH is the ONLY path for running VMs — guestfish can't modify a live disk
+      const bridgeIp = await this.getBridgeIp(userId);
+      if (!bridgeIp) {
+        const versionAfter = await readGoldenVersion(qcow2Path);
+        return { success: false, method: "ssh", error: "Cannot determine VM IP address", versionBefore, versionAfter };
+      }
+
+      // Read source files for deployment
+      let payload: FullUpdatePayload;
+      try {
+        payload = readUpdatePayload();
+      } catch (err) {
+        const versionAfter = await readGoldenVersion(qcow2Path);
+        return { success: false, method: "ssh", error: `Failed to read update payload: ${err instanceof Error ? err.message : String(err)}`, versionBefore, versionAfter };
+      }
+
+      const sshResult = await deployFullUpdate(bridgeIp, password, payload, { timeout: 120000 });
+      const versionAfter = await readGoldenVersion(qcow2Path);
+      return { success: sshResult.success, method: "ssh", error: sshResult.error, versionBefore, versionAfter };
+    }
+
+    // VM is not running — guestfish directly
+    const gfResult = await injectViaGuestfish(qcow2Path, [...DEFAULT_GUESTFISH_FIXES]);
+    if (!gfResult.success) {
+      const versionAfter = await readGoldenVersion(qcow2Path);
+      return {
+        success: false,
+        method: "guestfish",
+        error: `guestfish: ${gfResult.error}`,
+        versionBefore,
+        versionAfter,
+      };
+    }
+
+    const versionAfter = await readGoldenVersion(qcow2Path);
+    return { success: true, method: "guestfish", versionBefore, versionAfter };
   }
 
   async waitForHealth(
@@ -517,6 +636,24 @@ export class VmManager {
     return this.destroy(handle.userId);
   }
 
+  /** Resolve golden image virtual size in GiB from qemu-img info output.
+   *  Used to set OS overlay size — minimal, just enough for OS + deps. */
+  private resolveBaseImageSizeGb(baseImagePath: string): number {
+    try {
+      const info = this.execSyncFn(`qemu-img info --output=json "${baseImagePath}"`, {
+        encoding: "utf-8",
+      });
+      const parsed = JSON.parse(info);
+      const bytes = parsed["virtual-size"];
+      if (typeof bytes === "number") {
+        return Math.ceil(bytes / (1024 ** 3));
+      }
+    } catch {
+      logger.warn("[VmManager] Could not resolve base image size, defaulting to 20 GB");
+    }
+    return 20; // fallback
+  }
+
   private toVmHandle(vmId: string, info: VmInfo): VmHandle {
     return {
       vmId,
@@ -529,6 +666,20 @@ export class VmManager {
       specTier: info.tier,
     };
   }
+
+}
+
+/** Read MCP server files and tg-agent.md for deployment to VMs.
+ *  Resolves paths relative to the module URL (works with ESM bundlers). */
+function readUpdatePayload(): FullUpdatePayload {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+
+  const tgAgentMd = readFileSync(resolve(__dirname, "tg-agent-content.md"), "utf-8");
+  const memoryServerTs = readFileSync(resolve(__dirname, "mcp-servers/memory-ts/server.ts"), "utf-8");
+  const skillsServerTs = readFileSync(resolve(__dirname, "mcp-servers/skills-ts/server.ts"), "utf-8");
+
+  return { tgAgentMd, memoryServerTs, skillsServerTs };
 }
 
 export const vmManager = new VmManager();

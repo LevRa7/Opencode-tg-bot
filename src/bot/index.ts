@@ -304,6 +304,9 @@ interface DeferredPromptBatchResolution {
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
 const RESPONSE_STREAM_THROTTLE_MS = config.bot.responseStreamThrottleMs;
 const useRichProgress = config.bot.richProgressEnabled;
+if (useRichProgress) {
+  console.log("[UP] Rich progress ENABLED via RICH_PROGRESS_ENABLED=true");
+}
 const targetedSessionRichProgressFallbacks = new Set<string>();
 const startingSessions = new Set<string>();
 const RESPONSE_STREAM_TEXT_LIMIT = 3800;
@@ -2196,11 +2199,13 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           if (target && !targetedSessionRichProgressFallbacks.has(sessionId)) {
             startingSessions.add(sessionId);
             try {
+              const projectPath = getCurrentProject()?.worktree || "";
               await unifiedProgress.start(
                 sessionId,
                 target.chatId,
                 messageText.slice(0, 200) || "Working...",
                 target.messageThreadId,
+                projectPath,
               );
             } catch {
               logger.warn("[RichProgress] Start failed in onPartial, using legacy", { sessionId });
@@ -2452,6 +2457,22 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
         const finalFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
         let finalText = messageText;
+
+        // Append model + context footer in <pre>, same format as pinned message
+        const ctxInfo = pinnedMessageManager.getContextInfo();
+        const storedModel = getStoredModel();
+        if (storedModel.providerID && storedModel.modelID) {
+          const modelName = `${storedModel.providerID}/${storedModel.modelID}`;
+          let ctxLine = "";
+          if (ctxInfo && ctxInfo.tokensLimit > 0) {
+            const pct = Math.round((ctxInfo.tokensUsed / ctxInfo.tokensLimit) * 100);
+            const fmt = (n: number) =>
+              n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}K` : String(n);
+            ctxLine = ` • Контекст: 📊 ${fmt(ctxInfo.tokensUsed)} / ${fmt(ctxInfo.tokensLimit)} (${pct}%)`;
+          }
+          finalText += `\n<pre>${modelName}${ctxLine}</pre>`;
+        }
+
         let finalParseMode: "html" | "raw" | "markdown_v2" = finalFormat;
         let richMessageDelivered = false;
 
@@ -2852,11 +2873,13 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       if (target && !unifiedProgress.hasSession(toolInfo.sessionId) && !startingSessions.has(toolInfo.sessionId)) {
         startingSessions.add(toolInfo.sessionId);
         try {
+          const projectPath = getCurrentProject()?.worktree || "";
           await unifiedProgress.start(
             toolInfo.sessionId,
             target.chatId,
             "Working...",
             target.messageThreadId,
+            projectPath,
           );
         } catch {
           logger.warn("[RichProgress] Start failed, using legacy mode for session", {
@@ -5522,6 +5545,7 @@ export function createBot(): Bot<Context> {
 
     // Start fresh RichMessage for each new user prompt
     if (useRichProgress) {
+      console.log("[UP] clearAll before forward-catch-all processUserPrompt");
       unifiedProgress.clearAll();
     }
 
@@ -5619,6 +5643,7 @@ export function createBot(): Bot<Context> {
 
     // Start fresh RichMessage for each new user prompt
     if (useRichProgress) {
+      console.log("[UP] clearAll before message:text processUserPrompt");
       unifiedProgress.clearAll();
     }
 

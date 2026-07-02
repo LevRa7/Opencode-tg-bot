@@ -47,9 +47,16 @@ describe("UnifiedProgressStreamer", () => {
     chatId = 123,
     title = "Test Session",
     threadId?: number,
+    projectPath?: string,
   ) => {
     sendText.mockResolvedValueOnce(200);
-    await streamer.start(sessionId, chatId, title, threadId);
+    await streamer.start(
+      sessionId,
+      chatId,
+      title,
+      threadId,
+      projectPath ?? "/home/me/test-project",
+    );
   };
 
   // ── Lifecycle ──────────────────────────────────────────────
@@ -61,7 +68,7 @@ describe("UnifiedProgressStreamer", () => {
       expect(sendText).toHaveBeenCalledTimes(1);
       expect(sendText).toHaveBeenCalledWith(
         123,
-        expect.stringContaining('"Test Session"'),
+        expect.stringContaining("/home/me/test-project"),
         undefined,
       );
       expect(streamer.hasSession("s1")).toBe(true);
@@ -69,7 +76,7 @@ describe("UnifiedProgressStreamer", () => {
 
     it("should send initial message with threadId when provided", async () => {
       sendText.mockResolvedValueOnce(200);
-      await streamer.start("s1", 123, "Test", 789);
+      await streamer.start("s1", 123, "Test", 789, "/home/me/proj");
 
       expect(sendText).toHaveBeenCalledWith(
         123,
@@ -82,7 +89,7 @@ describe("UnifiedProgressStreamer", () => {
       sendText.mockRejectedValueOnce(new Error("network error"));
 
       await expect(
-        streamer.start("s1", 123, "Test"),
+        streamer.start("s1", 123, "Test", undefined, "/proj"),
       ).rejects.toThrow("network error");
     });
   });

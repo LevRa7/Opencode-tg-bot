@@ -21,17 +21,24 @@ interface SessionState {
   toolEntries: Map<string, ToolEntry>;
   reasoningBlocks: string[];
   reasoningTitle?: string;
+  reasoningCounter: number;
   flushTimer: ReturnType<typeof setInterval> | null;
   dirty: boolean;
   inFlight: boolean;
   destroyed: boolean;
   finalized: boolean;
+  projectPath: string;
 }
 
 export class UnifiedProgressStreamer {
   private sessions = new Map<string, SessionState>();
   private options: UnifiedProgressOptions;
   private flushIntervalMs: number;
+
+  /** Session IDs that were cleared via clearAll() and should NOT be re-created.
+   *  Prevents duplicate RichMessages when SSE events for an old session
+   *  arrive after the user starts a new prompt. */
+  readonly clearedSessions = new Set<string>();
 
   constructor(options: UnifiedProgressOptions) {
     this.options = options;
@@ -43,7 +50,10 @@ export class UnifiedProgressStreamer {
     chatId: number,
     sessionTitle: string,
     threadId?: number,
+    projectPath?: string,
   ): Promise<void> {
+    logger.debug("[UnifiedProgress] start", { sessionId, chatId, threadId });
+
     const state: SessionState = {
       sessionTitle,
       chatId,
@@ -52,11 +62,13 @@ export class UnifiedProgressStreamer {
       overflowIds: [],
       toolEntries: new Map(),
       reasoningBlocks: [],
+      reasoningCounter: 0,
       flushTimer: null,
       dirty: false,
       inFlight: false,
       destroyed: false,
       finalized: false,
+      projectPath: projectPath || "",
     };
 
     const html = buildProgressHtml({
@@ -66,10 +78,14 @@ export class UnifiedProgressStreamer {
       reasoningTitle: undefined,
       doneCount: 0,
       totalCount: 0,
+      projectPath: state.projectPath,
     });
 
     state.rootMessageId = await this.options.sendText(chatId, html, threadId);
+    logger.debug("[UnifiedProgress] start created rootMessageId", { sessionId, rootMessageId: state.rootMessageId });
 
+    // Session was recreated legitimately — remove from cleared set
+    this.clearedSessions.delete(sessionId);
     this.sessions.set(sessionId, state);
 
     state.flushTimer = setInterval(() => {
@@ -140,10 +156,26 @@ export class UnifiedProgressStreamer {
     state.dirty = true;
   }
 
-  /** Replace last reasoning block — use for streaming deltas to avoid duplicates. */
+  /** Replace last reasoning block — pushes old to tool entries only when title changes. */
   setReasoning(sessionId: string, text: string, title?: string): void {
     const state = this.getSession(sessionId);
-    if (state.reasoningBlocks.length > 0) {
+    const titleChanged = title && title !== state.reasoningTitle;
+    if (state.reasoningBlocks.length > 0 && titleChanged) {
+      // Title changed — old block is complete, move to tool entries
+      const old = state.reasoningBlocks[state.reasoningBlocks.length - 1];
+      if (old.trim()) {
+        const id = `reasoning-${++state.reasoningCounter}`;
+        state.toolEntries.set(id, {
+          callId: id,
+          title: old.trim(),
+          category: "reasoning",
+          status: "done",
+          tool: "reasoning",
+        });
+      }
+      state.reasoningBlocks[state.reasoningBlocks.length - 1] = text;
+    } else if (state.reasoningBlocks.length > 0) {
+      // Same title — streaming update, just replace in place
       state.reasoningBlocks[state.reasoningBlocks.length - 1] = text;
     } else {
       state.reasoningBlocks.push(text);
@@ -207,6 +239,7 @@ export class UnifiedProgressStreamer {
   }
 
   hasSession(sessionId: string): boolean {
+    if (this.clearedSessions.has(sessionId)) return false;
     const state = this.sessions.get(sessionId);
     return state !== undefined && !state.destroyed;
   }
@@ -218,10 +251,17 @@ export class UnifiedProgressStreamer {
   }
 
   clearAll(): void {
-    for (const [, state] of Array.from(this.sessions)) {
+    logger.debug("[UnifiedProgress] clearAll");
+    for (const [sId, state] of Array.from(this.sessions)) {
       this.clearTimer(state);
+      this.clearedSessions.add(sId);
     }
     this.sessions.clear();
+    // Prevent unbounded growth — keep last 100 cleared session IDs
+    if (this.clearedSessions.size > 100) {
+      const toRemove = Array.from(this.clearedSessions).slice(0, 50);
+      for (const sId of toRemove) this.clearedSessions.delete(sId);
+    }
   }
 
   /**
@@ -279,6 +319,7 @@ export class UnifiedProgressStreamer {
     try {
       await this.performFlush(state);
     } catch (err: unknown) {
+      logger.warn("[UnifiedProgress] performFlush threw", { sessionId, err });
       state.dirty = true;
       await this.handleFlushError(state, err, sessionId);
     } finally {
@@ -298,6 +339,7 @@ export class UnifiedProgressStreamer {
       reasoningTitle: state.reasoningTitle,
       doneCount,
       totalCount,
+      projectPath: state.projectPath,
     });
   }
 
@@ -305,6 +347,7 @@ export class UnifiedProgressStreamer {
     const html = this.buildHtml(state);
 
     if (state.rootMessageId !== null) {
+      logger.debug("[UnifiedProgress] performFlush edit", { rootMessageId: state.rootMessageId });
       await this.options.editText(state.chatId, state.rootMessageId, html);
     }
   }
@@ -330,8 +373,8 @@ export class UnifiedProgressStreamer {
       description.includes("message to edit not found")
     ) {
       logger.warn(
-        "[UnifiedProgressStreamer] Root message deleted, recreating",
-        { sessionId },
+        "[UnifiedProgress] Root message deleted, recreating",
+        { sessionId, oldRootMessageId: state.rootMessageId },
       );
       const html = this.buildHtml(state);
 
@@ -341,9 +384,10 @@ export class UnifiedProgressStreamer {
           html,
           state.threadId,
         );
+        logger.debug("[UnifiedProgress] Recreated rootMessageId", { sessionId, newRootMessageId: state.rootMessageId });
       } catch (sendErr) {
         logger.error(
-          "[UnifiedProgressStreamer] Failed to recreate root message",
+          "[UnifiedProgress] Failed to recreate root message",
           { sessionId, err: sendErr },
         );
         return;
@@ -353,6 +397,6 @@ export class UnifiedProgressStreamer {
       return;
     }
 
-    logger.error("[UnifiedProgressStreamer] Flush error", { sessionId, err });
+    logger.error("[UnifiedProgress] Flush error", { sessionId, err, rootMessageId: state.rootMessageId });
   }
 }

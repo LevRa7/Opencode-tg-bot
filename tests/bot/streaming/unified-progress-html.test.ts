@@ -40,26 +40,35 @@ describe("buildProgressHtml", () => {
     reasoningBlocks: [],
     doneCount: 0,
     totalCount: 0,
+    projectPath: "/home/me/test-project",
   };
 
-  it("renders header with session title", () => {
+  it("renders header with project path", () => {
     const html = buildProgressHtml(baseState);
-    expect(html).toContain("<b>🔄 Working on: \"Test Session\"</b>");
+    expect(html).toContain("<pre>Проект: /home/me/test-project</pre>");
   });
 
-  it("escapes HTML in session title", () => {
+  it("escapes HTML in project path", () => {
     const state: ProgressState = {
       ...baseState,
-      sessionTitle: "Test <script>alert('xss')</script>",
+      projectPath: "/home/me/<script>alert('xss')</script>",
     };
     const html = buildProgressHtml(state);
-    // escapeHtml does not escape single quotes — only & < > "
     expect(html).toContain(
-      "<b>🔄 Working on: \"Test &lt;script&gt;alert('xss')&lt;/script&gt;\"</b>"
+      "<pre>Проект: /home/me/&lt;script&gt;alert('xss')&lt;/script&gt;</pre>"
     );
   });
 
-  it("renders tool calls with status icons", () => {
+  it("renders header with placeholder when projectPath is empty", () => {
+    const state: ProgressState = {
+      ...baseState,
+      projectPath: "",
+    };
+    const html = buildProgressHtml(state);
+    expect(html).toContain("<pre>Проект: —</pre>");
+  });
+
+  it("renders completed tool with status icon in Tool Calls", () => {
     const state: ProgressState = {
       ...baseState,
       toolEntries: [
@@ -70,9 +79,25 @@ describe("buildProgressHtml", () => {
     expect(html).toContain("✅");
     expect(html).toContain("<code>read</code>");
     expect(html).toContain("12ms");
+    expect(html).toContain("<b>Tool Calls</b>");
+    expect(html).not.toContain("<b>Выполняю:</b>");
   });
 
-  it("renders multiple tool calls with different statuses", () => {
+  it("renders running tool in Выполняю section", () => {
+    const state: ProgressState = {
+      ...baseState,
+      toolEntries: [
+        { callId: "1", title: "bash", category: "terminal", status: "running", metric: "..." },
+      ],
+    };
+    const html = buildProgressHtml(state);
+    expect(html).toContain("<b>Выполняю:</b>");
+    expect(html).toContain("🔄");
+    expect(html).toContain("<code>bash</code>");
+    expect(html).not.toContain("<b>Tool Calls</b>");
+  });
+
+  it("renders mixed tools — running in Выполняю, done in Tool Calls", () => {
     const state: ProgressState = {
       ...baseState,
       toolEntries: [
@@ -90,15 +115,15 @@ describe("buildProgressHtml", () => {
     };
     const html = buildProgressHtml(state);
 
+    // Running section
+    expect(html).toContain("<b>Выполняю:</b>");
+    // Completed section
+    expect(html).toContain("<b>Tool Calls</b>");
+
     expect(html).toContain("✅");
     expect(html).toContain("🔄");
     expect(html).toContain("⏳");
     expect(html).toContain("❌");
-
-    expect(html).toContain("<code>read</code> <i>12ms</i>");
-    expect(html).toContain("<code>bash</code> <i>...</i>");
-    expect(html).toContain("<code>grep</code>");
-    expect(html).toContain("<code>write</code> <i>ERR</i>");
   });
 
   it("escapes HTML in tool titles", () => {
@@ -118,18 +143,45 @@ describe("buildProgressHtml", () => {
     expect(html).not.toContain("<script>evil()</script>");
   });
 
-  it("renders reasoning block with expandable details", () => {
+  it("renders active reasoning as open details with summary", () => {
     const state: ProgressState = {
       ...baseState,
-      reasoningBlocks: ["I should search first", "Then read the file"],
+      reasoningBlocks: ["I should search first\nThen read the file"],
     };
     const html = buildProgressHtml(state);
 
-    expect(html).toContain("<details>");
-    expect(html).toContain("<summary>💭 Reasoning</summary>");
-    expect(html).toContain("</details>");
-    expect(html).toContain("I should search first");
+    expect(html).toContain("<details><summary>💭 I should search first</summary>");
     expect(html).toContain("Then read the file");
+    expect(html).toContain("</details>");
+  });
+
+  it("uses title for summary when title is provided", () => {
+    const state: ProgressState = {
+      ...baseState,
+      reasoningBlocks: ["Analyzing the request\nActually, the user wants..."],
+      reasoningTitle: "Analyzing the request",
+    };
+    const html = buildProgressHtml(state);
+    expect(html).toContain("<details><summary>💭 Analyzing the request</summary>");
+    expect(html).toContain("Actually, the user wants...");
+  });
+
+  it("shows reasoning entries in tool calls as expandable details", () => {
+    const state: ProgressState = {
+      ...baseState,
+      toolEntries: [
+        { callId: "r1", title: "Previous thought about architecture\nMore details here", category: "reasoning", status: "done", tool: "reasoning" },
+        { callId: "1", title: "read", category: "file", status: "done", metric: "12ms" },
+      ],
+    };
+    const html = buildProgressHtml(state);
+    // Reasoning entry appears as <details> with 💭 prefix
+    expect(html).toContain("<details><summary>💭 Previous thought about architecture</summary>");
+    expect(html).toContain("More details here");
+    expect(html).toContain("</details>");
+    // Regular tool still shows normally
+    expect(html).toContain("✅");
+    expect(html).toContain("<code>read</code>");
   });
 
   it("escapes HTML in reasoning blocks", () => {
@@ -146,19 +198,7 @@ describe("buildProgressHtml", () => {
     expect(html).not.toContain("<script>");
   });
 
-  it("renders footer with progress stats", () => {
-    const state: ProgressState = {
-      ...baseState,
-      doneCount: 2,
-      totalCount: 5,
-    };
-    const html = buildProgressHtml(state);
-
-    expect(html).toContain("<i>📊 2/5 tools");
-    expect(html).toContain("updated just now</i>");
-  });
-
-  it("does not render tool section when no entries", () => {
+  it("does not render reasoning section when no blocks", () => {
     const html = buildProgressHtml(baseState);
     expect(html).not.toContain("<b>Tool Calls</b>");
   });
@@ -218,23 +258,29 @@ describe("buildProgressHtml", () => {
     expect(html).toContain("<code>bash</code>");
   });
 
-  it("does not render tool section when no entries", () => {
+  it("does not render Выполняю or Tool Calls when no entries", () => {
     const html = buildProgressHtml(baseState);
     expect(html).not.toContain("<b>Tool Calls</b>");
+    expect(html).not.toContain("<b>Выполняю:</b>");
   });
 
-  it("includes both tool calls and reasoning when both present", () => {
+  it("includes reasoning before tool calls and running section", () => {
     const state: ProgressState = {
       ...baseState,
       toolEntries: [
         { callId: "1", title: "read", category: "file", status: "done", metric: "12ms" },
+        { callId: "2", title: "bash", category: "terminal", status: "running", metric: "..." },
       ],
       reasoningBlocks: ["Looking at the code..."],
     };
     const html = buildProgressHtml(state);
 
-    expect(html).toContain("<b>Tool Calls</b>");
-    expect(html).toContain("<summary>💭 Reasoning</summary>");
+    // Reasoning appears before tool sections
+    const reasoningPos = html.indexOf("<details><summary>💭 Looking at the code...</summary>");
+    const toolPos = html.indexOf("<b>Tool Calls</b>");
+    const runningPos = html.indexOf("<b>Выполняю:</b>");
+    expect(reasoningPos).toBeLessThan(toolPos);
+    expect(reasoningPos).toBeLessThan(runningPos);
   });
 
   it("has correct STATUS_ICONS mapping", () => {
@@ -274,7 +320,7 @@ describe("splitHtmlAtTagBoundaries", () => {
   it("splits at blockquote boundaries", () => {
     const toolLine = "✅ <code>f.ts</code> 5ms\n";
     const manyLines = toolLine.repeat(500);
-    const html = `<blockquote>${manyLines}</blockquote>\n<i>📊 5/10 tools • ⏱ updated just now</i>`;
+    const html = `<blockquote>${manyLines}</blockquote>\n<i>footer text</i>`;
 
     const parts = splitHtmlAtTagBoundaries(html, 1500);
     expect(parts.length).toBeGreaterThan(1);

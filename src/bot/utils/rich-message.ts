@@ -171,6 +171,23 @@ export function formatToolOutputForRichMessage(
   // toolRichLabel returns HTML-safe <summary> content (it escapes internally and
   // may wrap the read/write path in <code>), so it must NOT be re-escaped here.
   const summaryHtml = toolRichLabel(tool, title, input, metadata, stateOutput);
+
+  // Append diff stats for edit/write/diff tools
+  const diffTools = new Set(["edit", "write", "apply_patch", "diff", "filediff"]);
+  let summaryWithStats = summaryHtml;
+  if (diffTools.has(tool)) {
+    // Try metadata.diff first, fall back to output body
+    const diffText = extractString(metadata?.diff) ?? (output || undefined);
+    const stats = countDiffStats(diffText ?? undefined);
+    if (stats) {
+      if (summaryWithStats.endsWith("</summary>")) {
+        summaryWithStats = summaryWithStats.replace("</summary>", `${stats}</summary>`);
+      } else {
+        summaryWithStats += stats;
+      }
+    }
+  }
+
   const openAttr = tool === "todowrite" ? " open" : "";
 
   // Decide the raw inner payload and its fence language (null = raw markdown body).
@@ -254,7 +271,7 @@ export function formatToolOutputForRichMessage(
     content = `${content}\n\n${marker}`;
   }
 
-  return `<details${openAttr}><summary>${summaryHtml}</summary>\n\n${content}\n\n</details>`;
+  return `<details${openAttr}><summary>${summaryWithStats}</summary>\n\n${content}\n\n</details>`;
 }
 
 /**
@@ -268,6 +285,14 @@ export function formatToolRichInitial(
 ): string {
   // toolRichLabel returns HTML-safe <summary> content (escaped internally).
   const summaryHtml = toolRichLabel(tool, title, input);
+
+  // For bash: show the actual command while it's running
+  if (tool === "bash" && typeof input?.command === "string") {
+    const cmd = input.command.trim();
+    const escaped = escapeSummary(cmd);
+    return `<details><summary>${summaryHtml}</summary>\n\n<pre><code class="language-bash">${escaped}</code></pre>\n\n⏳ Выполняется…\n\n</details>`;
+  }
+
   return `<details><summary>${summaryHtml}</summary>\n\n⏳ Выполняется…\n\n</details>`;
 }
 
@@ -278,6 +303,23 @@ export function formatToolRichInitial(
  * NOT re-escape): plain text is entity-escaped, and read/write file paths are
  * wrapped in <code> with a trailing "(N строк)" line count.
  */
+
+/**
+ * Count added/removed lines from a unified diff text.
+ * Returns " (+X/-Y)" or empty string if no diff stats found.
+ */
+function countDiffStats(diffText: string | undefined): string {
+  if (!diffText) return "";
+  let added = 0;
+  let removed = 0;
+  for (const line of diffText.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) added++;
+    if (line.startsWith("-") && !line.startsWith("---")) removed++;
+  }
+  if (added === 0 && removed === 0) return "";
+  return ` (+${added} -${removed})`;
+}
+
 function toolRichLabel(
   tool: string,
   title?: string,
@@ -343,8 +385,20 @@ function toolRichLabel(
   // the path can be wrapped in <code>; the free-form title is bypassed here.
   // 2026-06-26: added per request (path as inline code + line count in parens).
   if ((tool === "read" || tool === "read_file" || tool === "write") && fp) {
-    const lines = readWriteLineCount(tool, input, metadata, stateOutput);
-    const lineSuffix = lines !== undefined ? ` (${lines} ${pluralLines(lines)})` : "";
+    let lineSuffix = "";
+    if (tool === "read" || tool === "read_file") {
+      const offset = typeof input?.offset === "number" ? input.offset : undefined;
+      const limit = typeof input?.limit === "number" ? input.limit : undefined;
+      if (offset !== undefined && limit !== undefined && limit > 0) {
+        const start = offset;
+        const end = offset + limit - 1;
+        lineSuffix = ` (${start} — ${end})`;
+      }
+    }
+    if (!lineSuffix) {
+      const lines = readWriteLineCount(tool, input, metadata, stateOutput);
+      lineSuffix = lines !== undefined ? ` (${lines} ${pluralLines(lines)})` : "";
+    }
     // Budget the visible path so "base — path lineSuffix" stays within MAX_LABEL;
     // keep the tail (filename) when the path is too long.
     const overhead = base.length + " — ".length + lineSuffix.length;
@@ -373,21 +427,37 @@ function toolRichLabel(
 
   if (title?.trim()) {
     const t = title.trim();
-    // For bash tools, if the title is just the raw command, skip it —
-    // the label will fall through to the clean "💻 Команда — <truncated>" format below
+    // For bash tools, if the title is just the raw command or the tool name itself,
+    // show the actual command from input instead.
     const cmd = typeof input?.command === "string" ? input.command.trim() : "";
     const isBashRawCommand =
       tool === "bash" && cmd && (t === cmd || t.startsWith(cmd.slice(0, 40)));
     if (!isBashRawCommand) {
-      const prefixSep = title.includes(" — ") ? "" : " — ";
-      const withEmoji = truncateTitle(`${emoji}${prefixSep}${t}`, MAX_LABEL);
-      return escapeSummary(withEmoji);
+      // If title is just the tool name (e.g. "bash"), show the command instead
+      if (tool === "bash" && cmd && t === tool) {
+        // Fall through to the fallback label below
+      } else {
+        const prefixSep = title.includes(" — ") ? "" : " — ";
+        const withEmoji = truncateTitle(`${emoji}${prefixSep}${t}`, MAX_LABEL);
+        return escapeSummary(withEmoji);
+      }
     }
   }
 
   // Fallback label: emoji + tool name + truncated command/path
   const cmd2 = typeof input?.command === "string" ? input.command.trim() : "";
-  const extra = fp || cmd2 ? ` — ${fp || cmd2}` : "";
+  let extra = "";
+  if (cmd2) {
+    // Show first line of the command, truncate to fit
+    const firstLine = cmd2.split("\n")[0].trim();
+    const maxCmdLen = 70;
+    const shownCmd = firstLine.length > maxCmdLen
+      ? firstLine.slice(0, maxCmdLen - 1) + "…"
+      : firstLine;
+    extra = ` — ${shownCmd}`;
+  } else if (fp) {
+    extra = ` — ${fp}`;
+  }
   const full = truncateTitle(`${base}${extra}`, MAX_LABEL);
   return escapeSummary(full);
 }

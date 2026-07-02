@@ -28,10 +28,12 @@ export interface ProgressState {
   sessionTitle: string;
   toolEntries: ToolEntry[];
   reasoningBlocks: string[];
-  /** Title for the reasoning collapsible block. */
+  /** Title for the reasoning heading. */
   reasoningTitle?: string;
   doneCount: number;
   totalCount: number;
+  /** Project path for the header (e.g. "/home/me/projects/my-app"). */
+  projectPath?: string;
 }
 
 export const STATUS_ICONS: Record<ToolStatus, string> = {
@@ -51,18 +53,60 @@ export function escapeHtml(text: string): string {
 
 // ── Build ──────────────────────────────────────────────
 
-function buildToolCallsSection(entries: ToolEntry[]): string {
-  if (entries.length === 0) return "";
+function buildRunningSection(entries: ToolEntry[]): string {
+  const running = entries.filter(
+    (e) => e.status === "running" || e.status === "queued",
+  );
+  if (running.length === 0) return "";
 
-  const lines: string[] = [];
-  lines.push("<b>Tool Calls</b>");
+  const lines: string[] = ["<b>Выполняю:</b>"];
 
-  for (const entry of entries) {
+  for (const entry of running) {
+    const icon = STATUS_ICONS[entry.status];
+    const title = escapeHtml(entry.title);
+
+    if (entry.tool) {
+      const initialBlock = formatToolRichInitial(
+        entry.tool,
+        entry.title,
+        entry.input,
+      );
+      // Add open attribute for expanded view + prepend status icon
+      const withIcon = initialBlock.replace(
+        /^(<details)([^>]*>)(<summary>)/i,
+        `$1 open$2$3${icon} `,
+      );
+      lines.push(withIcon);
+    } else {
+      const metric = entry.metric ? ` <i>${escapeHtml(entry.metric)}</i>` : "";
+      lines.push(`${icon} <code>${title}</code>${metric}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function buildCompletedSection(entries: ToolEntry[]): string {
+  const completed = entries.filter(
+    (e) => e.status === "done" || e.status === "error",
+  );
+  if (completed.length === 0) return "";
+
+  const lines: string[] = ["<b>Tool Calls</b>"];
+
+  for (const entry of completed) {
+    // Reasoning entries: show as <details> with 💭 prefix, same format as tool calls
+    if (entry.tool === "reasoning") {
+      const firstLine = entry.title.split("\n")[0].trim();
+      const summaryText = escapeHtml(firstLine.length > 100 ? firstLine.slice(0, 97) + "…" : firstLine);
+      const bodyText = escapeHtml(entry.title);
+      lines.push(`<details><summary>💭 ${summaryText}</summary>\n\n${bodyText}\n\n</details>`);
+      continue;
+    }
+
     const icon = STATUS_ICONS[entry.status];
 
     if ((entry.status === "done" || entry.status === "error") && entry.output) {
-      // Completed/errored tool: use formatToolOutputForRichMessage for same format
-      // as the separate rich tool messages (language-aware syntax, truncation, etc.)
       const richBlock = formatToolOutputForRichMessage(
         entry.tool || "",
         entry.title,
@@ -72,37 +116,30 @@ function buildToolCallsSection(entries: ToolEntry[]): string {
         entry.stateOutput,
       );
       if (richBlock) {
-        // Prepend status icon to the <summary>
         const withIcon = richBlock.replace(
           /^(<details[^>]*>)(<summary>)/i,
           `$1$2${icon} `,
         );
         lines.push(withIcon);
       } else {
-        // Fallback: plain line
         const title = escapeHtml(entry.title);
         lines.push(`${icon} <code>${title}</code>`);
       }
+    } else if (entry.tool) {
+      const initialBlock = formatToolRichInitial(
+        entry.tool,
+        entry.title,
+        entry.input,
+      );
+      const withIcon = initialBlock.replace(
+        /^(<details[^>]*>)(<summary>)/i,
+        `$1$2${icon} `,
+      );
+      lines.push(withIcon);
     } else {
-      // Running/queued: use formatToolRichInitial for translated labels with placeholder
-      if (entry.tool) {
-        const initialBlock = formatToolRichInitial(
-          entry.tool,
-          entry.title,
-          entry.input,
-        );
-        // Prepend status icon
-        const withIcon = initialBlock.replace(
-          /^(<details[^>]*>)(<summary>)/i,
-          `$1$2${icon} `,
-        );
-        lines.push(withIcon);
-      } else {
-        // Fallback: plain status line
-        const title = escapeHtml(entry.title);
-        const metric = entry.metric ? ` <i>${escapeHtml(entry.metric)}</i>` : "";
-        lines.push(`${icon} <code>${title}</code>${metric}`);
-      }
+      const title = escapeHtml(entry.title);
+      const metric = entry.metric ? ` <i>${escapeHtml(entry.metric)}</i>` : "";
+      lines.push(`${icon} <code>${title}</code>${metric}`);
     }
   }
 
@@ -118,40 +155,46 @@ function buildReasoningSection(
   const text = blocks.join("\n").trim();
   if (!text) return "";
 
-  const summaryTitle = title ? `💭 ${escapeHtml(title)}` : "💭 Reasoning";
+  // Extract title (summary) and body (rest)
+  const lines = text.split("\n");
+  const firstLine = lines[0].trim();
+  const restLines = lines.slice(1).join("\n").trim();
+  const headingText = title || firstLine;
 
-  // If the full reasoning text is just the title (no additional content),
-  // show as plain line without collapsible block.
-  if (title && text === title.trim()) {
-    return summaryTitle;
-  }
+  // Body: rest of text after first line; if no rest, use first line as body too
+  const body = restLines || text;
 
-  const truncated = text.length > 4000 ? escapeHtml(text.slice(0, 4000)) + "\n<i>... truncated</i>" : escapeHtml(text);
-  return `<details><summary>${summaryTitle}</summary>\n\n${truncated}\n\n</details>`;
+  const summary = escapeHtml(headingText.length > 100 ? headingText.slice(0, 97) + "…" : headingText);
+  const truncated = body.length > 4000
+    ? escapeHtml(body.slice(0, 4000)) + "\n... truncated"
+    : escapeHtml(body);
+
+  return `<details><summary>💭 ${summary}</summary>\n\n${truncated}\n\n</details>`;
 }
 
 export function buildProgressHtml(state: ProgressState): string {
-  // Header: quote the user's request instead of generic "Working on:"
-  const requestQuote = escapeHtml(state.sessionTitle);
-  const header = `<blockquote>${requestQuote}</blockquote>`;
+  // Header: project path in blockquote
+  const projectPath = state.projectPath || "—";
+  const header = `<pre>Проект: ${escapeHtml(projectPath)}</pre>`;
 
-  // Reasoning first, then tool calls — newest items at top
+  // Reasoning first
   const reasoning = buildReasoningSection(state.reasoningBlocks, state.reasoningTitle);
 
-  // Show tool calls in reverse order (newest at top, oldest at bottom)
-  const reversedEntries = [...state.toolEntries].reverse();
-  const toolCalls = buildToolCallsSection(reversedEntries);
+  // Currently running tools ("Выполняю:")
+  const running = buildRunningSection(state.toolEntries);
 
-  const body = [reasoning, toolCalls].filter(Boolean).join("\n\n");
+  // Completed tools
+  const completed = buildCompletedSection(state.toolEntries);
 
-  const footer = `<i>📊 ${state.doneCount}/${state.totalCount} tools • ⏱ updated just now</i>`;
+  const body = [reasoning, running, completed].filter(Boolean).join("\n\n");
 
-  return [header, body, footer].filter(Boolean).join("\n");
+  return [header, body].filter(Boolean).join("\n");
 }
 
 // ── Tag-Aware Split ────────────────────────────────────
 
 const SPLIT_BOUNDARIES = [
+  "</pre>",
   "</code>\n",
   "</details>",
   "</tg-spoiler>",
@@ -213,6 +256,7 @@ function rewindBeforeInlineTag(html: string, pos: number): number {
 
 function balanceTags(parts: string[]): void {
   const TAG_PATTERNS = [
+    { open: /<pre>/g, close: /<\/pre>/g },
     { open: /<code>/g, close: /<\/code>/g },
     { open: /<tg-spoiler>/g, close: /<\/tg-spoiler>/g },
     { open: /<details[^>]*>/g, close: /<\/details>/g },

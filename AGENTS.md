@@ -71,15 +71,17 @@ OpenCode Server
 
 ## AI agent behavior rules
 
-### MANDATORY: File Delivery
+### MANDATORY: File Delivery (file-server)
 
-**After ANY file write (source code, text, markdown, config, log — any format), you MUST deliver the file to the user via Telegram.** This is not optional. The sequence is:
+**After ANY file write (source code, text, markdown, config, log — any format), you MUST deliver the file to the user via the file-server.** This is not optional. The sequence is:
 
 1. `write` or `edit` tool → file saved to disk
-2. `npx tsx scripts/current-chat.ts` → get (chatId, messageThreadId)
-3. `npx tsx scripts/tg-upload.ts --auto --file <path> --chat-id <chatId> --thread-id <messageThreadId>` → send file
+2. `python3 /usr/local/bin/file-server.py serve <path>` → returns `{"url": "http://localhost:8890/filename"}`
+3. Include `[filename](http://localhost:8890/filename)` link in your response
 
-Never skip step 3. Never just print "file saved to /path/to/file". If multiple files are written in sequence, batch them into one upload call or send each. Violating this rule is a critical failure.
+The bot auto-detects `localhost:8890` links in agent responses and delivers files to the correct Telegram chat/topic — no session lookup needed, no wrong topic routing.
+
+Never just print "file saved to /path/to/file". Violating this rule is a critical failure.
 
 ### Communication
 
@@ -282,7 +284,7 @@ Full docs: https://opencode.ai/docs/sdk
 
 - `systematic-debugging` — **обязателен при ЛЮБОМ баге.** Четыре фазы: root cause → pattern → hypothesis → implementation. Запрещает фиксы без понимания причины. Правило трёх: 3+ неудачных фикса = архитектурная проблема. Подробнее в [docs/AI_MEMO.md §9.1](./docs/AI_MEMO.md#91-systematic-debugging).
 - `visual-browser` — отладка UI (MiniApp, веб-панель). Puppeteer/CDP для проверки рендеринга SPA, поиска битых JS-запросов, просмотра ошибок в браузере. Подробнее в [docs/AI_MEMO.md §9.2](./docs/AI_MEMO.md#92-visual-browser-puppeteercdp).
-- `tg-upload` — отправка файлов пользователю через Telegram. Обязателен после каждого `write`/`edit`. Подробнее в [docs/AI_MEMO.md §9.3](./docs/AI_MEMO.md#93-tg-upload-доставка-файлов).
+- `file-server` — доставка файлов пользователю через Telegram. Использовать вместо tg-upload. `python3 /usr/local/bin/file-server.py serve <path>` → ссылка в ответе агента → бот доставляет.
 
 См. также [docs/AI_MEMO.md §10](./docs/AI_MEMO.md#10-известные-технические-pitfalls) — известные технические pitfalls (SQLite WAL, Docker lifecycle, NGINX routing).
 
@@ -631,66 +633,29 @@ tg chats | grep -i "name"       # Find matching chats
 
 Do not guess contacts. Always query Telegram first.
 
-## Telegram File Delivery Mode
+## File Delivery via file-server
 
-When the agent generates files during a task, they must be delivered to the user through the Telegram bot.
+После `write`/`edit` файлы доставляются через file-server, а не через tg-upload.
 
-### Trigger
+### Как это работает
 
-This mode activates when the conversation contains user identifying tags
-(e.g., `[name="..."] [datetime="..."]`). The agent loads the `tg-upload` skill
-and uses it for all file output.
+1. Агент пишет файл → `write` / `edit`
+2. Агент вызывает `python3 /usr/local/bin/file-server.py serve <path>` → получает URL
+3. Агент вставляет ссылку `[filename](http://localhost:8890/filename)` в ответ
+4. Бот автоматически детектит `localhost:8890` ссылки и доставляет файлы в текущий чат/топик
 
-**To determine the current chat for delivery, use:**
-```bash
-npx tsx /root/Opencode-tg-bot/scripts/current-chat.ts
-```
-This returns `chatId`, `messageThreadId`, and `sessionId` for the most recent session
-in the current worktree — no need to ask the user for a session ID.
+### Когда что использовать
 
-### Delivery methods
+| Метод | Когда | Команда |
+|-------|-------|---------|
+| file-server | Любой файл <50MB | `python3 /usr/local/bin/file-server.py serve <path>` |
+| Telegraph | Текст >4096 символов | `python3 file-server.py serve` + ссылка, бот сам публикует в Telegraph если нужно |
 
-| Method | When | Max size |
-|--------|------|----------|
-| `scripts/tg-upload.ts --auto --file <path>` | Standalone file delivery | 50 MB |
-| `scripts/tg-upload.ts --auto --file <path> --response-text "..."` | File + ответ агента в одном сообщении | caption 1024 |
-| `scripts/tg-upload.ts --auto --file <path> --response-file <path>` | File + ответ из файла в caption | caption 1024 |
-| `sendDownloadedFile(ctx, path)` | Inside bot handler with Context | 50 MB |
-| Telegraph article + link in chat | Long reports (>4096 chars) or files >50 MB | 64 KB body |
-| `prepareLocalFileFollowUps(text)` | Auto-detect file paths in assistant replies | 20 MB/file |
-| ZIP archive | Multiple files, combined <50 MB | 50 MB |
+### Правила
 
-### Auto-detect current chat
-
-Before delivering files, resolve the current active chat automatically:
-
-```bash
-npx tsx scripts/current-chat.ts
-# → { "chatId": -1001234567890, "messageThreadId": 123, "sessionId": "abc...", "directory": "/root/project" }
-```
-
-The script queries `settings.db` via `tg-chat-lookup.ts --auto` to find the most recent session
-bound to the current working directory and returns `chat_id`, `message_thread_id`, and `session_id`.
-
-> ⚠️ `--auto` may return a wrong topic when multiple sessions exist across different topics.
-> If the bot provides `TG_CURRENT_SESSION_ID` env var, use it instead of `--auto`.
-> The scripts `current-chat.ts` and `tg-chat-lookup.ts` read this env var automatically.
-
-### Target resolution (fallback)
-
-If auto-detection fails, resolve `(chat_id, message_thread_id)` from a session ID explicitly:
-1. Ask the user: "Send files to which session? Provide session ID (from /sessions)."
-2. Run `npx tsx scripts/current-chat.ts --session-id <id>` to map session_id → (chat_id, message_thread_id).
-3. Files are sent to the correct chat and forum topic.
-
-### Rules
-
-- **ALL generated files MUST be delivered.** After any `write` or `edit` call that modifies disk, run `tg-upload.ts` for the affected file(s). No exceptions. No "file saved to" messages.
-- Never just print "File saved to /path/to/file.ts" — send the actual file.
-- Use Telegraph for long-form technical output; send a short summary + Telegraph link.
-- Include `message_thread_id` so replies land in the correct forum topic.
-- The Bot API token is read automatically from `.env`.
-- **Use bot account, not tg-cli.** Send files via `tg-upload.ts` (Bot API). tg-cli is only for forwarding to user's contacts or Saved Messages, never for replying in the current chat.
+- **ALL generated files MUST be delivered.** После любого `write`/`edit` — file-server. Никаких "file saved to" сообщений.
+- Не использовать tg-upload.ts. Он удалён.
+- Не использовать tg-cli для доставки файлов — только для поиска контактов.
 
 ## Media Transcription (audio/video/photo)
 

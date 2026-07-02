@@ -154,6 +154,9 @@ export function extractMessageMetadata(ctx: Context): MessageMetadata | undefine
       forwardFromName = [fo.sender_user.first_name, fo.sender_user.last_name].filter(Boolean).join(" ");
       forwardFromId = fo.sender_user.id;
       forwardFromUsername = fo.sender_user.username;
+    } else if (fo.type === "channel" && fo.chat) {
+      forwardFromName = fo.chat.title;
+      forwardFromUsername = fo.chat.username;
     } else if (fo.type === "chat" && fo.sender_chat) {
       forwardFromName = fo.sender_chat.title;
       forwardFromUsername = fo.sender_chat.username;

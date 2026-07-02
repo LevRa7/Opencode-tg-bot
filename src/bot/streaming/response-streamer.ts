@@ -336,6 +336,21 @@ export class ResponseStreamer {
       return;
     }
 
+    // Flush the FIRST message immediately so model text is not blocked
+    // by tool output flooding the Telegram API channel.
+    // Subsequent updates for the same stream still go through the throttle.
+    if (state.telegramMessageIds.length === 0) {
+      void this.enqueueTask(state, () => this.flushState(state, "immediate_first")).catch(
+        (error) => {
+          logger.error(
+            `[ResponseStreamer] Immediate first-message sync failed: session=${state.sessionId}, message=${state.messageId}`,
+            error,
+          );
+        },
+      );
+      return;
+    }
+
     if (this.throttleMs === 0) {
       void this.enqueueTask(state, () => this.flushState(state, "immediate")).catch((error) => {
         logger.error(

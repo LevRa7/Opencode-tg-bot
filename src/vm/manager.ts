@@ -7,7 +7,8 @@ import { logger } from "../utils/logger.js";
 import { t } from "../i18n/index.js";
 import { VM_DEFAULTS, derivePassword, getDataDiskPath, GOLDEN_VERSION_FILE, type VmHandle, type VmInfo, type VmOperationResult, type VmSpec } from "./types.js";
 import { generateCloudInitIso } from "./cloud-init.js";
-import { getOrCreateServerPassword } from "../settings/manager.js";
+import { getOrCreateServerPassword, getUserVmSpecTier } from "../settings/manager.js";
+import { fireVmAlarmBg } from "./alarm.js";
 import type { VmStatePersistence, VmStateRecord } from "./state-persistence.js";
 import { createLibvirtHealthProxy, type HealthStatus } from "./health-proxy.js";
 import { deployFullUpdate, type FullUpdatePayload } from "./ssh-inject.js";
@@ -208,14 +209,30 @@ export class VmManager {
     report("Enabling KSM");
     await this.ensureKsm();
 
-    // Clean up any leftover from previous attempt before creating new
+    // SAFETY CHECK (2026-07-02): NEVER destroy/undefine an existing user VM —
+    // it may contain the user's data. If the domain already exists, fire an
+    // admin alarm and skip provisioning. Only clean up if the domain does NOT
+    // exist (true first-time provisioning, no user data at risk).
     report(t("vm.progress.cleanup_vm"));
-    try {
-      this.execSyncFn(`sudo virsh destroy ${domainName} --graceful`, { stdio: "ignore" });
-    } catch { /* not running — ok */ }
-    try {
-      this.execSyncFn(`sudo virsh undefine ${domainName}`, { stdio: "ignore" });
-    } catch { /* not defined — ok */ }
+    const domainExists = this.domainExists(domainName);
+    if (domainExists) {
+      const existingState = this.domainState(domainName);
+      fireVmAlarmBg({
+        severity: "CRITICAL",
+        userId,
+        domainName,
+        reason: `createAndStart would have destroyed existing domain (state: ${existingState}). User data at risk. Provisioning BLOCKED.`,
+        blockedAction: `virsh destroy ${domainName} + virsh undefine ${domainName} + rm -f ${clonePath}`,
+        caller: "VmManager.createAndStart",
+        source: "manager.ts:211-224",
+        timestamp: new Date().toISOString(),
+      });
+      throw new Error(
+        `VM domain '${domainName}' already exists (state: ${existingState}). ` +
+        `Provisioning blocked to protect user data. Admin has been notified.`,
+      );
+    }
+    // Safe cleanup: only if domain does NOT exist (no user data at risk)
     try {
       this.execSyncFn(`sudo rm -f ${clonePath}`, { stdio: "ignore" });
     } catch { /* file didn't exist — ok */ }
@@ -336,19 +353,42 @@ export class VmManager {
 
   async ensureKsm(): Promise<void> {
     // KSM deduplicates identical memory pages across VMs sharing the same base image.
-    // Aggressive tuning: scan more pages per pass (1024), short sleep (20ms).
-    const ksmCmds = [
+    // Burst phase: aggressive scan (5000 pages/pass, 10ms sleep) right after VM deploy.
+    // After 60s, switch to conservative (256 pages/pass, 200ms sleep) to save CPU.
+    const burstCmds = [
       "echo 1 > /sys/kernel/mm/ksm/run",
-      "echo 1024 > /sys/kernel/mm/ksm/pages_to_scan",
-      "echo 20 > /sys/kernel/mm/ksm/sleep_millisecs",
+      "echo 1 > /sys/kernel/mm/ksm/merge_across_nodes",
+      "echo 5000 > /sys/kernel/mm/ksm/pages_to_scan",
+      "echo 10 > /sys/kernel/mm/ksm/sleep_millisecs",
     ];
-    for (const cmd of ksmCmds) {
+    for (const cmd of burstCmds) {
       try {
         this.execSyncFn(`sudo sh -c '${cmd}'`, { stdio: "ignore" });
       } catch {
         // KSM not available on this kernel — non-fatal
       }
     }
+
+    // Log current dedup stats for monitoring
+    try {
+      const shared = this.execSyncFn("cat /sys/kernel/mm/ksm/pages_shared", { encoding: "utf-8", stdio: "pipe" }) as string;
+      const sharing = this.execSyncFn("cat /sys/kernel/mm/ksm/pages_sharing", { encoding: "utf-8", stdio: "pipe" }) as string;
+      const savedKb = (parseInt(sharing) - parseInt(shared)) * 4;
+      logger.info(`[KSM] pages_shared=${shared.trim()} pages_sharing=${sharing.trim()} saved=${savedKb}KB`);
+    } catch {
+      // stats unavailable — non-fatal
+    }
+
+    // After 60s, switch to conservative scan to reduce CPU overhead
+    setTimeout(() => {
+      try {
+        this.execSyncFn("sudo sh -c 'echo 256 > /sys/kernel/mm/ksm/pages_to_scan'", { stdio: "ignore" });
+        this.execSyncFn("sudo sh -c 'echo 200 > /sys/kernel/mm/ksm/sleep_millisecs'", { stdio: "ignore" });
+        logger.info("[KSM] Switched to conservative scan (256 pages, 200ms sleep)");
+      } catch {
+        // ignore — KSM may have been disabled
+      }
+    }, 60_000);
   }
 
   private buildDomainXml(name: string, diskPath: string, isoPath: string, spec: VmSpec, userId: number, dataDiskPath: string): string {
@@ -397,60 +437,51 @@ export class VmManager {
         timeout: VM_DEFAULTS.shutdownTimeoutMs,
       });
       return { success: true };
-    } catch {
-      try {
-        this.execSyncFn(`sudo virsh destroy ${domainName} --graceful`, {
-          timeout: VM_DEFAULTS.forceDestroyTimeoutMs,
-        });
-        return { success: true };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return { success: false, error: message };
-      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // (2026-07-02): NEVER force-destroy (virsh destroy --graceful).
+      // Graceful shutdown failed — fire alarm and return the error.
+      // User data on the VM must be preserved.
+      fireVmAlarmBg({
+        severity: "WARN",
+        userId,
+        domainName,
+        reason: `Graceful shutdown (virsh shutdown --mode acpi) failed: ${message}. Force-destroy BLOCKED to protect user data.`,
+        blockedAction: `virsh destroy ${domainName} --graceful`,
+        caller: "VmManager.stop",
+        source: "manager.ts:425-434",
+        timestamp: new Date().toISOString(),
+      });
+      return { success: false, error: `Graceful shutdown failed: ${message}. Admin notified.` };
     }
   }
 
+  /** (2026-07-02) DESTROY IS NOW SAFE — never undefines domain or deletes disks.
+   *  Only stops the VM gracefully. Admin alarm is fired with full context.
+   *  User data (qcow2, data disk, domain XML) is preserved. */
   async destroy(userId: number): Promise<VmOperationResult> {
     const domainName = `${VM_DEFAULTS.domainNamePrefix}-${userId}`;
+    const clonePath = path.join(VM_DEFAULTS.imagesDir, `${domainName}.qcow2`);
 
+    // Fire CRITICAL alarm — someone tried to destroy a user VM
+    fireVmAlarmBg({
+      severity: "CRITICAL",
+      userId,
+      domainName,
+      reason: `destroy() called — would have undefine'd domain and deleted OS disk ${clonePath}. User data preserved.`,
+      blockedAction: `virsh undefine ${domainName} + unlink ${clonePath} + DHCP cleanup`,
+      caller: "VmManager.destroy",
+      source: "manager.ts:436-469",
+      timestamp: new Date().toISOString(),
+    });
+
+    // Only graceful stop — NO undefine, NO disk deletion
     const stopResult = await this.stop(userId);
     if (!stopResult.success) {
       return stopResult;
     }
 
-    try {
-      this.execSyncFn(`sudo virsh undefine ${domainName}`, {
-        stdio: "ignore",
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { success: false, error: message };
-    }
-
-    // Remove OS overlay disk (NOT the persistent data disk)
-    try {
-      const clonePath = path.join(VM_DEFAULTS.imagesDir, `${domainName}.qcow2`);
-      unlinkSync(clonePath);
-    } catch {
-      logger.warn(`[VmManager] Could not remove OS overlay for userId=${userId}`);
-    }
-
-    // Remove DHCP reservation
-    try {
-      const mac = generateMacForUser(userId);
-      this.execSyncFn(
-        `sudo virsh net-update ${VM_DEFAULTS.networkName} delete ip-dhcp-host "<host mac='${mac}' />" --live --config --parent-index 0`,
-        { stdio: "ignore" },
-      );
-    } catch { /* ignore — reservation may not exist */ }
-
-    try {
-      const isoPath = path.join(VM_DEFAULTS.imagesDir, `cloud-init-${userId}.iso`);
-      unlinkSync(isoPath);
-    } catch {
-      logger.warn(`[VmManager] Could not remove cloud-init ISO for userId=${userId}`);
-    }
-
+    logger.warn("[VmManager] destroy() called for userId=%d — domain preserved, admin notified", userId);
     return { success: true };
   }
 
@@ -475,6 +506,33 @@ export class VmManager {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /** Check if a libvirt domain is defined (exists) for the given userId.
+   *  Returns false only when domain is completely undefined — not just shut off. */
+  domainExists(domainName: string): boolean {
+    try {
+      this.execSyncFn(`sudo virsh dominfo ${domainName}`, {
+        stdio: "pipe",
+        encoding: "utf-8",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Get the current state of a libvirt domain (running, shut off, etc.).
+   *  Returns "unknown" if the domain does not exist or domstate fails. */
+  domainState(domainName: string): string {
+    try {
+      const output = this.execSyncFn(`sudo virsh domstate ${domainName}`, {
+        encoding: "utf-8",
+      }) as string;
+      return output.trim() || "unknown";
+    } catch {
+      return "unknown";
     }
   }
 
@@ -516,7 +574,8 @@ export class VmManager {
       running = false;
     }
 
-    const password = derivePassword(userId, "medium");
+    const tier = getUserVmSpecTier(userId) ?? "medium";
+    const password = derivePassword(userId, tier);
 
     if (running) {
       // SSH is the ONLY path for running VMs — guestfish can't modify a live disk
@@ -677,9 +736,10 @@ function readUpdatePayload(): FullUpdatePayload {
 
   const tgAgentMd = readFileSync(resolve(__dirname, "tg-agent-content.md"), "utf-8");
   const memoryServerTs = readFileSync(resolve(__dirname, "mcp-servers/memory-ts/server.ts"), "utf-8");
+  const memoryStoreTs = readFileSync(resolve(__dirname, "mcp-servers/memory-ts/memory_store.ts"), "utf-8");
   const skillsServerTs = readFileSync(resolve(__dirname, "mcp-servers/skills-ts/server.ts"), "utf-8");
 
-  return { tgAgentMd, memoryServerTs, skillsServerTs };
+  return { tgAgentMd, memoryServerTs, memoryStoreTs, skillsServerTs };
 }
 
 export const vmManager = new VmManager();

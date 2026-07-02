@@ -194,7 +194,7 @@ function normalizeReasoning(text: string): string {
   return text.replace(/\r\n/g, "\n").trim();
 }
 
-function unwrapMarkdownTitle(text: string): string {
+export function unwrapMarkdownTitle(text: string): string {
   let result = text.trim();
 
   const wrappers = [

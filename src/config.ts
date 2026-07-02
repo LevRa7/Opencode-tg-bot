@@ -34,6 +34,7 @@ loadMergedEnv();
 
 export type MessageFormatMode = "raw" | "markdown";
 export type TtsProvider = "openai" | "google";
+export type TelegramUpdateMode = "polling" | "webhook";
 
 function getEnvVar(key: string, required: boolean = true): string {
   const value = process.env[key];
@@ -136,6 +137,31 @@ function getOptionalTtsProviderEnvVar(key: string, defaultValue: TtsProvider): T
   return defaultValue;
 }
 
+function getOptionalTelegramUpdateModeEnvVar(
+  key: string,
+  defaultValue: TelegramUpdateMode,
+): TelegramUpdateMode {
+  const value = getEnvVar(key, false);
+
+  if (!value) {
+    return defaultValue;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["webhook", "webhooks"].includes(normalized)) {
+    return "webhook";
+  }
+  if (["polling", "long-poll", "long-polling", "getupdates"].includes(normalized)) {
+    return "polling";
+  }
+
+  return defaultValue;
+}
+
+function normalizeWebhookBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
 function getOptionalTtsVoiceEnvVar(provider: TtsProvider): string {
   const configuredVoice = getEnvVar("TTS_VOICE", false);
   if (configuredVoice) {
@@ -231,6 +257,10 @@ export const config = {
     apiRoot: getEnvVar("TELEGRAM_API_ROOT", false).replace(/\/+$/, ""),
     proxySecret: getEnvVar("TELEGRAM_PROXY_SECRET", false),
     forceIpv4: getOptionalBooleanEnvVar("TELEGRAM_FORCE_IPV4", false),
+    updateMode: getOptionalTelegramUpdateModeEnvVar("TELEGRAM_UPDATE_MODE", "polling"),
+    webhookBaseUrl: normalizeWebhookBaseUrl(getEnvVar("TELEGRAM_WEBHOOK_BASE_URL", false)),
+    webhookPath: getEnvVar("TELEGRAM_WEBHOOK_PATH", false) || "/telegram/webhook",
+    webhookSecret: getEnvVar("TELEGRAM_WEBHOOK_SECRET", false),
   },
   opencode: {
     apiUrl: getEnvVar("OPENCODE_API_URL", false) || "http://localhost:4096",
@@ -269,7 +299,7 @@ export const config = {
     commandsListLimit: getOptionalPositiveIntEnvVar("COMMANDS_LIST_LIMIT", 10),
     taskLimit: getOptionalPositiveIntEnvVar("TASK_LIMIT", 10),
     responseStreaming: getOptionalBooleanEnvVar("RESPONSE_STREAMING", true),
-    responseStreamThrottleMs: getOptionalPositiveIntEnvVar("RESPONSE_STREAM_THROTTLE_MS", 200),
+    responseStreamThrottleMs: getOptionalPositiveIntEnvVar("RESPONSE_STREAM_THROTTLE_MS", 500),
     bashToolDisplayMaxLength: getOptionalPositiveIntEnvVar("BASH_TOOL_DISPLAY_MAX_LENGTH", 128),
     serviceMessagesIntervalSec: getOptionalNonNegativeIntEnvVarFromKeys(
       ["SERVICE_MESSAGES_INTERVAL_SEC", "TOOL_MESSAGES_INTERVAL_SEC"],
@@ -286,6 +316,8 @@ export const config = {
       120,
     ),
     messageFormatMode: getOptionalMessageFormatModeEnvVar("MESSAGE_FORMAT_MODE", "markdown"),
+    richProgressEnabled: getOptionalBooleanEnvVar("RICH_PROGRESS_ENABLED", false),
+    richProgressFlushIntervalMs: getOptionalPositiveIntEnvVar("RICH_PROGRESS_FLUSH_INTERVAL_MS", 2000),
   },
   open: {
     browserRoots: getOptionalStringListEnvVar("OPEN_BROWSER_ROOTS"),

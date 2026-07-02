@@ -253,7 +253,7 @@ describe("VmManager", () => {
   });
 
   describe("ensureKsm", () => {
-    it("enables KSM on the host by writing to sysfs", async () => {
+    it("enables KSM and merge_across_nodes on the host", async () => {
       const mockExec = vi.fn();
       const mgr = new VmManager(mockExec);
 
@@ -263,24 +263,75 @@ describe("VmManager", () => {
         "sudo sh -c 'echo 1 > /sys/kernel/mm/ksm/run'",
         expect.any(Object),
       );
+      expect(mockExec).toHaveBeenCalledWith(
+        "sudo sh -c 'echo 1 > /sys/kernel/mm/ksm/merge_across_nodes'",
+        expect.any(Object),
+      );
     });
 
-    it("tunes KSM for aggressive page merging", async () => {
+    it("tunes KSM for burst page merging (5000 pages/10ms)", async () => {
       const mockExec = vi.fn();
       const mgr = new VmManager(mockExec);
 
       await mgr.ensureKsm();
 
-      // pages_to_scan: scan more pages per pass
+      // pages_to_scan: aggressive burst scan
       expect(mockExec).toHaveBeenCalledWith(
-        "sudo sh -c 'echo 1024 > /sys/kernel/mm/ksm/pages_to_scan'",
+        "sudo sh -c 'echo 5000 > /sys/kernel/mm/ksm/pages_to_scan'",
         expect.any(Object),
       );
-      // sleep_millisecs: shorter sleep between scans for faster merging
+      // sleep_millisecs: minimal sleep for burst
       expect(mockExec).toHaveBeenCalledWith(
-        "sudo sh -c 'echo 20 > /sys/kernel/mm/ksm/sleep_millisecs'",
+        "sudo sh -c 'echo 10 > /sys/kernel/mm/ksm/sleep_millisecs'",
         expect.any(Object),
       );
+    });
+
+    it("logs KSM dedup stats after burst config", async () => {
+      const mockExec = vi.fn();
+      const { logger } = await import("../../src/utils/logger.js");
+      const mgr = new VmManager(mockExec);
+
+      await mgr.ensureKsm();
+
+      // Stats read via cat /sys/kernel/mm/ksm/pages_shared + pages_sharing
+      expect(mockExec).toHaveBeenCalledWith(
+        "cat /sys/kernel/mm/ksm/pages_shared",
+        expect.objectContaining({ encoding: "utf-8", stdio: "pipe" }),
+      );
+      expect(mockExec).toHaveBeenCalledWith(
+        "cat /sys/kernel/mm/ksm/pages_sharing",
+        expect.objectContaining({ encoding: "utf-8", stdio: "pipe" }),
+      );
+    });
+
+    it("schedules conservative scan after 60s burst window", async () => {
+      vi.useFakeTimers();
+      const mockExec = vi.fn().mockReturnValue("0");
+      const mgr = new VmManager(mockExec);
+
+      await mgr.ensureKsm();
+
+      // Before timer fires, conservative commands not called yet
+      const callsBefore = mockExec.mock.calls.filter(
+        (c: any[]) => String(c[0]).includes("256 >"),
+      );
+      expect(callsBefore.length).toBe(0);
+
+      // Fast-forward 60s
+      vi.advanceTimersByTime(60_000);
+
+      // Now conservative commands should have been called
+      expect(mockExec).toHaveBeenCalledWith(
+        "sudo sh -c 'echo 256 > /sys/kernel/mm/ksm/pages_to_scan'",
+        expect.any(Object),
+      );
+      expect(mockExec).toHaveBeenCalledWith(
+        "sudo sh -c 'echo 200 > /sys/kernel/mm/ksm/sleep_millisecs'",
+        expect.any(Object),
+      );
+
+      vi.useRealTimers();
     });
 
     it("does not throw when KSM sysfs is unavailable (no KSM support)", async () => {

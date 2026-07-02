@@ -114,6 +114,16 @@ USER (who the user is) [XX% — N/M chars]
 ```
 If you see these — USE them. They are authoritative for this session. Also check for \`<available_skills>\` block listing skills with descriptions.
 
+**Skills (mandatory — Hermes pattern):**
+
+Before replying, scan the injected \`<available_skills>\` block. If a skill matches or is even partially relevant to your task, you **MUST** load it with \`skill_view(name)\` and follow its instructions. **Err on the side of loading** — it is always better to have context you don't need than to miss critical steps, pitfalls, or established workflows. Skills contain specialized knowledge and proven workflows that outperform general-purpose approaches. Load the skill even if you think you could handle the task with basic tools — the skill defines HOW it should be done here.
+
+If a skill has issues, fix it with skill_manage(action='patch') — don't wait to be asked. Skills that aren't maintained become liabilities.
+
+After completing a complex task (5+ tool calls), fixing a tricky error, or discovering a non-trivial workflow, save the approach as a skill with skill_manage(action='create') so you can reuse it next time. If a skill you loaded was missing steps, had wrong commands, or needed pitfalls you discovered, update it before finishing.
+
+Only proceed without loading a skill if genuinely none are relevant to the task.
+
 ### Mode B: Self-Sufficient (when NOTHING injected)
 
 If the user's message starts directly without Hermes memory blocks → the user is accessing OpenCode directly (browser/web UI). Read memory yourself:
@@ -153,12 +163,38 @@ Memory files live at \`/workspace/MEMORY.md\` (environment facts) and \`/workspa
 - User states a preference → add to USER.md
 - Memory >80% full → consolidate entries before adding new ones
 
+### Memory Consolidation (Hermes flow — when memory_add returns `success: false`)
+
+When `memory_add(target, content)` (single entry) hits the char limit, the error response includes `current_entries: [...]` — the COMPLETE list of all entries. This is the consolidation trigger. Do NOT retry the same add — follow this flow:
+
+1. **Read `current_entries`** from the error response — these are ALL entries, exactly as they exist
+2. **Decide what to merge/remove:**
+   - Merge overlapping entries about the same topic into one shorter entry
+   - Remove truly stale entries (facts about completed projects, migrated tools)
+   - Keep high-value entries (user preferences, corrections, environment facts)
+3. **Issue ONE atomic batch call:**
+   ```
+   memory_add(target, operations=[
+     {action: 'remove', old_text: 'stale entry substring...'},
+     {action: 'replace', old_text: 'old entry substring...', content: 'merged shorter text...'},
+     {action: 'add', content: 'your new fact...'}
+   ])
+   ```
+   ALL changes in ONE call. The batch is all-or-nothing — if any op fails, nothing is written.
+4. **Check the result** — if `success: true`, consolidation done. If still `success: false` (over limit), remove more entries and retry once.
+
+**Key rules:**
+- NEVER retry single `memory_add` when it fails — use `operations=[...]` instead
+- The `old_text` for remove/replace must be a UNIQUE substring of one entry
+- `operations` supports: `add` (append new), `remove` (delete by substring), `replace` (overwrite by substring)
+- Batch is atomic — all ops succeed or nothing changes
+
 ### Skills (BOTH modes)
 
 User skills live at \`/workspace/skills/\` (symlinked from \`/home/opencode/.config/opencode/skills/user/\`).
 
 **When to create a skill:**
-- Complex task (5+ tool calls) → capture workflow as \`/workspace/skills/<name>/SKILL.md\`
+- Complex task (5+ tool calls) → capture workflow
 - Non-trivial technique, fix, or workaround → capture the approach
 - Tricky bug with obscure solution → capture debugging process
 
@@ -180,10 +216,39 @@ description: What this skill helps with
 ## Verification
 \`\`\`
 
-**How to update:**
-- Skill outdated/wrong → \`write_file\` IMMEDIATELY
-- Use \`ls /home/opencode/.config/opencode/skills/*/SKILL.md\` to discover existing skills
-- Read SKILL.md before using a skill
+### MCP Skills Tools (symmetric with Hermes skill_manage)
+
+**skill_manage(action, name, ...)** — unified skill management, identical to Hermes:
+```
+skill_manage(action='create',     name='my-skill', content='...full SKILL.md...')
+skill_manage(action='patch',      name='my-skill', old_string='old text', new_string='new text')
+skill_manage(action='edit',       name='my-skill', content='...full new SKILL.md...')
+skill_manage(action='delete',     name='old-skill', absorbed_into='umbrella-skill')
+```
+- **create:** name + content (FULL SKILL.md with YAML frontmatter at byte 0). Optional category.
+- **patch:** old_string (unique text to find) + new_string (replacement). PREFERRED for fixes.
+- **edit:** content — full rewrite. Use only when most sections change. ALWAYS skill_view() first.
+- **delete:** absorbed_into — umbrella name when merged, "" for pruning.
+
+**skills_list()** — list all available skills with descriptions
+**skill_view(name)** — read full SKILL.md content
+
+### Workflow: Creating a New Skill
+
+1. skills_list() — check name isn't taken
+2. skill_manage(action='create', name='my-skill', content='...full SKILL.md...')
+3. Verify: skill_view(name='my-skill') — check frontmatter
+
+### Workflow: Updating an Existing Skill
+
+1. skill_view(name='my-skill') — ALWAYS read first
+2. skill_manage(action='patch', name='my-skill', old_string='exact text', new_string='new text') — PREFERRED
+3. skill_manage(action='edit', name='my-skill', content='...full new content...') — only for major rewrites
+4. Verify: skill_view(name='my-skill') — check changes applied
+
+### Golden Rule
+
+Read before write. skill_view() → skill_manage(action='patch'). Never edit a skill you haven't read first.
 
 ## People Lookup
 

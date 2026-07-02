@@ -14,6 +14,18 @@ import { handleControlApiRequest, getControlApiKey } from "./control-api.js";
 const PORT = parseInt(process.env.HTTP_PORT || "8080", 10);
 const OPENCHAMBER_SERVER = "http://127.0.0.1:8081";
 
+type TelegramWebhookRequestHandler = (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
+
+let telegramWebhookRoute: { path: string; handler: TelegramWebhookRequestHandler } | null = null;
+
+export function setTelegramWebhookRequestHandler(
+  routePath: string,
+  handler: TelegramWebhookRequestHandler,
+): void {
+  const normalizedPath = routePath.startsWith("/") ? routePath : `/${routePath}`;
+  telegramWebhookRoute = { path: normalizedPath, handler };
+}
+
 // In-memory token store for MiniApp URL tokens (OpenChamber-compatible).
 // Keyed by token string, value contains user credentials and expiry.
 const urlTokenStore = new Map<
@@ -178,6 +190,12 @@ function proxyToUrl(
 
 function createServer(): http.Server {
   return http.createServer(async (req, res) => {
+    const requestPath = req.url?.split("?")[0] ?? "/";
+    if (telegramWebhookRoute && req.method === "POST" && requestPath === telegramWebhookRoute.path) {
+      await telegramWebhookRoute.handler(req, res);
+      return;
+    }
+
     setCors(res, req);
 
     if (req.method === "OPTIONS") {

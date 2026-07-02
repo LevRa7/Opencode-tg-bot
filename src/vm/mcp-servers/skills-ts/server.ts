@@ -324,7 +324,7 @@ function skillEdit(name: string, body: string): string {
   }
 }
 
-function skillDelete(name: string): string {
+function skillDelete(name: string, absorbedInto?: string): string {
   if (!name?.trim()) return JSON.stringify({ error: "Skill name is required." });
   name = name.trim();
   const skillsDir = getSkillsDir();
@@ -333,7 +333,10 @@ function skillDelete(name: string): string {
   if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
     try {
       fs.rmSync(dirPath, { recursive: true });
-      return JSON.stringify({ success: true, name, deleted: "directory", note: `Skill '${name}' removed.` });
+      const note = absorbedInto !== undefined
+        ? `Skill '${name}' removed${absorbedInto ? ` — content absorbed into '${absorbedInto}'` : " (pruned, no forwarding target)"}.`
+        : `Skill '${name}' removed.`;
+      return JSON.stringify({ success: true, name, deleted: "directory", absorbed_into: absorbedInto ?? null, note });
     } catch (e) {
       return JSON.stringify({ error: `Failed to delete skill directory: ${e}` });
     }
@@ -343,13 +346,174 @@ function skillDelete(name: string): string {
   if (fs.existsSync(flatPath)) {
     try {
       fs.unlinkSync(flatPath);
-      return JSON.stringify({ success: true, name, deleted: "file", note: `Skill '${name}' removed.` });
+      const note = absorbedInto !== undefined
+        ? `Skill '${name}' removed${absorbedInto ? ` — content absorbed into '${absorbedInto}'` : " (pruned, no forwarding target)"}.`
+        : `Skill '${name}' removed.`;
+      return JSON.stringify({ success: true, name, deleted: "file", absorbed_into: absorbedInto ?? null, note });
     } catch (e) {
       return JSON.stringify({ error: `Failed to delete skill file: ${e}` });
     }
   }
 
   return JSON.stringify({ error: `Skill '${name}' not found.` });
+}
+
+// ── Supporting file operations ───────────────────────────────
+
+function writeFile(name: string, filePath: string, fileContent: string): string {
+  if (!name?.trim()) return JSON.stringify({ error: "Skill name is required." });
+  name = name.trim();
+  if (!filePath?.trim()) return JSON.stringify({ error: "file_path is required. Must be under references/, templates/, scripts/, or assets/." });
+  filePath = filePath.trim();
+  if (fileContent === undefined || fileContent === null) return JSON.stringify({ error: "file_content is required." });
+  if (!/^(references|templates|scripts|assets)\//.test(filePath)) {
+    return JSON.stringify({ error: `file_path must start with references/, templates/, scripts/, or assets/. Got: '${filePath}'` });
+  }
+
+  const skillsDir = getSkillsDir();
+  const skillDir = path.join(skillsDir, name);
+  if (!fs.existsSync(path.join(skillDir, "SKILL.md"))) {
+    return JSON.stringify({ error: `Skill '${name}' does not exist. Use skill_create first.` });
+  }
+
+  const targetPath = path.join(skillDir, filePath);
+  try {
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, fileContent, "utf-8");
+    return JSON.stringify({ success: true, name, path: targetPath, note: `File '${filePath}' written under skill '${name}'.` });
+  } catch (e) {
+    return JSON.stringify({ error: `Failed to write file: ${e}` });
+  }
+}
+
+function removeFile(name: string, filePath: string): string {
+  if (!name?.trim()) return JSON.stringify({ error: "Skill name is required." });
+  name = name.trim();
+  if (!filePath?.trim()) return JSON.stringify({ error: "file_path is required." });
+  filePath = filePath.trim();
+
+  const skillsDir = getSkillsDir();
+  const targetPath = path.join(skillsDir, name, filePath);
+  if (!fs.existsSync(targetPath)) {
+    return JSON.stringify({ error: `File '${filePath}' not found under skill '${name}'.` });
+  }
+  try {
+    fs.unlinkSync(targetPath);
+    return JSON.stringify({ success: true, name, path: targetPath, note: `File '${filePath}' removed from skill '${name}'.` });
+  } catch (e) {
+    return JSON.stringify({ error: `Failed to remove file: ${e}` });
+  }
+}
+
+// ── Unified skill_manage dispatcher (Hermes-symmetric) ────────
+
+function skillManage(action: string, skillName: string, params: Record<string, unknown>): string {
+  if (!action || !skillName?.trim()) {
+    return JSON.stringify({ success: false, error: "action and name are required." });
+  }
+  skillName = skillName.trim();
+
+  switch (action) {
+    case "create": {
+      const content = (params.content as string) || "";
+      const category = (params.category as string) || undefined;
+      if (!content) return JSON.stringify({ success: false, error: "content is required for 'create'. Provide the full SKILL.md text (frontmatter + body)." });
+      // skillCreate validates frontmatter, content size, name collisions
+      const result = JSON.parse(skillCreate(skillName, content));
+      if (result.success && category) {
+        result.category = category;
+      }
+      return JSON.stringify(result);
+    }
+    case "patch": {
+      const oldString = (params.old_string as string) || "";
+      const newString = params.new_string !== undefined ? (params.new_string as string) : "";
+      const filePath = (params.file_path as string) || undefined;
+      const replaceAll = params.replace_all as boolean || false;
+      if (!oldString) return JSON.stringify({ success: false, error: "old_string is required for 'patch'. Provide the text to find." });
+      if (filePath) {
+        return writeFilePatch(skillName, filePath, oldString, newString, replaceAll);
+      }
+      if (replaceAll) {
+        return skillPatchAll(skillName, oldString, newString);
+      }
+      return skillPatch(skillName, oldString, newString);
+    }
+    case "edit": {
+      const content = (params.content as string) || "";
+      if (!content) return JSON.stringify({ success: false, error: "content is required for 'edit'. Provide the full updated SKILL.md text." });
+      return skillEdit(skillName, content);
+    }
+    case "delete": {
+      const absorbedInto = params.absorbed_into !== undefined ? (params.absorbed_into as string) : undefined;
+      return skillDelete(skillName, absorbedInto);
+    }
+    case "write_file": {
+      const fp = (params.file_path as string) || "";
+      const fc = params.file_content !== undefined ? (params.file_content as string) : undefined;
+      if (!fp) return JSON.stringify({ success: false, error: "file_path is required for 'write_file'. Example: 'references/api-guide.md'" });
+      if (fc === undefined) return JSON.stringify({ success: false, error: "file_content is required for 'write_file'." });
+      return writeFile(skillName, fp, fc);
+    }
+    case "remove_file": {
+      const fp = (params.file_path as string) || "";
+      if (!fp) return JSON.stringify({ success: false, error: "file_path is required for 'remove_file'." });
+      return removeFile(skillName, fp);
+    }
+    default:
+      return JSON.stringify({ success: false, error: `Unknown action '${action}'. Use: create, edit, patch, delete, write_file, remove_file` });
+  }
+}
+
+// ── Replace-all patch helper ─────────────────────────────────
+
+function skillPatchAll(name: string, oldString: string, newString: string): string {
+  const skillsDir = getSkillsDir();
+  const skillMd = path.join(skillsDir, name, "SKILL.md");
+  if (!fs.existsSync(skillMd)) {
+    const flatPath = path.join(skillsDir, `${name}.md`);
+    if (fs.existsSync(flatPath)) {
+      return applyPatchAll(flatPath, oldString, newString, name);
+    }
+    return JSON.stringify({ error: `Skill '${name}' not found.` });
+  }
+  return applyPatchAll(skillMd, oldString, newString, name);
+}
+
+function applyPatchAll(filePath: string, oldString: string, newString: string, name: string): string {
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    const count = content.split(oldString).length - 1;
+    if (count === 0) return JSON.stringify({ error: "old_string not found in skill file." });
+    const updated = content.split(oldString).join(newString ?? "");
+    fs.writeFileSync(filePath, updated, "utf-8");
+    return JSON.stringify({ success: true, name, path: filePath, replacements: count, note: `Replaced ${count} occurrence(s).` });
+  } catch (e) {
+    return JSON.stringify({ error: `Failed to patch skill: ${e}` });
+  }
+}
+
+// ── Patch supporting file ────────────────────────────────────
+
+function writeFilePatch(name: string, filePath: string, oldString: string, newString: string, replaceAll: boolean): string {
+  const skillsDir = getSkillsDir();
+  const targetPath = path.join(skillsDir, name, filePath);
+  if (!fs.existsSync(targetPath)) {
+    return JSON.stringify({ error: `File '${filePath}' not found under skill '${name}'.` });
+  }
+  try {
+    const content = fs.readFileSync(targetPath, "utf-8");
+    const count = content.split(oldString).length - 1;
+    if (count === 0) return JSON.stringify({ error: `old_string not found in ${filePath}.` });
+    if (!replaceAll && count > 1) {
+      return JSON.stringify({ error: `old_string appears ${count} times in ${filePath} — must be unique. Set replace_all=true to replace all.` });
+    }
+    const updated = replaceAll ? content.split(oldString).join(newString ?? "") : content.replace(oldString, newString ?? "");
+    fs.writeFileSync(targetPath, updated, "utf-8");
+    return JSON.stringify({ success: true, name, path: targetPath, replacements: replaceAll ? count : 1, note: `Patched ${filePath}.` });
+  } catch (e) {
+    return JSON.stringify({ error: `Failed to patch ${filePath}: ${e}` });
+  }
 }
 
 // ── MCP Server ──────────────────────────────────────────────
@@ -376,49 +540,61 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: "skill_create",
-      description: "Create a new skill. Args: name (lowercase, hyphens, ≤64), body (full SKILL.md with YAML frontmatter: name, description ≤1024). Validates frontmatter.",
+      name: "skill_manage",
+      description:
+        "Manage skills (create, update, delete). Skills are your procedural memory — reusable approaches for recurring task types. New skills go to /workspace/skills/.\\n\\n" +
+        "Actions: create (full SKILL.md + optional category), patch (old_string/new_string — preferred for fixes), edit (full SKILL.md rewrite — major overhauls only), delete, write_file, remove_file.\\n\\n" +
+        "On delete, pass `absorbed_into=<umbrella>` when merging this skill's content into another one, or `absorbed_into=\"\"` when pruning it with no forwarding target.\\n\\n" +
+        "Create when: complex task succeeded (5+ calls), errors overcome, user-corrected approach worked, non-trivial workflow discovered, or user asks you to remember a procedure.\\n" +
+        "Update when: instructions stale/wrong, OS-specific failures, missing steps or pitfalls found during use. If you used a skill and hit issues not covered by it, patch it immediately.\\n\\n" +
+        "After difficult/iterative tasks, offer to save as a skill. Skip for simple one-offs. Confirm with user before creating/deleting.\\n\\n" +
+        "Good skills: trigger conditions, numbered steps with exact commands, pitfalls section, verification steps. Use skill_view() to see format examples.",
       inputSchema: {
         type: "object",
         properties: {
-          name: { type: "string" },
-          body: { type: "string" },
+          action: {
+            type: "string",
+            enum: ["create", "patch", "edit", "delete", "write_file", "remove_file"],
+            description: "The action to perform."
+          },
+          name: {
+            type: "string",
+            description: "Skill name (lowercase, hyphens/underscores, max 64 chars). Must match an existing skill for patch/edit/delete/write_file/remove_file."
+          },
+          content: {
+            type: "string",
+            description: "Full SKILL.md content (YAML frontmatter + markdown body). Required for 'create' and 'edit'. For 'edit', read the skill first with skill_view() and provide the complete updated text."
+          },
+          old_string: {
+            type: "string",
+            description: "Text to find in the file (required for 'patch'). Must be unique unless replace_all=true. Include enough surrounding context to ensure uniqueness."
+          },
+          new_string: {
+            type: "string",
+            description: "Replacement text (required for 'patch'). Can be empty string to delete the matched text."
+          },
+          replace_all: {
+            type: "boolean",
+            description: "For 'patch': replace all occurrences instead of requiring a unique match (default: false)."
+          },
+          category: {
+            type: "string",
+            description: "Optional category/domain for organizing the skill (e.g., 'devops', 'data-science', 'mlops'). Only used with 'create'."
+          },
+          file_path: {
+            type: "string",
+            description: "Path to a supporting file within the skill directory. For 'write_file'/'remove_file': required, must be under references/, templates/, scripts/, or assets/. For 'patch': optional, defaults to SKILL.md if omitted."
+          },
+          file_content: {
+            type: "string",
+            description: "Content for the file. Required for 'write_file'."
+          },
+          absorbed_into: {
+            type: "string",
+            description: "For 'delete' only — declares intent. Pass the umbrella skill name when this skill's content was merged into another (the target must already exist). Pass an empty string when the skill is truly stale and being pruned with no forwarding target."
+          },
         },
-        required: ["name", "body"],
-      },
-    },
-    {
-      name: "skill_patch",
-      description: "Targeted find-and-replace edit in SKILL.md. Args: name, old_string (unique), new_string.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          old_string: { type: "string" },
-          new_string: { type: "string" },
-        },
-        required: ["name", "old_string", "new_string"],
-      },
-    },
-    {
-      name: "skill_edit",
-      description: "Full rewrite of a skill's SKILL.md. Args: name, body. Validates frontmatter.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          body: { type: "string" },
-        },
-        required: ["name", "body"],
-      },
-    },
-    {
-      name: "skill_delete",
-      description: "Delete a skill. Args: name. Removes the directory or file.",
-      inputSchema: {
-        type: "object",
-        properties: { name: { type: "string" } },
-        required: ["name"],
+        required: ["action", "name"],
       },
     },
   ],
@@ -433,14 +609,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return { content: [{ type: "text", text: skillsList() }] };
     case "skill_view":
       return { content: [{ type: "text", text: skillView((a.name as string) || "") }] };
-    case "skill_create":
-      return { content: [{ type: "text", text: skillCreate((a.name as string) || "", (a.body as string) || "") }] };
-    case "skill_patch":
-      return { content: [{ type: "text", text: skillPatch((a.name as string) || "", (a.old_string as string) || "", (a.new_string as string) ?? "") }] };
-    case "skill_edit":
-      return { content: [{ type: "text", text: skillEdit((a.name as string) || "", (a.body as string) || "") }] };
-    case "skill_delete":
-      return { content: [{ type: "text", text: skillDelete((a.name as string) || "") }] };
+    case "skill_manage":
+      return { content: [{ type: "text", text: skillManage((a.action as string) || "", (a.name as string) || "", a) }] };
     default:
       return { content: [{ type: "text", text: JSON.stringify({ error: `Unknown tool: ${name}` }) }] };
   }
@@ -454,4 +624,4 @@ async function main() {
 main().catch(console.error);
 
 // Export for testing
-export { skillsList, skillView, skillCreate, skillPatch, skillEdit, skillDelete, parseMetadata, getSkillsDir, validateFrontmatter };
+export { skillsList, skillView, skillManage, skillCreate, skillPatch, skillEdit, skillDelete, parseMetadata, getSkillsDir, validateFrontmatter };

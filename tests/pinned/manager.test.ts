@@ -1,5 +1,5 @@
 /**
- * Tests for PinnedMessageManager — deleteMessage + message_thread_id + circuit breaker
+ * Tests for PinnedMessageManager — reference implementation
  * Run: npx vitest run tests/pinned/manager.test.ts
  */
 import { describe, expect, it, beforeEach, vi } from "vitest";
@@ -39,6 +39,7 @@ function makeMockApi(overrides: Partial<Api> = {}): Api {
     editMessageText: vi.fn().mockResolvedValue(true),
     deleteMessage: vi.fn().mockResolvedValue(true),
     pinChatMessage: vi.fn().mockResolvedValue(true),
+    unpinAllChatMessages: vi.fn().mockResolvedValue(true),
     ...overrides,
   } as unknown as Api;
 }
@@ -63,108 +64,74 @@ describe("PinnedMessageManager", () => {
     vi.clearAllMocks();
   });
 
-  // =========================================================================
-  // FIX #1: deleteMessage now includes message_thread_id
-  // =========================================================================
-  describe("deleteMessage with message_thread_id", () => {
-    it("receives thread_id in recreatePinnedMessage", async () => {
-      const api = makeMockApi({
-        editMessageText: vi.fn().mockRejectedValue(
-          new Error("400: Bad Request: message can't be edited"),
-        ),
-      });
+  describe("create and update lifecycle", () => {
+    it("creates pinned message on session change", async () => {
+      const api = makeMockApi();
       initWithThread(api);
 
       await runInScope(async () => {
-        await (pinnedMessageManager as any).onSessionChange("sess-1", "Test");
-        await (pinnedMessageManager as any).updatePinnedMessage(true);
+        await (pinnedMessageManager as any).onSessionChange("sess-1", "Test Session");
+        expect(pinnedMessageManager.getState().messageId).toBe(100);
+        expect(api.sendMessage).toHaveBeenCalledTimes(1);
+        expect(api.pinChatMessage).toHaveBeenCalledWith(123, 100, expect.any(Object));
       });
-
-      const calls = (api.deleteMessage as any).mock.calls;
-      const withThreadId = calls.find(
-        (c: any[]) => c[2]?.message_thread_id === 67890,
-      );
-      expect(withThreadId).toBeDefined();
     });
 
-    it("receives thread_id in unpinOldMessage", async () => {
+    it("edits pinned message on update", async () => {
       const api = makeMockApi();
       initWithThread(api);
 
       await runInScope(async () => {
         await (pinnedMessageManager as any).onSessionChange("sess-1", "Test");
+        await (pinnedMessageManager as any).updatePinnedMessage(true);
+        expect(api.editMessageText).toHaveBeenCalled();
       });
-      await runInScope(async () => {
-        await (pinnedMessageManager as any).onSessionChange("sess-2", "Test2");
-      });
-
-      const calls = (api.deleteMessage as any).mock.calls;
-      expect(calls.length).toBeGreaterThanOrEqual(1);
-      expect(calls.every((c: any[]) => c[2]?.message_thread_id === 67890)).toBe(true);
     });
-  });
 
-  // =========================================================================
-  // FIX #2: cantEditFailCount resets on successful createPinnedMessage
-  // =========================================================================
-  describe("cantEditFailCount resets", () => {
-    it("resets to 0 after successful recreate", async () => {
+    it("recreates pinned message when edit returns 'message to edit not found'", async () => {
       const api = makeMockApi({
         editMessageText: vi.fn().mockRejectedValue(
-          new Error("400: Bad Request: message can't be edited"),
+          new Error("400: Bad Request: message to edit not found"),
         ),
         sendMessage: vi.fn()
           .mockResolvedValueOnce({ message_id: 100 })
-          .mockResolvedValueOnce({ message_id: 200 })
-          .mockResolvedValueOnce({ message_id: 300 }),
+          .mockResolvedValueOnce({ message_id: 200 }),
       });
       initWithThread(api);
 
       await runInScope(async () => {
         await (pinnedMessageManager as any).onSessionChange("sess-1", "Test");
-        // Edit fails → recreate succeeds → counter resets to 0
+        // Update that triggers "not found" → should recreate
         await (pinnedMessageManager as any).updatePinnedMessage(true);
-        expect(pinnedMessageManager.getState().cantEditFailCount).toBe(0);
-        // Again — edit fails → recreate succeeds → counter stays 0
-        await (pinnedMessageManager as any).updatePinnedMessage(true);
-        expect(pinnedMessageManager.getState().cantEditFailCount).toBe(0);
+        // sendMessage called twice: initial create + recreate
+        expect(api.sendMessage).toHaveBeenCalledTimes(2);
+        // New message ID should be 200
+        expect(pinnedMessageManager.getState().messageId).toBe(200);
+      });
+    });
+
+    it("refreshes pinned message on refresh() call", async () => {
+      const api = makeMockApi();
+      initWithThread(api);
+
+      await runInScope(async () => {
+        await (pinnedMessageManager as any).onSessionChange("sess-1", "Test");
+        await pinnedMessageManager.refresh();
+        expect(api.editMessageText).toHaveBeenCalled();
       });
     });
   });
 
-  // =========================================================================
-  // FIX #3: Circuit breaker opens when recreate ALSO keeps failing
-  // =========================================================================
-  describe("circuit breaker on persistent failure", () => {
-    it("opens when sendMessage (recreate) also fails 3 times", async () => {
-      let editCount = 0;
-      const api = makeMockApi({
-        editMessageText: vi.fn().mockImplementation(() => {
-          editCount++;
-          throw new Error("400: message can't be edited");
-        }),
-        // Simulate recreate failure: first create succeeds, subsequent recreates fail
-        sendMessage: vi.fn()
-          .mockResolvedValueOnce({ message_id: 100 })  // initial create OK
-          .mockRejectedValue(new Error("400: message thread not found"))  // 1st recreate FAIL
-          .mockRejectedValue(new Error("400: message thread not found"))  // 2nd recreate FAIL (not called? circuit might open earlier)
-      });
+  describe("unpinOldMessage", () => {
+    it("uses unpinAllChatMessages for cleanup", async () => {
+      const api = makeMockApi();
       initWithThread(api);
 
       await runInScope(async () => {
         await (pinnedMessageManager as any).onSessionChange("sess-1", "Test");
-
-        // Update 1: edit fails → recreate → sendMessage fails → createPinnedMessage catches
-        await (pinnedMessageManager as any).updatePinnedMessage(true);
-        // At this point: createPinnedMessage failed, messageId is null, cantEditFailCount incremented to 1
-
-        // Update 2: messageId is null → updatePinnedMessage returns early (line 769 guard)
-        // So no circuit breaker accumulation happens.
-
-        // Verify counter was incremented at least once
-        expect(pinnedMessageManager.getState().cantEditFailCount).toBeGreaterThanOrEqual(1);
-        // And messageId is null (createPinnedMessage failed)
-        expect(pinnedMessageManager.getState().messageId).toBeNull();
+        // Second session change triggers unpinOldMessage
+        await (pinnedMessageManager as any).onSessionChange("sess-2", "Test2");
+        expect(api.unpinAllChatMessages).toHaveBeenCalledWith(123);
       });
     });
   });

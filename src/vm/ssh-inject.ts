@@ -217,6 +217,7 @@ export const FULL_UPDATE_SSH_COMMANDS = [
 export interface FullUpdatePayload {
   tgAgentMd: string;
   memoryServerTs: string;
+  memoryStoreTs: string;
   skillsServerTs: string;
 }
 
@@ -236,6 +237,12 @@ export async function deployFullUpdate(
       remotePath: "/opt/mcp-servers/memory-ts/server.ts",
       content: payload.memoryServerTs,
       permissions: "755",
+      owner: "root:root",
+    },
+    {
+      remotePath: "/opt/mcp-servers/memory-ts/memory_store.ts",
+      content: payload.memoryStoreTs,
+      permissions: "644",
       owner: "root:root",
     },
     {

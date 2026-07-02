@@ -5,6 +5,14 @@ import { createVmLifecycleManager, VmLifecycle, type VmLifecycleManager } from "
 import type { VmHandle, VmSpec, VmInfo } from "../../src/vm/types.js";
 import type { HealthStatus } from "../../src/vm/health-proxy.js";
 
+const mockSetVmRuntimeInfo = vi.fn();
+const mockClearVmRuntimeInfo = vi.fn();
+
+vi.mock("../../src/settings/manager.js", () => ({
+  setVmRuntimeInfo: (...args: unknown[]) => mockSetVmRuntimeInfo(...args),
+  clearVmRuntimeInfo: (...args: unknown[]) => mockClearVmRuntimeInfo(...args),
+}));
+
 const DDL = `
 CREATE TABLE IF NOT EXISTS vm_states (
   vm_id           TEXT PRIMARY KEY,
@@ -25,6 +33,9 @@ CREATE TABLE IF NOT EXISTS vm_states (
 `;
 
 const testSpec: VmSpec = { tier: "small", ramMb: 4096, vcpus: 2, diskGb: 20, label: "Test" };
+
+// auto-recreation uses VM_TIERS from persisted specTier — must match src/vm/types.ts
+const smallSpec: VmSpec = { tier: "small", ramMb: 2048, vcpus: 1, diskGb: 20, label: "Базовый" };
 
 function makeInfo(userId: number): VmInfo {
   return {
@@ -54,6 +65,7 @@ function createMockVmManager() {
         password: record.passwordHash, specTier: record.specTier,
       } as VmHandle : null,
     ),
+    startDomain: vi.fn().mockResolvedValue(false),
     healthCheck: vi.fn(),
     destroyHandle: vi.fn().mockResolvedValue({ success: true }),
     stop: vi.fn().mockResolvedValue({ success: true }),
@@ -82,6 +94,8 @@ describe("createVmLifecycleManager", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSetVmRuntimeInfo.mockClear();
+    mockClearVmRuntimeInfo.mockClear();
     db = new Database(":memory:");
     db.exec(DDL);
     persistence = createVmStatePersistence(db);
@@ -186,9 +200,6 @@ describe("createVmLifecycleManager", () => {
     // (2026-06-26): recover() now auto-recreates VMs via acquire() after destroying dead/unhealthy
     // ones, instead of just walking away. This prevents the gap where a VM stays "destroyed"
     // indefinitely and the user gets no runtime until they send another message.
-
-    // auto-recreation uses VM_TIERS from persisted specTier, not testSpec
-    const smallSpec = { tier: "small", ramMb: 4096, vcpus: 2, diskGb: 20, label: "Базовый" };
 
     it("auto-recreates VM when not running (attach returns null)", async () => {
       persistence.save({
@@ -373,5 +384,69 @@ describe("createVmLifecycleManager", () => {
     const result = await VmLifecycle.using(lifecycle, persistence, 42, testSpec, fn);
     expect(result).toBe("done");
     expect(fn).toHaveBeenCalled();
+  });
+
+  // Fix (2026-07-01): verify dual-write consistency fixes ported from Hermes memory-ts.
+  // Hermes uses atomic file rename — single file = single source of truth.
+  // The bot uses two SQL tables (vm_states + vm_runtimes) which must stay in sync.
+  describe("vm_states ↔ vm_runtimes consistency (Hermes port fixes)", () => {
+    it("acquire calls setVmRuntimeInfo after successful provision", async () => {
+      await lifecycle.acquire(42, persistence, { spec: testSpec });
+
+      expect(mockSetVmRuntimeInfo).toHaveBeenCalledTimes(1);
+      expect(mockSetVmRuntimeInfo).toHaveBeenCalledWith(42, expect.objectContaining({
+        userId: 42,
+        baseUrl: "http://10.100.0.50:4096",
+      }));
+    });
+
+    it("acquire calls clearVmRuntimeInfo on health-check failure rollback", async () => {
+      healthOk = false;
+      // Rebuild lifecycle with the failing health proxy
+      lifecycle = createVmLifecycleManager({ vmManager: mockVm as never, healthProxy: mockHealthProxy() as never });
+
+      await expect(
+        lifecycle.acquire(42, persistence, { spec: testSpec }),
+      ).rejects.toThrow("did not become healthy");
+
+      // Must clear routing info on rollback to prevent orphan vm_runtimes
+      expect(mockClearVmRuntimeInfo).toHaveBeenCalledWith(42);
+    });
+
+    it("recover calls setVmRuntimeInfo when VM passes health check", async () => {
+      persistence.save({
+        vmId: "vm-recover-setruntime", userId: 33, environmentType: "libvirt", specTier: "small",
+        assignedIpv4: "10.100.0.33", assignedMac: "", domainName: "opencode-tg-33",
+        passwordHash: "hash", version: 1, createdAt: "", updatedAt: "", status: "healthy",
+      });
+      mockVm.attach.mockResolvedValue(makeHandle({ vmId: "vm-recover-setruntime", userId: 33, ipv4: "10.100.0.33" }));
+      const healthyHp = { check: vi.fn().mockResolvedValue({ healthy: true, services: { opencode: true, network: true } } as HealthStatus) };
+      lifecycle = createVmLifecycleManager({ vmManager: mockVm as never, healthProxy: healthyHp as never });
+
+      // reset mock call count from setup
+      mockSetVmRuntimeInfo.mockClear();
+
+      await lifecycle.recover(33, persistence);
+
+      expect(mockSetVmRuntimeInfo).toHaveBeenCalledTimes(1);
+      expect(mockSetVmRuntimeInfo).toHaveBeenCalledWith(33, expect.objectContaining({
+        userId: 33,
+        baseUrl: "http://10.100.0.33:4096",
+      }));
+    });
+
+    it("recover does NOT call setVmRuntimeInfo when VM is degraded (skipped)", async () => {
+      persistence.save({
+        vmId: "vm-degraded-noset", userId: 88, environmentType: "libvirt", specTier: "small",
+        assignedIpv4: "10.100.0.88", assignedMac: "", domainName: "opencode-tg-88",
+        passwordHash: "hash", version: 1, createdAt: "", updatedAt: "", status: "degraded",
+        failureCount: 5,
+      });
+      mockSetVmRuntimeInfo.mockClear();
+
+      await lifecycle.recover(88, persistence);
+
+      expect(mockSetVmRuntimeInfo).not.toHaveBeenCalled();
+    });
   });
 });

@@ -11,8 +11,8 @@ const AUDIO_EXTENSIONS = new Set([".mp3", ".m4a", ".wav", ".flac", ".ogg"]);
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".mkv", ".webm"]);
 const LOCAL_FILE_REFERENCE_PATTERN = /(?:file:\/\/\/[^\s'"`<>]+|sandbox:\/[^\s'"`<>]+|(?:(?<=^)|(?<=[\s'"`(\[]))\/(?:[^\s'"`<>]+(?:\.[^\s'"`<>./]+)?)(?=$|[\s'"`)\]]|[.,;!?]))/gm;
 
-/** Pattern for file-server URLs: http://localhost:8890/filename.ext */
-const LOCALHOST_FILE_URL_PATTERN = /https?:\/\/localhost:8890\/([^\s'"`<>)\]]+)/gi;
+/** Pattern for file-server URLs: http://localhost:8890/filename.ext or http://192.168.123.1:8890/filename.ext */
+const LOCALHOST_FILE_URL_PATTERN = /https?:\/\/(?:localhost|192\.168\.123\.1):8890\/([^\s'"`<>)\]]+)/gi;
 
 // Что делает этот модуль:
 // - находит в ответе ассистента абсолютные локальные пути,
@@ -314,7 +314,7 @@ const FILE_SERVER_SERVE_DIR = "/tmp/served-files";
 
 /**
  * Extract file-server URLs from agent response text.
- * Matches: http://localhost:8890/filename.ext
+ * Matches: http://localhost:8890/filename.ext or http://192.168.123.1:8890/filename.ext
  * Returns: array of { url, filename } objects
  */
 export function extractLocalhostFileUrls(text: string): Array<{ url: string; filename: string }> {
@@ -334,18 +334,18 @@ export function extractLocalhostFileUrls(text: string): Array<{ url: string; fil
 }
 
 /**
- * Map localhost:8890 URL to local filesystem path.
+ * Map file-server URL (localhost:8890 or 192.168.123.1:8890) to local filesystem path.
  * File-server stores files in /tmp/served-files/ by basename.
  */
 export function localhostUrlToPath(url: string): string | null {
-  const match = url.match(/localhost:8890\/(.+)$/);
+  const match = url.match(/(?:localhost|192\.168\.123\.1):8890\/(.+)$/);
   if (!match) return null;
   const filename = match[1];
   return `${FILE_SERVER_SERVE_DIR}/${filename}`;
 }
 
 /**
- * Prepare follow-up file deliveries from localhost:8890 URLs found in text.
+ * Prepare follow-up file deliveries from file-server URLs (localhost:8890 or 192.168.123.1:8890) found in text.
  * Downloads files from file-server, resolves to local paths, prepares for Telegram send.
  */
 export async function prepareLocalhostFileFollowUps(

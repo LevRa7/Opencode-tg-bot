@@ -224,7 +224,7 @@ export function buildStoredMediaPrompt(params: {
   const sections = [
     "Telegram media was already processed locally.",
     "The media file is included in this prompt as an attachment — you can examine it directly.",
-    "Do NOT run opencode-gemini-media, ffmpeg, or any other external tool on this file.",
+    `${params.runtimeVisiblePath} — path to the original media file (already saved locally).`,
     `Saved file path:\n${params.runtimeVisiblePath}`,
   ];
 

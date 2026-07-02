@@ -485,7 +485,13 @@ import {
   getThinkingClearMode,
   isMessageStreamingEnabled,
 } from "../../src/settings/manager.js";
-import { createBot, routingBySessionId } from "../../src/bot/index.js";
+import {
+  createBot,
+  getChildTopicLastSetName,
+  routingBySessionId,
+  setChildTopicLastSetName,
+  __clearChildAssistantSessionForTests,
+} from "../../src/bot/index.js";
 import { scheduledTaskRuntime } from "../../src/scheduled-task/runtime.js";
 
 describe("bot/index local file follow-up orchestration", () => {
@@ -730,6 +736,14 @@ describe("bot/index local file follow-up orchestration", () => {
         reply_markup: { keyboard: [[{ text: "A" }]] },
       }),
     );
+  });
+
+  it("keeps the root topic rename guard when clearing root-session runtime", () => {
+    setChildTopicLastSetName("root-session-1", "Stable Topic Title");
+
+    __clearChildAssistantSessionForTests("root-session-1");
+
+    expect(getChildTopicLastSetName("root-session-1")).toBe("Stable Topic Title");
   });
 
   it("keeps cached prompt fallback deliverable when no attached route exists", async () => {

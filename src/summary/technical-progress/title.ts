@@ -77,6 +77,18 @@ function pathFromPatchText(patchText: string): string {
 export function buildProgressTitle(toolInfo: Pick<TechnicalProgressToolInfo, "tool" | "input" | "title" | "metadata">): string {
   const input = toolInfo.input ?? {};
   const metadata = toolInfo.metadata ?? {};
+
+  // If the model generated a meaningful title, use it directly.
+  // Skip for reasoning (handled separately) and bash where title == raw command.
+  const modelTitle = toolInfo.title?.trim();
+  if (modelTitle && toolInfo.tool !== "reasoning") {
+    const cmd = typeof input?.command === "string" ? input.command.trim() : "";
+    const isRawCommand = cmd && (modelTitle === cmd || modelTitle.startsWith(cmd.slice(0, 40)));
+    if (!isRawCommand) {
+      return truncate(redactSecrets(stripMarkdownEmphasis(modelTitle)));
+    }
+  }
+
   let title = toolInfo.title ?? "";
 
   if (["read", "write", "edit"].includes(toolInfo.tool)) {

@@ -5,6 +5,7 @@ import {
   formatThinkingForRichFinal,
   formatThinkingForRichDraft,
   formatToolCallForRichMessage,
+  isRichContent,
   truncateForRich,
 } from "../../../src/bot/utils/rich-message.js";
 
@@ -44,6 +45,28 @@ describe("formatToolRichInitial", () => {
     expect(result).toContain("</summary>");
     expect(result).toContain("</details>");
     expect(result).toContain("⏳ Выполняется…");
+  });
+});
+
+// ── Rich eligibility detection ───────────────────────────────────────────
+
+describe("isRichContent", () => {
+  it("treats inline bold markdown in final prose as rich content", () => {
+    // Regression: a final response containing only inline **bold** used to bypass
+    // rich delivery and could be sent through the legacy raw path with literal
+    // asterisks visible in Telegram.
+    expect(
+      isRichContent("Итог: **бот реально запущен на новом коде, не на старом.**"),
+    ).toBe(true);
+  });
+
+  it("treats inline code and links as rich content", () => {
+    expect(isRichContent("Run `npm test` now")).toBe(true);
+    expect(isRichContent("See [docs](https://example.com)")).toBe(true);
+  });
+
+  it("does not treat plain text with arithmetic asterisks as rich content", () => {
+    expect(isRichContent("Use 2 * 3 = 6 in the example")).toBe(false);
   });
 });
 

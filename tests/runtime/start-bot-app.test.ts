@@ -6,6 +6,7 @@ const processManagerMock = vi.hoisted(() => ({
   initialize: vi.fn(),
   ensureRuntime: vi.fn(),
   start: vi.fn(),
+  stop: vi.fn(),
   dispose: vi.fn(),
 }));
 const autoRestartMonitorStartMock = vi.hoisted(() => vi.fn());
@@ -67,6 +68,7 @@ vi.mock("../../src/scheduled-task/runtime.js", () => ({
 
 vi.mock("../../src/bot/index.js", () => ({
   createBot: createBotMock,
+  disposeBotIntervals: vi.fn(),
 }));
 
 vi.mock("../../src/server/index.js", () => ({
@@ -117,6 +119,7 @@ describe("runtime/start-bot-app", () => {
     processManagerMock.initialize.mockReset();
     processManagerMock.ensureRuntime.mockReset();
     processManagerMock.start.mockReset();
+    processManagerMock.stop.mockReset();
     autoRestartMonitorStartMock.mockReset();
     autoRestartMonitorStopMock.mockReset();
     reconcileStoredModelSelectionMock.mockReset();
@@ -132,6 +135,7 @@ describe("runtime/start-bot-app", () => {
     processManagerMock.initialize.mockResolvedValue(undefined);
     processManagerMock.ensureRuntime.mockResolvedValue({ success: true });
     processManagerMock.start.mockResolvedValue({ success: true });
+    processManagerMock.stop.mockResolvedValue({ success: true });
     reconcileStoredModelSelectionMock.mockResolvedValue(undefined);
     warmupHostSessionDirectoryCacheMock.mockResolvedValue(undefined);
     scheduledTaskRuntimeMock.initialize.mockResolvedValue(undefined);
@@ -167,6 +171,7 @@ describe("runtime/start-bot-app", () => {
       delete signalHandlers[event as NodeJS.Signals];
       return process;
     }) as typeof process.off);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined as never));
     const createMonitor = vi.fn(() => ({
       start: autoRestartMonitorStartMock,
       stop: autoRestartMonitorStopMock,
@@ -193,5 +198,6 @@ describe("runtime/start-bot-app", () => {
     expect(autoRestartMonitorStopMock).toHaveBeenCalledTimes(1);
     expect(onSpy).toHaveBeenCalled();
     expect(offSpy).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(0);
   });
 });

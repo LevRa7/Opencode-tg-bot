@@ -3,8 +3,9 @@ import { logger } from "../utils/logger.js";
 import { type VmHandle, type VmSpec, type VmOperationResult, type VmInfo, type VmSpecTier, VM_TIERS } from "./types.js";
 import type { VmStatePersistence, VmStateRecord } from "./state-persistence.js";
 import type { HealthProxy, HealthStatus } from "./health-proxy.js";
+import { fireVmAlarmBg } from "./alarm.js";
 import type { VmManager } from "./manager.js";
-import { setVmRuntimeInfo } from "../settings/manager.js";
+import { setVmRuntimeInfo, clearVmRuntimeInfo } from "../settings/manager.js";
 
 export interface AcquireOptions {
   spec?: VmSpec;
@@ -71,9 +72,64 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
           return handle;
         }
         persistence.incrementFailureCount(existing.vmId);
-        logger.warn("[Lifecycle] VM %s exists but unhealthy, re-provisioning", userId);
-        await vm.destroyHandle(handle);
+        // (2026-07-02): NEVER destroy existing user VM — fire alarm instead.
+        // User data on the VM must be preserved. Admin can decide to recreate.
+        fireVmAlarmBg({
+          severity: "WARN",
+          userId,
+          domainName: existing.domainName,
+          reason: `Existing VM is unhealthy (health check failed). Would have destroyed. User data preserved.`,
+          blockedAction: `destroyHandle() → virsh destroy ${existing.domainName} + undefine + unlink qcow2`,
+          caller: "acquire (existing unhealthy)",
+          source: "lifecycle-manager.ts:75",
+          timestamp: new Date().toISOString(),
+        });
+        throw new Error(`Existing VM for userId=${userId} is unhealthy. Admin notified.`);
       } else {
+        // VM domain exists but is not running (e.g. host reboot, libvirt restart).
+        // Try to start it in-place before destroying — preserves user sessions.
+        const started = await vm.startDomain(userId);
+        if (started) {
+          const handle = await vm.attach(existing);
+          if (handle) {
+            const healthy = await hp.check(handle, {
+              timeoutMs: options?.timeoutMs ?? 60_000,
+              pollMs: options?.pollMs ?? 2000,
+              signal,
+            });
+            if (healthy.healthy) {
+              persistence.updateIfCurrent(existing.vmId, existing.version, { status: "healthy" });
+              persistence.resetFailureCount(existing.vmId);
+              setVmRuntimeInfo(userId, {
+                userId,
+                tier: existing.specTier as VmSpec["tier"],
+                domainName: existing.domainName,
+                qcow2Path: "",
+                cloudInitIsoPath: "",
+                bridgeIp: existing.assignedIpv4,
+                baseUrl: `http://${existing.assignedIpv4}:4096`,
+                startTime: existing.createdAt,
+                pid: null,
+                sudoPassword: existing.passwordHash,
+                serverPassword: handle.password,
+                ipv6: "",
+              });
+              return handle;
+            }
+            // Started but unhealthy — fire alarm, do NOT destroy
+            fireVmAlarmBg({
+              severity: "WARN",
+              userId,
+              domainName: existing.domainName,
+              reason: `VM started but health check failed after start. Would have destroyed. User data preserved.`,
+              blockedAction: `destroyHandle() → virsh destroy ${existing.domainName} + undefine + unlink qcow2`,
+              caller: "acquire (started but unhealthy)",
+              source: "lifecycle-manager.ts:119",
+              timestamp: new Date().toISOString(),
+            });
+            throw new Error(`VM for userId=${userId} started but is unhealthy. Admin notified.`);
+          }
+        }
         persistence.incrementFailureCount(existing.vmId);
         logger.warn("[Lifecycle] VM %s exists but not running, re-provisioning", userId);
       }
@@ -145,9 +201,26 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
     });
 
     if (!healthy.healthy) {
-      logger.error("[Lifecycle] Health timeout for VM userId=%d, rolling back", userId);
+      // (2026-07-02): Health timeout on NEWLY CREATED VM — this VM just started,
+      // no user data on it yet. Safe to clean up, but still fire alarm for audit.
+      const domainName = handle.domainName || record.domainName;
+      fireVmAlarmBg({
+        severity: "WARN",
+        userId,
+        domainName,
+        reason: `Newly provisioned VM did not become healthy within timeout. Cleaned up (no user data lost — VM was freshly created).`,
+        blockedAction: `destroyHandle() on freshly created VM ${domainName}`,
+        caller: "acquire (health timeout rollback)",
+        source: "lifecycle-manager.ts:203",
+        timestamp: new Date().toISOString(),
+      });
       await vm.destroyHandle(handle).catch(() => {});
       persistence.markDestroyed(record.vmId);
+      // Fix (2026-07-01): clear vm_runtimes on rollback so stale routing info
+      // doesn't survive the destroyed VM. Without this, getCurrentOpencodeRoute()
+      // returns the dead VM's URL (from vm_runtimes) while vm_states shows "destroyed" —
+      // dual-write inconsistency from Hermes memory module port lacking atomicity.
+      clearVmRuntimeInfo(userId);
       throw new Error(`VM at ${handle.baseUrl} did not become healthy within timeout`);
     }
 
@@ -156,18 +229,21 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
   }
 
   async function release(handle: VmHandle, persistence: VmStatePersistence): Promise<VmOperationResult> {
-    try {
-      const result = await vm.destroyHandle(handle);
-      if (result.success) {
-        persistence.markDestroyed(handle.vmId);
-        logger.info("[Lifecycle] Released VM %s for userId=%d", handle.vmId, handle.userId);
-      }
-      return result;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.error("[Lifecycle] Release failed for VM %s: %s", handle.vmId, msg);
-      return { success: false, error: msg };
-    }
+    // (2026-07-02): NEVER destroy user VM on release.
+    // Release is called after orchestrator parallel tasks — the VM should remain
+    // running for the user. Fire an INFO alarm for audit trail.
+    fireVmAlarmBg({
+      severity: "INFO",
+      userId: handle.userId,
+      domainName: handle.domainName,
+      reason: `release() called — VM preserved (would have destroyed before 2026-07-02).`,
+      blockedAction: `destroyHandle() → virsh destroy ${handle.domainName} + undefine + unlink qcow2`,
+      caller: "release",
+      source: "lifecycle-manager.ts:231",
+      timestamp: new Date().toISOString(),
+    });
+    logger.info("[Lifecycle] Released VM %s for userId=%d (preserved, no destruction)", handle.vmId, handle.userId);
+    return { success: true };
   }
 
   // (2026-06-26): after marking a VM as destroyed/dead, auto-recreate it via acquire()
@@ -209,9 +285,20 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
 
     const handle = await vm.attach(record);
     if (!handle) {
-      logger.warn("[Lifecycle] Recovery: VM %s not running, marking destroyed", userId);
+      // (2026-07-02): VM domain not found in libvirt — fire alarm, do NOT auto-recreate.
+      // Auto-recreation via tryAutoRecreate → acquire → createAndStart would
+      // overwrite the user's data disk. Admin must decide.
+      fireVmAlarmBg({
+        severity: "CRITICAL",
+        userId,
+        domainName: record.domainName,
+        reason: `VM domain not found in libvirt (virsh attach returned null). Auto-recreation BLOCKED to protect user data.`,
+        blockedAction: `tryAutoRecreate → createAndStart (would overwrite qcow2)`,
+        caller: "recover (domain not found)",
+        source: "lifecycle-manager.ts:287",
+        timestamp: new Date().toISOString(),
+      });
       persistence.markDestroyed(record.vmId);
-      await tryAutoRecreate(userId, record, persistence);
       return;
     }
 
@@ -219,8 +306,18 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
     if (!healthy.healthy) {
       persistence.incrementFailureCount(record.vmId);
       const updated = persistence.getByUserId(userId);
-      logger.warn("[Lifecycle] Recovery: VM %s unhealthy, destroying", userId);
-      await vm.destroyHandle(handle).catch(() => {});
+      // (2026-07-02): NEVER destroy unhealthy VM — fire alarm.
+      // User data must be preserved. Admin can decide to recreate.
+      fireVmAlarmBg({
+        severity: updated?.status === "degraded" ? "DEGRADED" : "WARN",
+        userId,
+        domainName: record.domainName,
+        reason: `VM unhealthy in recovery cycle (failures=${updated?.failureCount ?? record.failureCount}). Would have destroyed. User data preserved.`,
+        blockedAction: `destroyHandle() → virsh destroy ${record.domainName} + undefine + unlink qcow2`,
+        caller: "recover (unhealthy)",
+        source: "lifecycle-manager.ts:295",
+        timestamp: new Date().toISOString(),
+      });
 
       // incrementFailureCount already promotes status to "degraded" when
       // failure_count reaches MAX_RETRIES (5). Keep that status — do not
@@ -234,13 +331,33 @@ export function createVmLifecycleManager(deps: LifecycleDeps): VmLifecycleManage
         return;
       }
 
+      // (2026-07-02): Non-degraded but unhealthy — mark as destroyed, do NOT auto-recreate.
+      // Admin alarm already fired above.
       persistence.markDestroyed(record.vmId);
-      await tryAutoRecreate(userId, record, persistence);
       return;
     }
 
     persistence.updateIfCurrent(record.vmId, record.version, { status: "healthy" });
     persistence.resetFailureCount(record.vmId);
+
+    // Fix (2026-07-01): recover() must populate vm_runtimes so getCurrentOpencodeRoute()
+    // returns the correct VM URL. Without this, a healthy recovered VM has vm_states.status
+    // = "healthy" but vm_runtimes may be empty/stale — routing falls to vm-pending (host
+    // server), host models differ from VM models → "models unavailable" for the user.
+    setVmRuntimeInfo(userId, {
+      userId,
+      tier: record.specTier as VmSpec["tier"],
+      domainName: record.domainName,
+      qcow2Path: "",
+      cloudInitIsoPath: "",
+      bridgeIp: record.assignedIpv4,
+      baseUrl: `http://${record.assignedIpv4}:4096`,
+      startTime: record.createdAt,
+      pid: null,
+      sudoPassword: record.passwordHash,
+      serverPassword: handle.password,
+      ipv6: "",
+    });
   }
 
   return { acquire, release, recover, shutdown() { shutdownController?.abort(); } };

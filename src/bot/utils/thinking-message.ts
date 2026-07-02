@@ -1,4 +1,5 @@
 import type { ToolMessageBatcher } from "../../summary/tool-message-batcher.js";
+import { unwrapMarkdownTitle } from "./reasoning-format.js";
 import { t } from "../../i18n/index.js";
 import {
   formatTechnicalProgressSync,
@@ -57,7 +58,8 @@ export function extractReasoningTitle(reasoningText: string): string {
   if (!firstLine) return t("bot.thinking");
 
   const cleaned = firstLine.replace(/\s*[;:]\s*$/, "");
-  if (cleaned) return cleaned;
+  const unwrapped = unwrapMarkdownTitle(cleaned);
+  if (unwrapped) return unwrapped;
   return t("bot.thinking");
 }
 

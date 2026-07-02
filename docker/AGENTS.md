@@ -32,12 +32,11 @@ python3 /usr/local/bin/file-server.py serve /path/to/file
 |--------|------|---------|
 | File server link | Any file <50MB | `python3 file-server.py serve <path>` |
 | Direct upload via HTTP | Text/code files | `python3 file-server.py serve <path>` — returns URL |
-| Telegraph for text | Reports >4096 chars | Telegraph via tg-upload.ts --telegraph |
 
 ### Why this fixes the topic routing bug
 
-- **Old approach:** `tg-upload.ts --auto --file <path>` → resolves (chatId, threadId) from session DB → often wrong topic
-- **New approach:** Agent returns HTTP link → bot picks up link from response → delivers to CURRENT chat/thread → always correct
+- **Старый подход (удалён):** `tg-upload.ts` → резолвил (chatId, threadId) из session DB → часто ошибался с топиком
+- **Новый подход:** Агент возвращает HTTP ссылку → бот подхватывает ссылку из ответа → доставляет в ТЕКУЩИЙ чат/тред → всегда правильно
 
 The file-server runs on `http://localhost:8890` inside the container. Files are served from `/tmp/served-files/`.
 
@@ -68,8 +67,8 @@ python3 /usr/local/bin/file-server.py serve <path>  # Copy file, return URL
 
 ### When NOT to use tg-cli
 
-- **NEVER use tg-cli to reply in the current chat.** Use `tg-upload.ts` (Bot API) instead.
-- **NEVER use tg-cli to deliver generated files back to the user.** Use `tg-upload.ts`.
+- **NEVER use tg-cli to reply in the current chat.** The bot handles file delivery via file-server.
+- **NEVER use tg-cli to deliver generated files back to the user.** Use `python3 /usr/local/bin/file-server.py serve <path>`.
 - **NEVER use tg-cli tokens for bot operations.** Bot API and tg-cli have separate auth.
 
 ### Priority for contact lookup
@@ -315,9 +314,14 @@ Memory is stored in `/workspace/MEMORY.md` (your notes) and `/workspace/USER.md`
 - User corrects your style, tone, format, or behavior → save to `user`
 - User states a preference or workflow expectation → save to `user`
 - You discover environment facts, tool quirks, or project conventions → save to `memory`
+- **Most valuable memory**: prevents the user from correcting you again — user corrections > environment facts > procedural details
 - Write declarative facts: "User prefers concise responses" ✓ — "Always respond concisely" ✗
+- 'Project uses pytest with xdist' ✓ — 'Run tests with pytest -n 4' ✗ (imperatives get re-read as directives)
+- If you solved a complex problem → save as a **skill**, not memory. Memory = who/what, skills = how.
 
-**Do NOT save:** task progress, PR numbers, commit SHAs, "Phase N done", or anything stale in 7 days.
+**Do NOT save:** task progress, PR numbers, commit SHAs, "Phase N done", or anything stale in 7 days. Temporary TODO state → skip.
+
+**Consolidation:** If memory_show() reports >80% full, consolidate immediately: use `operations=[...]` to merge overlapping entries and remove stale ones in one atomic call.
 
 ### When to read
 
@@ -329,6 +333,11 @@ Memory is stored in `/workspace/MEMORY.md` (your notes) and `/workspace/USER.md`
 
 Skills are your procedural memory — they capture *how to do a specific type of task* based on proven experience. Store them as `/workspace/skills/<name>.md`.
 
+**Discovery tools:**
+- `skills_list()` — list all available skills with names and descriptions
+- `skill_view(name)` — read full SKILL.md of a specific skill
+- **Always call skills_list() BEFORE starting work** on a task to find relevant skills
+
 ### When to create a skill
 
 - You completed a complex task (5+ tool calls) — capture the workflow
@@ -337,7 +346,10 @@ Skills are your procedural memory — they capture *how to do a specific type of
 - The user corrected your approach and the correction is broadly applicable
 - A pattern will be referenced across projects or sessions
 
-**Do NOT create skills for:** one-off solutions, standard practices, project-specific conventions (use AGENTS.md), or mechanically automatable steps (write a script instead).
+**Do NOT create skills for:** one-off solutions, standard practices, project-specific conventions (use AGENTS.md), mechanically automatable steps (write a script instead). Also:
+- Environment-dependent failures (missing binaries, fresh-install errors, post-migration mismatches) — user can fix, not durable rules
+- Negative claims about tools ('browser tools do not work') — harden into refusals long after the problem is fixed
+- Session-specific transient errors that resolved (if retry worked, capture the retry pattern, not the original failure)
 
 ### Skill file structure
 
@@ -414,6 +426,24 @@ When asked to build, run, or verify something, the deliverable is a WORKING arti
 ### Tool-Use Enforcement
 
 You MUST use tools to take action — do not describe what you would do without actually doing it. When you say "I will run the tests" or "Let me check that file", make the tool call immediately. Never end a turn with a promise of future action. Every response should either contain tool calls that make progress or deliver a final result.
+
+### Tool Output Formatting (Critical)
+
+OpenCode server captures tool stdout **line by line** — it only flushes complete lines (terminated by `\n`). **`\r`-only progress bars are invisible** and cause the agent to hang waiting for output that never arrives.
+
+**Rules for ALL scripts:**
+
+| ❌ DO NOT | ✅ DO |
+|---|---|
+| `process.stdout.write(\`\r${pct}%\`)` | `console.log(\`${pct}%\`)` |
+| `printf '\rProgress...'` | `echo "Progress..."` |
+| `sys.stdout.write(f'\r{pct}%')` | `print(f'{pct}%', flush=True)` |
+| `\r` without `\n` anywhere | Always terminate with `\n` |
+
+- **Always start with an initial `\n`-terminated status message** (e.g., `echo "Starting download..."`)
+- **For Node.js scripts:** use `console.log()` for ALL output — never `process.stdout.write()` with `\r`
+- **For Python:** use `print(..., flush=True)`
+- **For bash:** use `echo`, not `printf` with `\r`
 
 ### Context Management
 

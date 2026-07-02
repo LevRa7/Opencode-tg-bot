@@ -51,6 +51,7 @@ import { showPermissionRequest } from "./permission.js";
 import { showCurrentQuestion } from "./question.js";
 import { externalInputSuppression } from "../../external-input/suppression.js";
 import { injectMemoryContext } from "../../memory/inject.js";
+import { injectVmContext } from "../../memory/vm-inject.js";
 import { syncTurn, queuePrefetch } from "../../memory/sync.js";
 import { maybeGetMemoryNudge, getTurnCount } from "../../memory/nudge.js";
 import { spawnBackgroundReview, setBackgroundReviewCallback } from "../../memory/background-review.js";
@@ -645,10 +646,11 @@ export async function processUserPrompt(
     // First message in this batch — open window with a short initial expiry
     // Must be > 0 so that other messages processed in the same getUpdates
     // response can find the window before the timer fires.
-    // 300 ms is enough for grammY to process all updates in one poll batch.
+    // 800 ms — enough for forwarded rich messages to pass through auth
+    // and middleware chain (~350ms) plus grammY dispatch overhead.
     await deferredBatch.deferItem({
       scopeKey,
-      initialExpiresMs: 300,
+      initialExpiresMs: 800,
       deferredItem: {
         correlationId: `prompt:${ctx.message?.message_id ?? Date.now()}`,
         kind: "text",
@@ -772,6 +774,38 @@ export async function processUserPrompt(
       );
       clearSession();
       currentSession = null;
+    }
+  }
+
+  // When deploy target is VM, the cached session may reference an opencode
+  // server instance that was destroyed during VM recreation (bot restart →
+  // fresh VM deployment → cloud-init → godmode-bootstrap restarts opencode).
+  // Verify the session still exists on the VM; if not, discard it so a fresh
+  // session is created transparently.
+  if (currentSession && scope) {
+    const deployTarget = getUserDeployTarget(scope.userId);
+    if (deployTarget === "vm") {
+      const sessionIdToVerify = currentSession.id;
+      const sessionDirToVerify = currentSession.directory;
+      try {
+        const { data: sessionData, error: sessionErr } = await opencodeClient.session.get({
+          directory: sessionDirToVerify,
+          sessionID: sessionIdToVerify,
+        });
+        if (sessionErr || !sessionData) {
+          logger.info(
+            `[Bot] Session ${sessionIdToVerify} not found on VM server (VM likely recreated), discarding`,
+          );
+          clearSession();
+          currentSession = null;
+        }
+      } catch {
+        logger.warn(
+          `[Bot] Failed to verify session ${sessionIdToVerify} on VM server, discarding`,
+        );
+        clearSession();
+        currentSession = null;
+      }
     }
   }
 
@@ -1018,6 +1052,13 @@ export async function processUserPrompt(
         enrichedText = await injectMemoryContext(userId, enrichedText);
       } catch {
         // injectMemoryContext already logs internally; proceed with unenriched text
+      }
+
+      // Inject VM-local memory + skills for SSH-connected users (best-effort)
+      try {
+        enrichedText = await injectVmContext(userId, enrichedText);
+      } catch {
+        // Best-effort — proceed with unenriched text
       }
 
       parts.push({ type: "text", text: enrichedText });

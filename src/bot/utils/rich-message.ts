@@ -116,7 +116,8 @@ export function isRichContent(text: string): boolean {
     hasLatexMath(text) ||
     hasCodeBlock(text) ||
     hasBlockquote(text) ||
-    hasHeading(text)
+    hasHeading(text) ||
+    hasInlineMarkdown(text)
   );
 }
 
@@ -130,6 +131,20 @@ function hasBlockquote(text: string): boolean {
 
 function hasHeading(text: string): boolean {
   return /^#{1,6}\s+\S/m.test(text);
+}
+
+function hasInlineMarkdown(text: string): boolean {
+  // Fixed 2026-06-30: final prose with only inline markup, e.g.
+  // `Итог: **...**`, bypassed rich delivery and could arrive with literal
+  // asterisks. Keep this intentionally narrow to avoid treating arithmetic
+  // `2 * 3` or ordinary punctuation as rich content.
+  return (
+    /(^|\s)\*\*\S[\s\S]*?\S\*\*(?=\s|[.!?,:;)]|$)/.test(text) ||
+    /(^|\s)__\S[\s\S]*?\S__(?=\s|[.!?,:;)]|$)/.test(text) ||
+    /(^|\s)~~\S[\s\S]*?\S~~(?=\s|[.!?,:;)]|$)/.test(text) ||
+    /`[^`\n]+`/.test(text) ||
+    /\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)/i.test(text)
+  );
 }
 
 /**
@@ -312,6 +327,15 @@ function toolRichLabel(
   };
   const base = `${emoji} ${toolText[tool] || tool}`;
 
+  // If the model provided a meaningful title (not just the tool name itself),
+  // use it directly instead of parsing input fields.
+  const modelTitle = title?.trim();
+  if (modelTitle && modelTitle !== tool) {
+    // Model title is meaningful — render as: "💻 Команда — model title"
+    const withTitle = truncateTitle(`${base} — ${modelTitle}`, MAX_LABEL);
+    return escapeSummary(withTitle);
+  }
+
   const fp = typeof input?.filePath === "string" ? input.filePath.trim() : "";
 
   // Read/write headers: file path in <code> (inline monospace), line count in
@@ -330,15 +354,40 @@ function toolRichLabel(
     return `${escapeSummary(base)} — <code>${escapeSummary(shownPath)}</code>${escapeSummary(lineSuffix)}`;
   }
 
-  if (title?.trim()) {
-    const t = title.trim();
-    const prefixSep = title.includes(" — ") ? "" : " — ";
-    const withEmoji = truncateTitle(`${emoji}${prefixSep}${t}`, MAX_LABEL);
-    return escapeSummary(withEmoji);
+  // grep / glob: show the search pattern in the header, not just the path
+  const searchPattern =
+    typeof input?.pattern === "string"
+      ? input.pattern.trim()
+      : typeof input?.query === "string"
+        ? input.query.trim()
+        : "";
+  if ((tool === "grep" || tool === "glob") && searchPattern) {
+    const patternDisplay =
+      searchPattern.length > 60
+        ? `"${searchPattern.slice(0, 57)}…"`
+        : `"${searchPattern}"`;
+    const titleSuffix = title?.trim() ? ` — ${title.trim()}` : "";
+    const full = truncateTitle(`${base} ${patternDisplay}${titleSuffix}`, MAX_LABEL);
+    return escapeSummary(full);
   }
 
-  const cmd = typeof input?.command === "string" ? input.command.trim() : "";
-  const extra = fp || cmd ? ` — ${fp || cmd}` : "";
+  if (title?.trim()) {
+    const t = title.trim();
+    // For bash tools, if the title is just the raw command, skip it —
+    // the label will fall through to the clean "💻 Команда — <truncated>" format below
+    const cmd = typeof input?.command === "string" ? input.command.trim() : "";
+    const isBashRawCommand =
+      tool === "bash" && cmd && (t === cmd || t.startsWith(cmd.slice(0, 40)));
+    if (!isBashRawCommand) {
+      const prefixSep = title.includes(" — ") ? "" : " — ";
+      const withEmoji = truncateTitle(`${emoji}${prefixSep}${t}`, MAX_LABEL);
+      return escapeSummary(withEmoji);
+    }
+  }
+
+  // Fallback label: emoji + tool name + truncated command/path
+  const cmd2 = typeof input?.command === "string" ? input.command.trim() : "";
+  const extra = fp || cmd2 ? ` — ${fp || cmd2}` : "";
   const full = truncateTitle(`${base}${extra}`, MAX_LABEL);
   return escapeSummary(full);
 }
@@ -648,17 +697,18 @@ export async function tryEditRichMessage(
   api: GrammyApi,
   chatId: number | string,
   messageId: number,
-  markdown: string,
+  content: string,
   options?: RichSendOptions,
 ): Promise<RichSendResult | null> {
-  if (!isRichSizeOk(markdown)) {
+  if (!isRichSizeOk(content)) {
     return null;
   }
 
+  const useHtml = options?.useHtml ?? false;
   const payload: RichMessagePayload = {
     chat_id: chatId,
     message_id: messageId,
-    rich_message: { markdown },
+    rich_message: useHtml ? { html: content } : { markdown: content },
   };
 
   if (options?.businessConnectionId) {

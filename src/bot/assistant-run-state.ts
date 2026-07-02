@@ -21,6 +21,10 @@ export interface AssistantRunInfo extends AssistantRunStartInfo {
   completedLogicalMessageId?: string;
   publishedFinalLogicalMessageId?: string;
   completedAt?: number;
+  // 2026-07-02: timestamp of last markFinalResponsePublished call.
+  // Used by BusyReconciliation to skip clearing runs that were recently
+  // finalized — the model may produce more messages in the same turn.
+  finalizedAt?: number;
 }
 
 class AssistantRunState {
@@ -133,10 +137,15 @@ class AssistantRunState {
     }
 
     run.hasPublishedFinalResponse = true;
+    run.finalizedAt = Date.now();
     if (info?.logicalMessageId) {
       run.publishedFinalLogicalMessageId = info.logicalMessageId;
     }
     logger.debug(`[AssistantRunState] markFinalResponsePublished: session=${sessionId}, hasPublishedFinalResponse=${run.hasPublishedFinalResponse}`);
+  }
+
+  getFinalizedAt(sessionId: string): number | undefined {
+    return this.runs.get(sessionId)?.finalizedAt;
   }
 
   finishRun(sessionId: string, reason: string): AssistantRunInfo | null {

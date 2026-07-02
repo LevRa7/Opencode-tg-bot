@@ -397,3 +397,42 @@ describe("config telegram force-ipv4", () => {
     expect(config.telegram.forceIpv4).toBe(true);
   });
 });
+
+describe("config telegram update mode", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "test-telegram-token");
+    vi.stubEnv("TELEGRAM_ADMIN_USER_ID", "123456789");
+    vi.stubEnv("OPENCODE_MODEL_PROVIDER", "test-provider");
+    vi.stubEnv("OPENCODE_MODEL_ID", "test-model");
+    vi.stubEnv("TELEGRAM_UPDATE_MODE", "");
+    vi.stubEnv("TELEGRAM_WEBHOOK_BASE_URL", "");
+    vi.stubEnv("TELEGRAM_WEBHOOK_PATH", "");
+    vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("uses polling mode by default", async () => {
+    const config = await loadConfig();
+
+    expect(config.telegram.updateMode).toBe("polling");
+    expect(config.telegram.webhookPath).toBe("/telegram/webhook");
+  });
+
+  it("parses webhook mode and normalizes base URL", async () => {
+    vi.stubEnv("TELEGRAM_UPDATE_MODE", "webhook");
+    vi.stubEnv("TELEGRAM_WEBHOOK_BASE_URL", "https://smart-server.online///");
+    vi.stubEnv("TELEGRAM_WEBHOOK_PATH", "telegram/custom");
+    vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "test-secret");
+
+    const config = await loadConfig();
+
+    expect(config.telegram.updateMode).toBe("webhook");
+    expect(config.telegram.webhookBaseUrl).toBe("https://smart-server.online");
+    expect(config.telegram.webhookPath).toBe("telegram/custom");
+    expect(config.telegram.webhookSecret).toBe("test-secret");
+  });
+});

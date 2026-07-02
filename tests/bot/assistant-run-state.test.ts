@@ -120,5 +120,23 @@ describe("bot/assistant-run-state", () => {
 
       expect(assistantRunState.isFinalizationInFlight("session-1")).toBe(true);
     });
+
+    // 2026-07-02: regression for tool-only message triggering premature
+    // finalization. When the model sends a message with tool calls but no
+    // text (finish: 'tool-calls'), markResponseCompleted fires but
+    // markVisibleFinalResponse / markFinalResponsePublished MUST NOT follow.
+    // If they do, isFinalizationInFlight becomes false, reconciliation clears
+    // the run, and the model's next turn (after tool execution) arrives to
+    // a dead run — the final answer is silently dropped.
+    it("stays in-flight after tool-only completion (no markVisibleFinal or markFinalPublished)", () => {
+      assistantRunState.startRun("session-1", { startedAt: 100 });
+      assistantRunState.markResponseCompleted("session-1", { logicalMessageId: "tool-msg-1" });
+
+      // Tool-only completion: completionRecorded=true, but no
+      // markVisibleFinalResponse / markFinalResponsePublished calls.
+      // isFinalizationInFlight MUST stay true to protect against
+      // reconciliation clearing the run.
+      expect(assistantRunState.isFinalizationInFlight("session-1")).toBe(true);
+    });
   });
 });

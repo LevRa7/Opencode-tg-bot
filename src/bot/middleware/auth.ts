@@ -187,24 +187,27 @@ export async function upsertPendingApprovalRequest(ctx: Context, requesterMessag
     }
   }
 
+  // Try to send a fresh admin message (best-effort — save request even on failure)
   try {
     const message = await ctx.api.sendMessage(config.telegram.adminUserId, text, {
       reply_markup: keyboard,
     });
     nextRequest.adminMessageId = message.message_id;
-
-    if (existingRequestIndex >= 0) {
-      pendingRequests[existingRequestIndex] = nextRequest;
-    } else {
-      pendingRequests.push(nextRequest);
-    }
-
-    await setPendingAccessRequests(pendingRequests);
-    return true;
-  } catch (error) {
-    logger.error("[Auth] Failed to send admin approval request", error);
-    return false;
+  } catch (sendError) {
+    logger.error("[Auth] Failed to send admin approval request — saving for retry", sendError);
+    // Clear adminMessageId so next attempt won't try to edit a stale message
+    nextRequest.adminMessageId = undefined;
   }
+
+  // Always persist the request so it can be retried — never dead-end
+  if (existingRequestIndex >= 0) {
+    pendingRequests[existingRequestIndex] = nextRequest;
+  } else {
+    pendingRequests.push(nextRequest);
+  }
+
+  await setPendingAccessRequests(pendingRequests);
+  return true;
 }
 
 function getPendingApprovalRequest(userId: number): AccessApprovalRequest | undefined {
@@ -386,6 +389,14 @@ export async function handleAccessApprovalCallback(ctx: Context): Promise<boolea
 export async function authMiddleware(ctx: Context, next: NextFunction): Promise<void> {
   const userId = ctx.from?.id;
 
+  // Skip auth for the bot's own service messages (forum_topic_edited,
+  // pinned_message, etc.) — these appear with the bot's ID as the sender
+  // because the bot created the topic/pinned the message.
+  if (userId === ctx.me?.id) {
+    await next();
+    return;
+  }
+
   logger.debug(
     `[Auth] Checking access: userId=${userId}, adminUserId=${config.telegram.adminUserId}, hasCallbackQuery=${!!ctx.callbackQuery}, hasMessage=${!!ctx.message}`,
   );
@@ -418,14 +429,18 @@ export async function authMiddleware(ctx: Context, next: NextFunction): Promise<
   }
 
   await hideCommandsForUnauthorizedPrivateChat(ctx);
-  const approvalRequestSent = isPrivateChat(ctx) ? await upsertPendingApprovalRequest(ctx) : false;
+  // Send approval request for ANY chat type (private, group, supergroup, forum)
+  // where a real user is messaging. Previously restricted to private chats only,
+  // which silently dropped forum messages from unauthorized users.
+  const isMessagableChat = typeof ctx.from?.id === "number" && !!ctx.chat?.id;
+  const approvalRequestSent = isMessagableChat ? await upsertPendingApprovalRequest(ctx) : false;
 
   if (ctx.callbackQuery) {
     await ctx.answerCallbackQuery({ text: t("auth.callback.pending_approval") }).catch(() => {});
     return;
   }
 
-  if (isPrivateChat(ctx) && approvalRequestSent) {
+  if (approvalRequestSent) {
     await ctx.reply(t("auth.requester.sent")).catch(() => {});
   }
 }

@@ -11,7 +11,12 @@ import { clearPromptResponseMode } from "../handlers/prompt.js";
 import { logger } from "../../utils/logger.js";
 
 const RECONCILE_MIN_INTERVAL_MS = 10_000;
-const FOREGROUND_BUSY_RECONCILE_GRACE_MS = 2_000;
+const FOREGROUND_BUSY_RECONCILE_GRACE_MS = 15_000;
+const FOREGROUND_NOT_FOUND_GRACE_MS = 30_000;
+// 2026-07-02: after markFinalResponsePublished, the model may continue producing
+// more messages in the same turn (tool calls, follow-up text). Reconciliation
+// must not clear the run within this window — it would drop subsequent messages.
+const FINALIZED_COOLDOWN_MS = 30_000;
 const MAX_IN_FLIGHT_RECONCILES = 5;
 
 type SessionStatus = {
@@ -56,6 +61,19 @@ function isWithinForegroundBusyGracePeriod(
   now: number,
 ): boolean {
   return now - session.markedAt < FOREGROUND_BUSY_RECONCILE_GRACE_MS;
+}
+
+// 2026-07-01: when the session is not found in the server's status response
+// (status === null), the model may still be warming up (especially cold-start
+// providers like godmode/deepseek-v4-flash-free). Use a longer grace period
+// to avoid false-positive "stale" clears during model startup (see bug where
+// BusyReconciliation cleared the run 6 seconds after promptAsync, 12 times
+// in a 20-minute agent session).
+function isWithinNotFoundGracePeriod(
+  session: ForegroundBusySession,
+  now: number,
+): boolean {
+  return now - session.markedAt < FOREGROUND_NOT_FOUND_GRACE_MS;
 }
 
 async function clearForegroundBusySession(sessionId: string, reason: string): Promise<void> {
@@ -115,6 +133,16 @@ export async function reconcileBusyStateNow(directory: string, now: number = Dat
       continue;
     }
 
+    // 2026-07-01: server reports "not-found" during model startup / cold-start
+    // warmup. Don't clear sessions that haven't been busy long enough to rule
+    // out this warmup window — use a dedicated 30s grace period for not-found.
+    if (!status && isWithinNotFoundGracePeriod(session, now)) {
+      logger.debug(
+        `[BusyReconciliation] Skipping clear, not-found within grace period: session=${session.sessionId}, directory=${session.directory}, elapsed=${now - session.markedAt}ms`,
+      );
+      continue;
+    }
+
     // 2026-06-26: the server flips a session to idle as soon as the model stops
     // generating, but the bot's completion/finalization pipeline runs asynchronously
     // for a few more seconds. Clearing the run mid-finalization turns
@@ -126,6 +154,18 @@ export async function reconcileBusyStateNow(directory: string, now: number = Dat
     if (assistantRunState.isFinalizationInFlight(session.sessionId)) {
       logger.debug(
         `[BusyReconciliation] Skipping clear, finalization in flight: session=${session.sessionId}, directory=${session.directory}, status=${status?.type ?? "not-found"}`,
+      );
+      continue;
+    }
+
+    // 2026-07-02: after markFinalResponsePublished, the model may produce more
+    // messages in the same turn (tool calls after tool execution, follow-up
+    // text). Don't clear the run within FINALIZED_COOLDOWN_MS of the last
+    // publication — the next message from the model would hit a dead run.
+    const finalizedAt = assistantRunState.getFinalizedAt(session.sessionId);
+    if (finalizedAt !== undefined && now - finalizedAt < FINALIZED_COOLDOWN_MS) {
+      logger.debug(
+        `[BusyReconciliation] Skipping clear, finalized cooldown: session=${session.sessionId}, directory=${session.directory}, elapsed=${now - finalizedAt}ms`,
       );
       continue;
     }

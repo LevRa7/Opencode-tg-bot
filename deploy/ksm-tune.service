@@ -1,0 +1,21 @@
+[Unit]
+Description=KSM Tuning for VM Memory Deduplication
+Documentation=https://docs.kernel.org/admin-guide/mm/ksm.html
+Before=libvirtd.service
+After=proc-sys-fs-binfmt_misc.mount
+
+[Service]
+Type=oneshot
+# Burst phase: aggressive scan for fast initial dedup after host boot.
+# Conservative values (pages_to_scan=256, sleep_millisecs=200) will be
+# set by VmManager.ensureKsm() 60s after first VM deploy.
+ExecStart=/bin/sh -c '\
+  echo 1 > /sys/kernel/mm/ksm/run && \
+  echo 1 > /sys/kernel/mm/ksm/merge_across_nodes && \
+  echo 5000 > /sys/kernel/mm/ksm/pages_to_scan && \
+  echo 10 > /sys/kernel/mm/ksm/sleep_millisecs'
+RemainAfterExit=yes
+ExecStop=/bin/sh -c 'echo 0 > /sys/kernel/mm/ksm/run || true'
+
+[Install]
+WantedBy=multi-user.target

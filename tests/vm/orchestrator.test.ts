@@ -6,6 +6,16 @@ import { createVmOrchestrator } from "../../src/vm/orchestrator.js";
 import type { VmHandle, VmSpec } from "../../src/vm/types.js";
 import type { HealthStatus } from "../../src/vm/health-proxy.js";
 
+const mockClearVmRuntimeInfo = vi.fn();
+const mockSetVmRuntimeInfo = vi.fn();
+const mockGetAllVmRuntimeUserIds = vi.fn();
+
+vi.mock("../../src/settings/manager.js", () => ({
+  setVmRuntimeInfo: (...args: unknown[]) => mockSetVmRuntimeInfo(...args),
+  clearVmRuntimeInfo: (...args: unknown[]) => mockClearVmRuntimeInfo(...args),
+  getAllVmRuntimeUserIds: () => mockGetAllVmRuntimeUserIds(),
+}));
+
 const DDL = `
 CREATE TABLE IF NOT EXISTS vm_states (
   vm_id           TEXT PRIMARY KEY,
@@ -42,6 +52,9 @@ describe("createVmOrchestrator", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockClearVmRuntimeInfo.mockClear();
+    mockSetVmRuntimeInfo.mockClear();
+    mockGetAllVmRuntimeUserIds.mockReturnValue([]);
     db = new Database(":memory:");
     db.exec(DDL);
     persistence = createVmStatePersistence(db);
@@ -135,5 +148,52 @@ describe("createVmOrchestrator", () => {
     const record = persistence.getByUserId(77);
     expect(record).toBeDefined();
     expect(record!.status).toBe("healthy");
+  });
+
+  // Fix (2026-07-01): orphan vm_runtimes cleanup — ported from Hermes memory-ts
+  // drift detection. vm_states is the authoritative source, vm_runtimes is a cache.
+  // Entries in vm_runtimes without a corresponding vm_states record must be removed.
+  describe("orphan vm_runtimes cleanup", () => {
+    it("clears orphan vm_runtimes with no vm_states record", async () => {
+      mockGetAllVmRuntimeUserIds.mockReturnValue([42, 99]);
+
+      // Only user 42 has a vm_states record — user 99 is an orphan
+      persistence.save({
+        vmId: "vm-42", userId: 42, environmentType: "libvirt", specTier: "small",
+        assignedIpv4: "10.100.0.42", assignedMac: "", domainName: "opencode-tg-42",
+        passwordHash: "h", version: 1, createdAt: "", updatedAt: "",
+        status: "healthy", failureCount: 0,
+      });
+
+      await orchestrator.recoverAll(persistence);
+
+      // User 99 has no vm_states → must be cleared
+      expect(mockClearVmRuntimeInfo).toHaveBeenCalledWith(99);
+      // User 42 has vm_states → must NOT be cleared
+      expect(mockClearVmRuntimeInfo).not.toHaveBeenCalledWith(42);
+    });
+
+    it("does nothing when there are no orphan entries", async () => {
+      mockGetAllVmRuntimeUserIds.mockReturnValue([42]);
+
+      persistence.save({
+        vmId: "vm-42", userId: 42, environmentType: "libvirt", specTier: "small",
+        assignedIpv4: "10.100.0.42", assignedMac: "", domainName: "opencode-tg-42",
+        passwordHash: "h", version: 1, createdAt: "", updatedAt: "",
+        status: "healthy", failureCount: 0,
+      });
+
+      await orchestrator.recoverAll(persistence);
+
+      expect(mockClearVmRuntimeInfo).not.toHaveBeenCalled();
+    });
+
+    it("does nothing when vm_runtimes table is empty", async () => {
+      mockGetAllVmRuntimeUserIds.mockReturnValue([]);
+
+      await orchestrator.recoverAll(persistence);
+
+      expect(mockClearVmRuntimeInfo).not.toHaveBeenCalled();
+    });
   });
 });

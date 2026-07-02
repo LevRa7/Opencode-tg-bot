@@ -63,6 +63,8 @@ import {
   handleCommandTextArguments,
 } from "./commands/commands.js";
 import { sshCommand, handleSshCallback, handleSshTextArguments } from "./commands/ssh.js";
+import { updateCommand } from "./commands/update.js";
+import { updateAllCommand } from "./commands/update-all.js";
 import { streamCommand } from "./commands/stream.js";
 import { ttsCommand } from "./commands/tts.js";
 import { terminalCommand } from "./commands/terminal.js";
@@ -113,6 +115,7 @@ import {
   formatTechnicalProgressSync,
   formatTechnicalProgressWithDetails,
 } from "../summary/technical-progress/formatter.js";
+import { classifyTechnicalProgress } from "../summary/technical-progress/classify.js";
 import { TelegraphClient } from "../telegraph/telegraph-client.js";
 import { TelegraphPublishQueue } from "../telegraph/publish-queue.js";
 import { ThinkingTelegraphAccumulator } from "../telegraph/thinking-accumulator.js";
@@ -156,6 +159,7 @@ import {
 } from "../model/manager.js";
 import { isModelUnavailableError, isSseReadTimeoutError } from "./utils/model-error-patterns.js";
 import { stripMessageTags } from "./utils/strip-message-tags.js";
+import { extractRichMessageText } from "./utils/rich-message-extractor.js";
 import type { ModelInfo } from "../model/types.js";
 import { IncomingMediaBatch } from "./incoming-media-batch.js";
 import type { ResolvedDeferredItem } from "../media/batch-types.js";
@@ -195,7 +199,7 @@ import {
 } from "../background-session/tracker.js";
 import { extractReasoningTitle, getVisibleReasoningText } from "./utils/thinking-message.js";
 import { formatAssistantRunFooter } from "./utils/assistant-run-footer.js";
-import { sendBotText, sendStreamedBotText } from "./utils/telegram-text.js";
+import { sendBotText, sendStreamedBotText, editBotText } from "./utils/telegram-text.js";
 import {
   createLocalFileFollowUpTracker,
   extractLocalFilePaths,
@@ -208,6 +212,7 @@ import {
 import { scheduledTaskRuntime } from "../scheduled-task/runtime.js";
 import { ResponseStreamer } from "./streaming/response-streamer.js";
 import { ToolCallStreamer } from "./streaming/tool-call-streamer.js";
+import { UnifiedProgressStreamer } from "./streaming/unified-progress-streamer.js";
 import { SessionDeliveryOrchestrator } from "./delivery/session-delivery-orchestrator.js";
 import { threadContextManager } from "../thread/manager.js";
 import { processManager } from "../process/manager.js";
@@ -253,6 +258,7 @@ import {
   formatToolOutputForRichMessage,
   isRichContent,
   stripHtml,
+  tryEditRichMessage,
   trySendRichMessage,
   trySendRichMessageUnchecked,
 } from "./utils/rich-message.js";
@@ -297,6 +303,9 @@ interface DeferredPromptBatchResolution {
 
 const TELEGRAM_DOCUMENT_CAPTION_MAX_LENGTH = 1024;
 const RESPONSE_STREAM_THROTTLE_MS = config.bot.responseStreamThrottleMs;
+const useRichProgress = config.bot.richProgressEnabled;
+const targetedSessionRichProgressFallbacks = new Set<string>();
+const startingSessions = new Set<string>();
 const RESPONSE_STREAM_TEXT_LIMIT = 3800;
 const SESSION_RETRY_PREFIX = "🔁";
 const SUBAGENT_STREAM_PREFIX = "🧩";
@@ -435,6 +444,11 @@ const childTopicPinnedMessageId = new Map<string, number>();
 const maternalTokenUsage = new Map<string, { input: number; output: number }>();
 
 const publishedToolDetailCallIds = new Set<string>();
+const toolStatusMessages = new Map<
+  string,
+  { messageId: number; chatId: number; threadId?: number; lastText: string }
+>();
+const toolStatusSending = new Set<string>();
 interface ChildAssistantMessageState {
   orderedPartIds: string[];
   partTexts: Map<string, string>;
@@ -461,7 +475,9 @@ function clearChildAssistantSession(sessionId: string): void {
   childTopicPromptSent.delete(sessionId);
   childSessionMeta.delete(sessionId);
   childSessionTitle.delete(sessionId);
-  childTopicLastSetName.clear(sessionId);
+  if (managedChildSessionIds.has(sessionId)) {
+    childTopicLastSetName.clear(sessionId);
+  }
   childReasoningBuffer.delete(sessionId);
   const typingInterval = childTypingIntervals.get(sessionId);
   if (typingInterval) {
@@ -469,6 +485,10 @@ function clearChildAssistantSession(sessionId: string): void {
     childTypingIntervals.delete(sessionId);
   }
   managedChildSessionIds.delete(sessionId);
+}
+
+export function __clearChildAssistantSessionForTests(sessionId: string): void {
+  clearChildAssistantSession(sessionId);
 }
 
 function setChildAssistantTextPart(
@@ -844,6 +864,14 @@ function clearSessionRoutingContext(sessionId: string): void {
   }
   routingBySessionId.delete(sessionId);
   clearPromptRouting(sessionId);
+}
+
+function cleanupToolStatusMessages(sessionId: string): void {
+  for (const [key, status] of toolStatusMessages) {
+    if (status.chatId && key.startsWith(sessionId + ":")) {
+      toolStatusMessages.delete(key);
+    }
+  }
 }
 
 function getCurrentReplyKeyboard() {
@@ -1591,6 +1619,9 @@ function buildFollowUpCandidateText(messageText?: string, reasoningText?: string
 const toolMessageBatcher = new ToolMessageBatcher({
   intervalSeconds: config.bot.serviceMessagesIntervalSec,
   sendText: async (sessionId, text, format) => {
+    if (useRichProgress && !targetedSessionRichProgressFallbacks.has(sessionId)) {
+      return; // Skip in rich mode
+    }
     const botApi = getSessionRoutingApi(sessionId);
     const target = getSessionDeliveryTarget(sessionId);
     if (!botApi || !target || !isSessionCurrent(sessionId)) {
@@ -1746,7 +1777,7 @@ const responseStreamer = new ResponseStreamer({
 const sharedMessageDraftIdAllocator = new SequentialMessageDraftIdAllocator();
 
 const messageDraftStreamManager = new MessageDraftStreamManager(
-  RESPONSE_STREAM_THROTTLE_MS,
+  undefined, // use class default (120ms) — not RESPONSE_STREAM_THROTTLE_MS
   sharedMessageDraftIdAllocator,
 );
 configureThinkingBlockDraftIdAllocator(sharedMessageDraftIdAllocator);
@@ -1868,6 +1899,88 @@ const toolCallStreamer = new ToolCallStreamer({
 
       throw error;
     });
+  },
+});
+
+// ── Unified Progress Streamer (RichMessage mode) ──────
+function stripHtmlTags(html: string): string {
+  return html.replace(/<[^>]*>/g, "").trim();
+}
+
+/**
+ * Direct HTTP fallback for sendRichMessage — bypasses grammY when
+ * raw.sendRichMessage is not available (grammY < Bot API 10.1).
+ */
+async function sendRichMessageDirect(
+  chatId: number,
+  markdown: string,
+  threadId?: number,
+): Promise<number | null> {
+  const url = `https://api.telegram.org/bot${config.telegram.token}/sendRichMessage`;
+  const body = JSON.stringify({
+    chat_id: chatId,
+    rich_message: { markdown },
+    message_thread_id: threadId,
+    disable_notification: true,
+  });
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as { ok: boolean; result?: { message_id: number } };
+    return data?.result?.message_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Direct HTTP fallback for editMessageText with rich_message — same reason.
+ */
+async function editRichMessageDirect(
+  chatId: number,
+  messageId: number,
+  markdown: string,
+): Promise<boolean> {
+  const url = `https://api.telegram.org/bot${config.telegram.token}/editMessageText`;
+  const body = JSON.stringify({
+    chat_id: chatId,
+    message_id: messageId,
+    rich_message: { markdown },
+  });
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    if (!resp.ok) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const unifiedProgress = new UnifiedProgressStreamer({
+  sendText: async (chatId, text, threadId) => {
+    // Use direct HTTP for sendRichMessage — grammY lacks Bot API 10.1 support.
+    const msgId = await sendRichMessageDirect(chatId, text, threadId);
+    if (msgId !== null) return msgId;
+    // If rich send fails, throw so streamer knows this session can't use rich mode.
+    throw new Error("sendRichMessage failed");
+  },
+  editText: async (chatId, messageId, text) => {
+    // Use direct HTTP for editMessageText with rich_message.
+    const ok = await editRichMessageDirect(chatId, messageId, text);
+    if (!ok) {
+      throw new Error("editRichMessageDirect failed");
+    }
+  },
+  deleteText: async (chatId, messageId) => {
+    await activeBotInstance!.api.deleteMessage(chatId, messageId).catch(() => {});
   },
 });
 
@@ -2051,6 +2164,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
     messageDraftStreamManager.clearAll();
     finalAssistantDeliveryOrchestrator.clearAll();
     clearAllThinkingBlockStreams();
+    unifiedProgress.clearAll();
     localFileFollowUpTracker.clearAll();
     assistantRunState.clearAll("summary_aggregator_clear");
     managedChildSessionIds.clear();
@@ -2065,6 +2179,46 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
   summaryAggregator.setOnPartial(
     async (sessionId, messageId, messageText, reasoningText, toolCalls) => {
+      // ── Rich Progress: feed reasoning ──
+      if (useRichProgress && reasoningText) {
+        logger.debug("[RichProgress] Reasoning update", {
+          sessionId,
+          hasSession: unifiedProgress.hasSession(sessionId),
+          hasTarget: !!getSessionRoutingTarget(sessionId),
+          inFallbacks: targetedSessionRichProgressFallbacks.has(sessionId),
+          inStarting: startingSessions.has(sessionId),
+          reasoningLen: reasoningText.length,
+        });
+
+        if (!unifiedProgress.hasSession(sessionId) && !startingSessions.has(sessionId)) {
+          syncSessionRoutingContext(sessionId);
+          const target = getSessionRoutingTarget(sessionId);
+          if (target && !targetedSessionRichProgressFallbacks.has(sessionId)) {
+            startingSessions.add(sessionId);
+            try {
+              await unifiedProgress.start(
+                sessionId,
+                target.chatId,
+                messageText.slice(0, 200) || "Working...",
+                target.messageThreadId,
+              );
+            } catch {
+              logger.warn("[RichProgress] Start failed in onPartial, using legacy", { sessionId });
+              targetedSessionRichProgressFallbacks.add(sessionId);
+            } finally {
+              startingSessions.delete(sessionId);
+            }
+          }
+        }
+        if (unifiedProgress.hasSession(sessionId)) {
+          const visibleText = getVisibleReasoningText(reasoningText);
+          if (visibleText) {
+            const reasoningTitle = extractReasoningTitle(reasoningText);
+            unifiedProgress.setReasoning(sessionId, visibleText, reasoningTitle);
+          }
+        }
+      }
+
       if (!isMessageStreamingEnabledForSession(sessionId)) {
         return;
       }
@@ -2077,21 +2231,29 @@ async function ensureEventSubscription(directory: string): Promise<void> {
         return;
       }
 
+      if (!messageText.trim() && !reasoningText?.trim() && !toolCalls?.length) {
+        return;
+      }
+
+      // Deliver file-server files from messageText BEFORE isFinalResponsePublished guard,
+      // so that subsequent text messages after a tool-calls completion still get files.
+      void enqueueLocalFileFollowUpsFromText(
+        sessionId,
+        buildFollowUpCandidateText(messageText, reasoningText),
+      );
+
       if (assistantRunState.isFinalResponsePublished(sessionId)) {
         return;
       }
 
       const mode = await getReasoningModeForSession(sessionId);
-      if (!messageText.trim() && !reasoningText?.trim() && !toolCalls?.length) {
-        return;
-      }
 
       const hideThinkingMessages = await getHideThinkingMessagesForSession(sessionId);
       const visibleReasoningText = hideThinkingMessages
         ? undefined
         : getVisibleReasoningText(reasoningText);
 
-      if (mode > 0 && visibleReasoningText) {
+      if (mode > 0 && visibleReasoningText && !useRichProgress) {
         try {
           const reasoningTitle = extractReasoningTitle(visibleReasoningText);
           const userLocalePartial = getTelegraphTranslateEnabled() ? getLocale() : undefined;
@@ -2159,6 +2321,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
   summaryAggregator.setOnComplete(
     async (sessionId, messageId, messageText, reasoningText, toolCalls, completionInfo) => {
+      // ── Rich Progress: finalize ──
+      if (useRichProgress && unifiedProgress.hasSession(sessionId)) {
+        await unifiedProgress.finalize(sessionId);
+      }
+
       await enqueueSessionCompletionTask(sessionId, async () => {
         assistantRunState.markResponseCompleted(sessionId, completionInfo);
 
@@ -2183,6 +2350,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           await clearThinkingBlockStream(sessionId, true);
           responseStreamer.clearMessage(sessionId, `${messageId}:assistant`, "session_mismatch");
           toolCallStreamer.clearSession(sessionId, "session_mismatch");
+          cleanupToolStatusMessages(sessionId);
           assistantRunState.clearRun(sessionId, "session_mismatch");
           foregroundSessionState.markIdle(sessionId, getBusyScopeForSession(sessionId));
           await scheduledTaskRuntime.flushDeferredDeliveries();
@@ -2229,7 +2397,18 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           return;
         }
 
-        if (mode > 0 && visibleReasoningText) {
+        // 2026-07-02: tool-only messages (finish: 'tool-calls' with no text)
+        // must NOT be marked as "final" — the model is still mid-workflow and
+        // will produce another turn after tool execution. Prematurely calling
+        // markVisibleFinalResponse / markFinalResponsePublished causes
+        // isFinalizationInFlight to return false, which lets BusyReconciliation
+        // clear the run. The next message from the model then arrives to a dead
+        // run, and the final answer is silently dropped.
+        // NOTE: reasoning text (thinking) is NOT considered "actual" text for
+        // finalization — only messageText (the visible assistant answer) counts.
+        const hasActualAssistantText = Boolean(messageText.trim());
+
+      if (mode > 0 && visibleReasoningText && !useRichProgress) {
           // Reasoning is already embedded inline in the response message.
           // Only publish to Telegraph for archival; skip separate Telegram thinking draft.
           const finalReasoningText = visibleReasoningText;
@@ -2265,9 +2444,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
           }
         }
 
-        assistantRunState.markVisibleFinalResponse(sessionId, {
-          logicalMessageId: completionLogicalMessageId,
-        });
+        if (hasActualAssistantText) {
+          assistantRunState.markVisibleFinalResponse(sessionId, {
+            logicalMessageId: completionLogicalMessageId,
+          });
+        }
 
         const finalFormat = getAssistantParseMode() === "MarkdownV2" ? "markdown_v2" : "raw";
         let finalText = messageText;
@@ -2302,9 +2483,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
 
         try {
           if (richMessageDelivered) {
-            assistantRunState.markFinalResponsePublished(sessionId, {
-              logicalMessageId: completionLogicalMessageId,
-            });
+            if (hasActualAssistantText) {
+              assistantRunState.markFinalResponsePublished(sessionId, {
+                logicalMessageId: completionLogicalMessageId,
+              });
+            }
             await clearThinkingBlockStream(sessionId, false);
             // Delete streamed legacy messages displaced by the rich message
             responseStreamer.clearMessage(sessionId, `${messageId}:assistant`, "rich_final_delivery", {
@@ -2322,6 +2505,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               text: messageText,
               messageThreadId: target.messageThreadId,
             });
+            // Deliver file-server file follow-ups after final message
+            await enqueueLocalFileFollowUpsFromText(
+              sessionId,
+              buildFollowUpCandidateText(messageText, visibleReasoningText),
+            );
           } else {
             const finalizeAssistantDelivery = finalAssistantDeliveryOrchestrator.enqueue({
               sessionId,
@@ -2397,9 +2585,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
                   }
                 }
 
-                assistantRunState.markFinalResponsePublished(sessionId, {
-                  logicalMessageId: completionLogicalMessageId,
-                });
+                if (hasActualAssistantText) {
+                  assistantRunState.markFinalResponsePublished(sessionId, {
+                    logicalMessageId: completionLogicalMessageId,
+                  });
+                }
               },
             });
 
@@ -2413,6 +2603,11 @@ async function ensureEventSubscription(directory: string): Promise<void> {
               text: messageText,
               messageThreadId: target.messageThreadId,
             });
+            // Deliver file-server file follow-ups after final message
+            await enqueueLocalFileFollowUpsFromText(
+              sessionId,
+              buildFollowUpCandidateText(messageText, visibleReasoningText),
+            );
           }
         } catch (err) {
           finalAssistantDeliveryOrchestrator.clearSession(sessionId);
@@ -2491,6 +2686,7 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       finalAssistantDeliveryOrchestrator.clearSession(sessionId);
       toolMessageBatcher.clearSession(sessionId, "session_idle_missing_routing");
       toolCallStreamer.clearSession(sessionId, "session_idle_missing_routing");
+      cleanupToolStatusMessages(sessionId);
       assistantRunState.clearRun(sessionId, "session_idle_missing_routing");
       clearSessionRoutingContext(sessionId);
       localFileFollowUpTracker.clearSession(sessionId);
@@ -2630,6 +2826,101 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   });
 
   summaryAggregator.setOnTool(async (toolInfo) => {
+    // ── Rich Progress mode ──
+    if (useRichProgress) {
+      logger.debug("[RichProgress] Tool update", {
+        sessionId: toolInfo.sessionId,
+        tool: toolInfo.tool,
+        callId: toolInfo.callId,
+        state: typeof toolInfo.state === "object" ? (toolInfo.state as any)?.status : toolInfo.state,
+        hasSession: unifiedProgress.hasSession(toolInfo.sessionId),
+        hasTarget: !!getSessionRoutingTarget(toolInfo.sessionId),
+        inFallbacks: targetedSessionRichProgressFallbacks.has(toolInfo.sessionId),
+      });
+
+      const formattedProgress = formatTechnicalProgressSync(toolInfo);
+      const category = classifyTechnicalProgress(toolInfo).category;
+      const callId = toolInfo.callId || formattedProgress.text;
+      const isComplete =
+        (typeof toolInfo.state === "object" && toolInfo.state !== null && "status" in toolInfo.state
+          ? toolInfo.state.status === "completed" || toolInfo.state.status === "error"
+          : toolInfo.state === "completed" || toolInfo.state === "error");
+
+      syncSessionRoutingContext(toolInfo.sessionId);
+      const target = getSessionRoutingTarget(toolInfo.sessionId);
+
+      if (target && !unifiedProgress.hasSession(toolInfo.sessionId) && !startingSessions.has(toolInfo.sessionId)) {
+        startingSessions.add(toolInfo.sessionId);
+        try {
+          await unifiedProgress.start(
+            toolInfo.sessionId,
+            target.chatId,
+            "Working...",
+            target.messageThreadId,
+          );
+        } catch {
+          logger.warn("[RichProgress] Start failed, using legacy mode for session", {
+            sessionId: toolInfo.sessionId,
+          });
+          targetedSessionRichProgressFallbacks.add(toolInfo.sessionId);
+        } finally {
+          startingSessions.delete(toolInfo.sessionId);
+        }
+      }
+
+      if (target && !targetedSessionRichProgressFallbacks.has(toolInfo.sessionId)) {
+        if (isComplete) {
+          if (unifiedProgress.hasSession(toolInfo.sessionId)) {
+            // For fast-completing tools (no separate "running" event), addToolCall
+            // first so updateToolCall has an entry to update.
+            // updateToolCall silently returns if the callId isn't found.
+            if (!unifiedProgress.hasToolCall(toolInfo.sessionId, callId)) {
+              unifiedProgress.addToolCall(toolInfo.sessionId, {
+                callId,
+                title: toolInfo.title || toolInfo.tool,
+                category,
+                tool: toolInfo.tool,
+                input: toolInfo.input as Record<string, unknown> | undefined,
+              });
+            }
+            // Extract rich output for expandable <details> blocks
+            const rawOutput = extractToolOutput(
+              toolInfo.tool,
+              toolInfo.input as Record<string, unknown> | undefined,
+              toolInfo.metadata as Record<string, unknown> | undefined,
+              (toolInfo.state as Record<string, unknown>)?.output,
+            );
+            unifiedProgress.updateToolCall(toolInfo.sessionId, callId, {
+              status:
+                (typeof toolInfo.state === "object" && toolInfo.state !== null && "status" in toolInfo.state
+                  ? toolInfo.state.status === "error"
+                  : toolInfo.state === "error")
+                  ? "error"
+                  : "done",
+              metric: formattedProgress.text?.split("\u2014")[1]?.trim(),
+              output: rawOutput || undefined,
+              tool: toolInfo.tool,
+              input: toolInfo.input as Record<string, unknown> | undefined,
+              metadata: toolInfo.metadata as Record<string, unknown> | undefined,
+              stateOutput: (toolInfo.state as Record<string, unknown>)?.output,
+              title: toolInfo.title || undefined,
+            });
+          }
+        } else {
+          if (unifiedProgress.hasSession(toolInfo.sessionId)) {
+            unifiedProgress.addToolCall(toolInfo.sessionId, {
+              callId,
+              title: toolInfo.title || toolInfo.tool,
+              category,
+              tool: toolInfo.tool,
+              input: toolInfo.input as Record<string, unknown> | undefined,
+            });
+          }
+        }
+        return;
+      }
+    }
+
     // 2026-05-29: Wait for child topic routing to be established before
     // streaming tool notifications. Without this, tool calls can route to
     // the parent topic during the seeding window.
@@ -2662,6 +2953,72 @@ async function ensureEventSubscription(directory: string): Promise<void> {
       ) {
         orderedPublication.resolve(null);
         return;
+      }
+
+      const stateStatus = (toolInfo.state as Record<string, unknown>)?.status as string | undefined;
+      const toolKey = `${toolInfo.sessionId}:${toolInfo.callId}`;
+      const existingStatus = toolStatusMessages.get(toolKey);
+      const toolApi = getSessionRoutingApi(toolInfo.sessionId);
+      const toolTarget = getSessionRoutingTarget(toolInfo.sessionId);
+
+      // Show tool status immediately when it starts running, update on completion
+      if (stateStatus === "running" || stateStatus === "pending") {
+        const formattedProgress = formatTechnicalProgressSync(toolInfo);
+        let statusText = formattedProgress.text || `⚙️ ${toolInfo.tool}`;
+
+        // Wrap bash command in <code> for readability
+        if (toolInfo.tool === "bash" && formattedProgress.text) {
+          const dashIdx = statusText.lastIndexOf(" — ");
+          if (dashIdx > 0) {
+            const prefix = statusText.slice(0, dashIdx + 3);
+            const command = statusText.slice(dashIdx + 3);
+            statusText = `${prefix}<pre>${command}</pre>`;
+          }
+        }
+
+        if (existingStatus) {
+          // Update existing message if text changed
+          if (existingStatus.lastText !== statusText && toolApi && toolTarget) {
+            await toolApi.editMessageText(toolTarget.chatId, existingStatus.messageId, statusText, {
+              parse_mode: "HTML",
+            }).catch(() => {});
+            existingStatus.lastText = statusText;
+          }
+        } else if (toolApi && toolTarget && !toolStatusSending.has(toolKey)) {
+          // Send initial status message (guard against concurrent events)
+          toolStatusSending.add(toolKey);
+          try {
+            const sent = await toolApi.sendMessage(toolTarget.chatId, statusText, {
+              message_thread_id: toolTarget.messageThreadId,
+              disable_notification: true,
+              parse_mode: "HTML",
+            });
+            toolStatusMessages.set(toolKey, {
+              messageId: sent.message_id,
+              chatId: toolTarget.chatId,
+              threadId: toolTarget.messageThreadId,
+              lastText: statusText,
+            });
+          } catch {
+            // Silently skip if send fails — details publication will handle it on completion
+          } finally {
+            toolStatusSending.delete(toolKey);
+          }
+        }
+      } else if ((stateStatus === "completed" || stateStatus === "error") && existingStatus) {
+        // Delete temporary status message — final rich message is sent separately
+        if (toolApi) {
+          logger.debug(`[ToolStatus] Deleting temp message ${existingStatus.messageId} for ${toolKey}`);
+          await toolApi.deleteMessage(toolTarget!.chatId, existingStatus.messageId).catch((err) => {
+            logger.warn(`[ToolStatus] Failed to delete temp message ${existingStatus.messageId} for ${toolKey}:`, err);
+          });
+          logger.debug(`[ToolStatus] Deleted temp message ${existingStatus.messageId} for ${toolKey}`);
+        } else {
+          logger.warn(`[ToolStatus] No toolApi for ${toolKey}, cannot delete temp message`);
+        }
+        toolStatusMessages.delete(toolKey);
+      } else if (stateStatus === "completed" || stateStatus === "error") {
+        logger.debug(`[ToolStatus] No existingStatus for ${toolKey} (stateStatus=${stateStatus}), cannot delete`);
       }
 
       const formattedProgress = formatTechnicalProgressSync(toolInfo);
@@ -3075,6 +3432,12 @@ async function ensureEventSubscription(directory: string): Promise<void> {
   });
 
   summaryAggregator.setOnThinking(async (sessionId) => {
+    // ── Rich Progress: suppress all thinking messages in rich mode ──
+    // Reasoning is handled exclusively via onPartial → setReasoning
+    if (useRichProgress && !targetedSessionRichProgressFallbacks.has(sessionId)) {
+      return;
+    }
+
     syncSessionRoutingContext(sessionId);
     if (!getSessionRoutingApi(sessionId) || !getSessionRoutingTarget(sessionId)) {
       return;
@@ -4407,9 +4770,29 @@ export function createBot(): Bot<Context> {
     const hasCallbackQuery = !!ctx.callbackQuery;
     const hasMessage = !!ctx.message;
     const callbackData = ctx.callbackQuery?.data || "N/A";
+    const msg = ctx.message;
+    const msgKeys = msg
+      ? Object.keys(msg).filter(
+          (k) => {
+            const val = (msg as any)[k];
+            return val !== undefined && val !== null &&
+            !["message_id", "from", "chat", "date", "forward_date"].includes(k);
+          },
+        )
+      : [];
     logger.debug(
-      `[DEBUG] Incoming update: hasCallbackQuery=${hasCallbackQuery}, hasMessage=${hasMessage}, callbackData=${callbackData}`,
+      `[DEBUG] Incoming update: hasCallbackQuery=${hasCallbackQuery}, hasMessage=${hasMessage}, callbackData=${callbackData}` +
+        (msg ? `, msgTypes=[${msgKeys.join(",")}], hasText=${!!msg.text}, hasCaption=${!!msg.caption}, hasFwd=${!!msg.forward_origin}` : ""),
     );
+    // Debug rich_message content
+    if (msg && (msg as any).rich_message) {
+      const rm = (msg as any).rich_message;
+      logger.debug(
+        `[DEBUG] rich_message keys: [${Object.keys(rm).join(",")}], ` +
+        `hasText=${!!rm.text}, hasCaption=${!!rm.caption}, ` +
+        `json=${JSON.stringify(rm).slice(0, 500)}`,
+      );
+    }
     return next();
   });
 
@@ -4525,6 +4908,8 @@ export function createBot(): Bot<Context> {
   bot.command("skills", skillsCommand);
   bot.command("mcps", mcpsCommand);
   bot.command("ssh", sshCommand);
+  bot.command("update", updateCommand);
+  bot.command("update_all", updateAllCommand);
 
   bot.on("message:text", unknownCommandMiddleware);
 
@@ -5037,6 +5422,114 @@ export function createBot(): Bot<Context> {
     await handleLocationMessage(ctx, locDeps);
   });
 
+  // ── DIAGNOSTIC: log all received messages to debug forwarded rich messages ──
+  bot.on("message", async (ctx, next) => {
+    const msg = ctx.message;
+    if (msg) {
+      const keys = Object.keys(msg).filter(k => msg[k as keyof typeof msg] !== undefined);
+      const hasFo = !!msg.forward_origin;
+      const hasRich = !!(msg as any).rich_message;
+      logger.debug(
+        `[Bot] INCOMING msg: keys=[${keys.join(",")}] ` +
+        `has_text=${!!msg.text} has_caption=${!!msg.caption} ` +
+        `has_forward_origin=${hasFo} has_rich_message=${hasRich} ` +
+        `chatId=${ctx.chat?.id} msgId=${msg.message_id}`,
+      );
+      if (hasRich) {
+        logger.debug(`[Bot] INCOMING rich_message keys: ${JSON.stringify(Object.keys((msg as any).rich_message))}`);
+      }
+    }
+    return next();
+  });
+
+  // Forwarded message catch-all handler: extracts text/caption from forwarded
+  // messages that don't have a `text` field (e.g. forwarded stickers with captions,
+  // animations, or messages where only caption is present).
+  // Forwarded messages WITH text are handled by the regular message:text handler
+  // and composeDeferredMediaPrompt now correctly treats them as direct prompts.
+  bot.on("message", async (ctx, next) => {
+    const msg = ctx.message;
+    if (!msg) return next();
+
+    const fo = msg.forward_origin;
+    if (!fo) return next();
+
+    // Skip messages that already have a text field — the message:text handler
+    // and deferred batch pipeline handle those (with forward context).
+    if (msg.text) return next();
+
+    // Skip known media types that have their own handlers (photo, video, etc.)
+    // These handlers extract captions and include forward context via metadata.
+    if (
+      msg.photo ||
+      msg.video ||
+      msg.video_note ||
+      msg.document ||
+      msg.voice ||
+      msg.audio ||
+      msg.location
+    ) {
+      return next();
+    }
+
+    // Extract text from rich_message blocks (forwarded formatted messages)
+    // or caption for other forwarded message types.
+    const richText = extractRichMessageText((msg as any).rich_message);
+    const caption = msg.caption?.trim();
+    const contentText = richText || caption;
+    if (!contentText) return next();
+
+    // Build forwarded tag from forward_origin
+    let forwardedTag: string | undefined;
+    if (fo.type === "user" && fo.sender_user) {
+      const name = [fo.sender_user.first_name, fo.sender_user.last_name]
+        .filter(Boolean)
+        .join(" ");
+      forwardedTag = name || `ID ${fo.sender_user.id}`;
+    } else if (fo.type === "hidden_user" && fo.sender_user_name) {
+      forwardedTag = fo.sender_user_name;
+    } else if (fo.type === "channel" && fo.chat) {
+      forwardedTag = fo.chat.title || fo.chat.username || "channel";
+    } else if (fo.type === "chat" && fo.sender_chat) {
+      forwardedTag = fo.sender_chat.title || fo.sender_chat.username || "chat";
+    }
+
+    const fwdPrefix = forwardedTag
+      ? `[Переслано от: ${forwardedTag}]`
+      : "[Пересланное сообщение]";
+    const enrichedText = `${fwdPrefix}\n${contentText!}`;
+
+    logger.debug(
+      `[Bot] Forwarded message: forward_origin.type=${fo.type}, ` +
+        `tag="${forwardedTag || "unknown"}", source=${richText ? "rich_message" : "caption"}, chatId=${ctx.chat.id}`,
+    );
+
+    // Terminal topic: execute as shell command
+    const mtId = msg.message_thread_id;
+    if (isTerminalTopic(mtId)) {
+      await handleTerminalTextInput(
+        stripMessageTags(contentText!),
+        mtId!,
+        ctx.from?.id ?? 0,
+        {
+          reply: (txt: string, opts?: any) => ctx.reply(txt, opts),
+          api: ctx.api,
+          chat: ctx.chat,
+        },
+      );
+      return;
+    }
+
+    // Start fresh RichMessage for each new user prompt
+    if (useRichProgress) {
+      unifiedProgress.clearAll();
+    }
+
+    // Process as regular prompt with forward context
+    const promptDeps = { bot, ensureEventSubscription, deferredBatch };
+    await processUserPrompt(ctx, enrichedText, promptDeps);
+  });
+
   bot.on("edited_message", async (ctx) => {
     await handleEditedLocation(ctx);
 
@@ -5122,6 +5615,11 @@ export function createBot(): Bot<Context> {
         },
       );
       if (handled) return;
+    }
+
+    // Start fresh RichMessage for each new user prompt
+    if (useRichProgress) {
+      unifiedProgress.clearAll();
     }
 
     await processUserPrompt(ctx, text, promptDeps);

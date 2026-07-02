@@ -1,3 +1,7 @@
+import path from "path";
+
+export const GOLDEN_VERSION_FILE = "/etc/opencode/golden-version";
+
 export type VmSpecTier = "small" | "medium" | "large" | "xlarge";
 
 export interface VmSpec {
@@ -9,10 +13,10 @@ export interface VmSpec {
 }
 
 export const VM_TIERS: Record<VmSpecTier, VmSpec> = {
-  small:  { tier: "small",  ramMb: 4096,  vcpus: 2, diskGb: 20,  label: "Базовый" },
-  medium: { tier: "medium", ramMb: 4096,  vcpus: 2, diskGb: 50,  label: "Стандартный" },
-  large:  { tier: "large",  ramMb: 8192,  vcpus: 4, diskGb: 100, label: "Продвинутый" },
-  xlarge: { tier: "xlarge", ramMb: 16384, vcpus: 8, diskGb: 250, label: "Максимальный" },
+  small:  { tier: "small",  ramMb: 2048,  vcpus: 1, diskGb: 20,  label: "Базовый" },
+  medium: { tier: "medium", ramMb: 4096,  vcpus: 2, diskGb: 40,  label: "Стандартный" },
+  large:  { tier: "large",  ramMb: 8192,  vcpus: 4, diskGb: 80,  label: "Продвинутый" },
+  xlarge: { tier: "xlarge", ramMb: 16384, vcpus: 8, diskGb: 120, label: "Максимальный" },
 };
 
 export const VM_DEFAULTS = {
@@ -21,7 +25,7 @@ export const VM_DEFAULTS = {
   baseImageName: "opencode-golden.qcow2",
   bridgeInterface: "macvtap0", // unused with default NAT network
   networkName: "vm-net",
-  networkBridge: "vm-br1",
+  networkBridge: "vm-br0",
   networkSubnetCidr: "192.168.123.0/24",
   networkHostIp: "192.168.123.1",
   networkDhcpStart: "192.168.123.10",
@@ -34,6 +38,10 @@ export const VM_DEFAULTS = {
   shutdownTimeoutMs: 30_000,
   forceDestroyTimeoutMs: 5_000,
 };
+
+export function getDataDiskPath(userId: number): string {
+  return path.join(VM_DEFAULTS.imagesDir, `${VM_DEFAULTS.domainNamePrefix}-${userId}-data.qcow2`);
+}
 
 export interface VmInfo {
   userId: number;

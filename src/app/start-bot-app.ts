@@ -1,8 +1,15 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { webhookCallback } from "grammy";
 
 import { createBot, disposeBotIntervals } from "../bot/index.js";
 import { config } from "../config.js";
+import {
+  ensureTelegramWebhook,
+  isTelegramWebhookDeliveryUnhealthy,
+  switchTelegramToPolling,
+  TELEGRAM_ALLOWED_UPDATES,
+} from "../bot/update-config.js";
 import {
   createOpenCodeAutoRestartMonitor,
   type OpenCodeAutoRestartMonitor,
@@ -10,6 +17,7 @@ import {
 import type { ProcessOperationResult } from "../process/types.js";
 import { getLastRestartRequest, loadSettings, setLastRestartRequest, disposeDatabase } from "../settings/manager.js";
 import { processManager } from "../process/manager.js";
+import { configureAlarm } from "../vm/alarm.js";
 import { scheduledTaskRuntime } from "../scheduled-task/runtime.js";
 import { refreshSessionCacheIfOpencodeReady } from "../opencode/ready-refresh.js";
 import { getRuntimeMode } from "../runtime/mode.js";
@@ -17,10 +25,11 @@ import { getRuntimePaths } from "../runtime/paths.js";
 import { stopBotContainers } from "../runtime/docker.js";
 import { safeBackgroundTask } from "../utils/safe-background-task.js";
 import { logger } from "../utils/logger.js";
-import { startHttpServer, stopHttpServer } from "../server/index.js";
+import { setTelegramWebhookRequestHandler, startHttpServer, stopHttpServer } from "../server/index.js";
 import { t, type Locale } from "../i18n/index.js";
 
 const STARTUP_LOCK_FILE_NAME = "bot-start.lock";
+const WEBHOOK_HEALTH_CHECK_DELAY_MS = 30_000;
 
 async function getBotVersion(): Promise<string> {
   try {
@@ -119,6 +128,51 @@ async function isHostRuntimeAvailable(): Promise<boolean> {
   return runtimeInfo.kind === "host" && runtimeInfo.managed;
 }
 
+async function startBotPollingWithRetries(bot: ReturnType<typeof createBot>): Promise<void> {
+  let startAttempt = 0;
+  const maxStartRetries = 10;
+
+  while (true) {
+    try {
+      await bot.start({
+        allowed_updates: [
+          ...TELEGRAM_ALLOWED_UPDATES,
+        ],
+        onStart: async (botInfo) => {
+          logger.info(`Bot @${botInfo.username} started!`);
+
+          const lastRestart = getLastRestartRequest();
+          if (lastRestart?.chatId && lastRestart?.messageId) {
+            try {
+              await bot.api.editMessageText(
+                lastRestart.chatId,
+                lastRestart.messageId,
+                t("restart.completed", undefined, lastRestart.locale as Locale | undefined),
+              );
+            } catch (error) {
+              logger.warn("[App] Failed to edit restart message:", error);
+            }
+            await setLastRestartRequest({ updateId: lastRestart.updateId, requestedAt: lastRestart.requestedAt });
+          }
+        },
+      });
+      return;
+    } catch (error) {
+      const msg = (error as Error)?.message ?? String(error);
+      if (msg.includes("409") || msg.includes("terminated by other getUpdates")) {
+        startAttempt++;
+        if (startAttempt >= maxStartRetries) {
+          throw error;
+        }
+        logger.warn(`[App] getUpdates 409 conflict, retrying in 5s (${startAttempt}/${maxStartRetries})`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      } else {
+        throw error;
+      }
+    }
+  }
+}
+
 export async function startBotApp(dependencies: StartBotAppDependencies = {}): Promise<void> {
   const mode = getRuntimeMode();
   const runtimePaths = getRuntimePaths();
@@ -129,6 +183,12 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
   logger.info(`Starting OpenCode Telegram Bot v${version}...`);
   logger.info(`Config loaded from ${runtimePaths.envFilePath}`);
   logger.info(`Admin User ID: ${config.telegram.adminUserId}`);
+  // Configure VM alarm system — sends Telegram notifications instead of destroying VMs
+  configureAlarm({
+    botToken: config.telegram.token,
+    adminUserId: config.telegram.adminUserId,
+    enabled: true,
+  });
   logger.debug(`[Runtime] Application start mode: ${mode}`);
 
   let bot: ReturnType<typeof createBot> | null = null;
@@ -172,74 +232,95 @@ export async function startBotApp(dependencies: StartBotAppDependencies = {}): P
       task: () => refreshSessionCacheIfOpencodeReady("startup"),
     });
 
-    const webhookInfo = await bot.api.getWebhookInfo();
-    if (webhookInfo.url) {
-      logger.info(`[Bot] Webhook detected: ${webhookInfo.url}, removing...`);
-      await bot.api.deleteWebhook();
-      logger.info("[Bot] Webhook removed, switching to long polling");
-    }
-
-    try {
-      await startHttpServer();
-    } catch (err) {
-      logger.warn("[App] HTTP server failed to start, continuing without it:", err);
-    }
-
     if (!shutdownRequested) {
-      // Retry on 409 Conflict (stale long-polling connection from previous instance)
-      let startAttempt = 0;
-      const maxStartRetries = 10;
-      while (true) {
-        try {
-          await bot.start({
-            allowed_updates: [
-              "message",
-              "edited_message",
-              "channel_post",
-              "edited_channel_post",
-              "callback_query",
-              "inline_query",
-              "chosen_inline_result",
-              "my_chat_member",
-              "chat_member",
-              "chat_join_request",
-              "poll",
-              "poll_answer",
-              "message_reaction",
-            ],
-            onStart: async (botInfo) => {
-              logger.info(`Bot @${botInfo.username} started!`);
-
-              const lastRestart = getLastRestartRequest();
-              if (lastRestart?.chatId && lastRestart?.messageId) {
-                try {
-                  await bot!.api.editMessageText(
-                    lastRestart.chatId,
-                    lastRestart.messageId,
-                    t("restart.completed", undefined, lastRestart.locale as Locale | undefined),
-                  );
-                } catch (error) {
-                  logger.warn("[App] Failed to edit restart message:", error);
-                }
-                await setLastRestartRequest({ updateId: lastRestart.updateId, requestedAt: lastRestart.requestedAt });
-              }
-            },
-          });
-          break;
-        } catch (error) {
-          const msg = (error as Error)?.message ?? String(error);
-          if (msg.includes("409") || msg.includes("terminated by other getUpdates")) {
-            startAttempt++;
-            if (startAttempt >= maxStartRetries) {
-              throw error;
-            }
-            console.error(`[App] getUpdates 409 conflict, retrying in 5s (${startAttempt}/${maxStartRetries})`);
-            await new Promise(resolve => setTimeout(resolve, 5000));
-          } else {
-            throw error;
-          }
+      if (config.telegram.updateMode === "webhook") {
+        const activeBot = bot;
+        if (!config.telegram.webhookBaseUrl) {
+          throw new Error("TELEGRAM_WEBHOOK_BASE_URL is required when TELEGRAM_UPDATE_MODE=webhook");
         }
+        if (!config.telegram.webhookSecret) {
+          throw new Error("TELEGRAM_WEBHOOK_SECRET is required when TELEGRAM_UPDATE_MODE=webhook");
+        }
+
+        const handleUpdate = webhookCallback(bot, "http", {
+          secretToken: config.telegram.webhookSecret,
+        });
+        setTelegramWebhookRequestHandler(config.telegram.webhookPath, handleUpdate);
+
+        try {
+          await startHttpServer();
+        } catch (err) {
+          logger.warn("[App] HTTP server failed to start for webhook mode, falling back to polling:", err);
+          await switchTelegramToPolling(activeBot.api);
+          await startBotPollingWithRetries(activeBot);
+          return;
+        }
+
+        const webhookUrl = await ensureTelegramWebhook(activeBot.api, {
+          baseUrl: config.telegram.webhookBaseUrl,
+          path: config.telegram.webhookPath,
+          secret: config.telegram.webhookSecret,
+        });
+        logger.info(`[Bot] Webhook mode enabled: ${webhookUrl}`);
+
+        await new Promise<void>((resolve) => {
+          let fallbackStarted = false;
+          const webhookStartedAt = Math.floor(Date.now() / 1000);
+          const fallbackTimer = setInterval(() => {
+            safeBackgroundTask({
+              taskName: "app.webhookFallbackHealthCheck",
+              task: async () => {
+                if (fallbackStarted) {
+                  return;
+                }
+
+                const webhookInfo = await activeBot.api.getWebhookInfo();
+                if (!isTelegramWebhookDeliveryUnhealthy(webhookInfo, webhookStartedAt)) {
+                  return;
+                }
+
+                fallbackStarted = true;
+                clearInterval(fallbackTimer);
+                logger.warn(
+                  `[Bot] Webhook delivery unhealthy after startup; switching to getUpdates fallback. ` +
+                    `pending=${webhookInfo.pending_update_count}, lastError=${webhookInfo.last_error_message ?? "unknown"}`,
+                );
+                await switchTelegramToPolling(activeBot.api);
+                await startBotPollingWithRetries(activeBot);
+                resolve();
+              },
+            });
+          }, WEBHOOK_HEALTH_CHECK_DELAY_MS);
+
+          activeBot.init().then(() => {
+            logger.info(`Bot @${activeBot.botInfo.username} started in webhook mode!`);
+          }).catch((error) => {
+            logger.warn("[Bot] Failed to prefetch bot info in webhook mode", error);
+          });
+
+          const resolveOnShutdown = (): void => {
+            clearInterval(fallbackTimer);
+            if (!fallbackStarted) {
+              resolve();
+            }
+          };
+          process.once("SIGINT", resolveOnShutdown);
+          process.once("SIGTERM", resolveOnShutdown);
+        });
+        return;
       }
+
+      try {
+        await startHttpServer();
+      } catch (err) {
+        logger.warn("[App] HTTP server failed to start, continuing without it:", err);
+      }
+
+      await switchTelegramToPolling(bot.api);
+      logger.info("[Bot] Polling mode enabled");
+
+      // Retry on 409 Conflict (stale long-polling connection from previous instance)
+      await startBotPollingWithRetries(bot);
     }
   } finally {
     process.off("SIGINT", handleSignal);

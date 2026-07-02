@@ -43,9 +43,24 @@ function isForwardedTextItem(item: DeferredPromptItem, t: TranslateFn): boolean 
 }
 
 function getLatestDirectTextItem(items: DeferredPromptItem[], t: TranslateFn): DeferredPromptItem | undefined {
+  // First pass: look for non-forwarded direct text (regular user messages)
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
     if (item.kind !== "text" || isForwardedTextItem(item, t)) {
+      continue;
+    }
+
+    if (normalizeText(item.directText)) {
+      return item;
+    }
+  }
+
+  // Second pass: if no regular direct text, use a forwarded text item as direct text.
+  // Forwarded messages should be treated as user prompts (with forward context),
+  // NOT demoted to "context to analyze".
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.kind !== "text" || !isForwardedTextItem(item, t)) {
       continue;
     }
 
@@ -185,9 +200,11 @@ export function composeDeferredMediaPrompt(
   const previewText = buildPreviewText(previewItems, t);
 
   if (directTextItem) {
+    const forwardedTag = resolveForwardedTag(directTextItem, t);
     const directText = normalizeText(directTextItem.directText);
+    const metaParts = [buildMetadataPrefix(directTextItem), forwardedTag].filter(Boolean);
     const directTextWithMeta = directText
-      ? [buildMetadataPrefix(directTextItem), directText].filter(Boolean).join("\n")
+      ? [...metaParts, directText].join("\n")
       : directText;
     const contextBlocks = items
       .filter((item) => item !== directTextItem)

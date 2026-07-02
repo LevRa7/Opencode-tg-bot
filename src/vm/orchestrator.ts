@@ -1,4 +1,5 @@
 import { logger } from "../utils/logger.js";
+import { getAllVmRuntimeUserIds, clearVmRuntimeInfo } from "../settings/manager.js";
 import type { VmHandle, VmSpec } from "./types.js";
 import type { VmLifecycleManager } from "./lifecycle-manager.js";
 import type { VmStatePersistence } from "./state-persistence.js";
@@ -57,6 +58,25 @@ export function createVmOrchestrator(lifecycle: VmLifecycleManager): VmOrchestra
   }
 
   async function recoverAll(persistence: VmStatePersistence): Promise<void> {
+    // Fix (2026-07-01): Clean up orphan vm_runtimes entries — rows where the VM
+    // was destroyed externally (libvirt undefine, host crash) but the routing
+    // table was never cleaned. Without this, getCurrentOpencodeRoute() returns
+    // a dead VM's URL → "models unavailable". Ported from Hermes memory-ts drift
+    // detection: vm_states is the authoritative source, vm_runtimes is the cache.
+    const runtimeUserIds = getAllVmRuntimeUserIds();
+    let orphansCleaned = 0;
+    for (const userId of runtimeUserIds) {
+      const stateRecord = persistence.getByUserId(userId);
+      if (!stateRecord) {
+        logger.warn("[Orchestrator] Orphan vm_runtimes for userId=%d — no vm_states record, clearing", userId);
+        clearVmRuntimeInfo(userId);
+        orphansCleaned++;
+      }
+    }
+    if (orphansCleaned > 0) {
+      logger.info("[Orchestrator] Cleaned %d orphan vm_runtimes entries", orphansCleaned);
+    }
+
     const active = persistence.listActive();
     const destroyed = persistence.listDestroyed();
     const degraded = persistence.listDegraded();

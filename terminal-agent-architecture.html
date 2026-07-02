@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Terminal Agent Architecture</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #020617;
+      --panel: #0f172a;
+      --card: rgba(15, 23, 42, 0.92);
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --cyan: #22d3ee;
+      --emerald: #34d399;
+      --violet: #a78bfa;
+      --amber: #fbbf24;
+      --rose: #fb7185;
+      --orange: #fb923c;
+      --slate: #94a3b8;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "JetBrains Mono", monospace;
+    }
+    body {
+      background-image:
+        linear-gradient(rgba(30, 41, 59, 0.28) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(30, 41, 59, 0.28) 1px, transparent 1px);
+      background-size: 40px 40px;
+      padding: 28px;
+    }
+    .wrap {
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .title {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      margin: 0;
+    }
+    .subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .pulse {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.75);
+      animation: pulse 1.8s infinite;
+      margin-right: 10px;
+      vertical-align: middle;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.7); }
+      70% { box-shadow: 0 0 0 18px rgba(52, 211, 153, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0); }
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid rgba(51, 65, 85, 0.9);
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.38);
+      overflow: hidden;
+    }
+    .diagram-card {
+      padding: 12px;
+    }
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+    .info-card {
+      padding: 16px 16px 14px;
+    }
+    .info-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .dot.cyan { background: var(--cyan); }
+    .dot.emerald { background: var(--emerald); }
+    .dot.violet { background: var(--violet); }
+    .info-head h3 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text);
+      font-size: 11px;
+      line-height: 1.7;
+    }
+    li { margin-bottom: 4px; }
+    .footer {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 11px;
+      text-align: right;
+    }
+    .legend-text {
+      font-size: 10px;
+      fill: #cbd5e1;
+    }
+    .tiny-text {
+      font-size: 8px;
+      fill: #cbd5e1;
+    }
+    .node-title {
+      font-size: 12px;
+      font-weight: 700;
+      fill: #e2e8f0;
+    }
+    .node-sub {
+      font-size: 9px;
+      fill: #cbd5e1;
+    }
+    .node-anno {
+      font-size: 8px;
+      fill: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <h1 class="title"><span class="pulse"></span>Terminal Agent Architecture</h1>
+        <p class="subtitle">OpenCode Telegram Bot worktree: /home/me/opencode-tg/.worktrees/terminal-agent</p>
+      </div>
+      <div class="subtitle" style="text-align:right; max-width: 430px;">
+        Telegram user → grammY bot → state managers + OpenCode SDK → SSE summary pipeline → Telegram delivery
+      </div>
+    </div>
+
+    <div class="card diagram-card">
+      <svg viewBox="0 0 1560 980" role="img" aria-label="Architecture diagram for the OpenCode Telegram Bot terminal agent worktree">
+        <defs>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
+          </marker>
+          <marker id="arrow-emerald" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399" />
+          </marker>
+          <marker id="arrow-cyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#22d3ee" />
+          </marker>
+          <marker id="arrow-rose" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#fb7185" />
+          </marker>
+          <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="2.5" result="blur"/>
+            <feMerge>
+              <feMergeNode in="blur"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+
+        <rect x="0" y="0" width="1560" height="980" fill="#020617"/>
+        <rect x="0" y="0" width="1560" height="980" fill="url(#grid)" opacity="0.7"/>
+
+        <!-- region boundary -->
+        <rect x="40" y="30" width="1480" height="840" rx="14" fill="none" stroke="#fbbf24" stroke-width="2" stroke-dasharray="8 4" opacity="0.9"/>
+        <text x="58" y="54" class="legend-text">Project runtime boundary</text>
+
+        <!-- external actors -->
+        <rect x="70" y="90" width="220" height="84" rx="6" fill="#0f172a" stroke="#94a3b8" stroke-width="1.5"/>
+        <rect x="70" y="90" width="220" height="84" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="88" y="120" class="node-title">Telegram User</text>
+        <text x="88" y="140" class="node-sub">chat / commands / media</text>
+        <text x="88" y="158" class="node-anno">entry point</text>
+
+        <rect x="70" y="720" width="220" height="84" rx="6" fill="#0f172a" stroke="#94a3b8" stroke-width="1.5"/>
+        <rect x="70" y="720" width="220" height="84" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="88" y="750" class="node-title">OpenCode Server</text>
+        <text x="88" y="770" class="node-sub">SSE + session APIs</text>
+        <text x="88" y="788" class="node-anno">local runtime</text>
+
+        <rect x="1270" y="90" width="220" height="84" rx="6" fill="#0f172a" stroke="#94a3b8" stroke-width="1.5"/>
+        <rect x="1270" y="90" width="220" height="84" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="1288" y="120" class="node-title">Telegram Bot API</text>
+        <text x="1288" y="140" class="node-sub">updates + outgoing messages</text>
+        <text x="1288" y="158" class="node-anno">network dependency</text>
+
+        <rect x="1270" y="720" width="220" height="84" rx="6" fill="#0f172a" stroke="#94a3b8" stroke-width="1.5"/>
+        <rect x="1270" y="720" width="220" height="84" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="1288" y="750" class="node-title">Optional APIs</text>
+        <text x="1288" y="770" class="node-sub">STT / TTS / LibreTranslate</text>
+        <text x="1288" y="788" class="node-anno">media + text helpers</text>
+
+        <!-- arrows -->
+        <path d="M 290 132 C 380 132, 390 190, 450 220" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+        <path d="M 1010 250 C 1120 250, 1150 160, 1270 132" fill="none" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+        <path d="M 1010 315 C 1110 390, 1140 580, 1270 742" fill="none" stroke="#fb923c" stroke-width="2" marker-end="url(#arrow)"/>
+        <path d="M 290 762 C 420 762, 430 650, 450 600" fill="none" stroke="#34d399" stroke-width="2" marker-end="url(#arrow-emerald)"/>
+        <path d="M 705 750 C 805 750, 830 705, 860 640" fill="none" stroke="#fb7185" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-rose)"/>
+
+        <!-- bot layer boundary -->
+        <rect x="360" y="70" width="820" height="700" rx="14" fill="none" stroke="#34d399" stroke-width="2" stroke-dasharray="4 4" opacity="0.95"/>
+        <text x="382" y="94" class="legend-text">Bot runtime + orchestrators</text>
+
+        <!-- entry/runtime -->
+        <rect x="400" y="110" width="210" height="96" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/>
+        <rect x="400" y="110" width="210" height="96" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="418" y="140" class="node-title">src/index.ts</text>
+        <text x="418" y="160" class="node-sub">runtime mode bootstrap</text>
+        <text x="418" y="178" class="node-anno">logger + startBotApp()</text>
+
+        <rect x="640" y="110" width="250" height="96" rx="6" fill="#0f172a" stroke="#fbbf24" stroke-width="1.5"/>
+        <rect x="640" y="110" width="250" height="96" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="658" y="140" class="node-title">src/app/start-bot-app.ts</text>
+        <text x="658" y="160" class="node-sub">main startup orchestration</text>
+        <text x="658" y="178" class="node-anno">settings + process + runtime</text>
+
+        <rect x="920" y="110" width="220" height="96" rx="6" fill="#0f172a" stroke="#fb7185" stroke-width="1.5"/>
+        <rect x="920" y="110" width="220" height="96" rx="6" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="938" y="140" class="node-title">src/config.ts</text>
+        <text x="938" y="160" class="node-sub">typed env config</text>
+        <text x="938" y="178" class="node-anno">bot / API / feature flags</text>
+
+        <!-- bot core -->
+        <rect x="400" y="245" width="370" height="160" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/>
+        <rect x="400" y="245" width="370" height="160" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="418" y="275" class="node-title">Bot Layer</text>
+        <text x="418" y="295" class="node-sub">src/bot/index.ts</text>
+        <text x="418" y="317" class="node-anno">grammY setup, commands, callbacks</text>
+        <text x="418" y="338" class="node-anno">auth / interaction guard / topic routing</text>
+        <text x="418" y="359" class="node-anno">SSE-to-Telegram delivery wiring</text>
+
+        <rect x="800" y="245" width="300" height="160" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/>
+        <rect x="800" y="245" width="300" height="160" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="818" y="275" class="node-title">State Managers</text>
+        <text x="818" y="295" class="node-sub">session / project / model / agent</text>
+        <text x="818" y="317" class="node-anno">question / permission / keyboard</text>
+        <text x="818" y="338" class="node-anno">thread bindings + pinned state</text>
+        <text x="818" y="359" class="node-anno">interaction lock & cleanup</text>
+
+        <rect x="400" y="435" width="330" height="160" rx="6" fill="#0f172a" stroke="#34d399" stroke-width="1.5"/>
+        <rect x="400" y="435" width="330" height="160" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="418" y="465" class="node-title">OpenCode Integration</text>
+        <text x="418" y="485" class="node-sub">src/opencode/client.ts</text>
+        <text x="418" y="507" class="node-anno">project/session APIs</text>
+        <text x="418" y="528" class="node-anno">event.subscribe() SSE stream</text>
+        <text x="418" y="549" class="node-anno">question.reply() / permission.reply()</text>
+
+        <rect x="760" y="435" width="340" height="160" rx="6" fill="#0f172a" stroke="#fb923c" stroke-width="1.5"/>
+        <rect x="760" y="435" width="340" height="160" rx="6" fill="rgba(251, 146, 60, 0.3)" stroke="#fb923c" stroke-width="1.5"/>
+        <text x="778" y="465" class="node-title">Summary & Delivery</text>
+        <text x="778" y="485" class="node-sub">src/summary/aggregator.ts</text>
+        <text x="778" y="507" class="node-anno">final text, tool info, file changes</text>
+        <text x="778" y="528" class="node-anno">Telegram-safe formatting</text>
+        <text x="778" y="549" class="node-anno">thinking / tool / error summaries</text>
+
+        <rect x="400" y="625" width="310" height="120" rx="6" fill="#0f172a" stroke="#fbbf24" stroke-width="1.5"/>
+        <rect x="400" y="625" width="310" height="120" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="418" y="655" class="node-title">Scheduled Tasks</text>
+        <text x="418" y="675" class="node-sub">src/scheduled-task/*</text>
+        <text x="418" y="697" class="node-anno">deferred execution + recovery</text>
+
+        <rect x="740" y="625" width="360" height="120" rx="6" fill="#0f172a" stroke="#94a3b8" stroke-width="1.5"/>
+        <rect x="740" y="625" width="360" height="120" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="758" y="655" class="node-title">Process & External Services</text>
+        <text x="758" y="675" class="node-sub">src/process/manager.ts + src/stt/client.ts</text>
+        <text x="758" y="697" class="node-anno">local opencode serve + optional STT/TTS/translation</text>
+
+        <!-- flow arrows inside bot layer -->
+        <path d="M 610 158 L 640 158" fill="none" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+        <path d="M 740 158 L 920 158" fill="none" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrow)"/>
+        <path d="M 655 206 L 655 245" fill="none" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrow-cyan)"/>
+        <path d="M 770 325 L 800 325" fill="none" stroke="#a78bfa" stroke-width="2" marker-end="url(#arrow)"/>
+        <path d="M 585 405 L 585 435" fill="none" stroke="#34d399" stroke-width="2" marker-end="url(#arrow-emerald)"/>
+        <path d="M 945 405 L 945 435" fill="none" stroke="#fb923c" stroke-width="2" marker-end="url(#arrow)"/>
+        <path d="M 625 595 L 625 625" fill="none" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrow)"/>
+        <path d="M 960 595 L 960 625" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+
+        <!-- summary cards callouts -->
+        <g filter="url(#glow)">
+          <circle cx="510" cy="325" r="3.5" fill="#22d3ee"/>
+          <circle cx="675" cy="325" r="3.5" fill="#a78bfa"/>
+          <circle cx="690" cy="515" r="3.5" fill="#34d399"/>
+          <circle cx="780" cy="515" r="3.5" fill="#fb923c"/>
+        </g>
+
+        <!-- legend outside boundary -->
+        <rect x="40" y="890" width="1480" height="66" rx="12" fill="#0f172a" stroke="#334155" stroke-width="1.2"/>
+        <text x="60" y="917" class="legend-text">Legend</text>
+        <rect x="130" y="904" width="18" height="10" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="158" y="913" class="tiny-text">Frontend / bot entry</text>
+        <rect x="314" y="904" width="18" height="10" rx="2" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.2"/>
+        <text x="342" y="913" class="tiny-text">Backend / OpenCode integration</text>
+        <rect x="584" y="904" width="18" height="10" rx="2" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.2"/>
+        <text x="612" y="913" class="tiny-text">State managers</text>
+        <rect x="740" y="904" width="18" height="10" rx="2" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.2"/>
+        <text x="768" y="913" class="tiny-text">Runtime / schedule orchestration</text>
+        <rect x="1048" y="904" width="18" height="10" rx="2" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.2"/>
+        <text x="1076" y="913" class="tiny-text">Security / config</text>
+        <line x1="1290" y1="909" x2="1340" y2="909" stroke="#fb7185" stroke-width="2" stroke-dasharray="6 5"/>
+        <text x="1350" y="913" class="tiny-text">Security-sensitive flow</text>
+      </svg>
+    </div>
+
+    <div class="cards">
+      <div class="card info-card">
+        <div class="info-head"><span class="dot cyan"></span><h3>Entry & Control</h3></div>
+        <ul>
+          <li><b>src/index.ts</b> boots runtime mode and logging.</li>
+          <li><b>src/app/start-bot-app.ts</b> coordinates startup.</li>
+          <li><b>src/config.ts</b> centralizes typed environment config.</li>
+        </ul>
+      </div>
+      <div class="card info-card">
+        <div class="info-head"><span class="dot emerald"></span><h3>Core Data Flow</h3></div>
+        <ul>
+          <li>Telegram updates enter the bot layer.</li>
+          <li>OpenCode events stream back through the summary pipeline.</li>
+          <li>Replies are routed to the same chat or forum topic.</li>
+        </ul>
+      </div>
+      <div class="card info-card">
+        <div class="info-head"><span class="dot violet"></span><h3>State & Safety</h3></div>
+        <ul>
+          <li>Session, model, question, permission, and thread state live in managers.</li>
+          <li>Scheduled tasks and process control run alongside the foreground flow.</li>
+          <li>Optional STT / TTS / translation services extend the runtime.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer">terminal-agent-architecture.html · standalone offline SVG diagram</div>
+  </div>
+</body>
+</html>

@@ -215,6 +215,7 @@ class SummaryAggregator {
   private processedToolStates: Set<string> = new Set();
   private lastRunningToolOutputHashes: Map<string, string> = new Map();
   private thinkingFiredForMessages: Set<string> = new Set();
+  private completedMessageIDs: Set<string> = new Set();
   private thinkingFiredForSessionRun = false;
   private knownTextPartIds: Map<string, Set<string>> = new Map();
   private bot: Bot | null = null;
@@ -579,6 +580,7 @@ class SummaryAggregator {
     this.processedToolStates.clear();
     this.lastRunningToolOutputHashes.clear();
     this.thinkingFiredForMessages.clear();
+    this.completedMessageIDs.clear();
     this.thinkingFiredForSessionRun = false;
     this.trackedSessionParents.clear();
     this.activeRootSessionIds.clear();
@@ -1168,6 +1170,11 @@ class SummaryAggregator {
 
     const messageID = info.id;
 
+    // Skip duplicate message.updated events (server may emit two completion events for the same messageId)
+    if (this.completedMessageIDs.has(messageID)) {
+      return;
+    }
+
     this.messages.set(messageID, { role: info.role });
 
     if (info.role === "assistant") {
@@ -1251,6 +1258,7 @@ class SummaryAggregator {
         this.messages.delete(messageID);
         this.partHashes.delete(messageID);
         this.knownTextPartIds.delete(messageID);
+        this.completedMessageIDs.add(messageID);
 
         logger.debug(
           `[Aggregator] Message completed cleanup: remaining messages=${this.textMessageStates.size}`,
